@@ -6,12 +6,12 @@ TraitorDash is an external, web-based admin panel designed specifically for TTT2
 
 ---
 
-### ⚠️ Project Status: Hobbyist & First Steps
+## ⚠️ Project Status: Hobbyist & First Steps
 **This is a hobby project.** It marks my first journey into the world of Garry's Mod Lua and Source Engine development. While the architecture is designed to be robust, please expect "newbie" mistakes in the Lua implementation! Feedback and contributions from seasoned GMod devs are highly welcome.
 
 ---
 
-### ✨ Key Features
+## ✨ Key Features
 
 -   **"Automagic" Schema Extraction:** No manual form building. The system parses your installed roles' Lua files in a headless VM to automatically generate a mirroring web UI.
 -   **RCON-less Security:** Uses a pull-based **Command Queue** via HTTP polling. You never have to expose your RCON password or open ports on your home router.
@@ -21,7 +21,7 @@ TraitorDash is an external, web-based admin panel designed specifically for TTT2
 
 ---
 
-### 🏗️ Architecture
+## 🏗️ Architecture
 
 TraitorDash is split into two parts:
 
@@ -30,7 +30,7 @@ TraitorDash is split into two parts:
 
 ---
 
-### 🛠️ Tech Stack
+## 🛠️ Tech Stack
 
 -   **Backend:** [Bun](https://bun.sh/) + [Hono](https://hono.dev/) (TypeScript)
 -   **Lua VM:** [Fengari](https://fengari.io/) (Headless extraction)
@@ -40,7 +40,7 @@ TraitorDash is split into two parts:
 
 ---
 
-### 📜 Documentation & RFCs
+## 📜 Documentation & RFCs
 
 The project is built following a series of Request for Comments (RFCs) that outline the core logic:
 
@@ -53,7 +53,7 @@ The project is built following a series of Request for Comments (RFCs) that outl
 
 ---
 
-### 🤝 Contributing
+## 🤝 Contributing
 
 As this is my first GMod project, I'm especially interested in:
 -   Lua best practices for performance and stability.
@@ -64,6 +64,6 @@ Feel free to open an issue or submit a PR!
 
 ---
 
-### ⚖️ License
+## ⚖️ License
 
 Distributed under the MIT License. See `LICENSE` for more information.
