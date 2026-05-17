@@ -9,6 +9,21 @@ TraitorDash.ConVarToRoles = TraitorDash.ConVarToRoles or {}
 local cv_url = CreateConVar("traitordash_url", "http://localhost:3000", {FCVAR_ARCHIVE, FCVAR_PROTECTED}, "The base URL of the TraitorDash backend.")
 local cv_token = CreateConVar("traitordash_token", "dev-token-123", {FCVAR_ARCHIVE, FCVAR_PROTECTED}, "The API token for authenticating with the backend.")
 
+function TraitorDash.GetActiveAdmins()
+    local admins = {}
+    for _, ply in ipairs(player.GetAll()) do
+        local hasAccess = ply:IsSuperAdmin()
+        if CAMI then
+            hasAccess = hasAccess or CAMI.PlayerHasAccess(ply, "ttt2_conf_edit")
+        end
+        
+        if hasAccess then
+            table.insert(admins, ply:SteamID64() or ply:SteamID())
+        end
+    end
+    return admins
+end
+
 function TraitorDash.IngestRole(roleName, roleCode, hash, force, callback)
     local baseUrl = cv_url:GetString()
     local token = cv_token:GetString()
@@ -22,8 +37,11 @@ function TraitorDash.IngestRole(roleName, roleCode, hash, force, callback)
         return 
     end
 
-    -- Scan for GetConVar calls to build a state snapshot
+    -- Scan for GetConVar and Global state accessors
     local convar_state = {}
+    local data_state = {}
+
+    -- Extract ConVars
     for name in roleCode:gmatch("GetConVar%([\"']([^\"']+)[\"']%)") do
         if not convar_state[name] then
             local cv = GetConVar(name)
@@ -55,13 +73,29 @@ function TraitorDash.IngestRole(roleName, roleCode, hash, force, callback)
             end
         end
     end
+
+    -- Extract Global/TTT2 Data (GetGlobal*, TTT2.DATA)
+    for name in roleCode:gmatch("GetGlobal%w+%([\"']([^\"']+)[\"']%)") do
+        if not data_state[name] then
+            local val = _G["GetGlobalVar"] and GetGlobalVar(name) or nil
+            if val == nil then
+                for _, t in ipairs({"Bool", "Int", "String", "Float"}) do
+                    local v = _G["GetGlobal"..t](name)
+                    if v ~= nil then val = v break end
+                end
+            end
+            data_state[name] = val
+        end
+    end
     
     local payload = util.TableToJSON({
         role_name = roleName,
         role_code = roleCode,
         md5_hash = hash,
         force = force or false,
-        convar_state = convar_state
+        convar_state = convar_state,
+        data_state = data_state,
+        active_admins = TraitorDash.GetActiveAdmins()
     })
     
     if not payload or payload == "" or payload == "{}" then
@@ -150,30 +184,37 @@ function TraitorDash.Sync(force)
         end
 
         if content then
-            -- For folder-based roles, grab cl_init.lua and init.lua too
             local extraFiles = {}
+            local baseDir = foundPath:match("(.*/)") or ""
+            
+            -- Recursive Localization & Extra File Discovery
             if foundPath:match("shared%.lua$") then
                 local folder = foundPath:gsub("shared%.lua$", "")
-                
-                local clInit = file.Read(folder .. "cl_init.lua", "LUA")
-                if clInit then
-                    content = content .. "\n\n--[[\n  --- TRAITORDASH: CL_INIT.LUA ---\n--]]\n\n" .. clInit
-                    table.insert(extraFiles, "cl_init")
-                end
-                
-                local sInit = file.Read(folder .. "init.lua", "LUA")
-                if sInit then
-                    content = content .. "\n\n--[[\n  --- TRAITORDASH: INIT.LUA ---\n--]]\n\n" .. sInit
-                    table.insert(extraFiles, "init")
+                for _, f in ipairs({"cl_init.lua", "init.lua"}) do
+                    local extra = file.Read(folder .. f, "LUA")
+                    if extra then
+                        content = content .. "\n\n--[[ --- TRAITORDASH: " .. f:upper() .. " --- ]]\n\n" .. extra
+                        table.insert(extraFiles, f)
+                    end
                 end
             end
 
-            -- Look for English localization files
-            local langPath = "terrortown/lang/en/" .. name .. ".lua"
-            local langContent = file.Read(langPath, "LUA")
-            if langContent then
-                content = content .. "\n\n--[[\n  --- TRAITORDASH: LANG/EN/" .. name:upper() .. ".LUA ---\n--]]\n\n" .. langContent
-                table.insert(extraFiles, "lang_en")
+            -- Recursively look for localization files in the addon path
+            -- We try to find the 'lang/en/' folder relative to 'lua/'
+            local luaPos = foundPath:find("lua/")
+            if luaPos then
+                local addonRoot = foundPath:sub(1, luaPos + 3) -- includes 'lua/'
+                local langDir = addonRoot .. "terrortown/lang/en/"
+                local files, _ = file.Find(langDir .. "*", "LUA")
+                for _, f in ipairs(files or {}) do
+                    if f:match("%.lua$") or f:match("%.json$") then
+                        local langContent = file.Read(langDir .. f, "LUA")
+                        if langContent then
+                            content = content .. "\n\n--[[ --- TRAITORDASH: LANG/EN/" .. f:upper() .. " --- ]]\n\n" .. langContent
+                            table.insert(extraFiles, "lang/" .. f)
+                        end
+                    end
+                end
             end
 
             local extraMsg = #extraFiles > 0 and (" (incl. " .. table.concat(extraFiles, ", ") .. ")") or ""
@@ -228,13 +269,20 @@ function TraitorDash.Poll()
         
         if baseUrl == "" or token == "" then return end
 
+        local payload = util.TableToJSON({
+            active_admins = TraitorDash.GetActiveAdmins(),
+            timestamp = os.time()
+        })
+
         HTTP({
             url = baseUrl .. "/api/v1/poll",
-            method = "GET",
+            method = "POST",
             headers = {
                 ["Authorization"] = "Bearer " .. token,
+                ["Content-Type"] = "application/json",
                 ["Cache-Control"] = "no-cache"
             },
+            body = payload,
             success = function(code, body)
                 if code == 200 then
                     TraitorDash.LastSuccess = RealTime()
@@ -242,8 +290,24 @@ function TraitorDash.Poll()
                     if data and data.commands then
                         for _, cmd in ipairs(data.commands) do
                             if cmd.type == "convar" then
-                                print("[TraitorDash] CMD: " .. cmd.payload)
-                                game.ConsoleCommand(cmd.payload .. "\n")
+                                print("[TraitorDash] CONVAR: " .. tostring(cmd.payload))
+                                game.ConsoleCommand(tostring(cmd.payload) .. "\n")
+                            elseif cmd.type == "data" then
+                                local p = cmd.payload
+                                if type(p) == "table" and p.key then
+                                    print("[TraitorDash] DATA: " .. p.key .. " = " .. tostring(p.value))
+                                    if p.dataType == "bool" then
+                                        SetGlobalBool(p.key, p.value == true or p.value == 1 or p.value == "1")
+                                    elseif p.dataType == "int" then
+                                        SetGlobalInt(p.key, tonumber(p.value) or 0)
+                                    elseif p.dataType == "string" then
+                                        SetGlobalString(p.key, tostring(p.value))
+                                    end
+                                    
+                                    if TTT2 and TTT2.DATA and TTT2.DATA.Set then
+                                        TTT2.DATA.Set(p.key, p.value)
+                                    end
+                                end
                             end
                         end
                     end
