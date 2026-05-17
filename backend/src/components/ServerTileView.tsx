@@ -1,3 +1,5 @@
+import { isServerOnline, formatLastSeen } from '../services/ServerUtils'
+
 export const ServerTileView = ({ servers }: { servers: any[] }) => {
   return (
     <div class="container mx-auto p-8">
@@ -10,7 +12,7 @@ export const ServerTileView = ({ servers }: { servers: any[] }) => {
 
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
         {servers.map(server => {
-          const isOnline = server.last_seen && (new Date().getTime() - new Date(server.last_seen).getTime()) < 30000
+          const isOnline = isServerOnline(server.last_seen)
           
           return (
             <div class="bg-gray-800 rounded-2xl p-8 border border-gray-700 shadow-2xl hover:border-red-500/50 transition-all duration-300 group">
@@ -27,7 +29,7 @@ export const ServerTileView = ({ servers }: { servers: any[] }) => {
               <div class="pt-6 border-t border-gray-700 mt-auto">
                 <p class="text-xs text-gray-500 uppercase font-bold mb-2">Last Heartbeat</p>
                 <p class="text-sm text-gray-300">
-                  {server.last_seen ? new Date(server.last_seen + 'Z').toLocaleString() : 'Never'}
+                  {formatLastSeen(server.last_seen)}
                 </p>
               </div>
             </div>

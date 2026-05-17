@@ -1,5 +1,7 @@
+import { isServerOnline } from '../services/ServerUtils'
+
 export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }) => {
-  const isOnline = server.last_seen && (new Date().getTime() - new Date(server.last_seen + 'Z').getTime()) < 30000
+  const isOnline = isServerOnline(server.last_seen)
 
   // Group roles by team
   const groups = roles.reduce((acc: any, role: any) => {

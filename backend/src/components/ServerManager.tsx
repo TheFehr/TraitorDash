@@ -1,3 +1,5 @@
+import { isServerOnline } from '../services/ServerUtils'
+
 export const ServerManager = ({ servers }: { servers: any[] }) => {
   return (
     <div class="space-y-8">
@@ -16,7 +18,7 @@ export const ServerManager = ({ servers }: { servers: any[] }) => {
             </thead>
             <tbody class="divide-y divide-gray-700">
               {servers.map(server => {
-                 const isOnline = server.last_seen && (new Date().getTime() - new Date(server.last_seen + 'Z').getTime()) < 30000
+                 const isOnline = isServerOnline(server.last_seen)
                  return (
                   <tr class="group hover:bg-gray-700/30 transition">
                     <td class="py-4 px-4 font-medium">{server.name}</td>

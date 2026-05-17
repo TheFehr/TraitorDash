@@ -1,3 +1,5 @@
+import { isServerOnline } from '../services/ServerUtils'
+
 export const AdminDashboard = ({ servers }: { servers: any[] }) => {
   return (
     <div class="container mx-auto p-8">
@@ -8,7 +10,7 @@ export const AdminDashboard = ({ servers }: { servers: any[] }) => {
 
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
         {servers.map(server => {
-          const isOnline = server.last_seen && (new Date().getTime() - new Date(server.last_seen + 'Z').getTime()) < 30000
+          const isOnline = isServerOnline(server.last_seen)
           return (
             <a href={`/servers/${server.id}`} class="bg-gray-800 rounded-2xl p-8 border border-gray-700 hover:border-red-500 transition group flex flex-col justify-between shadow-2xl">
               <div>
