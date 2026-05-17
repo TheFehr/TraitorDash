@@ -57,18 +57,32 @@ api.post('/ingest', getServer, async (c) => {
   try {
     const server = c.get('server')
     const body = await c.req.json()
-    const { role_code, role_name, convar_state } = body
+    const { role_code, role_name, convar_state, md5_hash, force } = body
 
     if (!role_code) {
       return c.json({ error: 'Missing role_code' }, 400)
     }
 
     const name = role_name || 'unknown'
-    console.log(`[API] Ingesting role: ${name} for server ${server.name} (Size: ${role_code.length} bytes)`)
+
+    // MD5 Caching Logic
+    if (!force && md5_hash) {
+      const existingHash = Store.getRoleHash(server.id, name)
+      if (existingHash === md5_hash) {
+        console.log(`[API] Ingest: ${name} for ${server.name} unchanged (MD5: ${md5_hash}). Skipping extraction.`)
+        return c.json({
+          success: true,
+          role: name,
+          cached: true
+        })
+      }
+    }
+
+    console.log(`[API] Ingesting role: ${name} for server ${server.name} (Size: ${role_code.length} bytes, Force: ${!!force})`)
     const { team, isPolicingRole, baserole, schema } = await Extractor.extractSchema(role_code, convar_state)
 
     // Save to database via Store
-    Store.saveSchema(server.id, name, team, isPolicingRole, baserole, schema)
+    Store.saveSchema(server.id, name, team, isPolicingRole, baserole, schema, md5_hash)
 
     return c.json({
       success: true,
@@ -76,7 +90,8 @@ api.post('/ingest', getServer, async (c) => {
       team: team,
       isPolicingRole,
       baserole,
-      schema: schema
+      schema: schema,
+      cached: false
     })
   } catch (err: any) {
     console.error('[API] Extraction failed:', err)

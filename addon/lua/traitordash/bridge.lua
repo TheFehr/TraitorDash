@@ -9,7 +9,7 @@ TraitorDash.ConVarToRoles = TraitorDash.ConVarToRoles or {}
 local cv_url = CreateConVar("traitordash_url", "http://localhost:3000", {FCVAR_ARCHIVE, FCVAR_PROTECTED}, "The base URL of the TraitorDash backend.")
 local cv_token = CreateConVar("traitordash_token", "dev-token-123", {FCVAR_ARCHIVE, FCVAR_PROTECTED}, "The API token for authenticating with the backend.")
 
-function TraitorDash.IngestRole(roleName, roleCode, callback)
+function TraitorDash.IngestRole(roleName, roleCode, hash, force, callback)
     local baseUrl = cv_url:GetString()
     local token = cv_token:GetString()
     
@@ -45,7 +45,9 @@ function TraitorDash.IngestRole(roleName, roleCode, callback)
                         local cached = TraitorDash.RoleCodeCache[rName]
                         if cached then
                             print("[TraitorDash] ConVar " .. cv_name .. " changed. Re-ingesting " .. rName .. "...")
-                            TraitorDash.IngestRole(rName, cached)
+                            -- Re-ingestion due to convar change should probably be forced or recalculated
+                            local newHash = util.MD5(cached)
+                            TraitorDash.IngestRole(rName, cached, newHash, false)
                         end
                     end
                 end, "TraitorDash_ReIngest")
@@ -57,6 +59,8 @@ function TraitorDash.IngestRole(roleName, roleCode, callback)
     local payload = util.TableToJSON({
         role_name = roleName,
         role_code = roleCode,
+        md5_hash = hash,
+        force = force or false,
         convar_state = convar_state
     })
     
@@ -93,14 +97,14 @@ function TraitorDash.IngestRole(roleName, roleCode, callback)
     })
 end
 
-function TraitorDash.Sync()
+function TraitorDash.Sync(force)
     if not roles or not roles.GetList then
         print("[TraitorDash] Error: TTT2 roles library not found!")
         return
     end
 
     local roleList = roles.GetList()
-    print("[TraitorDash] Syncing " .. #roleList .. " roles...")
+    print("[TraitorDash] Syncing " .. #roleList .. " roles (Force: " .. tostring(force or false) .. ")...")
     
     -- Disable hibernation during sync to ensure callbacks fire even if server is empty
     local oldHibernate = GetConVar("sv_hibernate_think"):GetInt()
@@ -178,7 +182,8 @@ function TraitorDash.Sync()
             -- Cache the code for dynamic re-ingestion
             TraitorDash.RoleCodeCache[name] = content
             
-            table.insert(queue, { name = name, code = content })
+            local hash = util.MD5(content)
+            table.insert(queue, { name = name, code = content, hash = hash })
         else
             print("[TraitorDash] WARNING: Could not find file for role: " .. name .. " (Source: " .. sourcePath .. ")")
         end
@@ -199,15 +204,19 @@ function TraitorDash.Sync()
         local item = table.remove(queue, 1)
         count = count + 1
         
-        -- Call IngestRole directly, its callback will trigger the next one
-        TraitorDash.IngestRole(item.name, item.code, function()
-            -- We don't use timer.Simple here to stay in the same "wake" cycle
+        TraitorDash.IngestRole(item.name, item.code, item.hash, force, function()
             processNext()
         end)
     end
 
     processNext()
 end
+
+concommand.Add("traitordash_sync_force", function(ply, cmd, args)
+    if IsValid(ply) and not ply:IsSuperAdmin() then return end
+    print("[TraitorDash] Force syncing all roles...")
+    TraitorDash.Sync(true)
+end)
 
 function TraitorDash.Poll()
     local ok, err = pcall(function()

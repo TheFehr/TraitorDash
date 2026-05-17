@@ -35,19 +35,27 @@ export class Store {
     update.run(new Date().toISOString(), serverId)
   }
 
-  static saveSchema(serverId: string, roleName: string, team: string, isPolicing: boolean, baserole: number, schema: any[]) {
+  static getRoleHash(serverId: string, roleName: string): string | null {
+    const query = db.prepare('SELECT md5_hash FROM roles WHERE server_id = ? AND role_name = ?')
+    const row = query.get(serverId, roleName) as { md5_hash: string } | null
+    return row ? row.md5_hash : null
+  }
+
+  static saveSchema(serverId: string, roleName: string, team: string, isPolicing: boolean, baserole: number, schema: any[], md5Hash?: string) {
     this.updateHeartbeat(serverId)
     const upsert = db.prepare(`
-      INSERT INTO roles (server_id, role_name, team, is_policing, baserole, schema_json)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO roles (server_id, role_name, team, is_policing, baserole, schema_json, md5_hash, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(server_id, role_name) DO UPDATE SET
         team = excluded.team,
         is_policing = excluded.is_policing,
         baserole = excluded.baserole,
         schema_json = excluded.schema_json,
-        updated_at = ?
+        md5_hash = excluded.md5_hash,
+        updated_at = excluded.updated_at
     `)
-    upsert.run(serverId, roleName, team, isPolicing ? 1 : 0, baserole, JSON.stringify(schema), new Date().toISOString())
+    const now = new Date().toISOString()
+    upsert.run(serverId, roleName, team, isPolicing ? 1 : 0, baserole, JSON.stringify(schema), md5Hash || null, now)
   }
 
   static getRoles(serverId: string): any[] {
