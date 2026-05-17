@@ -1,12 +1,12 @@
 import { Hono } from 'hono'
-import { setCookie, getCookie, deleteCookie } from 'hono/cookie'
+import { setSignedCookie, deleteCookie } from 'hono/cookie'
 
 const auth = new Hono()
 
 const STEAM_OPENID_URL = 'https://steamcommunity.com/openid/login'
-// In production, this should be the public domain
 const REALM = process.env.BASE_URL || 'http://localhost:3000'
 const RETURN_URL = `${REALM}/auth/steam/callback`
+const SESSION_SECRET = process.env.SESSION_SECRET || 'insecure-fallback-secret'
 
 auth.get('/steam', (c) => {
   const params = new URLSearchParams({
@@ -53,13 +53,13 @@ auth.get('/steam/callback', async (c) => {
     const steamId = claimedId.split('/').pop()
     if (!steamId) return c.text('Invalid steamId', 400)
 
-    // 4. Set Session (using a signed cookie for simplicity in this hobby project)
-    // In a real app, use a proper session store
-    setCookie(c, 'steam_id', steamId, {
+    // 4. Set Secure Signed Session
+    await setSignedCookie(c, 'steam_id', steamId, SESSION_SECRET, {
       path: '/',
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       maxAge: 60 * 60 * 24 * 7, // 1 week
+      sameSite: 'Lax',
     })
 
     return c.redirect('/')

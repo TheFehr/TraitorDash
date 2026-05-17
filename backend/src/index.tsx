@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { serveStatic } from 'hono/bun'
-import { getCookie } from 'hono/cookie'
+import { getSignedCookie } from 'hono/cookie'
 
 // Routes & Services
 import api from './routes/api'
@@ -17,6 +17,7 @@ import { ServerManager } from './components/ServerManager'
 import { Sidebar, RoleListPartial } from './components/Sidebar'
 
 const app = new Hono()
+const SESSION_SECRET = process.env.SESSION_SECRET || 'insecure-fallback-secret'
 
 // Static Assets
 app.use('/public/*', serveStatic({ root: './src' }))
@@ -28,7 +29,7 @@ app.route('/auth', auth)
 /**
  * Sidebar Partial for HTMX Search
  */
-app.get('/sidebar/:serverId', (c) => {
+app.get('/sidebar/:serverId', async (c) => {
   const serverId = c.req.param('serverId')
   const query = c.req.query('q') || ''
   const roles = Store.getRoles(serverId)
@@ -43,8 +44,8 @@ app.get('/sidebar/:serverId', (c) => {
 /**
  * Main Entry Point: Guest Tile View or Admin Dashboard
  */
-app.get('/', (c) => {
-  const steamId = getCookie(c, 'steam_id')
+app.get('/', async (c) => {
+  const steamId = await getSignedCookie(c, SESSION_SECRET, 'steam_id')
   const servers = Store.getServers()
   
   if (!steamId) {
@@ -56,7 +57,7 @@ app.get('/', (c) => {
   }
 
   return c.html(
-    <Layout steamId={steamId} path="/">
+    <Layout steamId={steamId as string} path="/">
       <AdminDashboard servers={servers} />
     </Layout>
   )
@@ -65,14 +66,14 @@ app.get('/', (c) => {
 /**
  * Server Management CRUD Page
  */
-app.get('/servers', (c) => {
-  const steamId = getCookie(c, 'steam_id')
+app.get('/servers', async (c) => {
+  const steamId = await getSignedCookie(c, SESSION_SECRET, 'steam_id')
   if (!steamId) return c.redirect('/')
   
   const servers = Store.getServers()
   
   return c.html(
-    <Layout steamId={steamId} path="/servers">
+    <Layout steamId={steamId as string} path="/servers">
       <div class="container mx-auto p-8">
         <ServerManager servers={servers} />
       </div>
@@ -83,8 +84,8 @@ app.get('/servers', (c) => {
 /**
  * Specific Server Dashboard (Role List)
  */
-app.get('/servers/:serverId', (c) => {
-  const steamId = getCookie(c, 'steam_id')
+app.get('/servers/:serverId', async (c) => {
+  const steamId = await getSignedCookie(c, SESSION_SECRET, 'steam_id')
   if (!steamId) return c.redirect('/')
 
   const serverId = c.req.param('serverId')
@@ -94,7 +95,7 @@ app.get('/servers/:serverId', (c) => {
   const roles = Store.getRoles(serverId)
 
   return c.html(
-    <Layout steamId={steamId} path="/">
+    <Layout steamId={steamId as string} path="/">
        <div class="flex">
           <Sidebar serverId={serverId} roles={roles} />
           <div class="flex-1 min-h-[calc(100vh-65px)] bg-gray-900/50">
@@ -108,8 +109,8 @@ app.get('/servers/:serverId', (c) => {
 /**
  * Specific Role Configuration Page
  */
-app.get('/servers/:serverId/roles/:roleName', (c) => {
-  const steamId = getCookie(c, 'steam_id')
+app.get('/servers/:serverId/roles/:roleName', async (c) => {
+  const steamId = await getSignedCookie(c, SESSION_SECRET, 'steam_id')
   if (!steamId) return c.redirect('/')
 
   const serverId = c.req.param('serverId')
@@ -122,7 +123,7 @@ app.get('/servers/:serverId/roles/:roleName', (c) => {
   if (!server || !schema) return c.redirect('/')
   
   return c.html(
-    <Layout steamId={steamId} path="/">
+    <Layout steamId={steamId as string} path="/">
        <div class="flex">
           <Sidebar serverId={serverId} roles={roles} />
           <div class="flex-1 p-8 min-h-[calc(100vh-65px)] bg-gray-900/50">
