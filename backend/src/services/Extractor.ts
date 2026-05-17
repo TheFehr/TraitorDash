@@ -42,7 +42,7 @@ export class Extractor {
       .replace(/\bcontinue\b/g, '__td_continue()') // GMod Lua 'continue' keyword
   }
 
-  public static async extractSchema(roleCode: string, convarState?: Record<string, string>): Promise<{ team: string, isPolicingRole: boolean, baserole: number, schema: any[] }> {
+  public static async extractSchema(roleCode: string, convarState?: Record<string, string>, dataState?: Record<string, any>): Promise<{ team: string, isPolicingRole: boolean, baserole: number, schema: any[] }> {
     const L = lauxlib.luaL_newstate()
     lualib.luaL_openlibs(L)
 
@@ -67,6 +67,26 @@ export class Extractor {
       } else {
         lua.lua_newtable(L)
         lua.lua_setglobal(L, to_luastring('__TD_CONVAR_STATE'))
+      }
+
+      // Inject Data state if provided
+      if (dataState) {
+        lua.lua_newtable(L)
+        for (const [key, value] of Object.entries(dataState)) {
+          lua.lua_pushstring(L, to_luastring(key))
+          if (typeof value === 'boolean') {
+            lua.lua_pushboolean(L, value)
+          } else if (typeof value === 'number') {
+            lua.lua_pushnumber(L, value)
+          } else {
+            lua.lua_pushstring(L, to_luastring(String(value)))
+          }
+          lua.lua_settable(L, -3)
+        }
+        lua.lua_setglobal(L, to_luastring('__TD_DATA_STATE'))
+      } else {
+        lua.lua_newtable(L)
+        lua.lua_setglobal(L, to_luastring('__TD_DATA_STATE'))
       }
 
       // 2. Sanitize and Load Role Code

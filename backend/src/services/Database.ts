@@ -63,10 +63,13 @@ const migrations = [
   },
   // v2: Added columns for RFCs and MD5 caching
   () => {
-    db.run('ALTER TABLE roles ADD COLUMN team TEXT DEFAULT "unknown"')
-    db.run('ALTER TABLE roles ADD COLUMN is_policing BOOLEAN DEFAULT 0')
-    db.run('ALTER TABLE roles ADD COLUMN baserole INTEGER DEFAULT -1')
-    db.run('ALTER TABLE roles ADD COLUMN md5_hash TEXT')
+    const tableInfo = db.query("PRAGMA table_info(roles)").all() as any[]
+    const columns = tableInfo.map(c => c.name)
+    
+    if (!columns.includes('team')) db.run('ALTER TABLE roles ADD COLUMN team TEXT DEFAULT "unknown"')
+    if (!columns.includes('is_policing')) db.run('ALTER TABLE roles ADD COLUMN is_policing BOOLEAN DEFAULT 0')
+    if (!columns.includes('baserole')) db.run('ALTER TABLE roles ADD COLUMN baserole INTEGER DEFAULT -1')
+    if (!columns.includes('md5_hash')) db.run('ALTER TABLE roles ADD COLUMN md5_hash TEXT')
   }
 ]
 
@@ -74,8 +77,11 @@ const migrations = [
 if (user_version < migrations.length) {
   db.transaction(() => {
     for (let i = user_version; i < migrations.length; i++) {
-      console.log(`[Database] Applying migration v${i + 1}...`)
-      migrations[i]()
+      const migration = migrations[i]
+      if (migration) {
+        console.log(`[Database] Applying migration v${i + 1}...`)
+        migration()
+      }
     }
     db.run(`PRAGMA user_version = ${migrations.length}`)
   })()

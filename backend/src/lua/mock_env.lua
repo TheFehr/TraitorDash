@@ -129,8 +129,9 @@ function print(...) end
 function ErrorNoHalt(...) end
 function __td_continue() end
 
--- 3. Mock ConVar Handling
+-- 3. Mock ConVar & Global Data Handling
 __TD_CONVAR_STATE = __TD_CONVAR_STATE or {}
+__TD_DATA_STATE = __TD_DATA_STATE or {}
 
 local convar_mt = {
     __index = function(t, k)
@@ -162,6 +163,19 @@ function GetConVar(name)
     setmetatable(cv, convar_mt)
     return cv
 end
+
+-- Mock Global Data Accessors
+local function GetTDData(name, default)
+    local val = __TD_DATA_STATE[name]
+    if val == nil then return default end
+    return val
+end
+
+function GetGlobalBool(n, d) return GetTDData(n, d or false) == true end
+function GetGlobalInt(n, d) return tonumber(GetTDData(n, d or 0)) or 0 end
+function GetGlobalFloat(n, d) return tonumber(GetTDData(n, d or 0)) or 0 end
+function GetGlobalString(n, d) return tostring(GetTDData(n, d or "")) end
+function GetGlobalVar(n, d) return GetTDData(n, d) end
 
 cvars = {
     AddChangeCallback = function() end,
