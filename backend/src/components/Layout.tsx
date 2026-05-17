@@ -6,6 +6,8 @@ export const Layout = ({ children, steamId, path }: { children: any, steamId?: s
       <meta charset="UTF-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1.0" />
       <title>TraitorDash | TTT2 Admin</title>
+      <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+      <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
       <script defer src="/public/frontend.js"></script>
       <link href="/public/style.css" rel="stylesheet" />
     </head>

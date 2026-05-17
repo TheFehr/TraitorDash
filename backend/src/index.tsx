@@ -14,6 +14,7 @@ import { AdminDashboard } from './components/AdminDashboard'
 import { ServerDashboard } from './components/ServerDashboard'
 import { RoleConfigForm } from './components/RoleConfigForm'
 import { ServerManager } from './components/ServerManager'
+import { Sidebar, RoleListPartial } from './components/Sidebar'
 
 const app = new Hono()
 
@@ -23,6 +24,21 @@ app.use('/public/*', serveStatic({ root: './src' }))
 // API & Auth Mounting
 app.route('/api', api)
 app.route('/auth', auth)
+
+/**
+ * Sidebar Partial for HTMX Search
+ */
+app.get('/sidebar/:serverId', (c) => {
+  const serverId = c.req.param('serverId')
+  const query = c.req.query('q') || ''
+  const roles = Store.getRoles(serverId)
+  
+  const filteredRoles = query 
+    ? roles.filter(r => r.role_name.toLowerCase().includes(query.toLowerCase()))
+    : roles
+
+  return c.html(<RoleListPartial serverId={serverId} roles={filteredRoles} />)
+})
 
 /**
  * Main Entry Point: Guest Tile View or Admin Dashboard
@@ -79,7 +95,12 @@ app.get('/servers/:serverId', (c) => {
 
   return c.html(
     <Layout steamId={steamId} path="/">
-      <ServerDashboard server={server} roles={roles} />
+       <div class="flex">
+          <Sidebar serverId={serverId} roles={roles} />
+          <div class="flex-1 min-h-[calc(100vh-65px)] bg-gray-900/50">
+            <ServerDashboard server={server} roles={roles} />
+          </div>
+       </div>
     </Layout>
   )
 })
@@ -96,23 +117,31 @@ app.get('/servers/:serverId/roles/:roleName', (c) => {
   
   const server = Store.getServerById(serverId)
   const schema = Store.getSchema(serverId, roleName)
+  const roles = Store.getRoles(serverId)
   
   if (!server || !schema) return c.redirect('/')
   
   return c.html(
     <Layout steamId={steamId} path="/">
-       <div class="container mx-auto p-8">
-          <nav class="text-xs font-black text-gray-500 uppercase tracking-widest mb-8 flex gap-2">
-              <a href="/" class="hover:text-white transition">Dashboard</a>
-              <span>/</span>
-              <a href={`/servers/${serverId}`} class="hover:text-white transition">{server.name}</a>
-              <span>/</span>
-              <span class="text-red-500">{roleName}</span>
-          </nav>
-          <RoleConfigForm serverId={serverId} role={roleName} schema={schema} />
+       <div class="flex">
+          <Sidebar serverId={serverId} roles={roles} />
+          <div class="flex-1 p-8 min-h-[calc(100vh-65px)] bg-gray-900/50">
+            <nav class="text-xs font-black text-gray-500 uppercase tracking-widest mb-8 flex gap-2">
+                <a href="/" class="hover:text-white transition">Dashboard</a>
+                <span>/</span>
+                <a href={`/servers/${serverId}`} class="hover:text-white transition">{server.name}</a>
+                <span>/</span>
+                <span class="text-red-500">{roleName}</span>
+            </nav>
+            <RoleConfigForm serverId={serverId} role={roleName} schema={schema} />
+          </div>
        </div>
     </Layout>
   )
 })
 
-export default app
+export default {
+  port: 3000,
+  hostname: '0.0.0.0',
+  fetch: app.fetch
+}

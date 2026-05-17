@@ -1,27 +1,92 @@
 
 export const RoleConfigForm = ({ serverId, role, schema }: { serverId: string, role: string, schema: any[] }) => {
+  const initialValues: Record<string, any> = {}
+  if (Array.isArray(schema)) {
+    schema.forEach(item => {
+      if (item.args?.convar || item.args?.serverConvar) {
+        const key = item.args.convar || item.args.serverConvar
+        if (item.type === 'MakeCheckBox') {
+           initialValues[key] = false 
+        } else if (item.type === 'conVarData') {
+           initialValues[key] = item.args.value
+        } else if (item.type === 'MakeSlider') {
+           initialValues[key] = item.args.min || 0
+        } else {
+           initialValues[key] = ''
+        }
+      }
+    })
+  }
+
+  const xData = `{ 
+    initial: ${JSON.stringify(initialValues)}, 
+    current: ${JSON.stringify(initialValues)},
+    isDirty() {
+      return JSON.stringify(this.initial) !== JSON.stringify(this.current);
+    }
+  }`
+
   return (
-    <div class="bg-gray-800 rounded-lg p-6 shadow-2xl border border-gray-700">
-      <h2 class="text-3xl font-bold mb-6 text-red-400 border-b border-gray-700 pb-2">
-        Configuring Role: <span class="text-white">{role}</span>
-      </h2>
-      
-      <form hx-post={`/api/save/${serverId}/${role}`} hx-swap="none" class="space-y-6">
-        {Array.isArray(schema) ? schema.map((item) => renderElement(item)) : (
-          <div class="p-4 bg-red-500/10 border border-red-500/50 rounded-xl text-red-400">
-             Warning: No configuration options were extracted for this role.
-          </div>
-        )}
+    <div class="space-y-6" x-data={xData}>
+      <div class="bg-gray-800 rounded-lg p-6 shadow-2xl border border-gray-700">
+        <h2 class="text-3xl font-bold mb-6 text-red-400 border-b border-gray-700 pb-2">
+          Configuring Role: <span class="text-white">{role}</span>
+        </h2>
         
-        <div class="pt-6">
-          <button 
-            type="submit" 
-            class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-lg transition duration-200 transform hover:scale-[1.02] shadow-lg"
-          >
-            Save Configuration
-          </button>
+        <form 
+          id="config-form"
+          hx-post={`/api/save/${serverId}/${role}`} 
+          hx-swap="none" 
+          hx-on="htmx:afterRequest: this.dispatchEvent(new CustomEvent('saved'))"
+          class="space-y-6"
+          x-on:saved="initial = Object.assign({}, current)"
+        >
+          {Array.isArray(schema) ? schema.map((item) => renderElement(item)) : (
+            <div class="p-4 bg-red-500/10 border border-red-500/50 rounded-xl text-red-400">
+               Warning: No configuration options were extracted for this role.
+            </div>
+          )}
+        </form>
+      </div>
+
+      {/* Floating Save Banner */}
+      <div 
+        x-show="isDirty()" 
+        x-cloak
+        x-transition:enter="transition ease-out duration-300"
+        x-transition:enter-start="translate-y-full opacity-0"
+        x-transition:enter-end="translate-y-0 opacity-100"
+        x-transition:leave="transition ease-in duration-300"
+        x-transition:leave-start="translate-y-0 opacity-100"
+        x-transition:leave-end="translate-y-full opacity-0"
+        class="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] w-full max-w-2xl px-4"
+      >
+        <div class="bg-red-600 text-white p-4 rounded-2xl shadow-2xl flex items-center justify-between border-2 border-red-400 backdrop-blur-lg bg-opacity-90">
+          <div class="flex items-center gap-4">
+            <span class="text-2xl">⚠️</span>
+            <div>
+              <p class="font-black leading-tight">Unsaved Changes</p>
+              <p class="text-xs text-red-100 opacity-80 uppercase tracking-widest font-bold">Modifications detected</p>
+            </div>
+          </div>
+          <div class="flex gap-3">
+             <button 
+               type="button"
+               x-on:click="current = Object.assign({}, initial)"
+               class="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg font-bold text-sm transition"
+             >
+               Reset
+             </button>
+             <button 
+               form="config-form"
+               type="submit" 
+               class="px-6 py-2 bg-white text-red-600 hover:bg-red-50 rounded-lg font-black shadow-lg transition active:scale-95"
+             >
+               Apply Changes
+             </button>
+          </div>
         </div>
-      </form>
+      </div>
     </div>
   )
 }
@@ -29,15 +94,14 @@ export const RoleConfigForm = ({ serverId, role, schema }: { serverId: string, r
 const cleanLabel = (label: string) => {
   if (!label) return 'Unknown Setting'
   
-  // If the label is marked as an unresolved key (e.g. [label_something]), keep it as is
   if (label.startsWith('[') && label.endsWith(']')) {
     return label
   }
 
   return label
-    .replace(/^label_|^header_|^ttt2_/, '') // Remove prefixes
-    .replace(/_/g, ' ') // Replace underscores with spaces
-    .replace(/\b\w/g, (c) => c.toUpperCase()) // Capitalize
+    .replace(/^label_|^header_|^ttt2_/, '') 
+    .replace(/_/g, ' ') 
+    .replace(/\b\w/g, (c) => c.toUpperCase()) 
 }
 
 const renderElement = (item: any) => {
@@ -62,7 +126,6 @@ const renderElement = (item: any) => {
       )
 
     case 'conVarData':
-      // conVarData can be numeric or boolean (represented as 0/1 usually)
       const val = args.value
       if (typeof val === 'boolean' || (typeof val === 'number' && (val === 0 || val === 1) && !args.key.match(/pct|maximum|min|credits|karma/i))) {
         return (
@@ -73,8 +136,8 @@ const renderElement = (item: any) => {
                 type="checkbox" 
                 name={convar} 
                 id={convar}
-                checked={!!val}
-                class="peer absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer"
+                x-model={`current['${convar}']`}
+                class="peer absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer transition-transform duration-200 ease-in-out checked:translate-x-6"
               />
               <label 
                 for={convar} 
@@ -84,13 +147,12 @@ const renderElement = (item: any) => {
           </div>
         )
       } else {
-        // Render as a generic numeric slider/input for other types
         const isPct = args.key.includes('pct')
         return (
-          <div class="p-4 bg-gray-700/30 rounded-lg border border-gray-600/50 space-y-2 hover:bg-gray-700/50 transition" x-data={`{ value: ${val || 0} }`}>
+          <div class="p-4 bg-gray-700/30 rounded-lg border border-gray-600/50 space-y-2 hover:bg-gray-700/50 transition">
             <div class="flex justify-between items-center">
               <label class="font-medium text-gray-200">{label}</label>
-              <span class="text-blue-400 font-mono text-sm" x-text="value"></span>
+              <span class="text-blue-400 font-mono text-sm" x-text={`current['${convar}']`}></span>
             </div>
             <input 
               type="range" 
@@ -98,7 +160,7 @@ const renderElement = (item: any) => {
               min={0} 
               max={isPct ? 1 : 100} 
               step={isPct ? 0.01 : 1}
-              x-model="value"
+              x-model={`current['${convar}']`}
               class="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-blue-500"
             />
           </div>
@@ -114,7 +176,8 @@ const renderElement = (item: any) => {
               type="checkbox" 
               name={convar} 
               id={convar}
-              class="peer absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer"
+              x-model={`current['${convar}']`}
+              class="peer absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer transition-transform duration-200 ease-in-out checked:translate-x-6"
             />
             <label 
               for={convar} 
@@ -126,10 +189,10 @@ const renderElement = (item: any) => {
 
     case 'MakeSlider':
       return (
-        <div class="p-4 bg-gray-700/50 rounded-lg space-y-2 hover:bg-gray-700 transition" x-data={`{ value: ${args.min || 0} }`}>
+        <div class="p-4 bg-gray-700/50 rounded-lg space-y-2 hover:bg-gray-700 transition">
           <div class="flex justify-between items-center">
             <label class="font-medium text-gray-200">{label}</label>
-            <span class="text-red-400 font-mono text-sm" x-text="value"></span>
+            <span class="text-red-400 font-mono text-sm" x-text={`current['${convar}']`}></span>
           </div>
           <input 
             type="range" 
@@ -137,7 +200,7 @@ const renderElement = (item: any) => {
             min={args.min} 
             max={args.max} 
             step={args.decimal === 0 ? 1 : 0.1}
-            x-model="value"
+            x-model={`current['${convar}']`}
             class="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-red-500"
           />
         </div>
@@ -149,6 +212,7 @@ const renderElement = (item: any) => {
           <label class="block font-medium text-gray-200">{label}</label>
           <select 
             name={convar}
+            x-model={`current['${convar}']`}
             class="w-full bg-gray-600 border border-gray-500 text-white rounded-lg p-2 focus:ring-2 focus:ring-red-500 outline-none"
           >
             {args.choices?.map((choice: string) => (
@@ -165,6 +229,7 @@ const renderElement = (item: any) => {
           <input 
             type="text" 
             name={convar}
+            x-model={`current['${convar}']`}
             placeholder="..."
             class="w-full bg-gray-600 border border-gray-500 text-white rounded-lg p-2 focus:ring-2 focus:ring-red-500 outline-none"
           />
