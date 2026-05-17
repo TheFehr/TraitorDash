@@ -57,13 +57,19 @@ api.post('/ingest', getServer, async (c) => {
   try {
     const server = c.get('server')
     const body = await c.req.json()
-    const { role_code, role_name, convar_state, md5_hash, force } = body
+    const { role_code, role_name, convar_state, data_state, active_admins, md5_hash, force } = body
 
     if (!role_code) {
       return c.json({ error: 'Missing role_code' }, 400)
     }
 
     const name = role_name || 'unknown'
+
+    // Update active admins for the server if provided
+    if (active_admins && Array.isArray(active_admins)) {
+      console.log(`[API] Active admins on ${server.name}:`, active_admins)
+      // TODO: Persist to authorized_admins table in RFC 5
+    }
 
     // MD5 Caching Logic
     if (!force && md5_hash) {
@@ -79,7 +85,7 @@ api.post('/ingest', getServer, async (c) => {
     }
 
     console.log(`[API] Ingesting role: ${name} for server ${server.name} (Size: ${role_code.length} bytes, Force: ${!!force})`)
-    const { team, isPolicingRole, baserole, schema } = await Extractor.extractSchema(role_code, convar_state)
+    const { team, isPolicingRole, baserole, schema } = await Extractor.extractSchema(role_code, convar_state, data_state)
 
     // Save to database via Store
     Store.saveSchema(server.id, name, team, isPolicingRole, baserole, schema, md5_hash)
@@ -109,25 +115,66 @@ api.post('/save/:serverId/:role', async (c) => {
   
   console.log(`[API] Saving config for ${role} on ${serverId}:`, body)
 
-  for (const [convar, value] of Object.entries(body)) {
-    const finalValue = value === 'on' ? '1' : (value === '' ? '0' : value)
-    Store.stageCommand(serverId, 'convar', `${convar} ${finalValue}`)
+  const schema = Store.getSchema(serverId, role)
+  if (!schema) {
+    console.error(`[API] Save failed: No schema found for role ${role} on server ${serverId}`)
+    return c.json({ error: 'Role schema not found. Configuration cannot be validated.' }, 400)
   }
 
-  return c.json({ success: true })
+  // Build whitelist of allowed convars from the extracted schema
+  const allowedKeys = new Set<string>()
+  schema.forEach((item: any) => {
+    if (item.args) {
+      if (item.args.convar) allowedKeys.add(item.args.convar)
+      if (item.args.serverConvar) allowedKeys.add(item.args.serverConvar)
+    }
+  })
+
+  let stagedCount = 0
+  for (const [convar, value] of Object.entries(body)) {
+    if (!allowedKeys.has(convar)) {
+      console.warn(`[API] SECURITY ALERT: Blocked unauthorized config injection attempt for key: ${convar} on role: ${role}`)
+      continue
+    }
+
+    const finalValue = value === 'on' ? '1' : (value === '' ? '0' : value)
+    Store.stageCommand(serverId, 'convar', `${convar} ${finalValue}`)
+    stagedCount++
+  }
+
+  return c.json({ success: true, commands_staged: stagedCount })
 })
 
-api.get('/v1/poll', getServer, async (c) => {
+api.post('/v1/poll', getServer, async (c) => {
   const server = c.get('server')
-  console.log(`[API] Heartbeat from ${server.name} (${server.id})`)
+  const body = await c.req.json().catch(() => ({}))
+  const { active_admins } = body
+
+  if (active_admins && Array.isArray(active_admins)) {
+    console.log(`[API] Heartbeat with ${active_admins.length} admins from ${server.name} (${server.id})`)
+    // TODO: Store active_admins in RFC 5
+  } else {
+    console.log(`[API] Heartbeat from ${server.name} (${server.id})`)
+  }
+
   Store.updateHeartbeat(server.id)
   const commands = Store.pollCommands(server.id)
   
   return c.json({
-    commands: commands.map(cmd => ({
-      type: cmd.command,
-      payload: cmd.args
-    }))
+    commands: commands.map(cmd => {
+      let payload = cmd.args
+      if (cmd.command === 'data') {
+        try {
+          payload = JSON.parse(cmd.args)
+        } catch (e) {
+          console.error('[API] Failed to parse data command args:', cmd.args)
+        }
+      }
+      return {
+        type: cmd.command,
+        payload: payload
+      }
+    })
   })
 })
 
