@@ -4,7 +4,9 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "bun run build && bun run --hot src/index.tsx",
+    "dev": "bun run --hot src/index.tsx",
+    "watch:css": "tailwindcss -i src/style.css -o src/public/style.css --watch",
+    "watch:js": "bun build src/frontend.ts --outdir src/public --watch",
     "build:css": "tailwindcss -i src/style.css -o src/public/style.css",
     "build:js": "bun build src/frontend.ts --outdir src/public --minify",
     "build": "bun run build:css && bun run build:js"
