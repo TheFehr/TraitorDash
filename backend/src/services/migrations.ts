@@ -140,6 +140,49 @@ export const migrations: Array<(db: Database) => void> = [
         FOREIGN KEY (server_id) REFERENCES servers(id)
       )
     `)
+  },
+  // v7: per-round stats reported by the bridge once a round has ended. A round is
+  // identified by the bridge-generated round_id, so a repeated POST is a no-op.
+  (db) => {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS rounds (
+        server_id TEXT NOT NULL,
+        round_id TEXT NOT NULL,
+        map TEXT,
+        started_at TEXT,
+        duration INTEGER,
+        result TEXT NOT NULL,
+        received_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (server_id, round_id),
+        FOREIGN KEY (server_id) REFERENCES servers(id)
+      )
+    `)
+    db.run(`
+      CREATE TABLE IF NOT EXISTS round_players (
+        server_id TEXT NOT NULL,
+        round_id TEXT NOT NULL,
+        steam_id TEXT NOT NULL,
+        nick TEXT,
+        role TEXT,
+        team TEXT,
+        survived INTEGER NOT NULL DEFAULT 0,
+        won INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (server_id, round_id, steam_id),
+        FOREIGN KEY (server_id, round_id) REFERENCES rounds(server_id, round_id)
+      )
+    `)
+    db.run('CREATE INDEX IF NOT EXISTS idx_round_players_steam ON round_players (server_id, steam_id)')
+    db.run(`
+      CREATE TABLE IF NOT EXISTS deaths (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        server_id TEXT NOT NULL,
+        round_id TEXT NOT NULL,
+        victim_steam_id TEXT NOT NULL,
+        attacker_steam_id TEXT,
+        at_seconds INTEGER,
+        FOREIGN KEY (server_id, round_id) REFERENCES rounds(server_id, round_id)
+      )
+    `)
   }
 ]
 

@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { Extractor } from '../services/Extractor'
-import { Store, type LiveConVarEntry } from '../services/Store'
+import { Store, type LiveConVarEntry, type RoundReport } from '../services/Store'
 import { ServerManager } from '../components/ServerManager'
 import { requireSession } from '../middleware/session'
 import { normalizeConVarValue, formatConVarCommand } from '../services/convars'
@@ -193,6 +193,66 @@ api.post('/v1/values', getServer, async (c) => {
   Store.setConVarValues(server.id, entries)
   Store.updateHeartbeat(server.id)
   return c.json({ success: true, stored: entries.length })
+})
+
+// The bridge reports one finished round: who played which role, who won, who died.
+// Best effort on the bridge side (no retry), so the body is validated strictly but a
+// duplicate round_id is answered with success rather than an error.
+const STEAM_ID = /^\d{5,20}$/
+const ROUND_ID = /^[A-Za-z0-9-]{8,64}$/
+const label = (v: unknown, max = 64) => (typeof v === 'string' && v.length > 0 ? v.slice(0, max) : null)
+const whole = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.round(v) : null)
+
+api.post('/v1/round', getServer, async (c) => {
+  const server = c.get('server')
+  const body = await c.req.json().catch(() => null)
+  const bad = (msg: string) => {
+    console.warn(`[Stats] Rejected round from ${server.name}: ${msg}`)
+    return c.json({ error: msg }, 400)
+  }
+
+  if (!body || typeof body.round_id !== 'string' || !ROUND_ID.test(body.round_id)) return bad('round_id is required')
+  const result = label(body.result)
+  if (!result) return bad('result is required')
+  if (!Array.isArray(body.players) || body.players.length === 0 || body.players.length > 128) return bad('players must be an array of 1-128 entries')
+  if (body.deaths !== undefined && (!Array.isArray(body.deaths) || body.deaths.length > 512)) return bad('deaths must be an array of at most 512 entries')
+
+  const players: RoundReport['players'] = []
+  for (const p of body.players) {
+    if (typeof p?.steam_id !== 'string' || !STEAM_ID.test(p.steam_id)) return bad(`invalid player steam_id: ${String(p?.steam_id).slice(0, 24)}`)
+    players.push({
+      steamId: p.steam_id,
+      nick: label(p.nick, 64),
+      role: label(p.role),
+      team: label(p.team),
+      survived: p.survived === true,
+      won: p.won === true,
+    })
+  }
+  const deaths: RoundReport['deaths'] = []
+  for (const d of body.deaths ?? []) {
+    if (typeof d?.victim !== 'string' || !STEAM_ID.test(d.victim)) return bad('invalid death victim')
+    const attacker = typeof d.attacker === 'string' && STEAM_ID.test(d.attacker) ? d.attacker : null
+    deaths.push({ victim: d.victim, attacker, at: whole(d.at) })
+  }
+
+  const report: RoundReport = {
+    roundId: body.round_id,
+    map: label(body.map),
+    startedAt: label(body.started_at, 40),
+    duration: whole(body.duration),
+    result,
+    players,
+    deaths,
+  }
+
+  const stored = Store.recordRound(server.id, report)
+  Store.updateHeartbeat(server.id)
+  console.log(
+    `[Stats] Round ${report.roundId} from ${server.name}: ${stored ? 'stored' : 'duplicate, ignored'} ` +
+    `(map=${report.map}, result=${result}, ${players.length} players, ${deaths.length} deaths, ${report.duration ?? '?'}s)`
+  )
+  return c.json({ success: true, stored })
 })
 
 api.post('/save/:serverId/:role', async (c) => {

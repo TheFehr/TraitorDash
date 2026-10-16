@@ -7,6 +7,16 @@ const SERVER_COLS = 'id, name, last_seen'
 /** 256 random bits, hex. Shown to an admin once; only its hash is stored. */
 const newToken = () => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('hex')
 
+export interface RoundReport {
+  roundId: string
+  map: string | null
+  startedAt: string | null
+  duration: number | null
+  result: string
+  players: { steamId: string, nick: string | null, role: string | null, team: string | null, survived: boolean, won: boolean }[]
+  deaths: { victim: string, attacker: string | null, at: number | null }[]
+}
+
 export class Store {
   static getServers(): any[] {
     const query = db.prepare(`SELECT ${SERVER_COLS} FROM servers ORDER BY name ASC`)
@@ -49,7 +59,32 @@ export class Store {
     db.run('DELETE FROM authorized_admins WHERE server_id = ?', [id])
     db.run('DELETE FROM convar_values WHERE server_id = ?', [id])
     db.run('DELETE FROM lang_files WHERE server_id = ?', [id])
+    db.run('DELETE FROM deaths WHERE server_id = ?', [id])
+    db.run('DELETE FROM round_players WHERE server_id = ?', [id])
+    db.run('DELETE FROM rounds WHERE server_id = ?', [id])
     db.run('DELETE FROM servers WHERE id = ?', [id])
+  }
+
+  /** Stores one finished round. Returns false (and stores nothing) if this round_id was already recorded. */
+  static recordRound(serverId: string, r: RoundReport): boolean {
+    return db.transaction(() => {
+      const inserted = db.prepare(
+        'INSERT OR IGNORE INTO rounds (server_id, round_id, map, started_at, duration, result) VALUES (?, ?, ?, ?, ?, ?)'
+      ).run(serverId, r.roundId, r.map, r.startedAt, r.duration, r.result)
+      if (inserted.changes === 0) return false
+
+      const player = db.prepare(
+        'INSERT OR REPLACE INTO round_players (server_id, round_id, steam_id, nick, role, team, survived, won) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      )
+      for (const p of r.players) {
+        player.run(serverId, r.roundId, p.steamId, p.nick, p.role, p.team, p.survived ? 1 : 0, p.won ? 1 : 0)
+      }
+      const death = db.prepare(
+        'INSERT INTO deaths (server_id, round_id, victim_steam_id, attacker_steam_id, at_seconds) VALUES (?, ?, ?, ?, ?)'
+      )
+      for (const d of r.deaths) death.run(serverId, r.roundId, d.victim, d.attacker, d.at)
+      return true
+    })()
   }
 
   static updateHeartbeat(serverId: string) {
