@@ -42,7 +42,7 @@ export class Extractor {
       .replace(/\bcontinue\b/g, '__td_continue()') // GMod Lua 'continue' keyword
   }
 
-  public static async extractSchema(roleCode: string, convarState?: Record<string, string>, dataState?: Record<string, any>): Promise<{ team: string, isPolicingRole: boolean, baserole: number, schema: any[] }> {
+  public static async extractSchema(roleCode: string, convarState?: Record<string, string>, dataState?: Record<string, any>, roleName?: string): Promise<{ team: string, isPolicingRole: boolean, baserole: number, schema: any[] }> {
     const L = lauxlib.luaL_newstate()
     lualib.luaL_openlibs(L)
 
@@ -88,6 +88,11 @@ export class Extractor {
         lua.lua_newtable(L)
         lua.lua_setglobal(L, to_luastring('__TD_DATA_STATE'))
       }
+
+      // The role's class name (folder name). Real role files don't set ROLE.name, and
+      // TTT2 builds most of a role's ConVar names from it, so it has to come from the caller.
+      lua.lua_pushstring(L, to_luastring(roleName || ''))
+      lua.lua_setglobal(L, to_luastring('__TD_ROLE_NAME'))
 
       // 2. Sanitize and Load Role Code
       const sanitizedCode = this.sanitizeCode(roleCode)
@@ -144,15 +149,43 @@ export class Extractor {
         end
 
         -- Method 3: conVarData (TTT2 Autogen)
+        -- TTT2 derives each ConVar name from a conVarData key, using the role NAME as
+        -- prefix for some settings and the role ABBR for others. Verified against a live
+        -- server's console 'find ttt_surv' / 'find ttt_det' (survivalist/surv, detective/det).
         if ROLE and ROLE.conVarData then
+           local name = rawget(ROLE, "name")
+           if type(name) ~= "string" or name == "" or name == "unknown" then name = __TD_ROLE_NAME end
+           local abbr = rawget(ROLE, "abbr")
+           if type(abbr) ~= "string" or abbr == "" or abbr == "unk" then abbr = name end
+
+           local NAME, ABBR = 1, 2
+           local CONVAR_MAP = {
+             pct                    = { NAME, "pct" },
+             maximum                = { NAME, "max" },
+             minPlayers             = { NAME, "min_players" },
+             minKarma               = { NAME, "karma_min" },
+             random                 = { NAME, "random" },
+             traitorButton          = { NAME, "traitor_button" },
+             togglable              = { NAME, "enabled" },
+             credits                = { ABBR, "credits_starting" },
+             creditsAwardDeadEnable = { ABBR, "credits_award_dead_enb" },
+             creditsAwardKillEnable = { ABBR, "credits_award_kill_enb" },
+             shopFallback           = { ABBR, "shop_fallback" },
+           }
+
            for key, value in pairs(ROLE.conVarData) do
-              table.insert(__TRAITORDASH_SCHEMA, { 
-                type = "conVarData", 
-                args = { 
-                  key = key, 
-                  value = value,
-                  convar = "ttt_" .. (ROLE.abbr or "unknown") .. "_" .. key
-                } 
+              local entry = CONVAR_MAP[key]
+              local convar
+              if entry then
+                convar = "ttt_" .. (entry[1] == NAME and name or abbr) .. "_" .. entry[2]
+              else
+                -- Unknown key: best guess (snake_case under the role name), flagged so the
+                -- UI/bridge can tell it was not verified.
+                convar = "ttt_" .. name .. "_" .. key:gsub("(%u)", function(c) return "_" .. c:lower() end)
+              end
+              table.insert(__TRAITORDASH_SCHEMA, {
+                type = "conVarData",
+                args = { key = key, value = value, convar = convar, guessed = (entry == nil) or nil }
               })
            end
         end

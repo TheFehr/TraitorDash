@@ -129,3 +129,50 @@ describe("Extractor Schema Extraction", () => {
     expect(schema[0].args.label).toBe("Test with 100");
   });
 });
+
+describe("Extractor conVarData ConVar names", () => {
+  // Real ConVar names, as listed by `find ttt_surv` / `find ttt_det` on a live TTT2 server.
+  const surv = `
+    function ROLE:PreInitialize()
+      self.abbr = "surv"
+      self.conVarData = {
+        pct = 0.15, maximum = 2, minPlayers = 7, minKarma = 400,
+        credits = 1, creditsAwardDeadEnable = 1, creditsAwardKillEnable = 0,
+        togglable = true, shopFallback = "detective"
+      }
+    end
+  `;
+
+  test("uses the role name for some settings and the abbr for others", async () => {
+    const { schema } = await Extractor.extractSchema(surv, undefined, undefined, "survivalist");
+    const byKey = Object.fromEntries(schema.map((i: any) => [i.args.key, i.args.convar]));
+
+    expect(byKey.pct).toBe("ttt_survivalist_pct");
+    expect(byKey.maximum).toBe("ttt_survivalist_max");
+    expect(byKey.minPlayers).toBe("ttt_survivalist_min_players");
+    expect(byKey.minKarma).toBe("ttt_survivalist_karma_min");
+    expect(byKey.togglable).toBe("ttt_survivalist_enabled");
+    expect(byKey.credits).toBe("ttt_surv_credits_starting");
+    expect(byKey.creditsAwardDeadEnable).toBe("ttt_surv_credits_award_dead_enb");
+    expect(byKey.creditsAwardKillEnable).toBe("ttt_surv_credits_award_kill_enb");
+    expect(byKey.shopFallback).toBe("ttt_surv_shop_fallback");
+  });
+
+  test("same rule for the detective (name != abbr)", async () => {
+    const det = surv.replace('"surv"', '"det"');
+    const { schema } = await Extractor.extractSchema(det, undefined, undefined, "detective");
+    const byKey = Object.fromEntries(schema.map((i: any) => [i.args.key, i.args.convar]));
+
+    expect(byKey.pct).toBe("ttt_detective_pct");
+    expect(byKey.minKarma).toBe("ttt_detective_karma_min");
+    expect(byKey.credits).toBe("ttt_det_credits_starting");
+    expect(byKey.shopFallback).toBe("ttt_det_shop_fallback");
+  });
+
+  test("an unknown conVarData key is guessed under the role name and flagged", async () => {
+    const code = `function ROLE:PreInitialize() self.abbr = "x" self.conVarData = { someNewThing = 5 } end`;
+    const { schema } = await Extractor.extractSchema(code, undefined, undefined, "myrole");
+    expect(schema[0].args.convar).toBe("ttt_myrole_some_new_thing");
+    expect(schema[0].args.guessed).toBe(true);
+  });
+});
