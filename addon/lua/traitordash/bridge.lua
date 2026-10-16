@@ -12,20 +12,57 @@ TraitorDash.PendingValues = TraitorDash.PendingValues or {}   -- name -> role, w
 local cv_url = CreateConVar("traitordash_url", "http://localhost:3000", {FCVAR_ARCHIVE, FCVAR_PROTECTED}, "The base URL of the TraitorDash backend.")
 local cv_token = CreateConVar("traitordash_token", "dev-token-123", {FCVAR_ARCHIVE, FCVAR_PROTECTED}, "The API token for authenticating with the backend.")
 
+-- Who is an admin right now. The result is only informational (the backend logs it), so
+-- this must NEVER be able to break a poll or an ingest.
+--
+-- CAMI.PlayerHasAccess is ASYNCHRONOUS: it requires a callback and reports the answer
+-- through it (ULib's implementation calls `callback(...)` unconditionally). The bridge used
+-- to call it without one, which threw on every poll as soon as a player was connected, and
+-- an aborted poll means no heartbeat and no config changes delivered. The answers are cached
+-- per player; each call asks again so the cache follows permission changes within a poll.
+TraitorDash.AdminAccessCache = TraitorDash.AdminAccessCache or {}
+local PRIVILEGE = "ttt2_conf_edit"
+
+local function AskCami(ply, steamId)
+    if not CAMI or not CAMI.PlayerHasAccess then return end
+
+    local ok, err = pcall(CAMI.PlayerHasAccess, ply, PRIVILEGE, function(allowed)
+        TraitorDash.AdminAccessCache[steamId] = allowed and true or false
+    end)
+
+    if not ok and not TraitorDash.WarnedCami then
+        TraitorDash.WarnedCami = true -- once, not every ten seconds
+        print("[TraitorDash] CAMI admin lookup failed, falling back to IsSuperAdmin only: " .. tostring(err))
+    end
+end
+
 function TraitorDash.GetActiveAdmins()
     local admins = {}
-    for _, ply in ipairs(player.GetAll()) do
-        local hasAccess = ply:IsSuperAdmin()
-        if CAMI then
-            hasAccess = hasAccess or CAMI.PlayerHasAccess(ply, "ttt2_conf_edit")
+
+    local ok, err = pcall(function()
+        for _, ply in ipairs(player.GetAll()) do
+            if IsValid(ply) then
+                local steamId = ply:SteamID64() or ply:SteamID()
+                AskCami(ply, steamId)
+
+                if ply:IsSuperAdmin() or TraitorDash.AdminAccessCache[steamId] then
+                    table.insert(admins, steamId)
+                end
+            end
         end
-        
-        if hasAccess then
-            table.insert(admins, ply:SteamID64() or ply:SteamID())
-        end
+    end)
+
+    if not ok then
+        print("[TraitorDash] Could not list admins (ignored): " .. tostring(err))
+        return {}
     end
+
     return admins
 end
+
+hook.Add("PlayerDisconnected", "TraitorDash_AdminCache", function(ply)
+    if IsValid(ply) then TraitorDash.AdminAccessCache[ply:SteamID64() or ply:SteamID()] = nil end
+end)
 
 -- ---------------------------------------------------------------------------
 -- Live ConVar values
