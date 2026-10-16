@@ -9,6 +9,11 @@ TraitorDash.RoleMeta = TraitorDash.RoleMeta or {}            -- role name -> { a
 TraitorDash.WatchedConVars = TraitorDash.WatchedConVars or {} -- ConVars already reporting changes
 TraitorDash.PendingValues = TraitorDash.PendingValues or {}   -- name -> role, waiting to be pushed
 
+-- What the bridge will apply on the backend's say-so (see commands.lua). If it cannot be
+-- loaded, every command is refused rather than run unchecked.
+local okCommands, errCommands = pcall(include, "traitordash/commands.lua")
+if not okCommands then print("[TraitorDash] commands.lua failed to load; all commands will be refused: " .. tostring(errCommands)) end
+
 local cv_url = CreateConVar("traitordash_url", "http://localhost:3000", {FCVAR_ARCHIVE, FCVAR_PROTECTED}, "The base URL of the TraitorDash backend.")
 local cv_token = CreateConVar("traitordash_token", "dev-token-123", {FCVAR_ARCHIVE, FCVAR_PROTECTED}, "The API token for authenticating with the backend.")
 
@@ -514,14 +519,17 @@ function TraitorDash.Poll()
                         for _, cmd in ipairs(data.commands) do
                             local success, err = pcall(function()
                                 if cmd.type == "convar" then
-                                    local parts = string.Explode(" ", cmd.payload)
-                                    local cv_name = parts[1]
+                                    local cv_name, cv_value
+                                    if TraitorDash.ParseConVarCommand then
+                                        cv_name, cv_value = TraitorDash.ParseConVarCommand(cmd.payload)
+                                    end
                                     local cv = cv_name and GetConVar(cv_name)
                                     if cv and cv:GetName() == cv_name then
-                                        print("[TraitorDash] CONVAR: " .. tostring(cmd.payload))
-                                        game.ConsoleCommand(tostring(cmd.payload) .. "\n")
+                                        print("[TraitorDash] CONVAR: " .. cv_name .. " " .. cv_value)
+                                        -- One command, one value: cannot be chained with ; or a newline.
+                                        RunConsoleCommand(cv_name, cv_value)
                                     else
-                                        print("[TraitorDash] WARNING: Attempted to set unknown ConVar: " .. tostring(cv_name))
+                                        print("[TraitorDash] WARNING: Refused a ConVar command: " .. tostring(cmd.payload):sub(1, 80))
                                     end
                                 elseif cmd.type == "sync" then
                                     print("[TraitorDash] Internal: Force Sync Triggered via API")
@@ -532,11 +540,11 @@ function TraitorDash.Poll()
                                         p = util.JSONToTable(p)
                                     end
                                     
-                                    if type(p) == "table" and p.key then
+                                    if type(p) == "table" and TraitorDash.IsSafeDataKey and TraitorDash.IsSafeDataKey(p.key) then
                                         print("[TraitorDash] Applying " .. (p.dataType or "unknown") .. " update: " .. p.key .. " = " .. tostring(p.value))
                                         
                                         -- 1. Update ConVar if it exists
-                                        local cv = GetConVar(p.key)
+                                        local cv = TraitorDash.IsSettableConVarName(p.key) and GetConVar(p.key)
                                         if cv then
                                             print("[TraitorDash] -> Setting ConVar: " .. p.key)
                                             cv:SetString(tostring(p.value))
