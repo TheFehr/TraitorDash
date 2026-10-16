@@ -130,6 +130,32 @@ describe('Steam login', () => {
   })
 })
 
+describe('BASE_URL', () => {
+  // REALM is fixed at import time, so each variant is checked in a fresh process.
+  const loginUrl = async (baseUrl: string) => {
+    const proc = Bun.spawn([process.execPath, '-e', `
+      const auth = (await import('./src/routes/auth')).default
+      const res = await auth.request('/steam')
+      const u = new URL(res.headers.get('location'))
+      console.log(JSON.stringify({ realm: u.searchParams.get('openid.realm'), returnTo: u.searchParams.get('openid.return_to') }))
+    `], {
+      cwd: import.meta.dir + '/..',
+      env: { PATH: process.env.PATH, SESSION_SECRET: 'x'.repeat(40), ADMIN_STEAM_IDS: ADMIN, BASE_URL: baseUrl },
+      stdout: 'pipe', stderr: 'pipe',
+    })
+    return JSON.parse(await new Response(proc.stdout).text())
+  }
+
+  test('a trailing slash (or several) never produces a double slash in the callback URL', async () => {
+    for (const base of ['https://td.example', 'https://td.example/', 'https://td.example///', ' https://td.example/ ']) {
+      const { realm, returnTo } = await loginUrl(base)
+      expect(realm).toBe('https://td.example')
+      expect(returnTo).toStartWith('https://td.example/auth/steam/callback?td_state=')
+      expect(returnTo).not.toContain('//auth')
+    }
+  })
+})
+
 describe('session secret', () => {
   const boot = async (env: Record<string, string | undefined>) => {
     const proc = Bun.spawn([process.execPath, '-e', "await import('./src/middleware/session'); console.log('BOOTED')"], {

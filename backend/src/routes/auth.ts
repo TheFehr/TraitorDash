@@ -5,7 +5,9 @@ import { SESSION_SECRET, isAdmin } from '../middleware/session'
 const auth = new Hono()
 
 const STEAM_OPENID_URL = 'https://steamcommunity.com/openid/login'
-const REALM = process.env.BASE_URL || 'http://localhost:3000'
+// No trailing slash: with one, every URL built from it gets a double slash ("//auth/..."),
+// and the login cookie (path /auth) is then not sent back by the browser.
+const REALM = (process.env.BASE_URL || 'http://localhost:3000').trim().replace(/\/+$/, '')
 const CALLBACK_URL = `${REALM}/auth/steam/callback`
 const STEAM_CLAIMED_ID = /^https:\/\/steamcommunity\.com\/openid\/id\/(\d{17})$/
 const LOGIN_COOKIE = 'td_login'
@@ -45,16 +47,21 @@ auth.get('/steam/callback', async (c) => {
   deleteCookie(c, LOGIN_COOKIE, { path: '/auth' })
   const claimedId = query['openid.claimed_id']
   const claimed = claimedId ? STEAM_CLAIMED_ID.exec(claimedId) : null
-  if (
-    !state ||
-    query['td_state'] !== state ||
-    query['openid.mode'] !== 'id_res' ||
-    query['openid.return_to'] !== returnUrl(state) ||
-    query['openid.op_endpoint'] !== STEAM_OPENID_URL ||
-    !claimed ||
-    query['openid.identity'] !== claimedId
-  ) {
-    console.warn('[Auth] Rejected a Steam callback that does not belong to a login started here')
+  // Which check failed goes in the log (never the state value itself), so a failed login can
+  // be diagnosed from the backend console.
+  const problems: string[] = []
+  if (!state) problems.push('no td_login cookie (login started on a different host than the callback arrived on?)')
+  else if (query['td_state'] !== state) problems.push('td_state does not match the cookie')
+  if (query['openid.mode'] !== 'id_res') problems.push(`openid.mode is ${query['openid.mode']}`)
+  if (state && query['openid.return_to'] !== returnUrl(state)) {
+    const got = (query['openid.return_to'] || '').replace(/td_state=[0-9a-f]+/, 'td_state=…')
+    problems.push(`return_to is ${got}, expected ${CALLBACK_URL}?td_state=…`)
+  }
+  if (query['openid.op_endpoint'] !== STEAM_OPENID_URL) problems.push(`op_endpoint is ${query['openid.op_endpoint']}`)
+  if (!claimed) problems.push('claimed_id is not a steamcommunity.com account URL')
+  if (query['openid.identity'] !== claimedId) problems.push('identity differs from claimed_id')
+  if (problems.length > 0 || !claimed) {
+    console.warn(`[Auth] Rejected a Steam callback (BASE_URL is ${REALM}): ${problems.join('; ')}`)
     return c.text('Invalid login response', 400)
   }
 
