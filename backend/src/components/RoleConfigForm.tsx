@@ -145,7 +145,7 @@ export const RoleConfigForm = ({ serverId, role, schema, live = {} }: { serverId
           Configuring Role: <span class="text-white">{role}</span>
         </h2>
         <p class="text-xs text-gray-500 mb-6">
-          <span class="text-green-400 font-bold">live</span> values were reported by the game server;
+          <span class="text-green-400 font-bold">live</span> values were reported by the game server;{' '}
           <span class="text-gray-400 font-bold">default</span> ones have not been reported yet and show the role's default.
           Only the settings you change are sent.
         </p>
