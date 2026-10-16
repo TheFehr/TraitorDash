@@ -16,6 +16,8 @@ import { ServerDashboard } from './components/ServerDashboard'
 import { RoleConfigForm } from './components/RoleConfigForm'
 import { ServerManager } from './components/ServerManager'
 import { Sidebar, RoleListPartial } from './components/Sidebar'
+import { StatsDashboard, PlayerStats } from './components/StatsDashboard'
+import * as stats from './services/stats'
 
 const app = new Hono()
 
@@ -103,6 +105,54 @@ app.get('/servers/:serverId', async (c) => {
             <ServerDashboard server={server} roles={roles} />
           </div>
        </div>
+    </Layout>
+  )
+})
+
+/**
+ * Round stats: overview, leaderboard, recent rounds. Admin-only: it shows SteamIDs.
+ */
+app.get('/servers/:serverId/stats', async (c) => {
+  const steamId = await getAdminId(c)
+  if (!steamId) return c.redirect('/')
+
+  const serverId = c.req.param('serverId')
+  const server = Store.getServerById(serverId)
+  if (!server) return c.redirect('/')
+
+  const requested = c.req.query('sort') as stats.SortKey
+  const sort = stats.SORTS.includes(requested) ? requested : 'rounds'
+  // Hidden switch for checking the bot test scenario: ?bots=1 includes bot-only rounds.
+  const opts = { bots: c.req.query('bots') === '1' }
+
+  return c.html(
+    <Layout steamId={steamId as string} path="/">
+      <StatsDashboard
+        server={server}
+        overview={stats.getOverview(serverId, opts)}
+        roles={stats.getRoleStats(serverId, opts)}
+        teams={stats.getTeamStats(serverId, opts)}
+        leaders={stats.getLeaderboard(serverId, sort, opts)}
+        recent={stats.getRecentRounds(serverId, opts)}
+        sort={sort}
+        bots={opts.bots}
+      />
+    </Layout>
+  )
+})
+
+app.get('/servers/:serverId/players/:playerId', async (c) => {
+  const steamId = await getAdminId(c)
+  if (!steamId) return c.redirect('/')
+
+  const serverId = c.req.param('serverId')
+  const server = Store.getServerById(serverId)
+  const player = server && stats.getPlayer(serverId, c.req.param('playerId'))
+  if (!server || !player || (stats.isBotId(player.steamId) && c.req.query('bots') !== '1')) return c.redirect(`/servers/${serverId}/stats`)
+
+  return c.html(
+    <Layout steamId={steamId as string} path="/">
+      <PlayerStats server={server} player={player} />
     </Layout>
   )
 })

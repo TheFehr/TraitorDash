@@ -39,7 +39,8 @@ const post = (body: unknown, auth: string | null = `Bearer ${token}`) =>
     body: JSON.stringify(body),
   })
 
-const count = (table: string) => (db.query(`SELECT COUNT(*) AS n FROM ${table}`).get() as any).n
+// Scoped to this file's server: test files share one in-memory database.
+const count = (table: string) => (db.query(`SELECT COUNT(*) AS n FROM ${table} WHERE server_id = ?`).get(serverId) as any).n
 
 describe('POST /v1/round', () => {
   test('requires a server token', async () => {
