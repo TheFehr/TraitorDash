@@ -21,7 +21,8 @@ export const Sidebar = ({ serverId, roles, query = '' }: { serverId: string, rol
         {filteredRoles.map(role => (
           <a 
             href={`/servers/${serverId}/roles/${role.role_name}`}
-            class="block px-3 py-2 rounded-lg text-sm font-medium hover:bg-gray-700 transition group flex justify-between items-center"
+            class={`block px-3 py-2 rounded-lg text-sm font-medium hover:bg-gray-700 transition group flex justify-between items-center ${role.enabled === false ? 'opacity-50' : ''}`}
+            title={role.enabled === false ? 'Disabled on this server' : undefined}
           >
             <span class="truncate">{role.role_name}</span>
             <span class="text-[10px] text-gray-500 group-hover:text-red-400 transition">→</span>
@@ -37,7 +38,8 @@ export const RoleListPartial = ({ serverId, roles }: { serverId: string, roles: 
     {roles.map(role => (
       <a 
         href={`/servers/${serverId}/roles/${role.role_name}`}
-        class="block px-3 py-2 rounded-lg text-sm font-medium hover:bg-gray-700 transition group flex justify-between items-center"
+        class={`block px-3 py-2 rounded-lg text-sm font-medium hover:bg-gray-700 transition group flex justify-between items-center ${role.enabled === false ? 'opacity-50' : ''}`}
+        title={role.enabled === false ? 'Disabled on this server' : undefined}
       >
         <span class="truncate">{role.role_name}</span>
         <span class="text-[10px] text-gray-500 group-hover:text-red-400 transition">→</span>

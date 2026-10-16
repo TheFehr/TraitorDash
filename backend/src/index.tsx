@@ -5,6 +5,7 @@ import { serveStatic } from 'hono/bun'
 import api from './routes/api'
 import auth from './routes/auth'
 import { Store } from './services/Store'
+import { getRolesWithState } from './services/roles'
 import { getAdminId } from './middleware/session'
 
 // Components
@@ -32,7 +33,7 @@ app.get('/sidebar/:serverId', async (c) => {
   if (!(await getAdminId(c))) return c.text('Unauthorized', 401)
   const serverId = c.req.param('serverId')
   const query = c.req.query('q') || ''
-  const roles = Store.getRoles(serverId)
+  const roles = getRolesWithState(serverId)
   
   const filteredRoles = query 
     ? roles.filter(r => r.role_name.toLowerCase().includes(query.toLowerCase()))
@@ -92,7 +93,7 @@ app.get('/servers/:serverId', async (c) => {
   const server = Store.getServerById(serverId)
   if (!server) return c.redirect('/')
 
-  const roles = Store.getRoles(serverId)
+  const roles = getRolesWithState(serverId)
 
   return c.html(
     <Layout steamId={steamId as string} path="/">
@@ -118,7 +119,7 @@ app.get('/servers/:serverId/roles/:roleName', async (c) => {
   
   const server = Store.getServerById(serverId)
   const schema = Store.getSchema(serverId, roleName)
-  const roles = Store.getRoles(serverId)
+  const roles = getRolesWithState(serverId)
   
   if (!server || !schema) return c.redirect('/')
   
