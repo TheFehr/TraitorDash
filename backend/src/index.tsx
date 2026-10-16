@@ -195,5 +195,7 @@ app.get('/servers/:serverId/roles/:roleName', async (c) => {
 export default {
   port: 3000,
   hostname: '0.0.0.0',
+  // Bun's default is 128MB. The biggest legitimate body is the language-file push.
+  maxRequestBodySize: 32 * 1024 * 1024,
   fetch: app.fetch
 }

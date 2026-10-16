@@ -16,6 +16,28 @@ type Variables = {
 
 const api = new Hono<{ Variables: Variables }>()
 
+// Names from a game server end up in URLs, HTML, SQL parameters and console commands, so
+// they are restricted to a plain identifier character set at the door.
+const ROLE_NAME = /^[A-Za-z0-9_]{1,64}$/
+const CONVAR_NAME = /^[A-Za-z0-9_]{1,80}$/
+const MAX_ROLE_CODE_BYTES = 256 * 1024
+
+/** Drops schema entries naming a ConVar that is not a plain identifier. Returns what it dropped. */
+function dropUnsafeConVars(schema: any[]): { schema: any[], dropped: string[] } {
+  const dropped: string[] = []
+  const safe = schema.filter((item: any) => {
+    for (const key of ['convar', 'serverConvar']) {
+      const v = item?.args?.[key]
+      if (v !== undefined && v !== null && (typeof v !== 'string' || !CONVAR_NAME.test(v))) {
+        dropped.push(String(v).slice(0, 80))
+        return false
+      }
+    }
+    return true
+  })
+  return { schema: safe, dropped }
+}
+
 // Middleware to get server by token
 const getServer = async (c: any, next: any) => {
   const auth = c.req.header('Authorization')
@@ -79,14 +101,23 @@ api.delete('/servers/:id', async (c) => {
 api.post('/ingest', getServer, async (c) => {
   try {
     const server = c.get('server')
-    const body = await c.req.json()
+    const body = await c.req.json().catch(() => null)
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return c.json({ error: 'Body must be a JSON object' }, 400)
+    }
     const { role_code, role_name, convar_state, data_state, active_admins, md5_hash, force } = body
 
-    if (!role_code) {
+    if (!role_code || typeof role_code !== 'string') {
       return c.json({ error: 'Missing role_code' }, 400)
     }
+    if (role_code.length > MAX_ROLE_CODE_BYTES) {
+      return c.json({ error: `role_code is larger than ${MAX_ROLE_CODE_BYTES} bytes` }, 413)
+    }
 
-    const name = role_name || 'unknown'
+    const name = role_name ?? 'unknown'
+    if (typeof name !== 'string' || !ROLE_NAME.test(name)) {
+      return c.json({ error: 'role_name must be 1-64 characters of letters, digits and underscores' }, 400)
+    }
 
     // Update active admins for the server if provided
     if (active_admins && Array.isArray(active_admins)) {
@@ -110,7 +141,12 @@ api.post('/ingest', getServer, async (c) => {
     }
 
     console.log(`[API] Ingesting role: ${name} for server ${server.name} (Size: ${role_code.length} bytes, Force: ${!!force})`)
-    const { team, isPolicingRole, baserole, schema } = await Extractor.extractSchema(role_code, convar_state, data_state, name, Store.getLangSources(server.id))
+    const extracted = await Extractor.extractSchema(role_code, convar_state, data_state, name, Store.getLangSources(server.id))
+    const { team, isPolicingRole, baserole } = extracted
+    const { schema, dropped } = dropUnsafeConVars(extracted.schema)
+    if (dropped.length > 0) {
+      console.warn(`[API] SECURITY ALERT: ${name} on ${server.name} declared ConVar names that are not plain identifiers; dropped: ${JSON.stringify(dropped)}`)
+    }
 
     // Save to database via Store
     Store.saveSchema(server.id, name, team, isPolicingRole, baserole, schema, md5_hash)
@@ -128,7 +164,7 @@ api.post('/ingest', getServer, async (c) => {
     console.error('[API] Extraction failed:', err)
     return c.json({
       success: false,
-      error: err.message
+      error: String(err?.message ?? 'Extraction failed').slice(0, 300)
     }, 500)
   }
 })
@@ -160,7 +196,6 @@ api.post('/v1/lang', getServer, async (c) => {
   return c.json({ success: true, ...result })
 })
 
-const CONVAR_NAME = /^[A-Za-z0-9_]{1,80}$/
 const short = (v: unknown) => (typeof v === 'string' && v.length <= 256 ? v : null)
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
 
@@ -272,8 +307,11 @@ api.post('/save/:serverId/:role', async (c) => {
   const allowedKeys = new Set<string>()
   schema.forEach((item: any) => {
     if (item.args) {
-      if (item.args.convar) allowedKeys.add(item.args.convar)
-      if (item.args.serverConvar) allowedKeys.add(item.args.serverConvar)
+      // Only plain identifiers: a name smuggling `;` or a newline must never become a command,
+      // even if it sits in a schema stored before ingest started filtering them.
+      for (const key of [item.args.convar, item.args.serverConvar]) {
+        if (typeof key === 'string' && CONVAR_NAME.test(key)) allowedKeys.add(key)
+      }
     }
   })
 

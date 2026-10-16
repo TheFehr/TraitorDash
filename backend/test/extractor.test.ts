@@ -1,11 +1,12 @@
 import { expect, test, describe } from "bun:test";
 import { Extractor } from "../src/services/Extractor";
+import { ExtractorCore } from "../src/services/ExtractorCore";
 
 describe("Extractor Sanitization", () => {
   test("should handle C-style comments", async () => {
     const input = "/* multi-line\ncomment */ local a = 1;";
     // @ts-ignore
-    const result = Extractor.sanitizeCode(input);
+    const result = (ExtractorCore as any).sanitizeCode(input);
     expect(result).toContain("--[[ multi-line\ncomment ]]");
   });
 
