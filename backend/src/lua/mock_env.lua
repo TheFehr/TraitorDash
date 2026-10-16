@@ -212,6 +212,12 @@ LANG = {
         __TD_LANGS[l] = __TD_LANGS[l] or {}
         __TD_LANGS[l][k] = v
     end,
+    -- TTT2's own en.lua starts with `local L = LANG.CreateLanguage("en")`.
+    CreateLanguage = function(l)
+        if l == nil then return CreateProxy() end
+        __TD_LANGS[l] = __TD_LANGS[l] or {}
+        return __TD_LANGS[l]
+    end,
     GetLanguageTableReference = function(l)
         if l == nil then return CreateProxy() end
         __TD_LANGS[l] = __TD_LANGS[l] or {}

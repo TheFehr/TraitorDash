@@ -124,6 +124,22 @@ export const migrations: Array<(db: Database) => void> = [
         FOREIGN KEY (server_id) REFERENCES servers(id)
       )
     `)
+  },
+  // v6: the game server's English language files (TTT2 core + one per role addon),
+  // pushed once per sync by the bridge. They resolve `label_*` translation keys while
+  // a role's settings menu is extracted.
+  (db) => {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS lang_files (
+        server_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        content TEXT NOT NULL,
+        hash TEXT NOT NULL,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (server_id, name),
+        FOREIGN KEY (server_id) REFERENCES servers(id)
+      )
+    `)
   }
 ]
 

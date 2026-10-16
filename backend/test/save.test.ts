@@ -135,3 +135,74 @@ describe('POST /save for settings the server reported', () => {
     expect(queued()).toEqual(['ttt_survivalist_random 50'])
   })
 })
+
+describe('POST /v1/lang (language files from the bridge)', () => {
+  let token: string
+  let langServerId: string
+  beforeAll(() => {
+    const created = Store.addServer('Lang')
+    token = created.token
+    langServerId = created.id
+    Store.saveSchema(langServerId, 'medic', 'nones', false, -1, [], 'hash-medic')
+    Store.saveSchema(langServerId, 'innocent', 'innocents', false, -1, [], 'hash-innocent')
+  })
+
+  const post = (body: unknown, auth = true) =>
+    api.request('/v1/lang', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(auth ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify(body),
+    })
+  const hashes = () => db.query("SELECT role_name, md5_hash FROM roles WHERE server_id = ? ORDER BY role_name").all(langServerId) as any[]
+
+  test('needs the server token', async () => {
+    expect((await post({ files: { core: 'x' } }, false)).status).toBe(401)
+  })
+
+  test('stores the files and orders them core-first for extraction', async () => {
+    const res = await post({ files: { 'medic.lua': 'L2', core: 'L1', 'announcer.lua': 'L3' } })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ success: true, changed: true, stored: 3 })
+    expect(Store.getLangSources(langServerId)).toEqual(['L1', 'L3', 'L2']) // core, announcer, medic
+  })
+
+  test('a change clears every role\'s cached extraction, so labels get re-extracted', async () => {
+    // Previous test changed the files, which already cleared the hashes; restore them and push a CHANGED file.
+    Store.saveSchema(langServerId, 'medic', 'nones', false, -1, [], 'hash-medic')
+    Store.saveSchema(langServerId, 'innocent', 'innocents', false, -1, [], 'hash-innocent')
+    await post({ files: { 'medic.lua': 'L2-new', core: 'L1', 'announcer.lua': 'L3' } })
+    expect(hashes().map(r => r.md5_hash)).toEqual([null, null])
+  })
+
+  test('pushing the same files again changes nothing and keeps the cache', async () => {
+    Store.saveSchema(langServerId, 'medic', 'nones', false, -1, [], 'hash-medic')
+    const res = await post({ files: { 'medic.lua': 'L2-new', core: 'L1', 'announcer.lua': 'L3' } })
+    expect((await res.json()).changed).toBe(false)
+    expect(hashes().find(r => r.role_name === 'medic').md5_hash).toBe('hash-medic')
+  })
+
+  test('rejects bad names, non-string content, empty and oversized sets', async () => {
+    expect((await post({ files: { '../etc/passwd': 'x' } })).status).toBe(400)
+    expect((await post({ files: { ok: 123 } })).status).toBe(400)
+    expect((await post({ files: {} })).status).toBe(400)
+    expect((await post({ nothing: true })).status).toBe(400)
+    const many = Object.fromEntries(Array.from({ length: 101 }, (_, i) => [`f${i}.lua`, 'x']))
+    expect((await post({ files: many })).status).toBe(400)
+  })
+
+  test('end to end: after the files are pushed, ingest resolves a role\'s labels', async () => {
+    await post({ files: { core: 'local L = LANG.CreateLanguage("en")\nL.label_med_armor = "Medic armor"' } })
+    const res = await api.request('/ingest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        role_name: 'medic',
+        role_code: 'function ROLE:AddToSettingsMenu(parent) parent:MakeSlider({ label = "label_med_armor", convar = "ttt_med_armor", min = 0, max = 100 }) end',
+        md5_hash: 'new-hash',
+      }),
+    })
+    const data = await res.json()
+    expect(data.success).toBe(true)
+    expect(data.schema[0].args.label).toBe('Medic armor')
+  })
+})

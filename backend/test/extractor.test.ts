@@ -176,3 +176,45 @@ describe("Extractor conVarData ConVar names", () => {
     expect(schema[0].args.guessed).toBe(true);
   });
 });
+
+describe("Extractor language files", () => {
+  const role = `
+    function ROLE:AddToSettingsMenu(parent)
+      parent:MakeSlider({ label = "label_med_armor", convar = "ttt_med_armor", min = 0, max = 100 })
+      parent:MakeCheckBox({ label = "label_roles_enabled", convar = "ttt_med_enabled" })
+      parent:MakeCheckBox({ label = "label_never_defined", convar = "ttt_med_x" })
+    end
+  `;
+  // The two shapes real files use: TTT2 core (LANG.CreateLanguage) and role addons (GetLanguageTableReference / AddToLanguage).
+  const core = `local L = LANG.CreateLanguage("en")\nL.label_roles_enabled = "Enable role"\nL.greeting = "Hello, terrorist!"`;
+  const addon = `local L = LANG.GetLanguageTableReference("en")\nL["label_med_armor"] = "Armor of the medic"`;
+
+  test("translation keys resolve from pushed language files", async () => {
+    const { schema } = await Extractor.extractSchema(role, undefined, undefined, "medic", [core, addon]);
+    const labels = schema.map((i: any) => i.args.label);
+    expect(labels).toContain("Armor of the medic");
+    expect(labels).toContain("Enable role");
+  });
+
+  test("a key nobody defines is still shown as [key], so it is visible that it is missing", async () => {
+    const { schema } = await Extractor.extractSchema(role, undefined, undefined, "medic", [core, addon]);
+    expect(schema.map((i: any) => i.args.label)).toContain("[label_never_defined]");
+  });
+
+  test("without language files the keys stay unresolved (the old behaviour)", async () => {
+    const { schema } = await Extractor.extractSchema(role);
+    expect(schema[0].args.label).toBe("[label_med_armor]");
+  });
+
+  test("language text is loaded raw: '!' and '//' in translations survive", async () => {
+    const lang = `local L = LANG.CreateLanguage("en")\nL.label_x = "Wow! See http://example.com // now"`;
+    const code = `function ROLE:AddToSettingsMenu(parent) parent:MakeCheckBox({ label = "label_x", convar = "ttt_x" }) end`;
+    const { schema } = await Extractor.extractSchema(code, undefined, undefined, "r", [lang]);
+    expect(schema[0].args.label).toBe("Wow! See http://example.com // now");
+  });
+
+  test("a broken language file is skipped and the others still load", async () => {
+    const { schema } = await Extractor.extractSchema(role, undefined, undefined, "medic", ["this is not lua ((", core, addon]);
+    expect(schema.map((i: any) => i.args.label)).toContain("Armor of the medic");
+  });
+});

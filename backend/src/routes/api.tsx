@@ -110,7 +110,7 @@ api.post('/ingest', getServer, async (c) => {
     }
 
     console.log(`[API] Ingesting role: ${name} for server ${server.name} (Size: ${role_code.length} bytes, Force: ${!!force})`)
-    const { team, isPolicingRole, baserole, schema } = await Extractor.extractSchema(role_code, convar_state, data_state, name)
+    const { team, isPolicingRole, baserole, schema } = await Extractor.extractSchema(role_code, convar_state, data_state, name, Store.getLangSources(server.id))
 
     // Save to database via Store
     Store.saveSchema(server.id, name, team, isPolicingRole, baserole, schema, md5_hash)
@@ -131,6 +131,33 @@ api.post('/ingest', getServer, async (c) => {
       error: err.message
     }, 500)
   }
+})
+
+// The bridge pushes the game server's English language files (TTT2 core + one per role
+// addon) once per sync; they resolve translation keys during extraction.
+const LANG_NAME = /^[A-Za-z0-9_.-]{1,64}$/
+api.post('/v1/lang', getServer, async (c) => {
+  const server = c.get('server')
+  const body = await c.req.json().catch(() => null)
+  const files = body?.files
+  if (!files || typeof files !== 'object' || Array.isArray(files)) {
+    return c.json({ error: 'files must be an object of name -> Lua source' }, 400)
+  }
+
+  const entries = Object.entries(files)
+  if (entries.length === 0 || entries.length > 100) {
+    return c.json({ error: 'between 1 and 100 language files are expected' }, 400)
+  }
+  for (const [name, content] of entries) {
+    if (!LANG_NAME.test(name) || typeof content !== 'string' || content.length > 1_000_000) {
+      return c.json({ error: `Invalid language file: ${name.slice(0, 40)}` }, 400)
+    }
+  }
+
+  const result = Store.setLangFiles(server.id, files as Record<string, string>)
+  Store.updateHeartbeat(server.id)
+  console.log(`[API] Language files from ${server.name}: ${result.stored} stored${result.changed ? ' (changed: cached extractions cleared)' : ''}`)
+  return c.json({ success: true, ...result })
 })
 
 const CONVAR_NAME = /^[A-Za-z0-9_]{1,80}$/

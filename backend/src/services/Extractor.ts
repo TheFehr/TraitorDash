@@ -42,7 +42,7 @@ export class Extractor {
       .replace(/\bcontinue\b/g, '__td_continue()') // GMod Lua 'continue' keyword
   }
 
-  public static async extractSchema(roleCode: string, convarState?: Record<string, string>, dataState?: Record<string, any>, roleName?: string): Promise<{ team: string, isPolicingRole: boolean, baserole: number, schema: any[] }> {
+  public static async extractSchema(roleCode: string, convarState?: Record<string, string>, dataState?: Record<string, any>, roleName?: string, langSources: string[] = []): Promise<{ team: string, isPolicingRole: boolean, baserole: number, schema: any[] }> {
     const L = lauxlib.luaL_newstate()
     lualib.luaL_openlibs(L)
 
@@ -93,6 +93,16 @@ export class Extractor {
       // TTT2 builds most of a role's ConVar names from it, so it has to come from the caller.
       lua.lua_pushstring(L, to_luastring(roleName || ''))
       lua.lua_setglobal(L, to_luastring('__TD_ROLE_NAME'))
+
+      // Language files first, so `label_*` keys in the role's settings menu resolve to real
+      // text. Loaded RAW, not through sanitizeCode: that rewrites "!" and "//" and would
+      // corrupt translated strings ("Disguise enabled!"). A broken file is skipped, never fatal.
+      for (const source of langSources) {
+        if (lauxlib.luaL_dostring(L, to_luastring(source)) !== lua.LUA_OK) {
+          console.warn('[Extractor] Skipping a language file that failed to load:', to_jsstring(lua.lua_tostring(L, -1)).slice(0, 160))
+          lua.lua_pop(L, 1)
+        }
+      }
 
       // 2. Sanitize and Load Role Code
       const sanitizedCode = this.sanitizeCode(roleCode)

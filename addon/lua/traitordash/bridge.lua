@@ -152,6 +152,74 @@ function TraitorDash.ReportRole(roleName, schema)
     TraitorDash.PushValues(entries)
 end
 
+-- ---------------------------------------------------------------------------
+-- Language files
+--
+-- A role's settings menu labels are translation keys (label_med_armor); the text is
+-- defined in terrortown/lang/en.lua (TTT2 core) and terrortown/lang/en/<addon>.lua (one per
+-- role addon). Those paths are relative to the LUA search path, which merges every mounted
+-- addon, so one lookup sees them all. They are sent to the backend ONCE per sync, before
+-- any role is ingested, and the backend uses them while extracting each role.
+-- ---------------------------------------------------------------------------
+local function ReadLangFiles()
+    local files = {}
+
+    local core = file.Read("terrortown/lang/en.lua", "LUA")
+    if core and core ~= "" then files["core"] = core end
+
+    for _, name in ipairs((file.Find("terrortown/lang/en/*.lua", "LUA"))) do
+        local content = file.Read("terrortown/lang/en/" .. name, "LUA")
+        if content and content ~= "" then files[name] = content end
+    end
+
+    return files
+end
+
+function TraitorDash.PushLang(callback)
+    local baseUrl, token = GetApi()
+    local files = ReadLangFiles()
+
+    if not baseUrl or next(files) == nil then
+        if callback then callback() end
+        return
+    end
+
+    local count = 0
+    for _ in pairs(files) do count = count + 1 end
+
+    local payload = util.TableToJSON({ files = files })
+    if not payload or payload == "" then
+        print("[TraitorDash] Could not encode the language files (too large?)")
+        if callback then callback() end
+        return
+    end
+
+    print("[TraitorDash] Sending " .. count .. " language files (" .. math.floor(#payload / 1024) .. " KB)...")
+
+    HTTP({
+        url = baseUrl .. "/api/v1/lang",
+        method = "POST",
+        headers = {
+            ["Content-Type"] = "application/json",
+            ["Authorization"] = "Bearer " .. token
+        },
+        body = payload,
+        timeout = 60,
+        success = function(code, body)
+            if code == 200 then
+                print("[TraitorDash] Language files OK")
+            else
+                print("[TraitorDash] Language files rejected (HTTP " .. code .. "): " .. tostring(body))
+            end
+            if callback then callback() end
+        end,
+        failed = function(err)
+            print("[TraitorDash] Language files failed: " .. tostring(err))
+            if callback then callback() end
+        end
+    })
+end
+
 function TraitorDash.IngestRole(roleName, roleCode, hash, force, callback)
     local baseUrl = cv_url:GetString()
     local token = cv_token:GetString()
@@ -332,24 +400,6 @@ function TraitorDash.Sync(force)
                 end
             end
 
-            -- Recursively look for localization files in the addon path
-            -- We try to find the 'lang/en/' folder relative to 'lua/'
-            local luaPos = foundPath:find("lua/")
-            if luaPos then
-                local addonRoot = foundPath:sub(1, luaPos + 3) -- includes 'lua/'
-                local langDir = addonRoot .. "terrortown/lang/en/"
-                local files, _ = file.Find(langDir .. "*", "LUA")
-                for _, f in ipairs(files or {}) do
-                    if f:match("%.lua$") or f:match("%.json$") then
-                        local langContent = file.Read(langDir .. f, "LUA")
-                        if langContent then
-                            content = content .. "\n\n--[[ --- TRAITORDASH: LANG/EN/" .. f:upper() .. " --- ]]\n\n" .. langContent
-                            table.insert(extraFiles, "lang/" .. f)
-                        end
-                    end
-                end
-            end
-
             local extraMsg = #extraFiles > 0 and (" (incl. " .. table.concat(extraFiles, ", ") .. ")") or ""
             print("[TraitorDash] Queueing " .. name .. " from " .. foundPath .. extraMsg)
             
@@ -384,7 +434,9 @@ function TraitorDash.Sync(force)
         end)
     end
 
-    processNext()
+    -- Roles are ingested only after the backend has the language files, so their labels
+    -- resolve. A failed push does not block the sync.
+    TraitorDash.PushLang(function() processNext() end)
 end
 
 concommand.Add("traitordash_sync_force", function(ply, cmd, args)

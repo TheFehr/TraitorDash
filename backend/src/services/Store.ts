@@ -48,6 +48,7 @@ export class Store {
     db.run('DELETE FROM commands WHERE server_id = ?', [id])
     db.run('DELETE FROM authorized_admins WHERE server_id = ?', [id])
     db.run('DELETE FROM convar_values WHERE server_id = ?', [id])
+    db.run('DELETE FROM lang_files WHERE server_id = ?', [id])
     db.run('DELETE FROM servers WHERE id = ?', [id])
   }
 
@@ -106,6 +107,42 @@ export class Store {
     }
 
     return rows
+  }
+
+  /**
+   * Replaces a server's language files. If anything changed, every role's cached
+   * extraction is invalidated (md5_hash cleared): a role file can be unchanged while its
+   * labels are not, and the bridge's md5 check would otherwise keep serving old labels.
+   */
+  static setLangFiles(serverId: string, files: Record<string, string>): { changed: boolean, stored: number } {
+    const existing = new Map<string, string>(
+      (db.prepare('SELECT name, hash FROM lang_files WHERE server_id = ?').all(serverId) as any[]).map(r => [r.name, r.hash])
+    )
+    const incoming = new Map(Object.entries(files).map(([name, content]) => [name, hashToken(content)]))
+
+    let changed = existing.size !== incoming.size
+    for (const [name, hash] of incoming) if (existing.get(name) !== hash) changed = true
+
+    if (changed) {
+      const upsert = db.prepare(`
+        INSERT INTO lang_files (server_id, name, content, hash, updated_at) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(server_id, name) DO UPDATE SET content = excluded.content, hash = excluded.hash, updated_at = excluded.updated_at
+      `)
+      const now = new Date().toISOString()
+      db.transaction(() => {
+        db.run('DELETE FROM lang_files WHERE server_id = ?', [serverId])
+        for (const [name, content] of Object.entries(files)) upsert.run(serverId, name, content, incoming.get(name)!, now)
+        db.run('UPDATE roles SET md5_hash = NULL WHERE server_id = ?', [serverId])
+      })()
+    }
+    return { changed, stored: incoming.size }
+  }
+
+  /** Language file sources in load order: TTT2 core first, then the role addons alphabetically. */
+  static getLangSources(serverId: string): string[] {
+    const rows = db.prepare('SELECT name, content FROM lang_files WHERE server_id = ?').all(serverId) as any[]
+    rows.sort((a, b) => (a.name === 'core' ? -1 : b.name === 'core' ? 1 : a.name.localeCompare(b.name)))
+    return rows.map(r => r.content)
   }
 
   /** Live ConVar state as reported by a server's bridge (upserts, one transaction). */
