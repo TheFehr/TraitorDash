@@ -1,7 +1,7 @@
 import { expect, test, describe, beforeAll } from 'bun:test'
 
 process.env.TRAITORDASH_DB = ':memory:'
-process.env.SESSION_SECRET = 'test-secret'
+process.env.SESSION_SECRET = 'test-secret-test-secret-test-secret-0'
 process.env.ADMIN_STEAM_IDS = '76561198000000000'
 
 let api: any, db: any, token: string, serverId: string

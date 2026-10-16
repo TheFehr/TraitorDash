@@ -3,7 +3,7 @@ import { serializeSigned } from 'hono/utils/cookie'
 
 // Same values as save.test.ts: modules are shared across test files, and session.ts reads these once.
 process.env.TRAITORDASH_DB = ':memory:'
-process.env.SESSION_SECRET = 'test-secret'
+process.env.SESSION_SECRET = 'test-secret-test-secret-test-secret-0'
 process.env.ADMIN_STEAM_IDS = '76561198000000000'
 
 const { isRoleEnabled, roleMetrics, METRICS } = await import('../src/services/roles')
@@ -309,7 +309,7 @@ describe('GET /servers/:id (through the real app)', () => {
       { name: 'ttt_zombie_enabled', role: 'zombie', present: true, value: '0' },
       // newrole has no report at all
     ])
-    cookie = (await serializeSigned('steam_id', '76561198000000000', 'test-secret')).split(';')[0]!
+    cookie = (await serializeSigned('steam_id', '76561198000000000', 'test-secret-test-secret-test-secret-0')).split(';')[0]!
   })
 
   test('marks roles from the live state; a role with no report counts as enabled', async () => {

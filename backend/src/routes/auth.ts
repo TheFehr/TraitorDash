@@ -1,20 +1,36 @@
 import { Hono } from 'hono'
-import { setSignedCookie, deleteCookie } from 'hono/cookie'
+import { setSignedCookie, setCookie, getCookie, deleteCookie } from 'hono/cookie'
 import { SESSION_SECRET, isAdmin } from '../middleware/session'
 
 const auth = new Hono()
 
 const STEAM_OPENID_URL = 'https://steamcommunity.com/openid/login'
 const REALM = process.env.BASE_URL || 'http://localhost:3000'
-const RETURN_URL = `${REALM}/auth/steam/callback`
+const CALLBACK_URL = `${REALM}/auth/steam/callback`
+const STEAM_CLAIMED_ID = /^https:\/\/steamcommunity\.com\/openid\/id\/(\d{17})$/
+const LOGIN_COOKIE = 'td_login'
+
+// Each login attempt carries a random value that is also kept in a cookie in the browser that
+// started it. The callback only accepts an assertion whose return_to contains that same value,
+// so one minted for another site (or another browser) cannot be replayed here.
+const returnUrl = (state: string) => `${CALLBACK_URL}?td_state=${state}`
 
 auth.get('/steam', (c) => {
+  const state = Buffer.from(crypto.getRandomValues(new Uint8Array(24))).toString('hex')
+  setCookie(c, LOGIN_COOKIE, state, {
+    path: '/auth',
+    httpOnly: true,
+    secure: REALM.startsWith('https://'),
+    maxAge: 600,
+    sameSite: 'Lax',
+  })
+
   const params = new URLSearchParams({
     'openid.ns': 'http://specs.openid.net/auth/2.0',
     'openid.mode': 'checkid_setup',
     'openid.identity': 'http://specs.openid.net/auth/2.0/identifier_select',
     'openid.claimed_id': 'http://specs.openid.net/auth/2.0/identifier_select',
-    'openid.return_to': RETURN_URL,
+    'openid.return_to': returnUrl(state),
     'openid.realm': REALM,
   })
 
@@ -23,6 +39,24 @@ auth.get('/steam', (c) => {
 
 auth.get('/steam/callback', async (c) => {
   const query = c.req.query()
+
+  // 0. Only an assertion made for THIS login attempt, by Steam, for a Steam account.
+  const state = getCookie(c, LOGIN_COOKIE)
+  deleteCookie(c, LOGIN_COOKIE, { path: '/auth' })
+  const claimedId = query['openid.claimed_id']
+  const claimed = claimedId ? STEAM_CLAIMED_ID.exec(claimedId) : null
+  if (
+    !state ||
+    query['td_state'] !== state ||
+    query['openid.mode'] !== 'id_res' ||
+    query['openid.return_to'] !== returnUrl(state) ||
+    query['openid.op_endpoint'] !== STEAM_OPENID_URL ||
+    !claimed ||
+    query['openid.identity'] !== claimedId
+  ) {
+    console.warn('[Auth] Rejected a Steam callback that does not belong to a login started here')
+    return c.text('Invalid login response', 400)
+  }
 
   // 1. Prepare verification request
   const verificationParams = new URLSearchParams(query)
@@ -46,12 +80,8 @@ auth.get('/steam/callback', async (c) => {
       return c.text('Steam authentication failed', 401)
     }
 
-    // 3. Extract SteamID64
-    const claimedId = query['openid.claimed_id']
-    if (!claimedId) return c.text('Missing claimed_id', 400)
-    
-    const steamId = claimedId.split('/').pop()
-    if (!steamId) return c.text('Invalid steamId', 400)
+    // 3. The SteamID64 (already shape-checked above)
+    const steamId = claimed[1]!
 
     if (!isAdmin(steamId)) {
       console.warn(`[Auth] Login denied for non-admin SteamID ${steamId}`)

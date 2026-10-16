@@ -2,7 +2,7 @@ import { expect, test, describe, beforeAll } from 'bun:test'
 import { serializeSigned } from 'hono/utils/cookie'
 
 process.env.TRAITORDASH_DB = ':memory:'
-process.env.SESSION_SECRET = 'test-secret'
+process.env.SESSION_SECRET = 'test-secret-test-secret-test-secret-0'
 process.env.ADMIN_STEAM_IDS = '76561198000000000'
 
 let app: any, Store: any, stats: any, serverId: string, cookie: string
@@ -20,7 +20,7 @@ beforeAll(async () => {
   Store = (await import('../src/services/Store')).Store
   stats = await import('../src/services/stats')
   serverId = Store.addServer('Stats').id
-  cookie = (await serializeSigned('steam_id', '76561198000000000', 'test-secret')).split(';')[0]!
+  cookie = (await serializeSigned('steam_id', '76561198000000000', 'test-secret-test-secret-test-secret-0')).split(';')[0]!
 
   const rec = (roundId: string, result: string, duration: number, players: any[], deaths: any[]) =>
     Store.recordRound(serverId, { roundId, map: 'ttt_a', startedAt: null, duration, result, players, deaths })

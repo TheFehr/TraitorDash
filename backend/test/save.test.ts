@@ -3,7 +3,7 @@ import { serializeSigned } from 'hono/utils/cookie'
 
 // Must be set before the app modules are imported (they read env at load time).
 process.env.TRAITORDASH_DB = ':memory:'
-process.env.SESSION_SECRET = 'test-secret'
+process.env.SESSION_SECRET = 'test-secret-test-secret-test-secret-0'
 process.env.ADMIN_STEAM_IDS = '76561198000000000'
 
 let api: any, Store: any, db: any
@@ -21,7 +21,7 @@ beforeAll(async () => {
     { type: 'conVarData', args: { key: 'shopFallback', value: 'detective', convar: 'ttt_surv_shop_fallback' } },
     { type: 'conVarData', args: { key: 'togglable', value: true, convar: 'ttt_survivalist_enabled' } },
   ])
-  cookie = (await serializeSigned('steam_id', '76561198000000000', 'test-secret')).split(';')[0]!
+  cookie = (await serializeSigned('steam_id', '76561198000000000', 'test-secret-test-secret-test-secret-0')).split(';')[0]!
 })
 
 const save = (body: Record<string, string>) =>
