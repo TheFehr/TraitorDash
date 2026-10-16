@@ -1,4 +1,5 @@
 import { isServerOnline } from '../services/ServerUtils'
+import { Heartbeat } from './Heartbeat'
 
 type NewToken = { serverId: string, token: string }
 
@@ -35,6 +36,7 @@ export const ServerManager = ({ servers, newToken }: { servers: any[], newToken?
                 <th class="pb-4 px-4">Server Name</th>
                 <th class="pb-4 px-4">ID</th>
                 <th class="pb-4 px-4">Status</th>
+                <th class="pb-4 px-4">Last heartbeat</th>
                 <th class="pb-4 px-4 text-right">Actions</th>
               </tr>
             </thead>
@@ -51,6 +53,7 @@ export const ServerManager = ({ servers, newToken }: { servers: any[], newToken?
                         {isOnline ? 'Online' : 'Offline'}
                       </span>
                     </td>
+                    <td class="py-4 px-4 text-sm text-gray-400"><Heartbeat lastSeen={server.last_seen} /></td>
                     <td class="py-4 px-4 text-right whitespace-nowrap">
                       <button
                         hx-post={`/api/servers/${server.id}/regenerate-token`}

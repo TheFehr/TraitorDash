@@ -1,4 +1,5 @@
 import { isServerOnline } from '../services/ServerUtils'
+import { Heartbeat } from './Heartbeat'
 
 export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }) => {
   const isOnline = isServerOnline(server.last_seen)
@@ -60,7 +61,10 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
         </div>
         <div class={`px-4 py-2 rounded-xl border ${isOnline ? 'border-green-500/50 bg-green-500/10 text-green-400' : 'border-gray-700 bg-gray-800 text-gray-500'} flex items-center gap-3 shadow-xl`}>
            <div class={`w-3 h-3 rounded-full ${isOnline ? 'bg-green-500 animate-pulse' : 'bg-gray-700'}`}></div>
-           <span class="font-black uppercase text-sm tracking-tighter">{isOnline ? 'System Online' : 'System Dead'}</span>
+           <div>
+             <span class="block font-black uppercase text-sm tracking-tighter">{isOnline ? 'System Online' : 'System Dead'}</span>
+             <span class="block text-xs opacity-80">Last heartbeat: <Heartbeat lastSeen={server.last_seen} /></span>
+           </div>
         </div>
       </header>
 

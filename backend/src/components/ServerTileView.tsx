@@ -1,4 +1,5 @@
-import { isServerOnline, formatLastSeen } from '../services/ServerUtils'
+import { isServerOnline } from '../services/ServerUtils'
+import { Heartbeat } from './Heartbeat'
 
 export const ServerTileView = ({ servers }: { servers: any[] }) => {
   return (
@@ -29,7 +30,7 @@ export const ServerTileView = ({ servers }: { servers: any[] }) => {
               <div class="pt-6 border-t border-gray-700 mt-auto">
                 <p class="text-xs text-gray-500 uppercase font-bold mb-2">Last Heartbeat</p>
                 <p class="text-sm text-gray-300">
-                  {formatLastSeen(server.last_seen)}
+                  <Heartbeat lastSeen={server.last_seen} />
                 </p>
               </div>
             </div>

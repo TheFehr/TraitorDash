@@ -1,4 +1,5 @@
 import { isServerOnline } from '../services/ServerUtils'
+import { Heartbeat } from './Heartbeat'
 
 export const AdminDashboard = ({ servers }: { servers: any[] }) => {
   return (
@@ -22,6 +23,8 @@ export const AdminDashboard = ({ servers }: { servers: any[] }) => {
                 </div>
                 <h3 class="text-2xl font-bold group-hover:text-red-400 transition mb-1">{server.name}</h3>
                 <p class="text-gray-500 text-xs font-mono mb-4">{server.id}</p>
+                <p class="text-xs text-gray-500 uppercase font-bold mb-1">Last heartbeat</p>
+                <p class="text-sm text-gray-300 mb-4"><Heartbeat lastSeen={server.last_seen} /></p>
               </div>
               <div class="pt-4 border-t border-gray-700 flex justify-between items-center text-sm font-bold text-gray-400 uppercase tracking-tighter">
                  <span>Manage Node</span>
