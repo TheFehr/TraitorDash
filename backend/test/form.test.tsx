@@ -134,3 +134,24 @@ describe('live values from the server', () => {
     expect(html).toContain('>default</span>')
   })
 })
+
+describe('live ConVars without bounds (what TTT2 actually reports)', () => {
+  const unbounded = (value: string, def: string) => ({ role: 'survivalist', present: true, value, default: def, min: null, max: null, updatedAt: 'x' })
+  const live = {
+    ttt_survivalist_traitor_button: unbounded('0', '0'),
+    ttt_survivalist_random: unbounded('25', '100'),
+    ttt_survivalist_pct: unbounded('1', '0.15'),
+  }
+  const out = decode(String(<RoleConfigForm serverId="s" role="survivalist" schema={survivalist} live={live} />))
+  const field = (convar: string) => out.match(new RegExp(`<input[^>]*id="${convar}"[^>]*>`))?.[0] ?? ''
+
+  test('a 0/1 setting with no bounds is still a toggle', () => {
+    expect(field('ttt_survivalist_traitor_button')).toContain('type="checkbox"')
+  })
+
+  test('other numbers stay numbers, and pct stays limited to 0..1 with a finer step', () => {
+    expect(field('ttt_survivalist_random')).toContain('type="number"')
+    expect(field('ttt_survivalist_pct')).toContain('max="1"')
+    expect(field('ttt_survivalist_pct')).toContain('step="0.01"')
+  })
+})

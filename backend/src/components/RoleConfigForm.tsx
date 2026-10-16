@@ -27,9 +27,15 @@ const parseLive = (kind: FieldKind, raw: string): any => {
   return raw
 }
 
-/** Control for a ConVar only the server told us about (no schema entry): decided from its default and bounds. */
+/**
+ * Control for a ConVar only the server told us about (no schema entry), decided from its
+ * default and value. TTT2 creates its role ConVars WITHOUT bounds (min/max come back
+ * null), so a 0/1 setting counts as a toggle unless the server reports bounds that
+ * say otherwise.
+ */
 const kindForLive = (lv: LiveConVar): FieldKind => {
-  if (isFlag(lv.default) && isFlag(lv.value) && lv.min === 0 && lv.max === 1) return 'toggle'
+  const boundsAllowFlag = (lv.min === null && lv.max === null) || (lv.min === 0 && lv.max === 1)
+  if (isFlag(lv.default) && isFlag(lv.value) && boundsAllowFlag) return 'toggle'
   if (lv.default !== null && lv.default !== '' && !Number.isNaN(Number(lv.default))) return 'number'
   return 'text'
 }
