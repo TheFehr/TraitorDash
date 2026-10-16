@@ -1,15 +1,17 @@
 import { Hono } from 'hono'
 import { Extractor } from '../services/Extractor'
-import { Store } from '../services/Store'
+import { Store, type LiveConVarEntry } from '../services/Store'
 import { ServerManager } from '../components/ServerManager'
+import { requireSession } from '../middleware/session'
+import { normalizeConVarValue, formatConVarCommand } from '../services/convars'
 
 type Variables = {
   server: {
     id: string
     name: string
-    api_token: string
     last_seen: string | null
   }
+  adminId: string
 }
 
 const api = new Hono<{ Variables: Variables }>()
@@ -32,25 +34,46 @@ const getServer = async (c: any, next: any) => {
   await next()
 }
 
-api.get('/servers', async (c) => {
-  const servers = Store.getServers()
-  return c.html(<ServerManager servers={servers} />)
-})
+// Admin-facing routes require a logged-in session
+api.use('/servers', requireSession)
+api.use('/servers/*', requireSession)
+api.use('/save/*', requireSession)
+
+// Token responses must never be cached: the plaintext token is shown exactly once.
+const serverManager = (c: any, newToken?: { serverId: string, token: string }) => {
+  c.header('Cache-Control', 'no-store')
+  return c.html(<ServerManager servers={Store.getServers()} newToken={newToken} />)
+}
+
+api.get('/servers', async (c) => serverManager(c))
 
 api.post('/servers', async (c) => {
   const { name } = await c.req.parseBody()
-  if (name && typeof name === 'string') {
-    Store.addServer(name)
-  }
-  const servers = Store.getServers()
-  return c.html(<ServerManager servers={servers} />)
+  const trimmed = typeof name === 'string' ? name.trim() : ''
+  if (!trimmed) return serverManager(c)
+
+  const { id, token } = Store.addServer(trimmed)
+  Store.audit(id, c.get('adminId'), 'CREATE_SERVER', `Name: ${trimmed}`)
+  return serverManager(c, { serverId: id, token })
+})
+
+api.post('/servers/:id/regenerate-token', async (c) => {
+  const id = c.req.param('id')
+  const token = Store.regenerateToken(id)
+  if (!token) return c.json({ error: 'Server not found' }, 404)
+
+  Store.audit(id, c.get('adminId'), 'REGEN_TOKEN')
+  return serverManager(c, { serverId: id, token })
 })
 
 api.delete('/servers/:id', async (c) => {
   const id = c.req.param('id')
-  Store.deleteServer(id)
-  const servers = Store.getServers()
-  return c.html(<ServerManager servers={servers} />)
+  const server = Store.getServerById(id)
+  if (server) {
+    Store.audit(id, c.get('adminId'), 'DELETE_SERVER', `Name: ${server.name}`)
+    Store.deleteServer(id)
+  }
+  return serverManager(c)
 })
 
 api.post('/ingest', getServer, async (c) => {
@@ -76,16 +99,18 @@ api.post('/ingest', getServer, async (c) => {
       const existingHash = Store.getRoleHash(server.id, name)
       if (existingHash === md5_hash) {
         console.log(`[API] Ingest: ${name} for ${server.name} unchanged (MD5: ${md5_hash}). Skipping extraction.`)
+        // Schema included so the bridge can still work out which ConVars to report.
         return c.json({
           success: true,
           role: name,
-          cached: true
+          cached: true,
+          schema: Store.getSchema(server.id, name) ?? []
         })
       }
     }
 
     console.log(`[API] Ingesting role: ${name} for server ${server.name} (Size: ${role_code.length} bytes, Force: ${!!force})`)
-    const { team, isPolicingRole, baserole, schema } = await Extractor.extractSchema(role_code, convar_state, data_state)
+    const { team, isPolicingRole, baserole, schema } = await Extractor.extractSchema(role_code, convar_state, data_state, name)
 
     // Save to database via Store
     Store.saveSchema(server.id, name, team, isPolicingRole, baserole, schema, md5_hash)
@@ -106,6 +131,41 @@ api.post('/ingest', getServer, async (c) => {
       error: err.message
     }, 500)
   }
+})
+
+const CONVAR_NAME = /^[A-Za-z0-9_]{1,80}$/
+const short = (v: unknown) => (typeof v === 'string' && v.length <= 256 ? v : null)
+const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+
+// The bridge reports each ConVar's live state: value, default, bounds, or that it does not exist.
+api.post('/v1/values', getServer, async (c) => {
+  const server = c.get('server')
+  const body = await c.req.json().catch(() => null)
+  const convars = body?.convars
+  if (!Array.isArray(convars) || convars.length > 400) {
+    return c.json({ error: 'convars must be an array of at most 400 entries' }, 400)
+  }
+
+  const entries: LiveConVarEntry[] = []
+  for (const e of convars) {
+    if (typeof e?.name !== 'string' || !CONVAR_NAME.test(e.name)) {
+      return c.json({ error: `Invalid ConVar name: ${String(e?.name).slice(0, 40)}` }, 400)
+    }
+    const role = typeof e.role === 'string' && CONVAR_NAME.test(e.role) ? e.role : null
+    entries.push({
+      name: e.name,
+      role,
+      present: e.present === true,
+      value: short(e.value),
+      default: short(e.default),
+      min: num(e.min),
+      max: num(e.max),
+    })
+  }
+
+  Store.setConVarValues(server.id, entries)
+  Store.updateHeartbeat(server.id)
+  return c.json({ success: true, stored: entries.length })
 })
 
 api.post('/save/:serverId/:role', async (c) => {
@@ -130,16 +190,43 @@ api.post('/save/:serverId/:role', async (c) => {
     }
   })
 
-  let stagedCount = 0
+  // ConVars the server itself reported for this role (random, traitor_button, ...) are
+  // editable too, even though the role file does not declare them.
+  for (const [name, lv] of Object.entries(Store.getConVarValues(serverId))) {
+    if (lv.role === role && lv.present) allowedKeys.add(name)
+  }
+
+  // Validate everything first: either all changes are queued or none are.
+  const accepted: Array<[string, string]> = []
+  const rejected: string[] = []
   for (const [convar, value] of Object.entries(body)) {
     if (!allowedKeys.has(convar)) {
       console.warn(`[API] SECURITY ALERT: Blocked unauthorized config injection attempt for key: ${convar} on role: ${role}`)
       continue
     }
 
-    const finalValue = value === 'on' ? '1' : (value === '' ? '0' : value)
-    Store.stageCommand(serverId, 'convar', `${convar} ${finalValue}`)
-    stagedCount++
+    const clean = normalizeConVarValue(value)
+    if (clean === null) {
+      console.warn(`[API] SECURITY ALERT: Rejected unsafe value for ${convar} on role: ${role}`)
+      rejected.push(convar)
+      continue
+    }
+    accepted.push([convar, clean])
+  }
+
+  if (rejected.length > 0) {
+    return c.json({ error: `Invalid value for: ${rejected.join(', ')}`, rejected }, 400)
+  }
+
+  const changes: string[] = []
+  for (const [convar, value] of accepted) {
+    Store.stageCommand(serverId, 'convar', formatConVarCommand(convar, value))
+    changes.push(`${convar}=${value}`)
+  }
+  const stagedCount = accepted.length
+
+  if (stagedCount > 0) {
+    Store.audit(serverId, c.get('adminId'), 'SAVE_CONFIG', `Role: ${role}, Changes: ${changes.join(', ')}`)
   }
 
   return c.json({ success: true, commands_staged: stagedCount })

@@ -1,0 +1,157 @@
+import type { Database } from 'bun:sqlite'
+import { createHash } from 'node:crypto'
+
+export const hashToken = (token: string) => createHash('sha256').update(token).digest('hex')
+
+/**
+ * Versioned schema migrations, tracked with PRAGMA user_version.
+ *
+ * v3/v4 bring this codebase in line with the schema the previously deployed
+ * dashboard already ran at (user_version 4): hashed API tokens and an audit
+ * log. A database already at v4 is therefore adopted as-is.
+ */
+export const migrations: Array<(db: Database) => void> = [
+  // v1: Initial Schema (RFC 1-6 base)
+  (db) => {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS servers (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        api_token TEXT NOT NULL UNIQUE,
+        last_seen DATETIME
+      )
+    `)
+    db.run(`
+      CREATE TABLE IF NOT EXISTS roles (
+        server_id TEXT,
+        role_name TEXT,
+        schema_json TEXT NOT NULL,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (server_id, role_name),
+        FOREIGN KEY (server_id) REFERENCES servers(id)
+      )
+    `)
+    db.run(`
+      CREATE TABLE IF NOT EXISTS config (
+        server_id TEXT,
+        convar TEXT,
+        value TEXT,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (server_id, convar),
+        FOREIGN KEY (server_id) REFERENCES servers(id)
+      )
+    `)
+    db.run(`
+      CREATE TABLE IF NOT EXISTS commands (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        server_id TEXT,
+        command TEXT NOT NULL,
+        args TEXT NOT NULL,
+        staged_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (server_id) REFERENCES servers(id)
+      )
+    `)
+  },
+  // v2: Added columns for RFCs and MD5 caching
+  (db) => {
+    const tableInfo = db.query("PRAGMA table_info(roles)").all() as any[]
+    const columns = tableInfo.map(c => c.name)
+
+    if (!columns.includes('team')) db.run('ALTER TABLE roles ADD COLUMN team TEXT DEFAULT "unknown"')
+    if (!columns.includes('is_policing')) db.run('ALTER TABLE roles ADD COLUMN is_policing BOOLEAN DEFAULT 0')
+    if (!columns.includes('baserole')) db.run('ALTER TABLE roles ADD COLUMN baserole INTEGER DEFAULT -1')
+    if (!columns.includes('md5_hash')) db.run('ALTER TABLE roles ADD COLUMN md5_hash TEXT')
+  },
+  // v3: Audit log and per-server authorized admins (RFC 5)
+  (db) => {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS authorized_admins (
+        server_id TEXT,
+        steam_id TEXT,
+        last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (server_id, steam_id),
+        FOREIGN KEY (server_id) REFERENCES servers(id)
+      )
+    `)
+    db.run(`
+      CREATE TABLE IF NOT EXISTS audit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        server_id TEXT,
+        steam_id TEXT,
+        action TEXT NOT NULL,
+        details TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (server_id) REFERENCES servers(id)
+      )
+    `)
+  },
+  // v4: Store only a hash of each server's API token. Existing plaintext tokens
+  // are hashed in place, so bridges already configured with them keep working.
+  (db) => {
+    const columns = (db.query('PRAGMA table_info(servers)').all() as any[]).map(c => c.name)
+    if (columns.includes('api_token_hash')) return
+
+    db.run(`
+      CREATE TABLE servers_new (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        api_token_hash TEXT NOT NULL UNIQUE,
+        last_seen DATETIME
+      )
+    `)
+    const insert = db.prepare('INSERT INTO servers_new (id, name, api_token_hash, last_seen) VALUES (?, ?, ?, ?)')
+    for (const row of db.query('SELECT id, name, api_token, last_seen FROM servers').all() as any[]) {
+      insert.run(row.id, row.name, hashToken(row.api_token), row.last_seen)
+    }
+    db.run('DROP TABLE servers')
+    db.run('ALTER TABLE servers_new RENAME TO servers')
+  },
+  // v5: live ConVar state reported by the game server's bridge: current value,
+  // default, bounds, and whether the ConVar exists at all on that server.
+  (db) => {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS convar_values (
+        server_id TEXT NOT NULL,
+        convar TEXT NOT NULL,
+        role_name TEXT,
+        present INTEGER NOT NULL DEFAULT 1,
+        value TEXT,
+        default_value TEXT,
+        min_value REAL,
+        max_value REAL,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (server_id, convar),
+        FOREIGN KEY (server_id) REFERENCES servers(id)
+      )
+    `)
+  }
+]
+
+/** Brings `db` up to the latest schema, in one transaction. */
+export function migrate(db: Database) {
+  let { user_version } = db.query('PRAGMA user_version').get() as { user_version: number }
+
+  // Legacy database detection: assign a version to unversioned databases
+  if (user_version === 0) {
+    const hasServersTable = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='servers'").get()
+    if (hasServersTable) {
+      const rolesTable = db.query("SELECT sql FROM sqlite_master WHERE type='table' AND name='roles'").get() as { sql: string }
+      user_version = rolesTable && rolesTable.sql.includes('md5_hash') ? 2 : 1
+      db.run(`PRAGMA user_version = ${user_version}`)
+    }
+  }
+
+  if (user_version > migrations.length) {
+    throw new Error(`Database is at schema v${user_version}, newer than this build supports (v${migrations.length}).`)
+  }
+
+  if (user_version < migrations.length) {
+    db.transaction(() => {
+      for (let i = user_version; i < migrations.length; i++) {
+        console.log(`[Database] Applying migration v${i + 1}...`)
+        migrations[i]!(db)
+      }
+      db.run(`PRAGMA user_version = ${migrations.length}`)
+    })()
+  }
+}

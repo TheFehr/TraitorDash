@@ -1,12 +1,12 @@
 import { Hono } from 'hono'
 import { setSignedCookie, deleteCookie } from 'hono/cookie'
+import { SESSION_SECRET, isAdmin } from '../middleware/session'
 
 const auth = new Hono()
 
 const STEAM_OPENID_URL = 'https://steamcommunity.com/openid/login'
 const REALM = process.env.BASE_URL || 'http://localhost:3000'
 const RETURN_URL = `${REALM}/auth/steam/callback`
-const SESSION_SECRET = process.env.SESSION_SECRET || 'insecure-fallback-secret'
 
 auth.get('/steam', (c) => {
   const params = new URLSearchParams({
@@ -52,6 +52,11 @@ auth.get('/steam/callback', async (c) => {
     
     const steamId = claimedId.split('/').pop()
     if (!steamId) return c.text('Invalid steamId', 400)
+
+    if (!isAdmin(steamId)) {
+      console.warn(`[Auth] Login denied for non-admin SteamID ${steamId}`)
+      return c.text('This Steam account is not authorized to administer TraitorDash.', 403)
+    }
 
     // 4. Set Secure Signed Session
     await setSignedCookie(c, 'steam_id', steamId, SESSION_SECRET, {

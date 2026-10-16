@@ -1,11 +1,11 @@
 import { Hono } from 'hono'
 import { serveStatic } from 'hono/bun'
-import { getSignedCookie } from 'hono/cookie'
 
 // Routes & Services
 import api from './routes/api'
 import auth from './routes/auth'
 import { Store } from './services/Store'
+import { getAdminId } from './middleware/session'
 
 // Components
 import { Layout } from './components/Layout'
@@ -17,7 +17,6 @@ import { ServerManager } from './components/ServerManager'
 import { Sidebar, RoleListPartial } from './components/Sidebar'
 
 const app = new Hono()
-const SESSION_SECRET = process.env.SESSION_SECRET || 'insecure-fallback-secret'
 
 // Static Assets
 app.use('/public/*', serveStatic({ root: './src' }))
@@ -30,6 +29,7 @@ app.route('/auth', auth)
  * Sidebar Partial for HTMX Search
  */
 app.get('/sidebar/:serverId', async (c) => {
+  if (!(await getAdminId(c))) return c.text('Unauthorized', 401)
   const serverId = c.req.param('serverId')
   const query = c.req.query('q') || ''
   const roles = Store.getRoles(serverId)
@@ -45,7 +45,7 @@ app.get('/sidebar/:serverId', async (c) => {
  * Main Entry Point: Guest Tile View or Admin Dashboard
  */
 app.get('/', async (c) => {
-  const steamId = await getSignedCookie(c, SESSION_SECRET, 'steam_id')
+  const steamId = await getAdminId(c)
   const servers = Store.getServers()
   
   if (!steamId) {
@@ -67,7 +67,7 @@ app.get('/', async (c) => {
  * Server Management CRUD Page
  */
 app.get('/servers', async (c) => {
-  const steamId = await getSignedCookie(c, SESSION_SECRET, 'steam_id')
+  const steamId = await getAdminId(c)
   if (!steamId) return c.redirect('/')
   
   const servers = Store.getServers()
@@ -85,7 +85,7 @@ app.get('/servers', async (c) => {
  * Specific Server Dashboard (Role List)
  */
 app.get('/servers/:serverId', async (c) => {
-  const steamId = await getSignedCookie(c, SESSION_SECRET, 'steam_id')
+  const steamId = await getAdminId(c)
   if (!steamId) return c.redirect('/')
 
   const serverId = c.req.param('serverId')
@@ -110,7 +110,7 @@ app.get('/servers/:serverId', async (c) => {
  * Specific Role Configuration Page
  */
 app.get('/servers/:serverId/roles/:roleName', async (c) => {
-  const steamId = await getSignedCookie(c, SESSION_SECRET, 'steam_id')
+  const steamId = await getAdminId(c)
   if (!steamId) return c.redirect('/')
 
   const serverId = c.req.param('serverId')
@@ -134,7 +134,7 @@ app.get('/servers/:serverId/roles/:roleName', async (c) => {
                 <span>/</span>
                 <span class="text-red-500">{roleName}</span>
             </nav>
-            <RoleConfigForm serverId={serverId} role={roleName} schema={schema} />
+            <RoleConfigForm serverId={serverId} role={roleName} schema={schema} live={Store.getConVarValues(serverId)} />
           </div>
        </div>
     </Layout>

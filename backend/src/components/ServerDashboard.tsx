@@ -7,8 +7,9 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
   const groups = roles.reduce((acc: any, role: any) => {
     let teamKey = role.team || 'unknown'
     
-    // Force grouping for detective variants
-    if (role.is_policing === 1 || role.baserole === 2 || role.role_name === 'detective') {
+    // Detective variants (baserole 2) group with the detective. is_policing is NOT
+    // used here: Survivalist is policing but an innocent-based role.
+    if (role.baserole === 2 || role.role_name === 'detective') {
       teamKey = 'detectives'
     }
 

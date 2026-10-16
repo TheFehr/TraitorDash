@@ -1,32 +1,53 @@
 import db from './Database'
+import { hashToken } from './migrations'
+
+// Never select api_token_hash for anything that can reach a template.
+const SERVER_COLS = 'id, name, last_seen'
+
+/** 256 random bits, hex. Shown to an admin once; only its hash is stored. */
+const newToken = () => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('hex')
 
 export class Store {
   static getServers(): any[] {
-    const query = db.prepare('SELECT * FROM servers ORDER BY name ASC')
+    const query = db.prepare(`SELECT ${SERVER_COLS} FROM servers ORDER BY name ASC`)
     return query.all()
   }
 
   static getServerById(id: string): any | null {
-    const query = db.prepare('SELECT * FROM servers WHERE id = ?')
+    const query = db.prepare(`SELECT ${SERVER_COLS} FROM servers WHERE id = ?`)
     return query.get(id) || null
   }
 
   static getServerByToken(token: string): any | null {
-    const query = db.prepare('SELECT * FROM servers WHERE api_token = ?')
-    return query.get(token) || null
+    const query = db.prepare(`SELECT ${SERVER_COLS} FROM servers WHERE api_token_hash = ?`)
+    return query.get(hashToken(token)) || null
   }
 
   static addServer(name: string) {
     const id = crypto.randomUUID()
-    const token = crypto.randomUUID()
-    const insert = db.prepare('INSERT INTO servers (id, name, api_token) VALUES (?, ?, ?)')
-    insert.run(id, name, token)
+    const token = newToken()
+    const insert = db.prepare('INSERT INTO servers (id, name, api_token_hash) VALUES (?, ?, ?)')
+    insert.run(id, name, hashToken(token))
     return { id, token }
+  }
+
+  /** Replaces a server's token. The old one stops working immediately. */
+  static regenerateToken(id: string): string | null {
+    const token = newToken()
+    const result = db.prepare('UPDATE servers SET api_token_hash = ? WHERE id = ?').run(hashToken(token), id)
+    return result.changes > 0 ? token : null
+  }
+
+  static audit(serverId: string | null, steamId: string | null, action: string, details?: string) {
+    db.prepare('INSERT INTO audit_log (server_id, steam_id, action, details) VALUES (?, ?, ?, ?)')
+      .run(serverId, steamId, action, details ?? null)
   }
 
   static deleteServer(id: string) {
     db.run('DELETE FROM roles WHERE server_id = ?', [id])
     db.run('DELETE FROM commands WHERE server_id = ?', [id])
+    db.run('DELETE FROM authorized_admins WHERE server_id = ?', [id])
+    db.run('DELETE FROM convar_values WHERE server_id = ?', [id])
     db.run('DELETE FROM servers WHERE id = ?', [id])
   }
 
@@ -86,4 +107,66 @@ export class Store {
 
     return rows
   }
+
+  /** Live ConVar state as reported by a server's bridge (upserts, one transaction). */
+  static setConVarValues(serverId: string, entries: LiveConVarEntry[]) {
+    const upsert = db.prepare(`
+      INSERT INTO convar_values (server_id, convar, role_name, present, value, default_value, min_value, max_value, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(server_id, convar) DO UPDATE SET
+        role_name = COALESCE(excluded.role_name, convar_values.role_name),
+        present = excluded.present,
+        value = excluded.value,
+        default_value = excluded.default_value,
+        min_value = excluded.min_value,
+        max_value = excluded.max_value,
+        updated_at = excluded.updated_at
+    `)
+    const now = new Date().toISOString()
+    db.transaction(() => {
+      for (const e of entries) {
+        upsert.run(serverId, e.name, e.role ?? null, e.present ? 1 : 0, e.value ?? null, e.default ?? null, e.min ?? null, e.max ?? null, now)
+      }
+    })()
+  }
+
+  /** Every reported ConVar for a server, keyed by ConVar name. */
+  static getConVarValues(serverId: string): Record<string, LiveConVar> {
+    const rows = db.prepare('SELECT convar, role_name, present, value, default_value, min_value, max_value, updated_at FROM convar_values WHERE server_id = ?').all(serverId) as any[]
+    const out: Record<string, LiveConVar> = {}
+    for (const r of rows) {
+      out[r.convar] = {
+        role: r.role_name,
+        present: r.present === 1,
+        value: r.value,
+        default: r.default_value,
+        min: r.min_value,
+        max: r.max_value,
+        updatedAt: r.updated_at,
+      }
+    }
+    return out
+  }
+}
+
+/** What the bridge sends per ConVar. */
+export type LiveConVarEntry = {
+  name: string
+  role?: string | null
+  present: boolean
+  value?: string | null
+  default?: string | null
+  min?: number | null
+  max?: number | null
+}
+
+/** What the UI reads back. */
+export type LiveConVar = {
+  role: string | null
+  present: boolean
+  value: string | null
+  default: string | null
+  min: number | null
+  max: number | null
+  updatedAt: string
 }
