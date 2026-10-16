@@ -192,8 +192,22 @@ app.get('/servers/:serverId/roles/:roleName', async (c) => {
   )
 })
 
+// Pelican hands the allocated port over as SERVER_PORT.
+const port = Number(process.env.SERVER_PORT || process.env.PORT) || 3000
+
+// The Pelican egg marks the server as "running" when it sees this exact line (see
+// pelican/egg-traitordash.json). Bun's own "Started development server" message is only
+// printed in development mode, so with NODE_ENV=production the panel would wait forever.
+export const STARTUP_LOG_LINE = '[TraitorDash] Listening on port'
+
+// The server itself starts once this module has finished loading (default export below),
+// so the line is logged right after, and only when run as the program (not by the tests).
+if (import.meta.main) {
+  setTimeout(() => console.log(`${STARTUP_LOG_LINE} ${port}`), 0)
+}
+
 export default {
-  port: 3000,
+  port,
   hostname: '0.0.0.0',
   // Bun's default is 128MB. The biggest legitimate body is the language-file push.
   maxRequestBodySize: 32 * 1024 * 1024,

@@ -1,0 +1,104 @@
+{
+  "_comment": "Maintained in the TraitorDash repository (pelican/). Import it in the panel under Admin > Eggs.",
+  "meta": {
+    "version": "PLCN_v3",
+    "update_url": null
+  },
+  "exported_at": "2026-10-17T00:00:00+00:00",
+  "name": "TraitorDash",
+  "author": "TheFehr",
+  "uuid": "c0840f94-3be9-4cd5-8032-db97771f9d53",
+  "description": "TraitorDash: web dashboard for configuring a GMod TTT2 server (Bun + Hono + SQLite). The app files are deployed into the server's volume; this egg only runs them.",
+  "icon": null,
+  "tags": [],
+  "features": [],
+  "docker_images": {
+    "Bun Latest": "ghcr.io/parkervcp/yolks:bun_latest"
+  },
+  "file_denylist": [],
+  "startup_commands": {
+    "Default": "if [ -f /home/container/package.json ]; then bun install --production --frozen-lockfile; fi; bun run {{MAIN_FILE}}"
+  },
+  "config": {
+    "files": "{}",
+    "startup": "{\n    \"done\": [\n        \"[TraitorDash] Listening on port\"\n    ]\n}",
+    "logs": "{}",
+    "stop": "^C"
+  },
+  "scripts": {
+    "installation": {
+      "script": "#!/bin/bash\n# TraitorDash installation\n#\n# Nothing to download: the app is deployed into /mnt/server (the server's files) by the\n# homelab-infrastructure `traitordash` Ansible role, and its dependencies are installed by the\n# startup command (bun install). This only makes sure the directory exists.\nmkdir -p /mnt/server\necho \"TraitorDash: nothing to install; deploy the app files, then start the server.\"\n",
+      "container": "ghcr.io/parkervcp/installers:debian",
+      "entrypoint": "bash"
+    }
+  },
+  "variables": [
+    {
+      "sort": 1,
+      "name": "Public URL",
+      "description": "The address the dashboard is reached at, e.g. https://traitordash.example.com (no path; a trailing slash is ignored). Steam sends admins back to it after login, so it must be the address in their browser.",
+      "env_variable": "BASE_URL",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": [
+        "required",
+        "string"
+      ]
+    },
+    {
+      "sort": 2,
+      "name": "Admin SteamID64s",
+      "description": "Comma-separated SteamID64s allowed to administer. Empty means nobody can log in.",
+      "env_variable": "ADMIN_STEAM_IDS",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": [
+        "required",
+        "string"
+      ]
+    },
+    {
+      "sort": 3,
+      "name": "Session Secret",
+      "description": "Random string of at least 32 characters used to sign login sessions (openssl rand -hex 32). The app refuses to start without it. Change it to log everyone out.",
+      "env_variable": "SESSION_SECRET",
+      "default_value": "",
+      "user_viewable": false,
+      "user_editable": false,
+      "rules": [
+        "required",
+        "string",
+        "min:32"
+      ]
+    },
+    {
+      "sort": 4,
+      "name": "Node Environment",
+      "description": "production enables Secure cookies. Use development only on a trusted local network.",
+      "env_variable": "NODE_ENV",
+      "default_value": "production",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": [
+        "required",
+        "string",
+        "in:production,development"
+      ]
+    },
+    {
+      "sort": 5,
+      "name": "Main File",
+      "description": "The file Bun runs.",
+      "env_variable": "MAIN_FILE",
+      "default_value": "src/index.tsx",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": [
+        "required",
+        "string"
+      ]
+    }
+  ]
+}
