@@ -1,5 +1,9 @@
 import db from './Database'
+import { createHash } from 'node:crypto'
 import { hashToken } from './migrations'
+
+/** Change detection for language file contents. Not a security use: just "did this text change". */
+const contentHash = (text: string) => createHash('sha256').update(text).digest('hex')
 
 // Never select api_token_hash for anything that can reach a template.
 const SERVER_COLS = 'id, name, last_seen'
@@ -153,7 +157,7 @@ export class Store {
     const existing = new Map<string, string>(
       (db.prepare('SELECT name, hash FROM lang_files WHERE server_id = ?').all(serverId) as any[]).map(r => [r.name, r.hash])
     )
-    const incoming = new Map(Object.entries(files).map(([name, content]) => [name, hashToken(content)]))
+    const incoming = new Map(Object.entries(files).map(([name, content]) => [name, contentHash(content)]))
 
     let changed = existing.size !== incoming.size
     for (const [name, hash] of incoming) if (existing.get(name) !== hash) changed = true

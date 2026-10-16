@@ -1,6 +1,9 @@
 import type { Database } from 'bun:sqlite'
 import { createHash } from 'node:crypto'
 
+// API tokens are 256 random bits (see Store.newToken), not passwords: there is nothing to
+// brute-force, so a fast hash is the right tool (a slow password hash would only add cost to
+// every bridge request, which checks the token on each poll). Same approach as GitHub's.
 export const hashToken = (token: string) => createHash('sha256').update(token).digest('hex')
 
 /**
