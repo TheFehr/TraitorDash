@@ -9,7 +9,8 @@
     "watch:js": "bun build src/frontend.ts --outdir src/public --watch",
     "build:css": "tailwindcss -i src/style.css -o src/public/style.css",
     "build:js": "bun build src/frontend.ts --outdir src/public --minify",
-    "build": "bun run build:css && bun run build:js"
+    "build": "bun run build:css && bun run build:js",
+    "source-hash": "bun run scripts/source-hash.ts"
   },
   "devDependencies": {
     "@tailwindcss/cli": "^4.3.0",

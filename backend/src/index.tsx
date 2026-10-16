@@ -16,6 +16,7 @@ import { ServerDashboard } from './components/ServerDashboard'
 import { RoleConfigForm } from './components/RoleConfigForm'
 import { ServerManager } from './components/ServerManager'
 import { Sidebar, RoleListPartial } from './components/Sidebar'
+import { checkHealth, sourceHash } from './services/version'
 import { StatsDashboard, PlayerStats } from './components/StatsDashboard'
 import * as stats from './services/stats'
 
@@ -27,6 +28,16 @@ app.use('/public/*', serveStatic({ root: './src' }))
 // API & Auth Mounting
 app.route('/api', api)
 app.route('/auth', auth)
+
+/**
+ * Liveness and identity: which code is running. Unauthenticated on purpose (monitoring and
+ * load balancers call it), so it carries no secrets, paths or error details.
+ */
+app.get('/health', (c) => {
+  const health = checkHealth()
+  c.header('Cache-Control', 'no-store')
+  return c.json(health, health.status === 'ok' ? 200 : 503)
+})
 
 /**
  * Sidebar Partial for HTMX Search
@@ -203,7 +214,7 @@ export const STARTUP_LOG_LINE = '[TraitorDash] Listening on port'
 // The server itself starts once this module has finished loading (default export below),
 // so the line is logged right after, and only when run as the program (not by the tests).
 if (import.meta.main) {
-  setTimeout(() => console.log(`${STARTUP_LOG_LINE} ${port}`), 0)
+  setTimeout(() => console.log(`${STARTUP_LOG_LINE} ${port} (source ${sourceHash()})`), 0)
 }
 
 export default {
