@@ -5,6 +5,9 @@ TraitorDash = TraitorDash or {}
 TraitorDash.RoleCodeCache = TraitorDash.RoleCodeCache or {}
 TraitorDash.RegisteredCallbacks = TraitorDash.RegisteredCallbacks or {}
 TraitorDash.ConVarToRoles = TraitorDash.ConVarToRoles or {}
+TraitorDash.RoleMeta = TraitorDash.RoleMeta or {}            -- role name -> { abbr = "surv" }
+TraitorDash.WatchedConVars = TraitorDash.WatchedConVars or {} -- ConVars already reporting changes
+TraitorDash.PendingValues = TraitorDash.PendingValues or {}   -- name -> role, waiting to be pushed
 
 local cv_url = CreateConVar("traitordash_url", "http://localhost:3000", {FCVAR_ARCHIVE, FCVAR_PROTECTED}, "The base URL of the TraitorDash backend.")
 local cv_token = CreateConVar("traitordash_token", "dev-token-123", {FCVAR_ARCHIVE, FCVAR_PROTECTED}, "The API token for authenticating with the backend.")
@@ -22,6 +25,131 @@ function TraitorDash.GetActiveAdmins()
         end
     end
     return admins
+end
+
+-- ---------------------------------------------------------------------------
+-- Live ConVar values
+--
+-- The dashboard form should show what is actually set on THIS server, not the role's
+-- defaults. After a role is ingested, the backend answers with the role's schema (which
+-- carries the ConVar names); the bridge reads each of those ConVars, plus the standard
+-- per-role ones TTT2 creates for every role but a role file never declares, and pushes
+-- value / default / min / max (or "does not exist") to /api/v1/values. Each ConVar is
+-- also watched, so a change from the console, an admin mod or the dashboard itself is
+-- pushed a moment later.
+-- ---------------------------------------------------------------------------
+local NAME_SUFFIXES = { "enabled", "random", "traitor_button", "pct", "max", "min_players", "karma_min" }
+local ABBR_SUFFIXES = { "credits_starting", "credits_award_dead_enb", "credits_award_kill_enb", "shop_fallback" }
+
+local function GetApi()
+    local baseUrl = cv_url:GetString():gsub("[\"']", ""):gsub("/+$", "")
+    local token = cv_token:GetString()
+    if baseUrl == "" or token == "" then return nil end
+    return baseUrl, token
+end
+
+function TraitorDash.ReadConVar(name, roleName)
+    local cv = GetConVar(name)
+    if not cv then return { name = name, role = roleName, present = false } end
+
+    return {
+        name = name,
+        role = roleName,
+        present = true,
+        value = cv:GetString(),
+        default = cv:GetDefault(),
+        min = cv:GetMin(),
+        max = cv:GetMax()
+    }
+end
+
+function TraitorDash.PushValues(entries)
+    if #entries == 0 then return end
+
+    local baseUrl, token = GetApi()
+    if not baseUrl then return end
+
+    -- The backend accepts at most 400 entries per request.
+    for first = 1, #entries, 400 do
+        local chunk = {}
+        for i = first, math.min(first + 399, #entries) do chunk[#chunk + 1] = entries[i] end
+
+        HTTP({
+            url = baseUrl .. "/api/v1/values",
+            method = "POST",
+            headers = {
+                ["Content-Type"] = "application/json",
+                ["Authorization"] = "Bearer " .. token
+            },
+            body = util.TableToJSON({ convars = chunk }),
+            timeout = 15,
+            success = function(code)
+                if code ~= 200 then print("[TraitorDash] Live values rejected (HTTP " .. code .. ")") end
+            end,
+            failed = function(err)
+                print("[TraitorDash] Live values failed: " .. tostring(err))
+            end
+        })
+    end
+end
+
+local function FlushPendingValues()
+    local entries = {}
+    for name, roleName in pairs(TraitorDash.PendingValues) do
+        entries[#entries + 1] = TraitorDash.ReadConVar(name, roleName)
+    end
+    TraitorDash.PendingValues = {}
+    TraitorDash.PushValues(entries)
+end
+
+-- Debounced: a burst of changes becomes one request, one second after the last.
+function TraitorDash.QueueValue(name, roleName)
+    TraitorDash.PendingValues[name] = roleName
+    timer.Create("TraitorDash_PushValues", 1, 1, FlushPendingValues)
+end
+
+function TraitorDash.WatchConVar(name, roleName)
+    if TraitorDash.WatchedConVars[name] then return end
+    TraitorDash.WatchedConVars[name] = true
+
+    cvars.AddChangeCallback(name, function()
+        TraitorDash.QueueValue(name, roleName)
+    end, "TraitorDash_Live")
+end
+
+function TraitorDash.ReportRole(roleName, schema)
+    local seen, order = {}, {}
+    local function add(name)
+        if isstring(name) and name ~= "" and not seen[name] then
+            seen[name] = true
+            order[#order + 1] = name
+        end
+    end
+
+    for _, item in ipairs(schema or {}) do
+        local args = item.args
+        if istable(args) then
+            add(args.convar)
+            add(args.serverConvar)
+        end
+    end
+
+    -- Standard per-role ConVars the role file does not declare.
+    for _, suffix in ipairs(NAME_SUFFIXES) do add("ttt_" .. roleName .. "_" .. suffix) end
+
+    local abbr = (TraitorDash.RoleMeta[roleName] or {}).abbr
+    if isstring(abbr) and abbr ~= "" then
+        for _, suffix in ipairs(ABBR_SUFFIXES) do add("ttt_" .. abbr .. "_" .. suffix) end
+    end
+
+    local entries = {}
+    for _, name in ipairs(order) do
+        local entry = TraitorDash.ReadConVar(name, roleName)
+        entries[#entries + 1] = entry
+        if entry.present then TraitorDash.WatchConVar(name, roleName) end
+    end
+
+    TraitorDash.PushValues(entries)
 end
 
 function TraitorDash.IngestRole(roleName, roleCode, hash, force, callback)
@@ -63,9 +191,9 @@ function TraitorDash.IngestRole(roleName, roleCode, hash, force, callback)
                         local cached = TraitorDash.RoleCodeCache[rName]
                         if cached then
                             print("[TraitorDash] ConVar " .. cv_name .. " changed. Re-ingesting " .. rName .. "...")
-                            -- Re-ingestion due to convar change should probably be forced or recalculated
+                            -- Re-ingestion due to convar change should be forced to update values
                             local newHash = util.MD5(cached)
-                            TraitorDash.IngestRole(rName, cached, newHash, false)
+                            TraitorDash.IngestRole(rName, cached, newHash, true)
                         end
                     end
                 end, "TraitorDash_ReIngest")
@@ -118,6 +246,11 @@ function TraitorDash.IngestRole(roleName, roleCode, hash, force, callback)
         success = function(code, body, headers)
             if code == 200 then
                 print("[TraitorDash] OK: " .. roleName)
+
+                local data = util.JSONToTable(body or "")
+                if istable(data) and istable(data.schema) then
+                    TraitorDash.ReportRole(roleName, data.schema)
+                end
             else
                 print("[TraitorDash] FAIL: " .. roleName .. " (HTTP " .. code .. ")")
                 print("[TraitorDash] Response: " .. (body or "empty"))
@@ -222,6 +355,7 @@ function TraitorDash.Sync(force)
             
             -- Cache the code for dynamic re-ingestion
             TraitorDash.RoleCodeCache[name] = content
+            TraitorDash.RoleMeta[name] = { abbr = v.abbr }
             
             local hash = util.MD5(content)
             table.insert(queue, { name = name, code = content, hash = hash })
@@ -289,25 +423,56 @@ function TraitorDash.Poll()
                     local data = util.JSONToTable(body)
                     if data and data.commands then
                         for _, cmd in ipairs(data.commands) do
-                            if cmd.type == "convar" then
-                                print("[TraitorDash] CONVAR: " .. tostring(cmd.payload))
-                                game.ConsoleCommand(tostring(cmd.payload) .. "\n")
-                            elseif cmd.type == "data" then
-                                local p = cmd.payload
-                                if type(p) == "table" and p.key then
-                                    print("[TraitorDash] DATA: " .. p.key .. " = " .. tostring(p.value))
-                                    if p.dataType == "bool" then
-                                        SetGlobalBool(p.key, p.value == true or p.value == 1 or p.value == "1")
-                                    elseif p.dataType == "int" then
-                                        SetGlobalInt(p.key, tonumber(p.value) or 0)
-                                    elseif p.dataType == "string" then
-                                        SetGlobalString(p.key, tostring(p.value))
+                            local success, err = pcall(function()
+                                if cmd.type == "convar" then
+                                    local parts = string.Explode(" ", cmd.payload)
+                                    local cv_name = parts[1]
+                                    local cv = cv_name and GetConVar(cv_name)
+                                    if cv and cv:GetName() == cv_name then
+                                        print("[TraitorDash] CONVAR: " .. tostring(cmd.payload))
+                                        game.ConsoleCommand(tostring(cmd.payload) .. "\n")
+                                    else
+                                        print("[TraitorDash] WARNING: Attempted to set unknown ConVar: " .. tostring(cv_name))
+                                    end
+                                elseif cmd.type == "sync" then
+                                    print("[TraitorDash] Internal: Force Sync Triggered via API")
+                                    TraitorDash.Sync(true)
+                                elseif cmd.type == "data" then
+                                    local p = cmd.payload
+                                    if type(p) == "string" then
+                                        p = util.JSONToTable(p)
                                     end
                                     
-                                    if TTT2 and TTT2.DATA and TTT2.DATA.Set then
-                                        TTT2.DATA.Set(p.key, p.value)
+                                    if type(p) == "table" and p.key then
+                                        print("[TraitorDash] Applying " .. (p.dataType or "unknown") .. " update: " .. p.key .. " = " .. tostring(p.value))
+                                        
+                                        -- 1. Update ConVar if it exists
+                                        local cv = GetConVar(p.key)
+                                        if cv then
+                                            print("[TraitorDash] -> Setting ConVar: " .. p.key)
+                                            cv:SetString(tostring(p.value))
+                                        end
+
+                                        -- 2. Update Global Variable (for networking/sync)
+                                        if p.dataType == "bool" then
+                                            SetGlobalBool(p.key, p.value == true or p.value == 1 or p.value == "1")
+                                        elseif p.dataType == "int" then
+                                            SetGlobalInt(p.key, tonumber(p.value) or 0)
+                                        elseif p.dataType == "string" then
+                                            SetGlobalString(p.key, tostring(p.value))
+                                        end
+                                        
+                                        -- 3. Update TTT2 internal data
+                                        local t_ttt2 = _G.TTT2
+                                        if type(t_ttt2) == "table" and t_ttt2.DATA and t_ttt2.DATA.Set then
+                                            print("[TraitorDash] -> Setting TTT2.DATA: " .. p.key)
+                                            t_ttt2.DATA.Set(p.key, p.value)
+                                        end
                                     end
                                 end
+                            end)
+                            if not success then
+                                print("[TraitorDash] Command Execution Error: " .. tostring(err))
                             end
                         end
                     end
@@ -318,13 +483,13 @@ function TraitorDash.Poll()
             end
         })
     end)
-    if not ok then print("[TraitorDash] Poll Error: " .. tostring(err)) end
+    if not ok then print("[TraitorDash] Poll Runtime Error: " .. tostring(err)) end
 end
 
 function TraitorDash.Init()
     if TraitorDash.Initialized then return end
     TraitorDash.Initialized = true
-    print("[TraitorDash] Bridge Active.")
+    print("[TraitorDash] Bridge Initialized. Source: " .. debug.getinfo(TraitorDash.Init).source)
     
     -- Start poller immediately
     TraitorDash.Poll()
@@ -354,4 +519,8 @@ end)
 
 hook.Add("TTT2FinishedLoading", "TD_Init", TraitorDash.Init)
 hook.Add("Initialize", "TD_Init", TraitorDash.Init)
-if TTT2 and TTT2.Loaded then TraitorDash.Init() end
+
+-- Defensive TTT2 check to avoid "index a boolean value" errors
+if type(TTT2) == "table" and TTT2.Loaded then 
+    TraitorDash.Init() 
+end
