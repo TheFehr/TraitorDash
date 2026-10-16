@@ -137,21 +137,21 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
   })
 
   return (
-    <div class="container mx-auto p-8">
-      <header class="mb-12 flex items-center justify-between">
+    <div class="container mx-auto p-4 sm:p-8">
+      <header class="mb-8 sm:mb-12 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <nav class="text-xs font-black text-gray-500 uppercase tracking-widest mb-4 flex gap-2">
             <a href="/" class="hover:text-white transition">Dashboard</a>
             <span>/</span>
             <span class="text-red-500">{server.name}</span>
           </nav>
-          <h1 class="text-5xl font-black mb-2">{server.name}</h1>
+          <h1 class="text-3xl sm:text-5xl font-black mb-2 break-words">{server.name}</h1>
           <p class="text-gray-400 text-lg">Server Role Registry</p>
           <a href={`/servers/${server.id}/stats`} class="inline-block mt-4 px-4 py-2 rounded-lg border border-gray-700 text-sm font-bold text-gray-300 hover:text-white hover:border-red-500 transition">
             📊 Round stats
           </a>
         </div>
-        <div class={`px-4 py-2 rounded-xl border ${isOnline ? 'border-green-500/50 bg-green-500/10 text-green-400' : 'border-gray-700 bg-gray-800 text-gray-500'} flex items-center gap-3 shadow-xl`}>
+        <div class={`px-4 py-2 rounded-xl border ${isOnline ? 'border-green-500/50 bg-green-500/10 text-green-400' : 'border-gray-700 bg-gray-800 text-gray-500'} flex items-center gap-3 shadow-xl self-start`}>
            <div class={`w-3 h-3 rounded-full ${isOnline ? 'bg-green-500 animate-pulse' : 'bg-gray-700'}`}></div>
            <div>
              <span class="block font-black uppercase text-sm tracking-tighter">{isOnline ? 'System Online' : 'System Dead'}</span>

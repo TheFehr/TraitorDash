@@ -3,17 +3,17 @@ import { Heartbeat } from './Heartbeat'
 
 export const AdminDashboard = ({ servers }: { servers: any[] }) => {
   return (
-    <div class="container mx-auto p-8">
-      <header class="mb-12">
-        <h1 class="text-5xl font-black mb-4 italic tracking-tighter">Admin Dashboard</h1>
-        <p class="text-gray-400 text-xl">Select a node to manage its roles and configurations.</p>
+    <div class="container mx-auto p-4 sm:p-8">
+      <header class="mb-8 sm:mb-12">
+        <h1 class="text-3xl sm:text-5xl font-black mb-4 italic tracking-tighter">Admin Dashboard</h1>
+        <p class="text-gray-400 text-base sm:text-xl">Select a node to manage its roles and configurations.</p>
       </header>
 
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-8">
         {servers.map(server => {
           const isOnline = isServerOnline(server.last_seen)
           return (
-            <a href={`/servers/${server.id}`} class="bg-gray-800 rounded-2xl p-8 border border-gray-700 hover:border-red-500 transition group flex flex-col justify-between shadow-2xl">
+            <a href={`/servers/${server.id}`} class="bg-gray-800 rounded-2xl p-5 sm:p-8 border border-gray-700 hover:border-red-500 transition group flex flex-col justify-between shadow-2xl">
               <div>
                 <div class="flex justify-between items-center mb-4">
                   <span class={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${isOnline ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-500'}`}>

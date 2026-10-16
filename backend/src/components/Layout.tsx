@@ -20,23 +20,23 @@ export const Layout = ({ children, steamId, path }: { children: any, steamId?: s
       <link href="/public/style.css" rel="stylesheet" />
     </head>
     <body class="bg-gray-900 text-white font-sans min-h-screen selection:bg-red-500/30">
-      <nav class="bg-gray-800 border-b border-gray-700 p-4 sticky top-0 z-50 backdrop-blur-md bg-opacity-80">
-        <div class="container mx-auto flex justify-between items-center">
-          <a href="/" class="text-2xl font-black text-red-500 hover:text-red-400 transition flex items-center gap-2">
+      <nav class="bg-gray-800 border-b border-gray-700 px-4 py-3 sm:p-4 sticky top-0 z-50 backdrop-blur-md bg-opacity-80">
+        <div class="container mx-auto flex flex-wrap justify-between items-center gap-x-4 gap-y-2">
+          <a href="/" class="text-xl sm:text-2xl font-black text-red-500 hover:text-red-400 transition flex items-center gap-2">
             <span>{LOGO_EMOJI}</span> TraitorDash
           </a>
-          <div class="flex items-center gap-8">
+          <div class="flex flex-wrap items-center gap-x-4 gap-y-2 sm:gap-8">
             <a href="/" class={`transition font-bold uppercase text-sm tracking-widest ${path === '/' ? 'text-red-500' : 'text-gray-400 hover:text-white'}`}>
               Dashboard
             </a>
             {steamId && (
-              <div class="flex items-center gap-6">
+              <div class="flex items-center gap-3 sm:gap-6">
                 <a href="/servers" class={`transition font-bold uppercase text-sm tracking-widest ${path === '/servers' ? 'text-red-500' : 'text-gray-400 hover:text-white'}`}>
                   Servers
                 </a>
-                <div class="h-4 w-px bg-gray-700"></div>
-                <div class="flex items-center gap-3 bg-gray-900/50 px-3 py-1.5 rounded-full border border-gray-700">
-                  <span class="text-xs text-gray-500 font-mono">{steamId}</span>
+                <div class="hidden sm:block h-4 w-px bg-gray-700"></div>
+                <div class="flex items-center gap-3 bg-gray-900/50 px-3 py-1.5 rounded-full border border-gray-700 shrink-0">
+                  <span class="hidden sm:inline text-xs text-gray-500 font-mono">{steamId}</span>
                   <a href="/auth/logout" class="text-red-500 hover:text-red-400 text-xs font-black uppercase">Logout</a>
                 </div>
               </div>

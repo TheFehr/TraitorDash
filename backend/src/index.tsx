@@ -77,7 +77,7 @@ app.get('/servers', async (c) => {
   
   return c.html(
     <Layout steamId={steamId as string} path="/servers">
-      <div class="container mx-auto p-8">
+      <div class="container mx-auto p-4 sm:p-8">
         <ServerManager servers={servers} />
       </div>
     </Layout>
@@ -99,9 +99,9 @@ app.get('/servers/:serverId', async (c) => {
 
   return c.html(
     <Layout steamId={steamId as string} path="/">
-       <div class="flex">
+       <div class="flex flex-col md:flex-row">
           <Sidebar serverId={serverId} roles={roles} />
-          <div class="flex-1 min-h-[calc(100vh-65px)] bg-gray-900/50">
+          <div class="flex-1 min-w-0 min-h-[calc(100vh-65px)] bg-gray-900/50">
             <ServerDashboard server={server} roles={roles} />
           </div>
        </div>
@@ -175,9 +175,9 @@ app.get('/servers/:serverId/roles/:roleName', async (c) => {
   
   return c.html(
     <Layout steamId={steamId as string} path="/">
-       <div class="flex">
+       <div class="flex flex-col md:flex-row">
           <Sidebar serverId={serverId} roles={roles} />
-          <div class="flex-1 p-8 min-h-[calc(100vh-65px)] bg-gray-900/50">
+          <div class="flex-1 min-w-0 p-4 sm:p-8 min-h-[calc(100vh-65px)] bg-gray-900/50">
             <nav class="text-xs font-black text-gray-500 uppercase tracking-widest mb-8 flex gap-2">
                 <a href="/" class="hover:text-white transition">Dashboard</a>
                 <span>/</span>

@@ -3,7 +3,7 @@ import { Heartbeat } from './Heartbeat'
 
 export const ServerTileView = ({ servers }: { servers: any[] }) => {
   return (
-    <div class="container mx-auto p-8">
+    <div class="container mx-auto p-4 sm:p-8">
       <header class="mb-12 text-center">
         <h1 class="text-6xl font-black mb-4 bg-gradient-to-r from-red-500 to-orange-400 bg-clip-text text-transparent">
           TraitorDash
@@ -11,12 +11,12 @@ export const ServerTileView = ({ servers }: { servers: any[] }) => {
         <p class="text-2xl text-gray-400">Live TTT2 Server Network</p>
       </header>
 
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-8">
         {servers.map(server => {
           const isOnline = isServerOnline(server.last_seen)
           
           return (
-            <div class="bg-gray-800 rounded-2xl p-8 border border-gray-700 shadow-2xl hover:border-red-500/50 transition-all duration-300 group">
+            <div class="bg-gray-800 rounded-2xl p-5 sm:p-8 border border-gray-700 shadow-2xl hover:border-red-500/50 transition-all duration-300 group">
               <div class="flex justify-between items-start mb-6">
                 <div class={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-widest ${isOnline ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-500'}`}>
                   {isOnline ? '● Online' : '○ Offline'}

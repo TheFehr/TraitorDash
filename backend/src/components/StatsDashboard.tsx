@@ -15,9 +15,9 @@ const SORT_LABELS: Record<SortKey, string> = {
 }
 
 const Card = ({ label, value, sub }: { label: string, value: any, sub?: string }) => (
-  <div class="bg-gray-800 border border-gray-700 rounded-xl p-5">
+  <div class="bg-gray-800 border border-gray-700 rounded-xl p-4 sm:p-5">
     <div class="text-[10px] font-black uppercase tracking-widest text-gray-500">{label}</div>
-    <div class="text-3xl font-black mt-1">{value}</div>
+    <div class="text-2xl sm:text-3xl font-black mt-1">{value}</div>
     {sub && <div class="text-xs text-gray-500 mt-1">{sub}</div>}
   </div>
 )
@@ -26,7 +26,7 @@ export const WinTable = ({ title, rows, empty }: { title: string, rows: WinRow[]
   <section>
     <h2 class="text-sm font-black uppercase tracking-widest text-gray-400 mb-3">{title}</h2>
     {rows.length === 0 ? <p class="text-gray-500 text-sm">{empty}</p> : (
-      <div class="bg-gray-800 border border-gray-700 rounded-xl overflow-hidden">
+      <div class="bg-gray-800 border border-gray-700 rounded-xl overflow-x-auto">
         <table class="w-full text-sm">
           <thead class="text-[10px] uppercase tracking-widest text-gray-500">
             <tr><th class="text-left p-3">Name</th><th class="text-right p-3">Played</th><th class="text-right p-3">Win %</th><th class="text-right p-3">Survived</th></tr>
@@ -51,7 +51,7 @@ export const WinTable = ({ title, rows, empty }: { title: string, rows: WinRow[]
 )
 
 export const RoundsTable = ({ rounds }: { rounds: RecentRound[] }) => (
-  <div class="bg-gray-800 border border-gray-700 rounded-xl overflow-hidden">
+  <div class="bg-gray-800 border border-gray-700 rounded-xl overflow-x-auto">
     <table class="w-full text-sm">
       <thead class="text-[10px] uppercase tracking-widest text-gray-500">
         <tr><th class="text-left p-3">When</th><th class="text-left p-3">Map</th><th class="text-left p-3">Result</th><th class="text-right p-3">Players</th><th class="text-right p-3">Deaths</th><th class="text-right p-3">Length</th></tr>
@@ -84,7 +84,7 @@ export interface StatsDashboardProps {
 }
 
 export const StatsDashboard = ({ server, overview, roles, teams, leaders, recent, sort, bots }: StatsDashboardProps) => (
-  <div class="p-8 space-y-10">
+  <div class="p-4 sm:p-8 space-y-8 sm:space-y-10">
     <header>
       <nav class="text-xs font-black text-gray-500 uppercase tracking-widest mb-4 flex gap-2">
         <a href="/" class="hover:text-white transition">Dashboard</a>
@@ -93,7 +93,7 @@ export const StatsDashboard = ({ server, overview, roles, teams, leaders, recent
         <span>/</span>
         <span class="text-red-500">Stats</span>
       </nav>
-      <h1 class="text-5xl font-black mb-2">Round stats</h1>
+      <h1 class="text-3xl sm:text-5xl font-black mb-2 break-words">Round stats</h1>
       <p class="text-gray-400 text-lg">{server.name}</p>
       {bots && <p class="mt-2 text-xs font-black uppercase tracking-widest text-yellow-400">Including bot test rounds</p>}
     </header>
@@ -104,7 +104,7 @@ export const StatsDashboard = ({ server, overview, roles, teams, leaders, recent
       </div>
     ) : (
       <>
-        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           <Card label="Rounds" value={overview.rounds} />
           <Card label="Players" value={overview.players} />
           <Card label="Average length" value={fmtDuration(overview.avgDuration)} />
@@ -123,7 +123,7 @@ export const StatsDashboard = ({ server, overview, roles, teams, leaders, recent
           </div>
         </section>
 
-        <div class="grid lg:grid-cols-2 gap-8">
+        <div class="grid lg:grid-cols-2 gap-6 sm:gap-8">
           <WinTable title="Teams" rows={teams} empty="No team data." />
           <WinTable title="Roles" rows={roles} empty="No role data." />
         </div>
@@ -140,7 +140,7 @@ export const StatsDashboard = ({ server, overview, roles, teams, leaders, recent
               ))}
             </div>
           </div>
-          <div class="bg-gray-800 border border-gray-700 rounded-xl overflow-hidden">
+          <div class="bg-gray-800 border border-gray-700 rounded-xl overflow-x-auto">
             <table class="w-full text-sm">
               <thead class="text-[10px] uppercase tracking-widest text-gray-500">
                 <tr>
@@ -177,7 +177,7 @@ export const StatsDashboard = ({ server, overview, roles, teams, leaders, recent
 )
 
 export const PlayerStats = ({ server, player }: { server: { id: string, name: string }, player: PlayerDetail }) => (
-  <div class="p-8 space-y-10">
+  <div class="p-4 sm:p-8 space-y-8 sm:space-y-10">
     <header>
       <nav class="text-xs font-black text-gray-500 uppercase tracking-widest mb-4 flex gap-2">
         <a href="/" class="hover:text-white transition">Dashboard</a>
@@ -188,7 +188,7 @@ export const PlayerStats = ({ server, player }: { server: { id: string, name: st
         <span>/</span>
         <span class="text-red-500">{player.nick}</span>
       </nav>
-      <h1 class="text-5xl font-black mb-2">{player.nick}</h1>
+      <h1 class="text-3xl sm:text-5xl font-black mb-2 break-words">{player.nick}</h1>
       <p class="text-gray-500 font-mono text-sm">{player.steamId}</p>
     </header>
 
@@ -204,7 +204,7 @@ export const PlayerStats = ({ server, player }: { server: { id: string, name: st
 
     <section>
       <h2 class="text-sm font-black uppercase tracking-widest text-gray-400 mb-3">Recent rounds</h2>
-      <div class="bg-gray-800 border border-gray-700 rounded-xl overflow-hidden">
+      <div class="bg-gray-800 border border-gray-700 rounded-xl overflow-x-auto">
         <table class="w-full text-sm">
           <thead class="text-[10px] uppercase tracking-widest text-gray-500">
             <tr><th class="text-left p-3">When</th><th class="text-left p-3">Map</th><th class="text-left p-3">Role</th><th class="text-left p-3">Result</th><th class="text-right p-3">Kills</th><th class="text-right p-3">Outcome</th></tr>

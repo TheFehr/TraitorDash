@@ -26,7 +26,7 @@ export const ServerManager = ({ servers, newToken }: { servers: any[], newToken?
         </div>
       )}
 
-      <div class="bg-gray-800 rounded-xl p-8 border border-gray-700">
+      <div class="bg-gray-800 rounded-xl p-4 sm:p-8 border border-gray-700">
         <h2 class="text-2xl font-bold mb-6">Manage Servers</h2>
 
         <div class="overflow-x-auto">
@@ -82,7 +82,7 @@ export const ServerManager = ({ servers, newToken }: { servers: any[], newToken?
         </div>
       </div>
 
-      <div class="bg-gray-800 rounded-xl p-8 border border-gray-700">
+      <div class="bg-gray-800 rounded-xl p-4 sm:p-8 border border-gray-700">
         <h3 class="text-xl font-bold mb-4">Add New Server</h3>
         <form hx-post="/api/servers" hx-target="#server-manager" hx-swap="outerHTML" class="flex gap-4">
           <input
