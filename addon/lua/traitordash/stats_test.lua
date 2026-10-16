@@ -47,7 +47,17 @@ concommand.Add("traitordash_stats_test", function(ply, _, args)
 
     RunConsoleCommand("traitordash_stats_bots", "1")
     RunConsoleCommand("bot_zombie", "1")
-    for i = 1, want do RunConsoleCommand("bot") end
+
+    -- Start from a known state: bots left over from an earlier run would otherwise be counted
+    -- on top of the new ones (a "6 bot" run once played with 8). No humans are online here.
+    local leftover = player.GetBots()
+    for _, b in ipairs(leftover) do b:Kick("TraitorDash stats test: clearing old bots") end
+    if #leftover > 0 then Say("kicked " .. #leftover .. " leftover bots first") end
+
+    timer.Simple(#leftover > 0 and 2 or 0, function()
+        if not running then return end
+        for i = 1, want do RunConsoleCommand("bot") end
+    end)
 
     local started = CurTime()
     local killQueue, nextKill, restarted, ended = nil, 0, false, false
@@ -69,6 +79,10 @@ concommand.Add("traitordash_stats_test", function(ply, _, args)
             bots = {}
             for _, p in ipairs(player.GetBots()) do bots[#bots + 1] = p end
             if #bots < want then return end -- still joining
+            if #bots > want then
+                for i = want + 1, #bots do bots[i]:Kick("TraitorDash stats test: surplus bot") end
+                return
+            end
 
             if not restarted then
                 restarted = true
