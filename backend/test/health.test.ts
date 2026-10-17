@@ -82,7 +82,9 @@ describe('source hash', () => {
 
   test('the script prints the same value the endpoint reports', async () => {
     const proc = Bun.spawn([process.execPath, 'run', 'scripts/source-hash.ts'], { cwd: path.join(import.meta.dir, '..'), stdout: 'pipe' })
-    expect((await new Response(proc.stdout).text()).trim()).toBe(computeSourceHash())
+    // The hash is the last line; a fresh database may log its migrations before it.
+    const lines = (await new Response(proc.stdout).text()).trim().split('\n')
+    expect(lines.at(-1)).toBe(computeSourceHash())
   })
 })
 
