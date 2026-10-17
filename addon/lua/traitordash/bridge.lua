@@ -498,9 +498,23 @@ function TraitorDash.Poll()
         baseUrl = baseUrl:gsub("[\"']", ""):gsub("/+$", "")
         
         if baseUrl == "" or token == "" then return end
+        if not (TraitorDash.IsTrustedTransport and TraitorDash.IsTrustedTransport(baseUrl)) then
+            if not TraitorDash.WarnedTransport then
+                TraitorDash.WarnedTransport = true
+                print("[TraitorDash] Not polling: traitordash_url must be https:// (or a private address), because the backend's commands change this server.")
+            end
+            return
+        end
+
+        -- Ids of commands applied so far. The backend keeps a command queued until it is
+        -- acknowledged here, so a lost response never loses a change.
+        TraitorDash.PendingAcks = TraitorDash.PendingAcks or {}
+        local sentAcks = {}
+        for i, id in ipairs(TraitorDash.PendingAcks) do sentAcks[i] = id end
 
         local payload = util.TableToJSON({
             active_admins = TraitorDash.GetActiveAdmins(),
+            acked = sentAcks,
             timestamp = os.time()
         })
 
@@ -516,6 +530,8 @@ function TraitorDash.Poll()
             success = function(code, body)
                 if code == 200 then
                     TraitorDash.LastSuccess = RealTime()
+                    -- The backend has seen these acknowledgements; keep only newer ones.
+                    for _ = 1, #sentAcks do table.remove(TraitorDash.PendingAcks, 1) end
                     local data = util.JSONToTable(body)
                     if data and data.commands then
                         for _, cmd in ipairs(data.commands) do
@@ -573,6 +589,8 @@ function TraitorDash.Poll()
                             if not success then
                                 print("[TraitorDash] Command Execution Error: " .. tostring(err))
                             end
+                            -- Acknowledge even a refused or failed command: re-sending it forever helps nobody.
+                            if isnumber(cmd.id) then table.insert(TraitorDash.PendingAcks, cmd.id) end
                         end
                     end
                 end

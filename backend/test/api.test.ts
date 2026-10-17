@@ -86,7 +86,7 @@ describe('poll / command queue', () => {
   test('a "data" command with corrupt JSON is delivered as the raw string, not a 500', async () => {
     Store.stageCommand(A.id, 'data', '{not json')
     const r = await poll(A.token); expect(r.status).toBe(200)
-    expect((await r.json()).commands[0]).toEqual({ type: 'data', payload: '{not json' })
+    expect((await r.json()).commands[0]).toMatchObject({ type: 'data', payload: '{not json' })
   })
   test('poll with a body that is valid JSON but not an object ("null") is not a 500', async () => {
     expect((await poll(A.token, 'null')).status).toBe(200)

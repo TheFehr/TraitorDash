@@ -43,7 +43,7 @@ describe('/v1/poll', () => {
       db.run('UPDATE servers SET last_seen = NULL WHERE id = ?', [s.id])
       const res = await post('/v1/poll', s.token, raw, true)
       expect(res.status).toBe(200)
-      expect((await res.json()).commands).toEqual([{ type: 'convar', payload: 'ttt_known 1' }])
+      expect((await res.json()).commands).toMatchObject([{ type: 'convar', payload: 'ttt_known 1' }])
       expect((db.query('SELECT last_seen FROM servers WHERE id = ?').get(s.id) as any).last_seen).not.toBeNull()
     }
   })

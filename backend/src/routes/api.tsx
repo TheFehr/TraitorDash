@@ -172,6 +172,8 @@ api.post('/ingest', getServer, async (c) => {
 
 // The bridge pushes the game server's English language files (TTT2 core + one per role
 // addon) once per sync; they resolve translation keys during extraction.
+// Real TTT2 language sets are a few hundred KB in all.
+const MAX_LANG_TOTAL = 8_000_000
 const LANG_NAME = /^[A-Za-z0-9_.-]{1,64}$/
 api.post('/v1/lang', getServer, async (c) => {
   const server = c.get('server')
@@ -185,7 +187,12 @@ api.post('/v1/lang', getServer, async (c) => {
   if (entries.length === 0 || entries.length > 100) {
     return c.json({ error: 'between 1 and 100 language files are expected' }, 400)
   }
+  let total = 0
   for (const [name, content] of entries) {
+    total += typeof content === 'string' ? content.length : 0
+    if (total > MAX_LANG_TOTAL) {
+      return c.json({ error: `language files are larger than ${MAX_LANG_TOTAL} bytes in total` }, 413)
+    }
     if (!LANG_NAME.test(name) || typeof content !== 'string' || content.length > 1_000_000) {
       return c.json({ error: `Invalid language file: ${name.slice(0, 40)}` }, 400)
     }
@@ -381,7 +388,7 @@ api.post('/v1/poll', getServer, async (c) => {
   // Anything that is not a JSON object (null, an array, a string, garbage) counts as an empty
   // poll: the heartbeat and the queued commands must still go through.
   const parsed = await c.req.json().catch(() => null)
-  const { active_admins } = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : ({} as any)
+  const { active_admins, acked } = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : ({} as any)
 
   if (active_admins && Array.isArray(active_admins)) {
     console.log(`[API] Heartbeat with ${active_admins.length} admins from ${server.name} (${server.id})`)
@@ -391,7 +398,7 @@ api.post('/v1/poll', getServer, async (c) => {
   }
 
   Store.updateHeartbeat(server.id)
-  const commands = Store.pollCommands(server.id)
+  const commands = Store.pollCommands(server.id, Array.isArray(acked) ? acked : undefined)
   
   return c.json({
     commands: commands.map(cmd => {
@@ -404,6 +411,7 @@ api.post('/v1/poll', getServer, async (c) => {
         }
       }
       return {
+        id: cmd.id,
         type: cmd.command,
         payload: payload
       }

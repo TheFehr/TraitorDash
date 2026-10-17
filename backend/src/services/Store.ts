@@ -151,12 +151,25 @@ export class Store {
     insert.run(serverId, command, args)
   }
 
-  static pollCommands(serverId: string): any[] {
-    const query = db.prepare('SELECT id, command, args FROM commands WHERE server_id = ? ORDER BY staged_at ASC')
+  /**
+   * Commands waiting for a server. A bridge that sends `acked` (the ids it has applied)
+   * gets at-least-once delivery: commands stay queued until acknowledged, so a lost response
+   * or a crash mid-apply does not lose a change. Without `acked` (an older bridge) they are
+   * deleted as soon as they are handed out. Unacknowledged commands expire after an hour.
+   */
+  static pollCommands(serverId: string, acked?: number[]): any[] {
+    db.run("DELETE FROM commands WHERE server_id = ? AND staged_at < datetime('now', '-1 hour')", [serverId])
+    if (acked && acked.length > 0) {
+      const ids = acked.filter(n => Number.isInteger(n)).slice(0, 1000)
+      if (ids.length > 0) {
+        db.run(`DELETE FROM commands WHERE server_id = ? AND id IN (${ids.map(() => '?').join(',')})`, [serverId, ...ids])
+      }
+    }
+
+    const query = db.prepare('SELECT id, command, args FROM commands WHERE server_id = ? ORDER BY staged_at ASC, id ASC')
     const rows = query.all(serverId) as any[]
 
-    if (rows.length > 0) {
-      // Clear polled commands
+    if (rows.length > 0 && !acked) {
       const ids = rows.map(r => r.id).join(',')
       db.run(`DELETE FROM commands WHERE id IN (${ids})`)
     }
