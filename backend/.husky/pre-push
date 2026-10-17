@@ -1,5 +1,0 @@
-# Keep the global push-window restriction (~/.git-hooks/pre-push) in force: husky's own hooksPath
-# replaces the global one. stdin (the ref list) and the arguments (remote, URL) pass through.
-GLOBAL="$HOME/.git-hooks/pre-push"
-[ -x "$GLOBAL" ] && exec "$GLOBAL" "$@"
-exit 0

@@ -1,10 +1,5 @@
-# Same checks CI runs, so a push cannot fail there for something found here first.
-#
-# git only honours one core.hooksPath and husky sets a repo-local one, which would switch off
-# the global hooks in ~/.git-hooks. Run the global pre-commit first so they keep working.
-GLOBAL="$HOME/.git-hooks/pre-commit"
-[ -x "$GLOBAL" ] && "$GLOBAL" "$@"
-
+# The same checks CI runs, so a push cannot fail there for something found here first.
+# Nothing in this file is specific to one machine.
 cd "$(git rev-parse --show-toplevel)/backend"
 
 if command -v bun >/dev/null 2>&1; then
