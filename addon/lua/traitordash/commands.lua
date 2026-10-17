@@ -30,3 +30,18 @@ end
 function TraitorDash.IsSafeDataKey(key)
     return type(key) == "string" and #key <= 80 and key:match("^[%w_]+$") ~= nil
 end
+
+-- Commands change the server, so they are only accepted over a channel nobody on the way
+-- can alter: https, or http to this machine / a private network.
+function TraitorDash.IsTrustedTransport(url)
+    if type(url) ~= "string" then return false end
+    local lower = url:lower()
+    if lower:match("^https://") then return true end
+    local host = lower:match("^http://([^/:]+)")
+    if not host then return false end
+    if host == "localhost" then return true end
+    local a, b = host:match("^(%d+)%.(%d+)%.%d+%.%d+$")
+    if not a then return false end
+    a, b = tonumber(a), tonumber(b)
+    return a == 127 or a == 10 or (a == 192 and b == 168) or (a == 172 and b >= 16 and b <= 31)
+end
