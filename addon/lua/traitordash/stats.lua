@@ -136,12 +136,23 @@ local function End(rawResult)
     local result = NormalizeResult(rawResult)
     local winners = WinningTeam(result)
 
+    -- "Survived" means alive when the round ends, not "no death seen": a player who was revived
+    -- survived, and one who disconnected mid-round did not (they are no longer in the player list).
+    -- One pass over the player list per round.
+    local alive = {}
+    for _, ply in ipairs(player.GetAll()) do
+        if IsValid(ply) and ply:IsTerror() then
+            local sid = PlayerId(ply)
+            if sid then alive[sid] = true end
+        end
+    end
+
     local players = {}
     for _, sid in ipairs(r.order) do
         local p = r.players[sid]
         players[#players + 1] = {
             steam_id = p.steam_id, nick = p.nick, role = p.role, team = p.team,
-            survived = not p.died,
+            survived = alive[sid] == true,
             won = winners ~= nil and p.team == winners,
         }
     end

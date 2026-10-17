@@ -128,6 +128,23 @@ describe('stats.lua', () => {
     expect(sent.body.players.map((p: any) => p.steam_id)).toContain('999000000007')
   })
 
+  test('survived means alive at the end: a revived player survived, a player who left did not', () => {
+    const [sent] = play(`
+      Fire("TTTBeginRound")
+      B.alive = false; Fire("TTT2PostPlayerDeath", B, nil, A)
+      B.alive = true  -- revived before the round ended
+      C.alive = false; Fire("TTT2PostPlayerDeath", C, nil, A)
+      C.alive = true
+      player.GetAll = function() return { A, B, BOT, SPEC } end -- C disconnected
+      Fire("TTTEndRound", WIN_TRAITOR)
+    `)
+    const by = Object.fromEntries(sent.body.players.map((p: any) => [p.nick, p]))
+    expect(by.Alice.survived).toBe(true)
+    expect(by.Bob.survived).toBe(true) // died, was revived, alive at the end
+    expect(by.Cara.survived).toBe(false) // left the server
+    expect(sent.body.deaths.map((d: any) => d.victim)).toEqual(['76561198000000002', '76561198000000003']) // both deaths are still recorded
+  })
+
   test('nothing is sent for a round-end without a round, a double end, or when disabled', () => {
     expect(play(`Fire("TTTEndRound")`)).toHaveLength(0)
     expect(play(`Fire("TTTBeginRound") Fire("TTTEndRound", WIN_INNOCENT) Fire("TTTEndRound", WIN_INNOCENT)`)).toHaveLength(1)
