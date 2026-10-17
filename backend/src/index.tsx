@@ -7,6 +7,7 @@ import auth from './routes/auth'
 import { Store } from './services/Store'
 import { getRolesWithState } from './services/roles'
 import { getAdminId } from './middleware/session'
+import { sameOrigin } from './middleware/csrf'
 
 // Components
 import { Layout } from './components/Layout'
@@ -24,6 +25,7 @@ const app = new Hono()
 
 // Static Assets
 app.use('/public/*', serveStatic({ root: './src' }))
+app.use('*', sameOrigin)
 
 // API & Auth Mounting
 app.route('/api', api)

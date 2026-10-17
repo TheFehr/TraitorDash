@@ -37,7 +37,7 @@ export const Layout = ({ children, steamId, path }: { children: any, steamId?: s
                 <div class="hidden sm:block h-4 w-px bg-gray-700"></div>
                 <div class="flex items-center gap-3 bg-gray-900/50 px-3 py-1.5 rounded-full border border-gray-700 shrink-0">
                   <span class="hidden sm:inline text-xs text-gray-500 font-mono">{steamId}</span>
-                  <a href="/auth/logout" class="text-red-500 hover:text-red-400 text-xs font-black uppercase">Logout</a>
+                  <form method="post" action="/auth/logout" class="contents"><button type="submit" class="text-red-500 hover:text-red-400 text-xs font-black uppercase">Logout</button></form>
                 </div>
               </div>
             )}

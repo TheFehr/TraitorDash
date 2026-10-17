@@ -111,7 +111,8 @@ auth.get('/steam/callback', async (c) => {
   }
 })
 
-auth.get('/logout', (c) => {
+// POST only: a GET could be triggered by any page (an image tag) and log the admin out.
+auth.post('/logout', (c) => {
   deleteCookie(c, 'steam_id')
   return c.redirect('/')
 })
