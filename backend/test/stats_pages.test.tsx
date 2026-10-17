@@ -82,10 +82,27 @@ describe('stats queries', () => {
 describe('stats pages', () => {
   const get = (path: string, withCookie = true) => app.fetch(new Request(`http://x${path}`, { headers: withCookie ? { Cookie: cookie } : {} }))
 
-  test('are admin-only', async () => {
-    const res = await get(`/servers/${serverId}/stats`, false)
-    expect(res.status).toBe(302)
-    expect((await get(`/servers/${serverId}/players/${ALICE}`, false)).status).toBe(302)
+  test('are public: a guest sees the stats, but no link into the rule settings', async () => {
+    for (const path of [`/servers/${serverId}/stats`, `/servers/${serverId}/players/${ALICE}`]) {
+      const res = await get(path, false)
+      expect(res.status).toBe(200)
+      expect(await res.text()).not.toContain(`href="/servers/${serverId}"`)
+    }
+  })
+
+  test('an admin still gets the link back to the server', async () => {
+    expect(await (await get(`/servers/${serverId}/stats`)).text()).toContain(`href="/servers/${serverId}"`)
+  })
+
+  test('the rule settings stay admin-only', async () => {
+    expect((await get(`/servers/${serverId}`, false)).status).toBe(302)
+    expect((await get(`/servers/${serverId}/roles/anything`, false)).status).toBe(302)
+    expect((await get('/servers', false)).status).toBe(302)
+    expect((await get(`/sidebar/${serverId}`, false)).status).toBe(401)
+  })
+
+  test('the guest home page links to each server\'s stats', async () => {
+    expect(await (await get('/', false)).text()).toContain(`href="/servers/${serverId}/stats"`)
   })
 
   test('the overview renders totals, the leaderboard and recent rounds, and no bots', async () => {

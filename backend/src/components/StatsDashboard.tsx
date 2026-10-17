@@ -81,15 +81,17 @@ export interface StatsDashboardProps {
   recent: RecentRound[]
   sort: SortKey
   bots?: boolean
+  /** The role settings link only makes sense for admins; guests see the stats alone. */
+  admin?: boolean
 }
 
-export const StatsDashboard = ({ server, overview, roles, teams, leaders, recent, sort, bots }: StatsDashboardProps) => (
+export const StatsDashboard = ({ server, overview, roles, teams, leaders, recent, sort, bots, admin }: StatsDashboardProps) => (
   <div class="p-4 sm:p-8 space-y-8 sm:space-y-10">
     <header>
       <nav class="text-xs font-black text-gray-500 uppercase tracking-widest mb-4 flex gap-2">
         <a href="/" class="hover:text-white transition">Dashboard</a>
         <span>/</span>
-        <a href={`/servers/${server.id}`} class="hover:text-white transition">{server.name}</a>
+        {admin ? <a href={`/servers/${server.id}`} class="hover:text-white transition">{server.name}</a> : <span>{server.name}</span>}
         <span>/</span>
         <span class="text-red-500">Stats</span>
       </nav>
@@ -176,13 +178,13 @@ export const StatsDashboard = ({ server, overview, roles, teams, leaders, recent
   </div>
 )
 
-export const PlayerStats = ({ server, player }: { server: { id: string, name: string }, player: PlayerDetail }) => (
+export const PlayerStats = ({ server, player, admin }: { server: { id: string, name: string }, player: PlayerDetail, admin?: boolean }) => (
   <div class="p-4 sm:p-8 space-y-8 sm:space-y-10">
     <header>
       <nav class="text-xs font-black text-gray-500 uppercase tracking-widest mb-4 flex gap-2">
         <a href="/" class="hover:text-white transition">Dashboard</a>
         <span>/</span>
-        <a href={`/servers/${server.id}`} class="hover:text-white transition">{server.name}</a>
+        {admin ? <a href={`/servers/${server.id}`} class="hover:text-white transition">{server.name}</a> : <span>{server.name}</span>}
         <span>/</span>
         <a href={`/servers/${server.id}/stats`} class="hover:text-white transition">Stats</a>
         <span>/</span>

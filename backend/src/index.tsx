@@ -123,11 +123,12 @@ app.get('/servers/:serverId', async (c) => {
 })
 
 /**
- * Round stats: overview, leaderboard, recent rounds. Admin-only: it shows SteamIDs.
+ * Round stats: overview, leaderboard, recent rounds. PUBLIC, like the server tiles: it is
+ * only what happened in rounds (names and SteamID64s are public on Steam). The rule settings
+ * stay admin-only.
  */
 app.get('/servers/:serverId/stats', async (c) => {
   const steamId = await getAdminId(c)
-  if (!steamId) return c.redirect('/')
 
   const serverId = c.req.param('serverId')
   const server = Store.getServerById(serverId)
@@ -139,7 +140,7 @@ app.get('/servers/:serverId/stats', async (c) => {
   const opts = { bots: c.req.query('bots') === '1' }
 
   return c.html(
-    <Layout steamId={steamId as string} path="/">
+    <Layout steamId={steamId || undefined} path="/">
       <StatsDashboard
         server={server}
         overview={stats.getOverview(serverId, opts)}
@@ -149,6 +150,7 @@ app.get('/servers/:serverId/stats', async (c) => {
         recent={stats.getRecentRounds(serverId, opts)}
         sort={sort}
         bots={opts.bots}
+        admin={!!steamId}
       />
     </Layout>
   )
@@ -156,7 +158,6 @@ app.get('/servers/:serverId/stats', async (c) => {
 
 app.get('/servers/:serverId/players/:playerId', async (c) => {
   const steamId = await getAdminId(c)
-  if (!steamId) return c.redirect('/')
 
   const serverId = c.req.param('serverId')
   const server = Store.getServerById(serverId)
@@ -164,8 +165,8 @@ app.get('/servers/:serverId/players/:playerId', async (c) => {
   if (!server || !player || (stats.isBotId(player.steamId) && c.req.query('bots') !== '1')) return c.redirect(`/servers/${serverId}/stats`)
 
   return c.html(
-    <Layout steamId={steamId as string} path="/">
-      <PlayerStats server={server} player={player} />
+    <Layout steamId={steamId || undefined} path="/">
+      <PlayerStats server={server} player={player} admin={!!steamId} />
     </Layout>
   )
 })

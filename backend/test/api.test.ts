@@ -30,7 +30,8 @@ describe('authorization matrix: every admin route refuses an anonymous caller', 
     const r = await req(p, { method: m, body: m === 'POST' ? 'name=x' : undefined, headers: { 'Content-Type': 'application/x-www-form-urlencoded' } })
     expect(r.status).toBe(401)
   })
-  for (const p of ['/servers', `/servers/${'x'}`, '/servers/x/stats', '/servers/x/players/1', '/servers/x/roles/r'])
+  // /servers/:id/stats and /players/:id are public on purpose (see stats_pages.test.tsx).
+  for (const p of ['/servers', `/servers/${'x'}`, '/servers/x/roles/r'])
     test(`GET ${p} redirects to /`, async () => { const r = await req(p); expect(r.status).toBe(302); expect(r.headers.get('location')).toBe('/') })
   test('guest home page never leaks tokens / hashes', async () => {
     const html = await (await req('/')).text(); expect(html).not.toContain(A.token); expect(html).not.toMatch(/[0-9a-f]{64}/)
