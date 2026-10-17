@@ -86,9 +86,9 @@ local NAME_SUFFIXES = { "enabled", "random", "traitor_button", "pct", "max", "mi
 local ABBR_SUFFIXES = { "credits_starting", "credits_award_dead_enb", "credits_award_kill_enb", "shop_fallback" }
 
 local function GetApi()
-    local baseUrl = cv_url:GetString():gsub("[\"']", ""):gsub("/+$", "")
+    local baseUrl = TraitorDash.TrustedBaseUrl and TraitorDash.TrustedBaseUrl(cv_url:GetString())
     local token = cv_token:GetString()
-    if baseUrl == "" or token == "" then return nil end
+    if not baseUrl or token == "" then return nil end
     return baseUrl, token
 end
 
@@ -265,12 +265,10 @@ function TraitorDash.PushLang(callback)
 end
 
 function TraitorDash.IngestRole(roleName, roleCode, hash, force, callback)
-    local baseUrl = cv_url:GetString()
     local token = cv_token:GetString()
-    
-    -- Ensure URL is clean
-    baseUrl = baseUrl:gsub("[\"']", ""):gsub("/+$", "")
-    
+    -- Cleaned, and only over a trusted channel (https or a private address).
+    local baseUrl = TraitorDash.TrustedBaseUrl and TraitorDash.TrustedBaseUrl(cv_url:GetString()) or ""
+
     if baseUrl == "" or token == "" then 
         print("[TraitorDash] ERROR: URL or Token not set!")
         if callback then callback() end
@@ -491,20 +489,9 @@ end)
 
 function TraitorDash.Poll()
     local ok, err = pcall(function()
-        local baseUrl = cv_url:GetString()
+        local baseUrl = TraitorDash.TrustedBaseUrl and TraitorDash.TrustedBaseUrl(cv_url:GetString())
         local token = cv_token:GetString()
-        
-        -- Clean URL
-        baseUrl = baseUrl:gsub("[\"']", ""):gsub("/+$", "")
-        
-        if baseUrl == "" or token == "" then return end
-        if not (TraitorDash.IsTrustedTransport and TraitorDash.IsTrustedTransport(baseUrl)) then
-            if not TraitorDash.WarnedTransport then
-                TraitorDash.WarnedTransport = true
-                print("[TraitorDash] Not polling: traitordash_url must be https:// (or a private address), because the backend's commands change this server.")
-            end
-            return
-        end
+        if not baseUrl or token == "" then return end
 
         -- Ids of commands applied so far. The backend keeps a command queued until it is
         -- acknowledged here, so a lost response never loses a change.

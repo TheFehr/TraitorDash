@@ -71,3 +71,18 @@ function TraitorDash.SignatureMatches(expected, got)
     end
     return diff == 0
 end
+
+-- The backend URL every sender uses: cleaned, and only if the channel is trusted (the token
+-- travels with every request, and what comes back changes the server). Warns once.
+function TraitorDash.TrustedBaseUrl(raw)
+    local base = (tostring(raw or ""):gsub("[\"']", ""):gsub("/+$", ""))
+    if base == "" then return nil end
+    if not TraitorDash.IsTrustedTransport(base) then
+        if not TraitorDash.WarnedTransport then
+            TraitorDash.WarnedTransport = true
+            print("[TraitorDash] Not talking to the backend: traitordash_url must be https:// (or a private address), because the token is sent with every request.")
+        end
+        return nil
+    end
+    return base
+end

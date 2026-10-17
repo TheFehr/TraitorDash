@@ -4,6 +4,7 @@ import path from 'path'
 
 // Runs the real addon/lua/traitordash/stats.lua against a minimal fake of GMod/TTT2, plays a
 // round through the hooks, and returns what the bridge would have POSTed.
+const COMMANDS_LUA = path.join(import.meta.dir, '../../addon/lua/traitordash/commands.lua')
 const STATS = path.join(import.meta.dir, '../../addon/lua/traitordash/stats.lua')
 
 const PRELUDE = `
@@ -14,7 +15,7 @@ const PRELUDE = `
   IsValid = function(v) return v ~= nil and v ~= false end
   local cvars = {}
   function CreateConVar(n, v) cvars[n] = tostring(v) return { GetBool = function() return cvars[n] == "1" end } end
-  cvars.traitordash_url = "http://td.test/"; cvars.traitordash_token = "tok"
+  cvars.traitordash_url = "https://td.test/"; cvars.traitordash_token = "tok"
   function GetConVar(n) return { GetString = function() return cvars[n] end } end
   function SetCv(n, v) cvars[n] = v end
   game = { GetMap = function() return "ttt_test_map" end }
@@ -74,6 +75,7 @@ function play(script: string): any[] {
   }
   try {
     run(PRELUDE)
+    run(require('fs').readFileSync(COMMANDS_LUA, 'utf8'))
     run(require('fs').readFileSync(STATS, 'utf8'))
     run(script)
     run('SENT_JSON = "[" .. table.concat((function() local o = {} for i, s in ipairs(SENT) do o[i] = \'{"url":"\' .. s.url .. \'","auth":"\' .. s.auth .. \'","body":\' .. s.body .. "}" end return o end)(), ",") .. "]"')
@@ -93,7 +95,7 @@ describe('stats.lua', () => {
       Fire("TTTEndRound", WIN_TRAITOR)
     `)
     expect(rest).toHaveLength(0)
-    expect(sent.url).toBe('http://td.test/api/v1/round')
+    expect(sent.url).toBe('https://td.test/api/v1/round')
     expect(sent.auth).toBe('Bearer tok')
 
     const b = sent.body
@@ -159,6 +161,14 @@ describe('stats.lua', () => {
       Fire("TTTEndRound", WIN_TRAITOR)
     `)
     expect(sent).toHaveLength(0)
+  })
+})
+
+describe('transport', () => {
+  test('nothing is sent over plain http to a public host, and a private address is fine', () => {
+    const round = 'Fire("TTTPrepareRound") Fire("TTTBeginRound") Fire("TTTEndRound", WIN_TRAITOR)'
+    expect(play(`SetCv("traitordash_url", "http://td.example") ${round}`)).toHaveLength(0)
+    expect(play(`SetCv("traitordash_url", "http://192.168.1.5:3000") ${round}`)).toHaveLength(1)
   })
 })
 

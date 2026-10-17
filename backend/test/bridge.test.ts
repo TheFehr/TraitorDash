@@ -296,3 +296,23 @@ describe('signed poll answers', () => {
     expect(applied('TraitorDash.Poll() TraitorDash.Poll() APPLIED[1] = tostring(SENT[1].nonce ~= SENT[2].nonce) .. ":" .. #SENT[1].nonce')).toEqual(['true:32'])
   })
 })
+
+describe('every sender needs a trusted channel', () => {
+  const sentCount = (url: string, call: string) => run(`SetCv("traitordash_url", ${JSON.stringify(url)}) ${call} APPLIED[1] = "sent:" .. #SENT`).applied[0]
+  const calls = {
+    values: 'TraitorDash.PushValues({ { name = "ttt_known", present = true } })',
+    ingest: 'TraitorDash.IngestRole("medic", "x", "h", false)',
+    lang: 'file = { Read = function() return "x" end, Find = function() return {}, {} end } TraitorDash.PushLang()',
+    poll: 'TraitorDash.Poll()',
+  }
+  for (const [name, call] of Object.entries(calls)) {
+    test(`${name}: refused over http to a public host`, () => {
+      expect(sentCount('http://td.example', call)).toBe('sent:0')
+    })
+  }
+  test('values and poll still go out over https', () => {
+    expect(sentCount('https://td.example', calls.values)).toBe('sent:1')
+    expect(sentCount('https://td.example', calls.poll)).toBe('sent:1')
+    expect(sentCount('https://td.example', calls.lang)).toBe('sent:1')
+  })
+})
