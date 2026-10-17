@@ -268,6 +268,22 @@ describe('signed poll answers', () => {
     expect(applied(`${cmd} local sig = TraitorDash.ExpectedSignature("tok", SENT[1].nonce, "b", util.SHA256) SENT[1].success(200, "b", { ["X-TRAITORDASH-SIGNATURE"] = sig })`)).toEqual(['ttt_known=5'])
   })
 
+  test('a refused answer is reported with details, and a recovery is announced', () => {
+    const L = lauxlib.luaL_newstate(); lualib.luaL_openlibs(L); addSha256(L)
+    const out: string[] = []
+    lua.lua_pushjsfunction(L, (st: any) => { out.push(to_jsstring(lauxlib.luaL_checklstring(st, 1))); return 0 })
+    lua.lua_setglobal(L, to_luastring('print'))
+    try {
+      for (const c of [PRELUDE, COMMANDS, BRIDGE, `${cmd} SENT[1].success(200, "body", { ["x-other"] = "1" }) TraitorDash.Poll() OK(2, "ok")`]) {
+        if (lauxlib.luaL_dostring(L, to_luastring(c)) !== lua.LUA_OK) throw new Error(to_jsstring(lua.lua_tostring(L, -1)))
+      }
+    } finally { lua.lua_close(L) }
+    const warn = out.find(l => l.includes('without a valid signature'))!
+    expect(warn).toContain('header=MISSING')
+    expect(warn).toContain('headers: x-other')
+    expect(out.some(l => l.includes('signed correctly again'))).toBe(true)
+  })
+
   test('every poll uses a new nonce', () => {
     expect(applied('TraitorDash.Poll() TraitorDash.Poll() APPLIED[1] = tostring(SENT[1].nonce ~= SENT[2].nonce) .. ":" .. #SENT[1].nonce')).toEqual(['true:32'])
   })

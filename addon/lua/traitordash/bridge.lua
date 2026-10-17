@@ -538,11 +538,22 @@ function TraitorDash.Poll()
                     local got = TraitorDash.FindHeader(headers, "X-TraitorDash-Signature")
                     local expected = TraitorDash.ExpectedSignature and TraitorDash.ExpectedSignature(token, nonce, body or "", util.SHA256)
                     if not (TraitorDash.SignatureMatches and TraitorDash.SignatureMatches(expected, got)) then
-                        if not TraitorDash.WarnedSignature then
-                            TraitorDash.WarnedSignature = true
-                            print("[TraitorDash] Ignoring a poll answer without a valid signature (is the backend up to date, and the token correct?). No commands are applied.")
+                        -- At most one line every 5 minutes, with enough detail to tell the causes apart.
+                        if RealTime() - (TraitorDash.LastSignatureWarning or -1e9) > 300 then
+                            TraitorDash.LastSignatureWarning = RealTime()
+                            local names = {}
+                            for k in pairs(type(headers) == "table" and headers or {}) do names[#names + 1] = tostring(k) end
+                            table.sort(names)
+                            print(string.format("[TraitorDash] Ignoring a poll answer without a valid signature (no commands applied). header=%s expected=%s got=%s body=%d bytes, headers: %s",
+                                got and "present" or "MISSING",
+                                tostring(expected):sub(1, 8), tostring(got):sub(1, 8), #(body or ""), table.concat(names, ",")))
                         end
+                        TraitorDash.SignatureFailing = true
                         return
+                    end
+                    if TraitorDash.SignatureFailing then
+                        TraitorDash.SignatureFailing = nil
+                        print("[TraitorDash] Poll answers are signed correctly again.")
                     end
                     -- The backend has seen these acknowledgements; keep only newer ones.
                     for _ = 1, #sentAcks do table.remove(TraitorDash.PendingAcks, 1) end
