@@ -101,7 +101,7 @@ describe('build.json', () => {
 
 describe('uptime', () => {
   test('is the time since startedAt, not some other clock', () => {
-    const h = checkHealth(() => {})
+    const h = checkHealth(() => 1)
     const sinceStart = (Date.now() - new Date(h.startedAt).getTime()) / 1000
     expect(Math.abs(h.uptimeSeconds - sinceStart)).toBeLessThan(2)
   })
