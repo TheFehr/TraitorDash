@@ -4,11 +4,11 @@ import { createHash } from 'node:crypto'
 process.env.TRAITORDASH_DB = ':memory:'
 process.env.SESSION_SECRET = 'test-secret-test-secret-test-secret-0'
 
-let api: any, Store: any, signResponse: any, SIGNATURE_HEADER: string
+let api: any, Store: any, signResponse: any
 beforeAll(async () => {
   api = (await import('../src/routes/api')).default
   Store = (await import('../src/services/Store')).Store
-  ;({ signResponse, SIGNATURE_HEADER } = await import('../src/services/signing'))
+  ;({ signResponse } = await import('../src/services/signing'))
 })
 
 describe('signed poll answers', () => {
@@ -24,20 +24,22 @@ describe('signed poll answers', () => {
       createHash('sha256').update('tok\nnonce-123\n{"a":1}\ntok').digest('hex'))
   })
 
-  test('an answer to a poll with a nonce is signed over the exact body with the presented token', async () => {
+  test('an answer to a poll with a nonce carries a signature over the exact command list, as the last key', async () => {
     const s = Store.addServer('Signed')
     Store.stageCommand(s.id, 'convar', 'ttt_a 1')
-    const res = await poll(s.token, { nonce: 'abcdef0123456789' })
-    const body = await res.text()
-    expect(res.headers.get(SIGNATURE_HEADER)).toBe(signResponse(s.token, 'abcdef0123456789', body))
-    expect(JSON.parse(body).commands).toHaveLength(1)
+    const body = await (await poll(s.token, { nonce: 'abcdef0123456789' })).text()
+    const m = body.match(/^\{"commands":(.*),"sig":"([0-9a-f]{64})"\}$/)!
+    expect(m).not.toBeNull()
+    expect(m[2]).toBe(signResponse(s.token, 'abcdef0123456789', m[1]))
+    const parsed = JSON.parse(body)
+    expect(parsed.commands).toHaveLength(1)
+    expect(JSON.stringify(parsed.commands)).toBe(m[1])
   })
 
   test('a different nonce gives a different signature', async () => {
     const s = Store.addServer('Signed2')
-    const a = (await poll(s.token, { nonce: 'aaaaaaaaaaaa' })).headers.get(SIGNATURE_HEADER)
-    const b = (await poll(s.token, { nonce: 'bbbbbbbbbbbb' })).headers.get(SIGNATURE_HEADER)
-    expect(a).not.toBe(b)
+    const sig = async (n: string) => (await (await poll(s.token, { nonce: n })).json()).sig
+    expect(await sig('aaaaaaaaaaaa')).not.toBe(await sig('bbbbbbbbbbbb'))
   })
 
   test('no nonce (an older bridge) or a malformed one gets no signature, but still an answer', async () => {
@@ -45,8 +47,9 @@ describe('signed poll answers', () => {
     for (const body of [{}, { nonce: 'x' }, { nonce: 'has space!!' }, { nonce: 'a'.repeat(65) }, { nonce: 5 }]) {
       const res = await poll(s.token, body)
       expect(res.status).toBe(200)
-      expect(res.headers.get(SIGNATURE_HEADER)).toBeNull()
-      expect(await res.json()).toHaveProperty('commands')
+      const json = await res.json()
+      expect(json).not.toHaveProperty('sig')
+      expect(json).toHaveProperty('commands')
     }
   })
 })

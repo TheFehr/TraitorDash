@@ -5,7 +5,7 @@ import { ServerManager } from '../components/ServerManager'
 import { requireSession } from '../middleware/session'
 import { normalizeConVarValue, formatConVarCommand } from '../services/convars'
 import { RateLimiter } from '../services/rateLimit'
-import { NONCE, SIGNATURE_HEADER, signResponse } from '../services/signing'
+import { NONCE, signResponse } from '../services/signing'
 
 type Variables = {
   server: {
@@ -402,8 +402,8 @@ api.post('/v1/poll', getServer, async (c) => {
   Store.updateHeartbeat(server.id)
   const commands = Store.pollCommands(server.id, Array.isArray(acked) ? acked : undefined)
   
-  const body = JSON.stringify({
-    commands: commands.map(cmd => {
+  const commandsJson = JSON.stringify(
+    commands.map(cmd => {
       let payload = cmd.args
       if (cmd.command === 'data') {
         try {
@@ -418,20 +418,23 @@ api.post('/v1/poll', getServer, async (c) => {
         payload: payload
       }
     })
-  })
+  )
 
-  // A bridge that sends a nonce gets a signature it can verify before applying anything.
+  // A bridge that sends a nonce gets the answer signed. The signature travels IN the body (as
+  // the last key), not in a header: a header did not reach the game server's HTTP callback.
+  // The bridge verifies it over the exact bytes of the command list (see SplitSignedBody).
   // The key is the bearer token it just presented (only its hash is stored here).
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (typeof nonce === 'string' && NONCE.test(nonce)) {
     const token = c.req.header('Authorization')!.slice('Bearer '.length)
-    headers[SIGNATURE_HEADER] = signResponse(token, nonce, body)
-  } else if (!warnedNoNonce.has(server.id)) {
+    const sig = signResponse(token, nonce, commandsJson)
+    return c.body(`{"commands":${commandsJson},"sig":"${sig}"}`, 200, { 'Content-Type': 'application/json' })
+  }
+  if (!warnedNoNonce.has(server.id)) {
     // An older bridge never sends one; a current bridge should. Said once per server and process.
     warnedNoNonce.add(server.id)
     console.warn(`[API] Poll from ${server.name} has no valid nonce (nonce is ${typeof nonce}, body keys: ${Object.keys(parsed && typeof parsed === 'object' ? parsed : {}).join(',') || 'none'}), so the answer is unsigned`)
   }
-  return c.body(body, 200, headers)
+  return c.body(`{"commands":${commandsJson}}`, 200, { 'Content-Type': 'application/json' })
 })
 
 export default api

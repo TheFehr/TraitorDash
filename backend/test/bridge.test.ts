@@ -52,7 +52,10 @@ const PRELUDE = `
   SysTime = os.clock
   function HTTP(req) req.nonce = LAST_PAYLOAD and LAST_PAYLOAD.nonce SENT[#SENT + 1] = req end
   -- The backend's answer to request i, signed the way the backend signs it.
-  function OK(i, body) SENT[i].success(200, body, { ["x-traitordash-signature"] = TraitorDash.ExpectedSignature("tok", SENT[i].nonce, body, util.SHA256) }) end
+  function SIGNED(i, cj, key, nonce)
+    return '{"commands":' .. cj .. ',"sig":"' .. TraitorDash.ExpectedSignature(key or "tok", nonce or SENT[i].nonce, cj, util.SHA256) .. '"}'
+  end
+  function OK(i, cj) SENT[i].success(200, SIGNED(i, cj or "[]")) end
   SetGlobalBool, SetGlobalInt, SetGlobalString = function() end, function() end, function() end
 `
 
@@ -78,7 +81,7 @@ function run(script: string): { applied: string[], set: string[] } {
 const poll = (commands: string) => `
   JSON_NEXT = { commands = ${commands} }
   TraitorDash.Poll()
-  OK(1, "ignored")`
+  OK(1)`
 const convar = (payload: string) => run(poll(`{ { type = "convar", payload = ${JSON.stringify(payload)} } }`)).applied
 
 describe('commands the bridge applies', () => {
@@ -141,7 +144,7 @@ describe('data updates', () => {
 
   test('only ttt_/ttt2_ ConVars are written, and only for plain identifier keys', () => {
     const run1 = (key: string) => run(`JSON_NEXT = { commands = { { type = "data", payload = { key = ${JSON.stringify(key)}, value = "x", dataType = "string" } } } }
-      TraitorDash.Poll() OK(1, "ignored")`).set
+      TraitorDash.Poll() OK(1)`).set
     expect(run1('ttt_known')).toEqual(['ttt_known=x'])
     expect(run1('rcon_password')).toEqual([])
     expect(run1('sv_password')).toEqual([])
@@ -173,7 +176,7 @@ describe('the rest of the bridge still works', () => {
   })
 
   test('a failing or malformed response never throws', () => {
-    expect(run(`JSON_NEXT = nil TraitorDash.Poll() OK(1, "garbage") SENT[1].success(500, "") SENT[1].failed("timeout")`).applied).toEqual([])
+    expect(run(`JSON_NEXT = nil TraitorDash.Poll() OK(1) SENT[1].success(500, "") SENT[1].failed("timeout")`).applied).toEqual([])
   })
 
   test('ReportRole chunks at 400 ConVars per request', () => {
@@ -208,7 +211,7 @@ describe('acknowledging commands', () => {
   })
 
   test('an acknowledgement is not repeated once the backend answered', () => {
-    expect(ackedIn(`${poll(cmds)} JSON_NEXT = { commands = {} } TraitorDash.Poll() OK(2, "") TraitorDash.Poll()`)).toBe('')
+    expect(ackedIn(`${poll(cmds)} JSON_NEXT = { commands = {} } TraitorDash.Poll() OK(2) TraitorDash.Poll()`)).toBe('')
   })
 
   test('a poll that failed keeps the acknowledgements for the next one', () => {
@@ -248,24 +251,29 @@ describe('signed poll answers', () => {
   const cmd = 'JSON_NEXT = { commands = { { id = 1, type = "convar", payload = "ttt_known 5" } } } TraitorDash.Poll()'
 
   test('an answer signed for this poll is applied', () => {
-    expect(applied(`${cmd} OK(1, "body")`)).toEqual(['ttt_known=5'])
+    expect(applied(`${cmd} OK(1)`)).toEqual(['ttt_known=5'])
   })
 
   test('an unsigned answer applies nothing and acknowledges nothing', () => {
-    expect(applied(`${cmd} SENT[1].success(200, "body", {})`)).toEqual([])
+    expect(applied(`${cmd} SENT[1].success(200, '{"commands":[]}')`)).toEqual([])
     expect(applied(`${cmd} SENT[1].success(200, "body")`)).toEqual([])
   })
 
-  test('a signature from another token, another body or another poll is refused', () => {
-    const bad = (sig: string) => applied(`${cmd} SENT[1].success(200, "body", { ["X-TraitorDash-Signature"] = ${sig} })`)
-    expect(bad('TraitorDash.ExpectedSignature("other", SENT[1].nonce, "body", util.SHA256)')).toEqual([])
-    expect(bad('TraitorDash.ExpectedSignature("tok", SENT[1].nonce, "tampered", util.SHA256)')).toEqual([])
-    expect(bad('TraitorDash.ExpectedSignature("tok", "an-older-nonce", "body", util.SHA256)')).toEqual([])
-    expect(bad('""')).toEqual([])
+  test('a signature from another token, other commands or another poll is refused', () => {
+    const bad = (body: string) => applied(`${cmd} SENT[1].success(200, ${body})`)
+    expect(bad('SIGNED(1, "[]", "other")')).toEqual([])
+    expect(bad('SIGNED(1, "[]", "tok", "an-older-nonce")')).toEqual([])
+    // Signed for one command list, delivered with another.
+    expect(bad('SIGNED(1, "[]"):gsub("%[%]", "[1]", 1)')).toEqual([])
+    expect(bad('\'{"commands":[],"sig":""}\'')).toEqual([])
   })
 
-  test('the header name is found whatever its case', () => {
-    expect(applied(`${cmd} local sig = TraitorDash.ExpectedSignature("tok", SENT[1].nonce, "b", util.SHA256) SENT[1].success(200, "b", { ["X-TRAITORDASH-SIGNATURE"] = sig })`)).toEqual(['ttt_known=5'])
+  test('only the real trailing signature counts, whatever the commands contain', () => {
+    const split = (body: string) => run(`local cj, sig = TraitorDash.SplitSignedBody(${JSON.stringify(body)}) APPLIED[1] = tostring(cj) .. " @@ " .. tostring(sig)`).applied[0]
+    expect(split('{"commands":[],"sig":"ab12"}')).toBe('[] @@ ab12')
+    expect(split('{"commands":[{"p":"x\\",\\"sig\\":\\"aa"}],"sig":"bb"}')).toBe('[{"p":"x\\",\\"sig\\":\\"aa"}] @@ bb')
+    expect(split('{"commands":[]}')).toBe('nil @@ nil')
+    expect(split('{"commands":[],"sig":"zz"}')).toBe('nil @@ nil')
   })
 
   test('a refused answer is reported with details, and a recovery is announced', () => {
@@ -274,13 +282,13 @@ describe('signed poll answers', () => {
     lua.lua_pushjsfunction(L, (st: any) => { out.push(to_jsstring(lauxlib.luaL_checklstring(st, 1))); return 0 })
     lua.lua_setglobal(L, to_luastring('print'))
     try {
-      for (const c of [PRELUDE, COMMANDS, BRIDGE, `${cmd} SENT[1].success(200, "body", { ["x-other"] = "1" }) TraitorDash.Poll() OK(2, "ok")`]) {
+      for (const c of [PRELUDE, COMMANDS, BRIDGE, `${cmd} SENT[1].success(200, "not signed") TraitorDash.Poll() OK(2)`]) {
         if (lauxlib.luaL_dostring(L, to_luastring(c)) !== lua.LUA_OK) throw new Error(to_jsstring(lua.lua_tostring(L, -1)))
       }
     } finally { lua.lua_close(L) }
     const warn = out.find(l => l.includes('without a valid signature'))!
-    expect(warn).toContain('header=MISSING')
-    expect(warn).toContain('headers: x-other')
+    expect(warn).toContain('signature=MISSING')
+    expect(warn).toContain('not signed')
     expect(out.some(l => l.includes('signed correctly again'))).toBe(true)
   })
 

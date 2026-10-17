@@ -47,9 +47,19 @@ function TraitorDash.IsTrustedTransport(url)
 end
 
 -- The backend signs every poll answer (see services/signing.ts; keep the two identical):
--- SHA-256 over "token \n nonce \n body \n token", as lowercase hex. `sha256` is util.SHA256.
-function TraitorDash.ExpectedSignature(token, nonce, body, sha256)
-    return sha256(token .. "\n" .. nonce .. "\n" .. body .. "\n" .. token)
+-- SHA-256 over "token \n nonce \n commands-json \n token", as lowercase hex. `sha256` is util.SHA256.
+function TraitorDash.ExpectedSignature(token, nonce, commandsJson, sha256)
+    return sha256(token .. "\n" .. nonce .. "\n" .. commandsJson .. "\n" .. token)
+end
+
+-- The signature is the last key of the answer, `{"commands":<json>,"sig":"<hex>"}`, because a
+-- response header did not reach GMod's HTTP callback. Returns the exact bytes of <json> and the
+-- hex signature, or nil. The pattern is anchored at both ends and greedy, so only the real
+-- trailing signature counts, whatever the commands contain.
+function TraitorDash.SplitSignedBody(body)
+    if type(body) ~= "string" then return nil end
+    local commandsJson, sig = body:match('^{"commands":(.*),"sig":"(%x+)"}$')
+    return commandsJson, sig
 end
 
 -- Compares without stopping at the first difference.
@@ -60,14 +70,4 @@ function TraitorDash.SignatureMatches(expected, got)
         if expected:byte(i) ~= got:byte(i) then diff = diff + 1 end
     end
     return diff == 0
-end
-
--- HTTP header names come back in whatever case the server sent them.
-function TraitorDash.FindHeader(headers, name)
-    if type(headers) ~= "table" then return nil end
-    name = name:lower()
-    for k, v in pairs(headers) do
-        if type(k) == "string" and k:lower() == name then return v end
-    end
-    return nil
 end

@@ -355,7 +355,7 @@ function TraitorDash.IngestRole(roleName, roleCode, hash, force, callback)
         },
         body = payload,
         timeout = 30,
-        success = function(code, body, headers)
+        success = function(code, body)
             if code == 200 then
                 print("[TraitorDash] OK: " .. roleName)
 
@@ -535,19 +535,16 @@ function TraitorDash.Poll()
                 if code == 200 then
                     TraitorDash.LastSuccess = RealTime()
                     -- Nothing below runs unless the answer is signed with our token for THIS poll.
-                    local got = TraitorDash.FindHeader(headers, "X-TraitorDash-Signature")
-                    local expected = TraitorDash.ExpectedSignature and TraitorDash.ExpectedSignature(token, nonce, body or "", util.SHA256)
+                    local commandsJson, got = TraitorDash.SplitSignedBody(body)
+                    local expected = commandsJson and TraitorDash.ExpectedSignature(token, nonce, commandsJson, util.SHA256)
                     if not (TraitorDash.SignatureMatches and TraitorDash.SignatureMatches(expected, got)) then
                         -- At most one line every 5 minutes, with enough detail to tell the causes apart.
                         TraitorDash.SignatureWarnings = (TraitorDash.SignatureWarnings or 0) + 1
                         if TraitorDash.SignatureWarnings <= 3 or RealTime() - (TraitorDash.LastSignatureWarning or -1e9) > 300 then
                             TraitorDash.LastSignatureWarning = RealTime()
-                            local names = {}
-                            for k in pairs(type(headers) == "table" and headers or {}) do names[#names + 1] = tostring(k) end
-                            table.sort(names)
-                            print(string.format("[TraitorDash] Ignoring a poll answer without a valid signature (no commands applied). header=%s expected=%s got=%s body=%d bytes, sent: %s, headers: %s",
+                            print(string.format("[TraitorDash] Ignoring a poll answer without a valid signature (no commands applied). signature=%s expected=%s got=%s body=%d bytes: %s",
                                 got and "present" or "MISSING",
-                                tostring(expected):sub(1, 8), tostring(got):sub(1, 8), #(body or ""), tostring(payload):sub(1, 160), table.concat(names, ",")))
+                                tostring(expected):sub(1, 8), tostring(got):sub(1, 8), #(body or ""), tostring(body):sub(1, 120)))
                         end
                         TraitorDash.SignatureFailing = true
                         return
@@ -558,7 +555,8 @@ function TraitorDash.Poll()
                     end
                     -- The backend has seen these acknowledgements; keep only newer ones.
                     for _ = 1, #sentAcks do table.remove(TraitorDash.PendingAcks, 1) end
-                    local data = util.JSONToTable(body)
+                    -- Only the verified bytes are parsed, never the rest of the body.
+                    local data = util.JSONToTable('{"commands":' .. commandsJson .. "}")
                     if data and data.commands then
                         for _, cmd in ipairs(data.commands) do
                             local success, err = pcall(function()
