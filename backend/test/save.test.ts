@@ -1,4 +1,4 @@
-import { expect, test, describe, beforeAll } from 'bun:test'
+import { expect, test, describe, beforeAll, beforeEach } from 'bun:test'
 import { serializeSigned } from 'hono/utils/cookie'
 
 // Must be set before the app modules are imported (they read env at load time).
@@ -31,8 +31,9 @@ const save = (body: Record<string, string>) =>
     body: new URLSearchParams(body).toString(),
   })
 
-const queued = () => (db.query('SELECT args FROM commands ORDER BY id').all() as any[]).map(r => r.args)
-const clear = () => db.run('DELETE FROM commands')
+// Scoped to this file's server: all test files share one in-memory database.
+const queued = () => (db.query('SELECT args FROM commands WHERE server_id = ? ORDER BY id').all(serverId) as any[]).map(r => r.args)
+const clear = () => db.run('DELETE FROM commands WHERE server_id = ?', [serverId])
 
 describe('POST /save', () => {
   test('requires an admin session', async () => {
@@ -71,11 +72,13 @@ describe('POST /save', () => {
 })
 
 describe('POST /v1/values (live ConVar state from the bridge)', () => {
+  // A fresh server per test, so no test depends on what another one reported.
   let token: string
-  beforeAll(() => {
+  let liveServerId: string
+  beforeEach(() => {
     const created = Store.addServer('Live')
     token = created.token
-    ;(globalThis as any).__liveServerId = created.id
+    liveServerId = created.id
   })
 
   const post = (body: unknown, auth = true) =>
@@ -97,15 +100,16 @@ describe('POST /v1/values (live ConVar state from the bridge)', () => {
     ] })
     expect(res.status).toBe(200)
 
-    const live = Store.getConVarValues((globalThis as any).__liveServerId)
+    const live = Store.getConVarValues(liveServerId)
     expect(live.ttt_survivalist_pct).toMatchObject({ present: true, value: '1', default: '0.15', min: 0, max: 1, role: 'survivalist' })
     expect(live.ttt_survivalist_random.value).toBe('25')
     expect(live.ttt_surv_nonexistent.present).toBe(false)
   })
 
   test('a later report overwrites the value (this is how a change on the server shows up)', async () => {
+    await post({ convars: [{ name: 'ttt_survivalist_pct', role: 'survivalist', present: true, value: '1', default: '0.15', min: 0, max: 1 }] })
     await post({ convars: [{ name: 'ttt_survivalist_pct', present: true, value: '0.5', default: '0.15', min: 0, max: 1 }] })
-    const live = Store.getConVarValues((globalThis as any).__liveServerId)
+    const live = Store.getConVarValues(liveServerId)
     expect(live.ttt_survivalist_pct.value).toBe('0.5')
     expect(live.ttt_survivalist_pct.role).toBe('survivalist') // not lost when a later report omits it
   })
@@ -137,9 +141,10 @@ describe('POST /save for settings the server reported', () => {
 })
 
 describe('POST /v1/lang (language files from the bridge)', () => {
+  // A fresh server per test, so no test depends on what another one pushed.
   let token: string
   let langServerId: string
-  beforeAll(() => {
+  beforeEach(() => {
     const created = Store.addServer('Lang')
     token = created.token
     langServerId = created.id
@@ -167,7 +172,8 @@ describe('POST /v1/lang (language files from the bridge)', () => {
   })
 
   test('a change clears every role\'s cached extraction, so labels get re-extracted', async () => {
-    // Previous test changed the files, which already cleared the hashes; restore them and push a CHANGED file.
+    await post({ files: { 'medic.lua': 'L2', core: 'L1', 'announcer.lua': 'L3' } })
+    // The first push cleared the hashes; restore them, then push a CHANGED file.
     Store.saveSchema(langServerId, 'medic', 'nones', false, -1, [], 'hash-medic')
     Store.saveSchema(langServerId, 'innocent', 'innocents', false, -1, [], 'hash-innocent')
     await post({ files: { 'medic.lua': 'L2-new', core: 'L1', 'announcer.lua': 'L3' } })
@@ -175,6 +181,7 @@ describe('POST /v1/lang (language files from the bridge)', () => {
   })
 
   test('pushing the same files again changes nothing and keeps the cache', async () => {
+    await post({ files: { 'medic.lua': 'L2-new', core: 'L1', 'announcer.lua': 'L3' } })
     Store.saveSchema(langServerId, 'medic', 'nones', false, -1, [], 'hash-medic')
     const res = await post({ files: { 'medic.lua': 'L2-new', core: 'L1', 'announcer.lua': 'L3' } })
     expect((await res.json()).changed).toBe(false)

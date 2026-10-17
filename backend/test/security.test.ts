@@ -1,4 +1,4 @@
-import { expect, test, describe, beforeAll } from 'bun:test'
+import { expect, test, describe, beforeAll, beforeEach, afterEach } from 'bun:test'
 
 process.env.TRAITORDASH_DB = ':memory:'
 process.env.SESSION_SECRET = 'test-secret-test-secret-test-secret-0'
@@ -47,8 +47,9 @@ describe('the Lua sandbox', () => {
 })
 
 describe('the extraction deadline', () => {
-  const before = Extractor.timeoutMs
-  beforeAll(() => { Extractor.timeoutMs = 600 })
+  const original = Extractor.timeoutMs
+  beforeEach(() => { Extractor.timeoutMs = 600 })
+  afterEach(() => { Extractor.timeoutMs = original })
 
   test('an infinite loop is stopped and reported, not left to freeze the backend', async () => {
     const started = Date.now()
@@ -69,8 +70,8 @@ describe('the extraction deadline', () => {
     expect(ticks).toBeGreaterThan(5)
   })
 
-  test('extraction keeps working afterwards', async () => {
-    Extractor.timeoutMs = before
+  test('extraction keeps working after a timeout', async () => {
+    await expect(Extractor.extractSchema('while true do end', {}, {}, 'loop', [])).rejects.toThrow(/timed out/)
     expect(await labelOf('"fine"')).toBe('fine')
   })
 })

@@ -1,4 +1,4 @@
-import { expect, test, describe, beforeAll } from 'bun:test'
+import { expect, test, describe, beforeAll, beforeEach } from 'bun:test'
 
 process.env.TRAITORDASH_DB = ':memory:'
 process.env.SESSION_SECRET = 'test-secret-test-secret-test-secret-0'
@@ -6,14 +6,22 @@ process.env.ADMIN_STEAM_IDS = '76561198000000000'
 
 let api: any, db: any, token: string, serverId: string
 
+let Store: any
 beforeAll(async () => {
   api = (await import('../src/routes/api')).default
-  const { Store } = await import('../src/services/Store')
+  Store = (await import('../src/services/Store')).Store
   db = (await import('../src/services/Database')).default
+})
+
+// A fresh server for every test, so no test depends on what another one stored.
+beforeEach(() => {
   const added = Store.addServer('Stats') as any
   serverId = added.id
-  token = added.token ?? added.api_token
+  token = added.token
 })
+
+// Each test starts with a fresh rate-limit window (the limiter is shared by the whole process).
+beforeEach(async () => { (await import('../src/routes/api')).roundLimiter.reset() })
 
 const A = '76561198000000001'
 const B = '76561198000000002'
@@ -55,11 +63,12 @@ describe('POST /v1/round', () => {
     expect(count('rounds')).toBe(1)
     expect(count('round_players')).toBe(2)
     expect(count('deaths')).toBe(1)
-    const p = db.query('SELECT * FROM round_players WHERE steam_id = ?').get(A) as any
+    const p = db.query('SELECT * FROM round_players WHERE server_id = ? AND steam_id = ?').get(serverId, A) as any
     expect(p).toMatchObject({ nick: 'Alice', role: 'traitor', team: 'traitors', survived: 1, won: 1 })
   })
 
   test('a repeated round_id is acknowledged but stores nothing more', async () => {
+    expect((await post(round())).status).toBe(200)
     const res = await post(round())
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ success: true, stored: false })
@@ -70,7 +79,7 @@ describe('POST /v1/round', () => {
   test('a death without a player attacker (world/fall damage) is kept with a null attacker', async () => {
     const res = await post(round({ round_id: 'a1b2c3d4-0002', deaths: [{ victim: B, attacker: null, at: 5 }] }))
     expect(res.status).toBe(200)
-    const d = db.query("SELECT * FROM deaths WHERE round_id = 'a1b2c3d4-0002'").get() as any
+    const d = db.query("SELECT * FROM deaths WHERE server_id = ? AND round_id = 'a1b2c3d4-0002'").get(serverId) as any
     expect(d.attacker_steam_id).toBeNull()
   })
 
@@ -90,7 +99,8 @@ describe('POST /v1/round', () => {
   })
 
   test('deleting the server removes its stats', async () => {
-    const { Store } = await import('../src/services/Store')
+    expect((await post(round())).status).toBe(200)
+    expect(count('rounds')).toBe(1)
     Store.deleteServer(serverId)
     expect(count('rounds') + count('round_players') + count('deaths')).toBe(0)
   })
