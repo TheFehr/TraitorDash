@@ -21,6 +21,7 @@ const PRELUDE = `
   REAL_CVARS = { ttt_known = "1", ttt2_other = "2", rcon_password = "secret", sv_password = "pw", ttt_survivalist_pct = "0.15" }
   local CV = { traitordash_url = 'http://td.test/"', traitordash_token = "tok" }
   function CreateConVar(n, v) if CV[n] == nil then CV[n] = tostring(v) end return { GetString = function() return CV[n] end } end
+  function SetCv(n, v) CV[n] = v end
   function GetConVar(n)
     if CV[n] == nil and REAL_CVARS[n] == nil then return nil end
     return { GetString = function() return CV[n] or REAL_CVARS[n] end, GetName = function() return n end,
@@ -132,6 +133,21 @@ describe('data updates', () => {
     expect(run1('ttt_known; quit')).toEqual([])
     expect(run1('ttt_known\nquit')).toEqual([])
     expect(data(json({ key: 'rcon_password', value: 'x' }))).toEqual([])
+  })
+})
+
+describe('the API token', () => {
+  test('there is no built-in default: with no token the bridge sends nothing', () => {
+    const { applied } = run(`
+      SetCv("traitordash_token", "")
+      TraitorDash.Poll()
+      APPLIED[1] = "requests:" .. #SENT`)
+    expect(applied).toEqual(['requests:0'])
+  })
+
+  test('the shipped default is empty, not a shared dev token', () => {
+    expect(BRIDGE).not.toContain('dev-token')
+    expect(/CreateConVar\("traitordash_token", ""/.test(BRIDGE)).toBe(true)
   })
 })
 
