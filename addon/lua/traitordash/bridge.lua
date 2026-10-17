@@ -374,6 +374,77 @@ function TraitorDash.IngestRole(roleName, roleCode, hash, force, callback)
     })
 end
 
+-- Reads one role's source into a queue entry { name, code, hash }. nil for abstract/internal roles
+-- and for roles whose file cannot be found (that one is logged). Plain Lua on purpose (no
+-- `continue`), so the test harness can run it.
+local function LoadRole(v)
+    -- Use ClassName for unique ID, fallback to name
+    local name = v.ClassName or v.name or "unknown"
+
+    -- Skip base roles and internal roles
+    if v.IsAbstract or name == "none" or name == "unknown" or name == "base" then
+        return nil
+    end
+
+    local func = v.PreInitialize or v.Initialize or v.OnRoleSetup
+    local info = func and debug.getinfo(func)
+    local sourcePath = info and info.source or ""
+
+    -- Clean up the source path from debug.getinfo
+    if sourcePath:sub(1, 1) == "@" then sourcePath = sourcePath:sub(2) end
+
+    -- Try a few variations to find the file
+    local pathsToTry = {
+        sourcePath,
+        (sourcePath:gsub("^lua/", "")),
+        (sourcePath:gsub("^gamemodes/[^/]+/entities/roles/", "terrortown/entities/roles/")),
+        "terrortown/entities/roles/" .. name .. "/shared.lua",
+        "terrortown/entities/roles/" .. name .. ".lua",
+        "terrortown/entities/roles/sh_" .. name .. ".lua"
+    }
+
+    local content = nil
+    local foundPath = nil
+
+    for _, path in ipairs(pathsToTry) do
+        if path and path ~= "" then
+            content = file.Read(path, "LUA")
+            if content and content ~= "" then
+                foundPath = path
+                break
+            end
+        end
+    end
+
+    if not content or content == "" then
+        print("[TraitorDash] WARNING: Could not find file for role: " .. name .. " (Source: " .. sourcePath .. ")")
+        return nil
+    end
+
+    local extraFiles = {}
+
+    -- Extra file discovery: a role in a folder keeps client and server code beside shared.lua
+    if foundPath:match("shared%.lua$") then
+        local folder = foundPath:gsub("shared%.lua$", "")
+        for _, f in ipairs({"cl_init.lua", "init.lua"}) do
+            local extra = file.Read(folder .. f, "LUA")
+            if extra then
+                content = content .. "\n\n--[[ --- TRAITORDASH: " .. f:upper() .. " --- ]]\n\n" .. extra
+                table.insert(extraFiles, f)
+            end
+        end
+    end
+
+    local extraMsg = #extraFiles > 0 and (" (incl. " .. table.concat(extraFiles, ", ") .. ")") or ""
+    print("[TraitorDash] Queueing " .. name .. " from " .. foundPath .. extraMsg)
+
+    -- Cache the code for dynamic re-ingestion
+    TraitorDash.RoleCodeCache[name] = content
+    TraitorDash.RoleMeta[name] = { abbr = v.abbr }
+
+    return { name = name, code = content, hash = util.MD5(content) }
+end
+
 function TraitorDash.Sync(force)
     if not roles or not roles.GetList then
         print("[TraitorDash] Error: TTT2 roles library not found!")
@@ -389,71 +460,8 @@ function TraitorDash.Sync(force)
     
     local queue = {}
     for _, v in ipairs(roleList) do
-        -- Use ClassName for unique ID, fallback to name
-        local name = v.ClassName or v.name or "unknown"
-        
-        -- Skip base roles and internal roles
-        if v.IsAbstract or name == "none" or name == "unknown" or name == "base" then 
-            continue 
-        end
-        
-        local func = v.PreInitialize or v.Initialize or v.OnRoleSetup
-        local info = func and debug.getinfo(func)
-        local sourcePath = info and info.source or ""
-        
-        -- Clean up the source path from debug.getinfo
-        if sourcePath:sub(1, 1) == "@" then sourcePath = sourcePath:sub(2) end
-        
-        -- Try a few variations to find the file
-        local pathsToTry = {
-            sourcePath,
-            sourcePath:gsub("^lua/", ""),
-            sourcePath:gsub("^gamemodes/[^/]+/entities/roles/", "terrortown/entities/roles/"),
-            "terrortown/entities/roles/" .. name .. "/shared.lua",
-            "terrortown/entities/roles/" .. name .. ".lua",
-            "terrortown/entities/roles/sh_" .. name .. ".lua"
-        }
-
-        local content = nil
-        local foundPath = nil
-
-        for _, path in ipairs(pathsToTry) do
-            if not path or path == "" then continue end
-            content = file.Read(path, "LUA")
-            if content and content ~= "" then
-                foundPath = path
-                break
-            end
-        end
-
-        if content then
-            local extraFiles = {}
-            local baseDir = foundPath:match("(.*/)") or ""
-            
-            -- Recursive Localization & Extra File Discovery
-            if foundPath:match("shared%.lua$") then
-                local folder = foundPath:gsub("shared%.lua$", "")
-                for _, f in ipairs({"cl_init.lua", "init.lua"}) do
-                    local extra = file.Read(folder .. f, "LUA")
-                    if extra then
-                        content = content .. "\n\n--[[ --- TRAITORDASH: " .. f:upper() .. " --- ]]\n\n" .. extra
-                        table.insert(extraFiles, f)
-                    end
-                end
-            end
-
-            local extraMsg = #extraFiles > 0 and (" (incl. " .. table.concat(extraFiles, ", ") .. ")") or ""
-            print("[TraitorDash] Queueing " .. name .. " from " .. foundPath .. extraMsg)
-            
-            -- Cache the code for dynamic re-ingestion
-            TraitorDash.RoleCodeCache[name] = content
-            TraitorDash.RoleMeta[name] = { abbr = v.abbr }
-            
-            local hash = util.MD5(content)
-            table.insert(queue, { name = name, code = content, hash = hash })
-        else
-            print("[TraitorDash] WARNING: Could not find file for role: " .. name .. " (Source: " .. sourcePath .. ")")
-        end
+        local item = LoadRole(v)
+        if item then table.insert(queue, item) end
     end
 
     local count = 0

@@ -4,12 +4,11 @@ import fs from 'fs'
 import path from 'path'
 
 // Runs the real addon/lua/traitordash/{commands,bridge}.lua against a minimal fake of GMod.
-// GMod's `continue` is not Lua 5.3, so it is neutralised for loading (only Sync uses it, and
-// these tests never call Sync).
+// The bridge avoids GMod's `continue` (not Lua 5.3), so it loads unmodified.
 const dir = path.join(import.meta.dir, '../../addon/lua/traitordash')
 const read = (f: string) => fs.readFileSync(path.join(dir, f), 'utf8')
 const COMMANDS = read('commands.lua')
-const BRIDGE = read('bridge.lua').replace(/\bcontinue\b/g, 'error("continue")')
+const BRIDGE = read('bridge.lua')
 
 import { createHash } from 'node:crypto'
 // util.SHA256 as GMod has it: a string in, lowercase hex out.
@@ -30,21 +29,26 @@ const PRELUDE = `
   IsValid = function(v) return v ~= nil and v ~= false end
   include = function() end -- commands.lua is loaded by the harness before the bridge
   APPLIED, SENT, SET = {}, {}, {}
-  REAL_CVARS = { ttt_known = "1", ttt2_other = "2", rcon_password = "secret", sv_password = "pw", ttt_survivalist_pct = "0.15" }
+  PRINTS = {}
+  local realPrint = print
+  print = function(...) local t = {} for i = 1, select("#", ...) do t[i] = tostring((select(i, ...))) end PRINTS[#PRINTS + 1] = table.concat(t, " ") end
+  REAL_CVARS = { sv_hibernate_think = "0", ttt_known = "1", ttt2_other = "2", rcon_password = "secret", sv_password = "pw", ttt_survivalist_pct = "0.15" }
   local CV = { traitordash_url = 'https://td.test/"', traitordash_token = "tok" }
   function CreateConVar(n, v) if CV[n] == nil then CV[n] = tostring(v) end return { GetString = function() return CV[n] end } end
   function SetCv(n, v) CV[n] = v end
   function GetConVar(n)
     if CV[n] == nil and REAL_CVARS[n] == nil then return nil end
     return { GetString = function() return CV[n] or REAL_CVARS[n] end, GetName = function() return n end,
-             GetDefault = function() return "0" end, GetMin = function() return 0 end, GetMax = function() return 1 end,
+             GetInt = function() return tonumber(CV[n] or REAL_CVARS[n]) end, GetDefault = function() return "0" end, GetMin = function() return 0 end, GetMax = function() return 1 end,
              SetString = function(_, v) SET[#SET + 1] = n .. "=" .. v end }
   end
   cvars = { AddChangeCallback = function() end }
   game = { ConsoleCommand = function(s) APPLIED[#APPLIED + 1] = "RAW:" .. s end } -- must never be used any more
   RunConsoleCommand = function(n, v) APPLIED[#APPLIED + 1] = n .. "=" .. tostring(v) end
-  hook = { Add = function() end }
-  timer = { Create = function() end, Simple = function() end, Exists = function() return false end }
+  HOOKS, TIMERS = {}, {}
+  hook = { Add = function(ev, id, fn) HOOKS[#HOOKS + 1] = ev .. ":" .. id end }
+  timer = { Create = function(id, secs, reps, fn) TIMERS[#TIMERS + 1] = "create " .. id .. " " .. secs .. " " .. reps end,
+            Simple = function(secs, fn) TIMERS[#TIMERS + 1] = "simple " .. secs end, Exists = function() return false end }
   concommand = { Add = function() end }  player = { GetAll = function() return {} end }
   RealTime = os.clock
   string.Explode = function(sep, s) local o = {} for p in (s .. sep):gmatch("(.-)" .. sep:gsub("%p", "%%%0")) do o[#o + 1] = p end return o end
@@ -60,18 +64,20 @@ const PRELUDE = `
 `
 
 /** Runs `script` after loading the files and returns what was applied to the console, and which ConVars were SetString'd. */
-function run(script: string): { applied: string[], set: string[] } {
+function run(script: string, before = ''): { applied: string[], set: string[], result: string } {
   const L = lauxlib.luaL_newstate()
   lualib.luaL_openlibs(L); addSha256(L)
   const go = (c: string) => {
     if (lauxlib.luaL_dostring(L, to_luastring(c)) !== lua.LUA_OK) throw new Error(to_jsstring(lua.lua_tostring(L, -1)))
   }
   try {
-    go(PRELUDE); go(COMMANDS); go(BRIDGE); go(script)
+    go(PRELUDE); go(before); go(COMMANDS); go(BRIDGE); go(script)
     go('OUT = table.concat(APPLIED, "|") .. "#" .. table.concat(SET, "|")')
     lua.lua_getglobal(L, to_luastring('OUT'))
     const [applied = '', set = ''] = to_jsstring(lua.lua_tostring(L, -1)).split('#')
-    return { applied: applied ? applied.split('|') : [], set: set ? set.split('|') : [] }
+    lua.lua_getglobal(L, to_luastring('RESULT'))
+    const result = lua.lua_isstring(L, -1) ? to_jsstring(lua.lua_tostring(L, -1)) : ''
+    return { applied: applied ? applied.split('|') : [], set: set ? set.split('|') : [], result }
   } finally {
     lua.lua_close(L)
   }
@@ -277,15 +283,7 @@ describe('signed poll answers', () => {
   })
 
   test('a refused answer is reported with details, and a recovery is announced', () => {
-    const L = lauxlib.luaL_newstate(); lualib.luaL_openlibs(L); addSha256(L)
-    const out: string[] = []
-    lua.lua_pushjsfunction(L, (st: any) => { out.push(to_jsstring(lauxlib.luaL_checklstring(st, 1))); return 0 })
-    lua.lua_setglobal(L, to_luastring('print'))
-    try {
-      for (const c of [PRELUDE, COMMANDS, BRIDGE, `${cmd} SENT[1].success(200, "not signed") TraitorDash.Poll() OK(2)`]) {
-        if (lauxlib.luaL_dostring(L, to_luastring(c)) !== lua.LUA_OK) throw new Error(to_jsstring(lua.lua_tostring(L, -1)))
-      }
-    } finally { lua.lua_close(L) }
+    const out = run(`${cmd} SENT[1].success(200, "not signed") TraitorDash.Poll() OK(2) RESULT = table.concat(PRINTS, "\\n")`).result.split('\n')
     const warn = out.find(l => l.includes('without a valid signature'))!
     expect(warn).toContain('signature=MISSING')
     expect(warn).toContain('not signed')
@@ -314,5 +312,146 @@ describe('every sender needs a trusted channel', () => {
     expect(sentCount('https://td.example', calls.values)).toBe('sent:1')
     expect(sentCount('https://td.example', calls.poll)).toBe('sent:1')
     expect(sentCount('https://td.example', calls.lang)).toBe('sent:1')
+  })
+})
+
+// Sync and Init. The fake game has a TTT2 role list and a file system for the "LUA" path.
+describe('Init', () => {
+  const init = (script = '', before = '') => run(`${script}
+    RESULT = table.concat(HOOKS, ",") .. " / " .. table.concat(TIMERS, ",") .. " / " .. #SENT`, before).result
+
+  test('registers its hooks (admin cache, both load hooks) and does not start anything by itself', () => {
+    // Loading the bridge only registers the hooks; Init runs when TTT2 says it has loaded.
+    expect(init()).toBe('PlayerDisconnected:TraitorDash_AdminCache,TTT2FinishedLoading:TD_Init,Initialize:TD_Init /  / 0')
+  })
+
+  test('polls at once, then every 10 seconds, and queues the first sync for 5 seconds out', () => {
+    expect(init('TraitorDash.Init()')).toBe(
+      'PlayerDisconnected:TraitorDash_AdminCache,TTT2FinishedLoading:TD_Init,Initialize:TD_Init / create TraitorDash_Poller 10 0,simple 5 / 1')
+  })
+
+  test('a second Init (both hooks fire) changes nothing', () => {
+    expect(init('TraitorDash.Init() TraitorDash.Init()')).toBe(
+      'PlayerDisconnected:TraitorDash_AdminCache,TTT2FinishedLoading:TD_Init,Initialize:TD_Init / create TraitorDash_Poller 10 0,simple 5 / 1')
+  })
+
+  test('when TTT2 has already loaded as the bridge loads, it starts at load time', () => {
+    expect(init('', 'TTT2 = { Loaded = true }')).toContain('create TraitorDash_Poller 10 0,simple 5 / 1')
+  })
+
+  test('the first poll goes to the poll endpoint with the token', () => {
+    const r = run(`TraitorDash.Init() RESULT = SENT[1].url .. " " .. SENT[1].headers.Authorization`).result
+    expect(r).toBe('https://td.test/api/v1/poll Bearer tok')
+  })
+})
+
+describe('Sync', () => {
+  // Three roles worth ingesting (one with a folder: shared.lua + init.lua), plus the ones Sync skips.
+  const WORLD = `
+    util.TableToJSON = function(t) PAYLOADS[#PAYLOADS + 1] = t return "J" end
+    PAYLOADS = {}
+    roles = { GetList = function() return {
+      { ClassName = "traitor", abbr = "t", PreInitialize = function() end },
+      { ClassName = "base" },
+      { ClassName = "none" },
+      { ClassName = "abstractone", IsAbstract = true },
+      { ClassName = "ghost" },
+      { name = "plain", Initialize = function() end },
+    } end }
+    FILES = {
+      ["terrortown/entities/roles/traitor/shared.lua"] = "SHARED",
+      ["terrortown/entities/roles/traitor/init.lua"] = "SERVER",
+      ["terrortown/entities/roles/plain.lua"] = "PLAIN",
+      ["terrortown/entities/roles/base.lua"] = "BASE", -- these have files, so only the skip rule keeps them out
+      ["terrortown/entities/roles/none.lua"] = "NONE",
+      ["terrortown/entities/roles/abstractone.lua"] = "ABSTRACT",
+      ["terrortown/lang/en.lua"] = "CORE",
+    }
+    file = { Read = function(p) return FILES[p] end, Find = function() return {}, {} end }
+  `
+  const sync = (script: string, force = '') => run(`${script}`, WORLD + 'JSON_NEXT = nil').result
+  const flow = `
+    local function names() local t = {} for _, p in ipairs(PAYLOADS) do t[#t + 1] = p.role_name or "lang" end return table.concat(t, ",") end
+  `
+  /** Syncs, answers every request 200, and reports which ones were sent in what order. */
+  const full = (force = '') => run(`${flow}
+    TraitorDash.Sync(${force})
+    local i = 1
+    while SENT[i] do SENT[i].success(200, "{}") i = i + 1 end
+    RESULT = names() .. " | " .. table.concat(APPLIED, ",") .. " | " .. PRINTS[#PRINTS]`, WORLD).result
+
+  test('pushes the language files first, then ingests each real role once, then restores hibernation', () => {
+    const [order, console_, last] = full().split(' | ')
+    expect(order).toBe('lang,traitor,plain')
+    expect(console_).toBe('sv_hibernate_think=1,sv_hibernate_think=0')
+    expect(last).toBe('[TraitorDash] Sync complete! 2 roles processed.')
+  })
+
+  test('skips base, none and abstract roles, and a role whose file cannot be found is reported', () => {
+    const r = run(`${flow}
+      TraitorDash.Sync()
+      local i = 1 while SENT[i] do SENT[i].success(200, "{}") i = i + 1 end
+      RESULT = table.concat(PRINTS, "\\n")`, WORLD).result
+    expect(r).toContain('WARNING: Could not find file for role: ghost')
+    for (const skipped of ['base', 'none', 'abstractone']) expect(r).not.toContain(`Queueing ${skipped} `)
+    expect(r).toContain('Queueing plain from terrortown/entities/roles/plain.lua')
+  })
+
+  test("a role's folder files are sent with shared.lua, in one piece", () => {
+    const r = run(`${flow}
+      TraitorDash.Sync()
+      local i = 1 while SENT[i] do SENT[i].success(200, "{}") i = i + 1 end
+      RESULT = PAYLOADS[2].role_code`, WORLD).result
+    expect(r).toBe('SHARED\n\n--[[ --- TRAITORDASH: INIT.LUA --- ]]\n\nSERVER')
+  })
+
+  test('the role code and abbreviation are cached for re-ingestion when a ConVar changes', () => {
+    const r = run(`TraitorDash.Sync() RESULT = TraitorDash.RoleCodeCache.plain .. " " .. TraitorDash.RoleMeta.traitor.abbr`, WORLD).result
+    expect(r).toBe('PLAIN t')
+  })
+
+  test('a plain Sync does not force; Sync(true) does', () => {
+    const forced = (arg: string) => run(`${flow}
+      TraitorDash.Sync(${arg})
+      local i = 1 while SENT[i] do SENT[i].success(200, "{}") i = i + 1 end
+      RESULT = tostring(PAYLOADS[2].force)`, WORLD).result
+    expect(forced('')).toBe('false')
+    expect(forced('true')).toBe('true')
+  })
+
+  test('roles are ingested one at a time: the next waits for the previous answer', () => {
+    const r = run(`TraitorDash.Sync() SENT[1].success(200, "{}") RESULT = #SENT .. " " .. SENT[2].url`, WORLD).result
+    expect(r).toBe('2 https://td.test/api/ingest')
+  })
+
+  test('a failed language push does not block the roles', () => {
+    const r = run(`${flow}
+      TraitorDash.Sync()
+      SENT[1].failed("timed out")
+      local i = 2 while SENT[i] do SENT[i].success(200, "{}") i = i + 1 end
+      RESULT = names()`, WORLD).result
+    expect(r).toBe('lang,traitor,plain')
+  })
+
+  test('a failed or rejected ingest still moves on and the sync still finishes', () => {
+    const r = run(`${flow}
+      TraitorDash.Sync()
+      SENT[1].success(200, "{}")
+      SENT[2].failed("boom")
+      SENT[3].success(500, "no")
+      RESULT = table.concat(APPLIED, ",") .. " | " .. PRINTS[#PRINTS]`, WORLD).result
+    expect(r).toBe('sv_hibernate_think=1,sv_hibernate_think=0 | [TraitorDash] Sync complete! 2 roles processed.')
+  })
+
+  test('without the TTT2 roles library nothing is sent and the console is left alone', () => {
+    const r = run(`roles = nil TraitorDash.Sync() RESULT = #SENT .. " " .. #APPLIED .. " " .. PRINTS[#PRINTS]`, WORLD).result
+    expect(r).toBe('0 0 [TraitorDash] Error: TTT2 roles library not found!')
+  })
+
+  test('with no token the roles are not sent, and the sync still ends', () => {
+    const r = run(`SetCv("traitordash_token", "") ${flow}
+      TraitorDash.Sync()
+      RESULT = #SENT .. " " .. table.concat(APPLIED, ",") .. " | " .. PRINTS[#PRINTS]`, WORLD).result
+    expect(r).toBe('0 sv_hibernate_think=1,sv_hibernate_think=0 | [TraitorDash] Sync complete! 2 roles processed.')
   })
 })
