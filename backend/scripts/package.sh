@@ -4,9 +4,9 @@
 # Usage: scripts/package.sh <output-dir>      (run from backend/; needs bun and git)
 set -euo pipefail
 out="${1:?usage: package.sh <output-dir>}"
-cd "$(dirname "$0")/.."
 mkdir -p "$out"
-out="$(cd "$out" && pwd)"
+out="$(cd "$out" && pwd)"   # resolved before the cd below, so a relative path means the caller's cwd
+cd "$(dirname "$0")/.."
 
 bun install --frozen-lockfile
 bun run build
