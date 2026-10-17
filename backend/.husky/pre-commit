@@ -1,0 +1,24 @@
+# Same checks CI runs, so a push cannot fail there for something found here first.
+#
+# git only honours one core.hooksPath and husky sets a repo-local one, which would switch off
+# the global hooks in ~/.git-hooks. Run the global pre-commit first so they keep working.
+GLOBAL="$HOME/.git-hooks/pre-commit"
+[ -x "$GLOBAL" ] && "$GLOBAL" "$@"
+
+cd "$(git rev-parse --show-toplevel)/backend"
+
+if command -v bun >/dev/null 2>&1; then
+  BUN=bun
+elif [ -x "$HOME/.bun/bin/bun" ]; then
+  BUN="$HOME/.bun/bin/bun"
+fi
+
+if [ -n "${BUN:-}" ]; then
+  "$BUN" install --frozen-lockfile >/dev/null && "$BUN" x tsc --noEmit && "$BUN" test >/dev/null
+elif command -v docker >/dev/null 2>&1; then
+  echo "pre-commit: bun is not installed, running the checks in a container..." >&2
+  docker run --rm -v "$(git rev-parse --show-toplevel):/repo" -w /repo/backend oven/bun:1 \
+    sh -c 'bun install --frozen-lockfile >/dev/null && bun x tsc --noEmit && bun test >/dev/null'
+else
+  echo "pre-commit: neither bun nor docker is available, the checks were SKIPPED." >&2
+fi
