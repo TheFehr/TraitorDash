@@ -180,6 +180,14 @@ describe('session secret', () => {
     expect((await boot({ SESSION_SECRET: 'short', ADMIN_STEAM_IDS: ADMIN })).code).not.toBe(0)
   })
 
+  test('an empty admin list warns loudly and nobody is an admin', async () => {
+    const r = await boot({ SESSION_SECRET: 'x'.repeat(40), ADMIN_STEAM_IDS: '' })
+    expect(r.out).toContain('BOOTED')
+    expect(r.err + r.out).toContain('ADMIN_STEAM_IDS is empty')
+    const unset = await boot({ SESSION_SECRET: 'x'.repeat(40) })
+    expect(unset.err + unset.out).toContain('ADMIN_STEAM_IDS is empty')
+  })
+
   test('a long random secret starts fine, and a cookie signed with the old fallback is useless', async () => {
     const ok = await boot({ SESSION_SECRET: 'x'.repeat(40), ADMIN_STEAM_IDS: ADMIN })
     expect(ok.out).toContain('BOOTED')

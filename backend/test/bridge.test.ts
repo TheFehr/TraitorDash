@@ -13,13 +13,14 @@ const BRIDGE = read('bridge.lua').replace(/\bcontinue\b/g, 'error("continue")')
 
 const PRELUDE = `
   FCVAR_ARCHIVE, FCVAR_PROTECTED = 1, 2
+  isnumber = function(v) return type(v) == "number" end
   isstring = function(v) return type(v) == "string" end
   istable = function(v) return type(v) == "table" end
   IsValid = function(v) return v ~= nil and v ~= false end
   include = function() end -- commands.lua is loaded by the harness before the bridge
   APPLIED, SENT, SET = {}, {}, {}
   REAL_CVARS = { ttt_known = "1", ttt2_other = "2", rcon_password = "secret", sv_password = "pw", ttt_survivalist_pct = "0.15" }
-  local CV = { traitordash_url = 'http://td.test/"', traitordash_token = "tok" }
+  local CV = { traitordash_url = 'https://td.test/"', traitordash_token = "tok" }
   function CreateConVar(n, v) if CV[n] == nil then CV[n] = tostring(v) end return { GetString = function() return CV[n] end } end
   function SetCv(n, v) CV[n] = v end
   function GetConVar(n)
@@ -36,7 +37,7 @@ const PRELUDE = `
   concommand = { Add = function() end }  player = { GetAll = function() return {} end }
   RealTime = os.clock
   string.Explode = function(sep, s) local o = {} for p in (s .. sep):gmatch("(.-)" .. sep:gsub("%p", "%%%0")) do o[#o + 1] = p end return o end
-  util = { TableToJSON = function() return "{}" end, JSONToTable = function() return JSON_NEXT end, MD5 = function() return "x" end }
+  util = { TableToJSON = function(t) LAST_PAYLOAD = t return "{}" end, JSONToTable = function() return JSON_NEXT end, MD5 = function() return "x" end }
   function HTTP(req) SENT[#SENT + 1] = req end
   SetGlobalBool, SetGlobalInt, SetGlobalString = function() end, function() end, function() end
 `
@@ -154,7 +155,7 @@ describe('the API token', () => {
 describe('the rest of the bridge still works', () => {
   test('poll URL is cleaned and the token is sent as a Bearer header', () => {
     const { applied } = run(`TraitorDash.Poll() APPLIED[1] = SENT[1].url .. " " .. SENT[1].headers.Authorization`)
-    expect(applied).toEqual(['http://td.test/api/v1/poll Bearer tok'])
+    expect(applied).toEqual(['https://td.test/api/v1/poll Bearer tok'])
   })
 
   test('a failing or malformed response never throws', () => {
@@ -167,6 +168,63 @@ describe('the rest of the bridge still works', () => {
       for i = 1, 450 do schema[i] = { args = { convar = "ttt_x_" .. i } } end
       TraitorDash.ReportRole("survivalist", schema)
       APPLIED[1] = #SENT .. ":" .. SENT[1].url`)
-    expect(applied).toEqual(['2:http://td.test/api/v1/values'])
+    expect(applied).toEqual(['2:https://td.test/api/v1/values'])
+  })
+})
+
+describe('acknowledging commands', () => {
+  // Reads what the bridge says it has acked in its n-th poll.
+  const ackedIn = (script: string) => {
+    const L = lauxlib.luaL_newstate()
+    lualib.luaL_openlibs(L)
+    const go = (c: string) => {
+      if (lauxlib.luaL_dostring(L, to_luastring(c)) !== lua.LUA_OK) throw new Error(to_jsstring(lua.lua_tostring(L, -1)))
+    }
+    try {
+      go(PRELUDE); go(COMMANDS); go(BRIDGE); go(script)
+      go('OUT = table.concat(LAST_PAYLOAD.acked, ",")')
+      lua.lua_getglobal(L, to_luastring('OUT'))
+      return to_jsstring(lua.lua_tostring(L, -1))
+    } finally { lua.lua_close(L) }
+  }
+  const cmds = '{ { id = 7, type = "convar", payload = "ttt_known 5" }, { id = 8, type = "convar", payload = "rcon_password x" } }'
+
+  test('applied and refused commands are acknowledged on the next poll', () => {
+    expect(ackedIn(`${poll(cmds)} JSON_NEXT = { commands = {} } TraitorDash.Poll()`)).toBe('7,8')
+  })
+
+  test('an acknowledgement is not repeated once the backend answered', () => {
+    expect(ackedIn(`${poll(cmds)} JSON_NEXT = { commands = {} } TraitorDash.Poll() SENT[2].success(200, "") TraitorDash.Poll()`)).toBe('')
+  })
+
+  test('a poll that failed keeps the acknowledgements for the next one', () => {
+    expect(ackedIn(`${poll(cmds)} TraitorDash.Poll() SENT[2].failed("x") TraitorDash.Poll()`)).toBe('7,8')
+  })
+})
+
+describe('transport', () => {
+  const check = (url: string) => {
+    const L = lauxlib.luaL_newstate(); lualib.luaL_openlibs(L)
+    try {
+      for (const c of [PRELUDE, COMMANDS, `R = TraitorDash.IsTrustedTransport(${JSON.stringify(url)})`]) {
+        if (lauxlib.luaL_dostring(L, to_luastring(c)) !== lua.LUA_OK) throw new Error(to_jsstring(lua.lua_tostring(L, -1)))
+      }
+      lua.lua_getglobal(L, to_luastring('R'))
+      return lua.lua_toboolean(L, -1)
+    } finally { lua.lua_close(L) }
+  }
+
+  test('https and local or private http are trusted', () => {
+    for (const u of ['https://td.example', 'HTTPS://td.example/x', 'http://localhost:3000', 'http://127.0.0.1:3000', 'http://10.1.2.3', 'http://192.168.1.5:3000', 'http://172.16.0.1', 'http://172.31.255.1'])
+      expect([u, check(u)]).toEqual([u, true])
+  })
+
+  test('plain http to anything else, and junk, is not', () => {
+    for (const u of ['http://td.example', 'http://8.8.8.8', 'http://172.32.0.1', 'http://172.15.0.1', 'http://10.evil.com', 'ftp://x', '', 'td.example'])
+      expect([u, check(u)]).toEqual([u, false])
+  })
+
+  test('the poller does nothing over untrusted http', () => {
+    expect(run('SetCv("traitordash_url", "http://td.example") TraitorDash.Poll() APPLIED[1] = "sent:" .. #SENT').applied).toEqual(['sent:0'])
   })
 })

@@ -161,3 +161,34 @@ describe('stats.lua', () => {
     expect(sent).toHaveLength(0)
   })
 })
+
+describe('contract with POST /api/v1/round', () => {
+  test('a round exactly as stats.lua sends it is accepted and stored by the backend', async () => {
+    process.env.TRAITORDASH_DB = ':memory:'
+    process.env.SESSION_SECRET = 'test-secret-test-secret-test-secret-0'
+    const api = (await import('../src/routes/api')).default
+    const { Store } = await import('../src/services/Store')
+    const db = (await import('../src/services/Database')).default
+
+    const [sent] = play(`
+      Fire("TTTPrepareRound")
+      Fire("TTTBeginRound")
+      B.alive = false; Fire("TTT2PostPlayerDeath", B, nil, A)
+      A.alive = false; Fire("TTT2PostPlayerDeath", A, nil, A)
+      Fire("TTTEndRound", WIN_INNOCENT)
+    `)
+    const server = Store.addServer('Contract')
+    const res = await api.request('/v1/round', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${server.token}` },
+      body: JSON.stringify(sent.body),
+    })
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as any).stored).toBe(true)
+
+    const round = db.query('SELECT * FROM rounds WHERE server_id = ?').get(server.id) as any
+    expect(round.round_id).toBe(sent.body.round_id)
+    expect((db.query('SELECT COUNT(*) n FROM round_players WHERE server_id = ?').get(server.id) as any).n).toBeGreaterThan(0)
+    expect((db.query('SELECT COUNT(*) n FROM deaths WHERE server_id = ?').get(server.id) as any).n).toBe(2)
+  })
+})
