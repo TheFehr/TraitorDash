@@ -17,6 +17,12 @@ function loadSessionSecret(): string {
 
 export const SESSION_SECRET = loadSessionSecret()
 
+// Behind https the cookie gets the __Host- prefix: browsers then refuse to accept it unless it
+// is Secure, has Path=/ and no Domain, so a sibling subdomain (or an http page) cannot plant
+// or overwrite it. Plain http (local development) keeps the unprefixed name.
+export const SESSION_COOKIE_SECURE = /^https:\/\//i.test((process.env.BASE_URL || '').trim())
+export const SESSION_COOKIE = SESSION_COOKIE_SECURE ? '__Host-steam_id' : 'steam_id'
+
 // Comma-separated SteamID64s allowed to administer. Empty list = nobody (fail closed).
 const ADMIN_STEAM_IDS = new Set(
   (process.env.ADMIN_STEAM_IDS || '').split(',').map(s => s.trim()).filter(Boolean)
@@ -30,7 +36,7 @@ export const isAdmin = (steamId: string) => ADMIN_STEAM_IDS.has(steamId)
 
 /** Returns the SteamID64 of the logged-in admin, or null. Re-checks the allowlist on every call. */
 export const getAdminId = async (c: any): Promise<string | null> => {
-  const steamId = await getSignedCookie(c, SESSION_SECRET, 'steam_id')
+  const steamId = await getSignedCookie(c, SESSION_SECRET, SESSION_COOKIE)
   return steamId && isAdmin(steamId) ? steamId : null
 }
 

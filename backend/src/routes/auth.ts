@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { setSignedCookie, setCookie, getCookie, deleteCookie } from 'hono/cookie'
-import { SESSION_SECRET, isAdmin } from '../middleware/session'
+import { SESSION_SECRET, SESSION_COOKIE, SESSION_COOKIE_SECURE, isAdmin } from '../middleware/session'
 
 const auth = new Hono()
 
@@ -96,10 +96,10 @@ auth.get('/steam/callback', async (c) => {
     }
 
     // 4. Set Secure Signed Session
-    await setSignedCookie(c, 'steam_id', steamId, SESSION_SECRET, {
+    await setSignedCookie(c, SESSION_COOKIE, steamId, SESSION_SECRET, {
       path: '/',
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: SESSION_COOKIE_SECURE || process.env.NODE_ENV === 'production',
       maxAge: 60 * 60 * 24 * 7, // 1 week
       sameSite: 'Lax',
     })
@@ -113,7 +113,7 @@ auth.get('/steam/callback', async (c) => {
 
 // POST only: a GET could be triggered by any page (an image tag) and log the admin out.
 auth.post('/logout', (c) => {
-  deleteCookie(c, 'steam_id')
+  deleteCookie(c, SESSION_COOKIE, { path: '/', secure: SESSION_COOKIE_SECURE })
   return c.redirect('/')
 })
 

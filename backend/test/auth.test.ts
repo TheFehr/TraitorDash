@@ -198,3 +198,35 @@ describe('session secret', () => {
     expect(await getAdminId(c)).toBeNull()
   })
 })
+
+describe('session cookie name', () => {
+  // SESSION_COOKIE is fixed at import time, so each variant runs in a fresh process.
+  const probe = async (baseUrl: string | undefined) => {
+    const proc = Bun.spawn([process.execPath, '-e', `
+      const { serializeSigned } = await import('hono/utils/cookie')
+      const { SESSION_COOKIE, SESSION_COOKIE_SECURE, getAdminId } = await import('./src/middleware/session')
+      const ctx = (cookie) => ({ req: { raw: { headers: new Headers({ Cookie: cookie }) }, header: (n) => new Headers({ Cookie: cookie }).get(n) } })
+      const secret = 'x'.repeat(40)
+      const sign = async (name) => (await serializeSigned(name, '${ADMIN}', secret, { secure: true, path: '/' })).split(';')[0]
+      console.log(JSON.stringify({
+        name: SESSION_COOKIE, secure: SESSION_COOKIE_SECURE,
+        prefixed: await getAdminId(ctx(await sign('__Host-steam_id'))),
+        plain: await getAdminId(ctx(await sign('steam_id'))),
+      }))
+    `], {
+      cwd: import.meta.dir + '/..',
+      env: { PATH: process.env.PATH, SESSION_SECRET: 'x'.repeat(40), ADMIN_STEAM_IDS: ADMIN, ...(baseUrl ? { BASE_URL: baseUrl } : {}) },
+      stdout: 'pipe', stderr: 'pipe',
+    })
+    const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]); try { return JSON.parse(out.trim().split('\n').at(-1)!) } catch { throw new Error(err) }
+  }
+
+  test('behind https the cookie is __Host- prefixed, and an unprefixed one is not accepted', async () => {
+    expect(await probe('https://td.example')).toEqual({ name: '__Host-steam_id', secure: true, prefixed: ADMIN, plain: null })
+  })
+
+  test('on plain http (development) the name is unchanged, and a prefixed one is not accepted', async () => {
+    expect(await probe('http://localhost:3000')).toEqual({ name: 'steam_id', secure: false, prefixed: null, plain: ADMIN })
+    expect(await probe(undefined)).toMatchObject({ name: 'steam_id', secure: false })
+  })
+})
