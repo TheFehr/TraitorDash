@@ -4,6 +4,7 @@ import { Store, type LiveConVarEntry, type RoundReport } from '../services/Store
 import { ServerManager } from '../components/ServerManager'
 import { requireSession } from '../middleware/session'
 import { normalizeConVarValue, formatConVarCommand } from '../services/convars'
+import { RateLimiter } from '../services/rateLimit'
 
 type Variables = {
   server: {
@@ -238,8 +239,19 @@ const ROUND_ID = /^[A-Za-z0-9-]{8,64}$/
 const label = (v: unknown, max = 64) => (typeof v === 'string' && v.length > 0 ? v.slice(0, max) : null)
 const whole = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.round(v) : null)
 
+// A server reports one round every few minutes. This only stops a runaway or hostile client from
+// filling the database: a real server never gets near it, and a refused round is simply lost
+// (the bridge does not retry), exactly like any other failed report.
+export const roundLimiter = new RateLimiter(10, 60_000)
+
 api.post('/v1/round', getServer, async (c) => {
   const server = c.get('server')
+  const wait = roundLimiter.hit(server.id)
+  if (wait > 0) {
+    console.warn(`[Stats] Rate limit hit by ${server.name}; refusing rounds for ${wait}s`)
+    c.header('Retry-After', String(wait))
+    return c.json({ error: 'Too many rounds reported; slow down' }, 429)
+  }
   const body = await c.req.json().catch(() => null)
   const bad = (msg: string) => {
     console.warn(`[Stats] Rejected round from ${server.name}: ${msg}`)
@@ -264,12 +276,19 @@ api.post('/v1/round', getServer, async (c) => {
       won: p.won === true,
     })
   }
+  // Deaths are checked against the round's own players: a death for someone who was not in the
+  // round is dropped, and a killer who is the victim (suicide) or not in the round gets no kill.
+  const inRound = new Set(players.map(p => p.steamId))
   const deaths: RoundReport['deaths'] = []
+  let dropped = 0
   for (const d of body.deaths ?? []) {
     if (typeof d?.victim !== 'string' || !STEAM_ID.test(d.victim)) return bad('invalid death victim')
-    const attacker = typeof d.attacker === 'string' && STEAM_ID.test(d.attacker) ? d.attacker : null
+    if (!inRound.has(d.victim)) { dropped++; continue }
+    const claimed = typeof d.attacker === 'string' && STEAM_ID.test(d.attacker) ? d.attacker : null
+    const attacker = claimed && claimed !== d.victim && inRound.has(claimed) ? claimed : null
     deaths.push({ victim: d.victim, attacker, at: whole(d.at) })
   }
+  if (dropped > 0) console.warn(`[Stats] ${server.name}: ${dropped} death(s) for players not in the round were dropped`)
 
   const report: RoundReport = {
     roundId: body.round_id,
@@ -295,7 +314,7 @@ api.post('/save/:serverId/:role', async (c) => {
   const role = c.req.param('role')
   const body = await c.req.parseBody()
   
-  console.log(`[API] Saving config for ${role} on ${serverId}:`, body)
+  console.log(`[API] Saving config for ${role} on ${serverId}: ${Object.keys(body).length} field(s)`)
 
   const schema = Store.getSchema(serverId, role)
   if (!schema) {
@@ -359,8 +378,10 @@ api.post('/save/:serverId/:role', async (c) => {
 
 api.post('/v1/poll', getServer, async (c) => {
   const server = c.get('server')
-  const body = await c.req.json().catch(() => ({}))
-  const { active_admins } = body
+  // Anything that is not a JSON object (null, an array, a string, garbage) counts as an empty
+  // poll: the heartbeat and the queued commands must still go through.
+  const parsed = await c.req.json().catch(() => null)
+  const { active_admins } = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : ({} as any)
 
   if (active_admins && Array.isArray(active_admins)) {
     console.log(`[API] Heartbeat with ${active_admins.length} admins from ${server.name} (${server.id})`)

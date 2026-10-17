@@ -11,6 +11,9 @@ const SERVER_COLS = 'id, name, last_seen'
 /** 256 random bits, hex. Shown to an admin once; only its hash is stored. */
 const newToken = () => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('hex')
 
+/** Stats history kept per server; older rounds are removed as new ones arrive. */
+export const MAX_ROUNDS_PER_SERVER = 50_000
+
 export interface RoundReport {
   roundId: string
   map: string | null
@@ -69,8 +72,12 @@ export class Store {
     db.run('DELETE FROM servers WHERE id = ?', [id])
   }
 
-  /** Stores one finished round. Returns false (and stores nothing) if this round_id was already recorded. */
-  static recordRound(serverId: string, r: RoundReport): boolean {
+  /**
+   * Stores one finished round. Returns false (and stores nothing) if this round_id was already
+   * recorded. Keeps at most `keep` rounds per server: the oldest are removed together with their
+   * players and deaths, so the tables cannot grow without bound.
+   */
+  static recordRound(serverId: string, r: RoundReport, keep: number = MAX_ROUNDS_PER_SERVER): boolean {
     return db.transaction(() => {
       const inserted = db.prepare(
         'INSERT OR IGNORE INTO rounds (server_id, round_id, map, started_at, duration, result) VALUES (?, ?, ?, ?, ?, ?)'
@@ -87,6 +94,15 @@ export class Store {
         'INSERT INTO deaths (server_id, round_id, victim_steam_id, attacker_steam_id, at_seconds) VALUES (?, ?, ?, ?, ?)'
       )
       for (const d of r.deaths) death.run(serverId, r.roundId, d.victim, d.attacker, d.at)
+
+      const old = db.prepare(
+        'SELECT round_id FROM rounds WHERE server_id = ? ORDER BY received_at DESC, rowid DESC LIMIT -1 OFFSET ?'
+      ).all(serverId, keep) as { round_id: string }[]
+      for (const { round_id } of old) {
+        db.run('DELETE FROM deaths WHERE server_id = ? AND round_id = ?', [serverId, round_id])
+        db.run('DELETE FROM round_players WHERE server_id = ? AND round_id = ?', [serverId, round_id])
+        db.run('DELETE FROM rounds WHERE server_id = ? AND round_id = ?', [serverId, round_id])
+      }
       return true
     })()
   }
