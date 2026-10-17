@@ -539,14 +539,15 @@ function TraitorDash.Poll()
                     local expected = TraitorDash.ExpectedSignature and TraitorDash.ExpectedSignature(token, nonce, body or "", util.SHA256)
                     if not (TraitorDash.SignatureMatches and TraitorDash.SignatureMatches(expected, got)) then
                         -- At most one line every 5 minutes, with enough detail to tell the causes apart.
-                        if RealTime() - (TraitorDash.LastSignatureWarning or -1e9) > 300 then
+                        TraitorDash.SignatureWarnings = (TraitorDash.SignatureWarnings or 0) + 1
+                        if TraitorDash.SignatureWarnings <= 3 or RealTime() - (TraitorDash.LastSignatureWarning or -1e9) > 300 then
                             TraitorDash.LastSignatureWarning = RealTime()
                             local names = {}
                             for k in pairs(type(headers) == "table" and headers or {}) do names[#names + 1] = tostring(k) end
                             table.sort(names)
-                            print(string.format("[TraitorDash] Ignoring a poll answer without a valid signature (no commands applied). header=%s expected=%s got=%s body=%d bytes, headers: %s",
+                            print(string.format("[TraitorDash] Ignoring a poll answer without a valid signature (no commands applied). header=%s expected=%s got=%s body=%d bytes, sent: %s, headers: %s",
                                 got and "present" or "MISSING",
-                                tostring(expected):sub(1, 8), tostring(got):sub(1, 8), #(body or ""), table.concat(names, ",")))
+                                tostring(expected):sub(1, 8), tostring(got):sub(1, 8), #(body or ""), tostring(payload):sub(1, 160), table.concat(names, ",")))
                         end
                         TraitorDash.SignatureFailing = true
                         return

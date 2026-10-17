@@ -50,3 +50,25 @@ describe('signed poll answers', () => {
     }
   })
 })
+
+describe('missing nonce diagnostics', () => {
+  test('a poll without a valid nonce is logged once per server, naming what arrived', async () => {
+    const s = Store.addServer('NoNonce')
+    const lines: string[] = []
+    const orig = console.warn
+    console.warn = (...a: any[]) => { lines.push(a.join(' ')) }
+    try {
+      for (let i = 0; i < 3; i++) {
+        await api.request('/v1/poll', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${s.token}` },
+          body: JSON.stringify({ active_admins: [], nonce: 5 }),
+        })
+      }
+    } finally { console.warn = orig }
+    const mine = lines.filter(l => l.includes('NoNonce'))
+    expect(mine).toHaveLength(1)
+    expect(mine[0]).toContain('nonce is number')
+    expect(mine[0]).toContain('active_admins,nonce')
+  })
+})

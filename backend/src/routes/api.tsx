@@ -384,6 +384,7 @@ api.post('/save/:serverId/:role', async (c) => {
   return c.json({ success: true, commands_staged: stagedCount })
 })
 
+const warnedNoNonce = new Set<string>()
 api.post('/v1/poll', getServer, async (c) => {
   const server = c.get('server')
   // Anything that is not a JSON object (null, an array, a string, garbage) counts as an empty
@@ -425,6 +426,10 @@ api.post('/v1/poll', getServer, async (c) => {
   if (typeof nonce === 'string' && NONCE.test(nonce)) {
     const token = c.req.header('Authorization')!.slice('Bearer '.length)
     headers[SIGNATURE_HEADER] = signResponse(token, nonce, body)
+  } else if (!warnedNoNonce.has(server.id)) {
+    // An older bridge never sends one; a current bridge should. Said once per server and process.
+    warnedNoNonce.add(server.id)
+    console.warn(`[API] Poll from ${server.name} has no valid nonce (nonce is ${typeof nonce}, body keys: ${Object.keys(parsed && typeof parsed === 'object' ? parsed : {}).join(',') || 'none'}), so the answer is unsigned`)
   }
   return c.body(body, 200, headers)
 })
