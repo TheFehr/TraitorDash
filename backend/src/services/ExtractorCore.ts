@@ -30,18 +30,112 @@ export class ExtractorCore {
     return this.mockEnv
   }
 
+  // GMod Lua has C-style operators and comments that plain Lua 5.3 (fengari) rejects:
+  //   !  !=  &&  ||  //  /* */  continue
+  // They are rewritten ONLY in code. A string literal, a long string or a comment is copied
+  // exactly as written ("Disguise enabled!" and "http://example.com" used to be corrupted,
+  // which put wrong labels on the dashboard), so this walks the source instead of using
+  // regular expressions.
   private static sanitizeCode(code: string): string {
-    return code
-      .replace(/\/\*[\s\S]*?\*\//g, (match) => {
-        // Convert /* */ to --[[ ]]
-        return '--[[' + match.substring(2, match.length - 2) + ']]'
-      })
-      .replace(/!=/g, '~=')
-      .replace(/!/g, ' not ')
-      .replace(/&&/g, ' and ')
-      .replace(/\|\|/g, ' or ')
-      .replace(/\/\//g, '--') // Single line comments
-      .replace(/\bcontinue\b/g, '__td_continue()') // GMod Lua 'continue' keyword
+    const out: string[] = []
+    let i = 0
+    let lastCode = '' // last non-space character emitted as code, to leave `.continue` alone
+    const n = code.length
+
+    // `[`, `=`*, `[` at i starts a long string/comment; returns the closing marker or null.
+    const longOpen = (at: number): string | null => {
+      const m = /^\[(=*)\[/.exec(code.slice(at, at + 64))
+      return m ? `]${m[1]}]` : null
+    }
+    const copyUntil = (end: number) => { out.push(code.slice(i, end)); i = end }
+
+    while (i < n) {
+      const c = code[i]!
+      const two = code.substr(i, 2)
+
+      // Quoted string: copied verbatim up to its closing quote (escapes honoured; an
+      // unterminated string ends at the line break, as Lua itself would complain about it).
+      if (c === '"' || c === "'") {
+        let j = i + 1
+        while (j < n && code[j] !== c && code[j] !== '\n') j += code[j] === '\\' ? 2 : 1
+        copyUntil(Math.min(j + 1, n))
+        lastCode = c
+        continue
+      }
+
+      // Long string [[ ... ]] / [=[ ... ]=]
+      if (c === '[') {
+        const close = longOpen(i)
+        if (close) {
+          const end = code.indexOf(close, i)
+          copyUntil(end === -1 ? n : end + close.length)
+          lastCode = ']'
+          continue
+        }
+      }
+
+      // Lua comment: -- to end of line, or --[[ ... ]]
+      if (two === '--') {
+        const close = longOpen(i + 2)
+        if (close) {
+          const end = code.indexOf(close, i)
+          copyUntil(end === -1 ? n : end + close.length)
+        } else {
+          const nl = code.indexOf('\n', i)
+          copyUntil(nl === -1 ? n : nl)
+        }
+        continue
+      }
+
+      // GMod line comment: // to end of line, becomes a Lua comment
+      if (two === '//') {
+        const nl = code.indexOf('\n', i)
+        const end = nl === -1 ? n : nl
+        out.push('--' + code.slice(i + 2, end))
+        i = end
+        continue
+      }
+
+      // GMod block comment: /* ... */ becomes --[[ ... ]] (long level raised if the text contains ]])
+      if (two === '/*') {
+        const end = code.indexOf('*/', i + 2)
+        const body = code.slice(i + 2, end === -1 ? n : end)
+        out.push(body.includes(']]') ? `--[==[${body}]==]` : `--[[${body}]]`)
+        i = end === -1 ? n : end + 2
+        continue
+      }
+
+      if (two === '!=') { out.push('~='); i += 2; lastCode = '='; continue }
+      if (two === '&&') { out.push(' and '); i += 2; lastCode = '&'; continue }
+      if (two === '||') { out.push(' or '); i += 2; lastCode = '|'; continue }
+      if (c === '!') { out.push(' not '); i += 1; lastCode = '!'; continue }
+
+      // Numbers are consumed whole so that the `e5` of `1e5` is never read as a word.
+      if (/[0-9]/.test(c)) {
+        let j = i + 1
+        while (j < n && /[0-9A-Za-z_.]/.test(code[j]!)) j++
+        copyUntil(j)
+        lastCode = '0'
+        continue
+      }
+
+      // Words: only a bare `continue` (not a field such as `x.continue`) is GMod's keyword.
+      if (/[A-Za-z_]/.test(c)) {
+        let j = i + 1
+        while (j < n && /[A-Za-z0-9_]/.test(code[j]!)) j++
+        const word = code.slice(i, j)
+        out.push(word === 'continue' && lastCode !== '.' && lastCode !== ':' ? '__td_continue()' : word)
+        i = j
+        lastCode = 'a'
+        continue
+      }
+
+      out.push(c)
+      if (!/\s/.test(c)) lastCode = c
+      i++
+    }
+
+    return out.join('')
   }
 
   // Only the pure libraries. luaL_openlibs would also hand role code os.execute / os.exit /
