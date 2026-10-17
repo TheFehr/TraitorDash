@@ -11,6 +11,17 @@ const read = (f: string) => fs.readFileSync(path.join(dir, f), 'utf8')
 const COMMANDS = read('commands.lua')
 const BRIDGE = read('bridge.lua').replace(/\bcontinue\b/g, 'error("continue")')
 
+import { createHash } from 'node:crypto'
+// util.SHA256 as GMod has it: a string in, lowercase hex out.
+function addSha256(L: any) {
+  lua.lua_pushjsfunction(L, (st: any) => {
+    const input = to_jsstring(lauxlib.luaL_checklstring(st, 1))
+    lua.lua_pushstring(st, to_luastring(createHash('sha256').update(input).digest('hex')))
+    return 1
+  })
+  lua.lua_setglobal(L, to_luastring('JS_SHA256'))
+}
+
 const PRELUDE = `
   FCVAR_ARCHIVE, FCVAR_PROTECTED = 1, 2
   isnumber = function(v) return type(v) == "number" end
@@ -37,15 +48,18 @@ const PRELUDE = `
   concommand = { Add = function() end }  player = { GetAll = function() return {} end }
   RealTime = os.clock
   string.Explode = function(sep, s) local o = {} for p in (s .. sep):gmatch("(.-)" .. sep:gsub("%p", "%%%0")) do o[#o + 1] = p end return o end
-  util = { TableToJSON = function(t) LAST_PAYLOAD = t return "{}" end, JSONToTable = function() return JSON_NEXT end, MD5 = function() return "x" end }
-  function HTTP(req) SENT[#SENT + 1] = req end
+  util = { TableToJSON = function(t) LAST_PAYLOAD = t return "{}" end, JSONToTable = function() return JSON_NEXT end, MD5 = function() return "x" end, SHA256 = JS_SHA256 }
+  SysTime = os.clock
+  function HTTP(req) req.nonce = LAST_PAYLOAD and LAST_PAYLOAD.nonce SENT[#SENT + 1] = req end
+  -- The backend's answer to request i, signed the way the backend signs it.
+  function OK(i, body) SENT[i].success(200, body, { ["x-traitordash-signature"] = TraitorDash.ExpectedSignature("tok", SENT[i].nonce, body, util.SHA256) }) end
   SetGlobalBool, SetGlobalInt, SetGlobalString = function() end, function() end, function() end
 `
 
 /** Runs `script` after loading the files and returns what was applied to the console, and which ConVars were SetString'd. */
 function run(script: string): { applied: string[], set: string[] } {
   const L = lauxlib.luaL_newstate()
-  lualib.luaL_openlibs(L)
+  lualib.luaL_openlibs(L); addSha256(L)
   const go = (c: string) => {
     if (lauxlib.luaL_dostring(L, to_luastring(c)) !== lua.LUA_OK) throw new Error(to_jsstring(lua.lua_tostring(L, -1)))
   }
@@ -64,7 +78,7 @@ function run(script: string): { applied: string[], set: string[] } {
 const poll = (commands: string) => `
   JSON_NEXT = { commands = ${commands} }
   TraitorDash.Poll()
-  SENT[1].success(200, "ignored")`
+  OK(1, "ignored")`
 const convar = (payload: string) => run(poll(`{ { type = "convar", payload = ${JSON.stringify(payload)} } }`)).applied
 
 describe('commands the bridge applies', () => {
@@ -127,7 +141,7 @@ describe('data updates', () => {
 
   test('only ttt_/ttt2_ ConVars are written, and only for plain identifier keys', () => {
     const run1 = (key: string) => run(`JSON_NEXT = { commands = { { type = "data", payload = { key = ${JSON.stringify(key)}, value = "x", dataType = "string" } } } }
-      TraitorDash.Poll() SENT[1].success(200, "ignored")`).set
+      TraitorDash.Poll() OK(1, "ignored")`).set
     expect(run1('ttt_known')).toEqual(['ttt_known=x'])
     expect(run1('rcon_password')).toEqual([])
     expect(run1('sv_password')).toEqual([])
@@ -159,7 +173,7 @@ describe('the rest of the bridge still works', () => {
   })
 
   test('a failing or malformed response never throws', () => {
-    expect(run(`JSON_NEXT = nil TraitorDash.Poll() SENT[1].success(200, "garbage") SENT[1].success(500, "") SENT[1].failed("timeout")`).applied).toEqual([])
+    expect(run(`JSON_NEXT = nil TraitorDash.Poll() OK(1, "garbage") SENT[1].success(500, "") SENT[1].failed("timeout")`).applied).toEqual([])
   })
 
   test('ReportRole chunks at 400 ConVars per request', () => {
@@ -176,7 +190,7 @@ describe('acknowledging commands', () => {
   // Reads what the bridge says it has acked in its n-th poll.
   const ackedIn = (script: string) => {
     const L = lauxlib.luaL_newstate()
-    lualib.luaL_openlibs(L)
+    lualib.luaL_openlibs(L); addSha256(L)
     const go = (c: string) => {
       if (lauxlib.luaL_dostring(L, to_luastring(c)) !== lua.LUA_OK) throw new Error(to_jsstring(lua.lua_tostring(L, -1)))
     }
@@ -194,7 +208,7 @@ describe('acknowledging commands', () => {
   })
 
   test('an acknowledgement is not repeated once the backend answered', () => {
-    expect(ackedIn(`${poll(cmds)} JSON_NEXT = { commands = {} } TraitorDash.Poll() SENT[2].success(200, "") TraitorDash.Poll()`)).toBe('')
+    expect(ackedIn(`${poll(cmds)} JSON_NEXT = { commands = {} } TraitorDash.Poll() OK(2, "") TraitorDash.Poll()`)).toBe('')
   })
 
   test('a poll that failed keeps the acknowledgements for the next one', () => {
@@ -204,7 +218,7 @@ describe('acknowledging commands', () => {
 
 describe('transport', () => {
   const check = (url: string) => {
-    const L = lauxlib.luaL_newstate(); lualib.luaL_openlibs(L)
+    const L = lauxlib.luaL_newstate(); lualib.luaL_openlibs(L); addSha256(L)
     try {
       for (const c of [PRELUDE, COMMANDS, `R = TraitorDash.IsTrustedTransport(${JSON.stringify(url)})`]) {
         if (lauxlib.luaL_dostring(L, to_luastring(c)) !== lua.LUA_OK) throw new Error(to_jsstring(lua.lua_tostring(L, -1)))
@@ -226,5 +240,35 @@ describe('transport', () => {
 
   test('the poller does nothing over untrusted http', () => {
     expect(run('SetCv("traitordash_url", "http://td.example") TraitorDash.Poll() APPLIED[1] = "sent:" .. #SENT').applied).toEqual(['sent:0'])
+  })
+})
+
+describe('signed poll answers', () => {
+  const applied = (script: string) => run(script).applied
+  const cmd = 'JSON_NEXT = { commands = { { id = 1, type = "convar", payload = "ttt_known 5" } } } TraitorDash.Poll()'
+
+  test('an answer signed for this poll is applied', () => {
+    expect(applied(`${cmd} OK(1, "body")`)).toEqual(['ttt_known=5'])
+  })
+
+  test('an unsigned answer applies nothing and acknowledges nothing', () => {
+    expect(applied(`${cmd} SENT[1].success(200, "body", {})`)).toEqual([])
+    expect(applied(`${cmd} SENT[1].success(200, "body")`)).toEqual([])
+  })
+
+  test('a signature from another token, another body or another poll is refused', () => {
+    const bad = (sig: string) => applied(`${cmd} SENT[1].success(200, "body", { ["X-TraitorDash-Signature"] = ${sig} })`)
+    expect(bad('TraitorDash.ExpectedSignature("other", SENT[1].nonce, "body", util.SHA256)')).toEqual([])
+    expect(bad('TraitorDash.ExpectedSignature("tok", SENT[1].nonce, "tampered", util.SHA256)')).toEqual([])
+    expect(bad('TraitorDash.ExpectedSignature("tok", "an-older-nonce", "body", util.SHA256)')).toEqual([])
+    expect(bad('""')).toEqual([])
+  })
+
+  test('the header name is found whatever its case', () => {
+    expect(applied(`${cmd} local sig = TraitorDash.ExpectedSignature("tok", SENT[1].nonce, "b", util.SHA256) SENT[1].success(200, "b", { ["X-TRAITORDASH-SIGNATURE"] = sig })`)).toEqual(['ttt_known=5'])
+  })
+
+  test('every poll uses a new nonce', () => {
+    expect(applied('TraitorDash.Poll() TraitorDash.Poll() APPLIED[1] = tostring(SENT[1].nonce ~= SENT[2].nonce) .. ":" .. #SENT[1].nonce')).toEqual(['true:32'])
   })
 })

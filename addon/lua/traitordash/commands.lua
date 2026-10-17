@@ -45,3 +45,29 @@ function TraitorDash.IsTrustedTransport(url)
     a, b = tonumber(a), tonumber(b)
     return a == 127 or a == 10 or (a == 192 and b == 168) or (a == 172 and b >= 16 and b <= 31)
 end
+
+-- The backend signs every poll answer (see services/signing.ts; keep the two identical):
+-- SHA-256 over "token \n nonce \n body \n token", as lowercase hex. `sha256` is util.SHA256.
+function TraitorDash.ExpectedSignature(token, nonce, body, sha256)
+    return sha256(token .. "\n" .. nonce .. "\n" .. body .. "\n" .. token)
+end
+
+-- Compares without stopping at the first difference.
+function TraitorDash.SignatureMatches(expected, got)
+    if type(expected) ~= "string" or type(got) ~= "string" or #expected ~= #got or #expected == 0 then return false end
+    local diff = 0
+    for i = 1, #expected do
+        if expected:byte(i) ~= got:byte(i) then diff = diff + 1 end
+    end
+    return diff == 0
+end
+
+-- HTTP header names come back in whatever case the server sent them.
+function TraitorDash.FindHeader(headers, name)
+    if type(headers) ~= "table" then return nil end
+    name = name:lower()
+    for k, v in pairs(headers) do
+        if type(k) == "string" and k:lower() == name then return v end
+    end
+    return nil
+end

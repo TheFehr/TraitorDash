@@ -5,6 +5,7 @@ import { ServerManager } from '../components/ServerManager'
 import { requireSession } from '../middleware/session'
 import { normalizeConVarValue, formatConVarCommand } from '../services/convars'
 import { RateLimiter } from '../services/rateLimit'
+import { NONCE, SIGNATURE_HEADER, signResponse } from '../services/signing'
 
 type Variables = {
   server: {
@@ -388,7 +389,7 @@ api.post('/v1/poll', getServer, async (c) => {
   // Anything that is not a JSON object (null, an array, a string, garbage) counts as an empty
   // poll: the heartbeat and the queued commands must still go through.
   const parsed = await c.req.json().catch(() => null)
-  const { active_admins, acked } = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : ({} as any)
+  const { active_admins, acked, nonce } = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : ({} as any)
 
   if (active_admins && Array.isArray(active_admins)) {
     console.log(`[API] Heartbeat with ${active_admins.length} admins from ${server.name} (${server.id})`)
@@ -400,7 +401,7 @@ api.post('/v1/poll', getServer, async (c) => {
   Store.updateHeartbeat(server.id)
   const commands = Store.pollCommands(server.id, Array.isArray(acked) ? acked : undefined)
   
-  return c.json({
+  const body = JSON.stringify({
     commands: commands.map(cmd => {
       let payload = cmd.args
       if (cmd.command === 'data') {
@@ -417,6 +418,15 @@ api.post('/v1/poll', getServer, async (c) => {
       }
     })
   })
+
+  // A bridge that sends a nonce gets a signature it can verify before applying anything.
+  // The key is the bearer token it just presented (only its hash is stored here).
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (typeof nonce === 'string' && NONCE.test(nonce)) {
+    const token = c.req.header('Authorization')!.slice('Bearer '.length)
+    headers[SIGNATURE_HEADER] = signResponse(token, nonce, body)
+  }
+  return c.body(body, 200, headers)
 })
 
 export default api

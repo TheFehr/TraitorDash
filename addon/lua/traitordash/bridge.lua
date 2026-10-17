@@ -512,9 +512,13 @@ function TraitorDash.Poll()
         local sentAcks = {}
         for i, id in ipairs(TraitorDash.PendingAcks) do sentAcks[i] = id end
 
+        -- Fresh for every poll; the backend signs its answer together with it.
+        local nonce = util.SHA256(tostring(SysTime()) .. ":" .. tostring(math.random()) .. ":" .. tostring(os.time())):sub(1, 32)
+
         local payload = util.TableToJSON({
             active_admins = TraitorDash.GetActiveAdmins(),
             acked = sentAcks,
+            nonce = nonce,
             timestamp = os.time()
         })
 
@@ -527,9 +531,19 @@ function TraitorDash.Poll()
                 ["Cache-Control"] = "no-cache"
             },
             body = payload,
-            success = function(code, body)
+            success = function(code, body, headers)
                 if code == 200 then
                     TraitorDash.LastSuccess = RealTime()
+                    -- Nothing below runs unless the answer is signed with our token for THIS poll.
+                    local got = TraitorDash.FindHeader(headers, "X-TraitorDash-Signature")
+                    local expected = TraitorDash.ExpectedSignature and TraitorDash.ExpectedSignature(token, nonce, body or "", util.SHA256)
+                    if not (TraitorDash.SignatureMatches and TraitorDash.SignatureMatches(expected, got)) then
+                        if not TraitorDash.WarnedSignature then
+                            TraitorDash.WarnedSignature = true
+                            print("[TraitorDash] Ignoring a poll answer without a valid signature (is the backend up to date, and the token correct?). No commands are applied.")
+                        end
+                        return
+                    end
                     -- The backend has seen these acknowledgements; keep only newer ones.
                     for _ = 1, #sentAcks do table.remove(TraitorDash.PendingAcks, 1) end
                     local data = util.JSONToTable(body)
