@@ -14,8 +14,8 @@ export const Layout = ({ children, steamId, path }: { children: any, steamId?: s
       <meta name="viewport" content="width=device-width, initial-scale=1.0" />
       <title>TraitorDash | TTT2 Admin</title>
       <link rel="icon" href={FAVICON} />
-      <script src="https://unpkg.com/htmx.org@1.9.10"></script>
-      <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+      {/* htmx and Alpine come from our own bundle (frontend.ts, versions locked by bun.lock), not a CDN:
+          a third-party script on an admin page can do anything the admin can. */}
       <script defer src="/public/frontend.js"></script>
       <link href="/public/style.css" rel="stylesheet" />
     </head>
