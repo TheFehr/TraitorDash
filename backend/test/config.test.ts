@@ -206,6 +206,12 @@ describe('telling the owner what is missing', () => {
     expect(lines[0]).toContain('config.json')
   })
 
+  test('no token anywhere: the message names the pairing command first', () => {
+    const [line] = missing(init('SetCv("traitordash_token", "")'))
+    expect(line).toContain('traitordash_connect <url> <code>')
+    expect(line!.indexOf('traitordash_connect')).toBeLessThan(line!.indexOf('config.json'))
+  })
+
   test('no URL anywhere: its own message', () => {
     const lines = missing(init('SetCv("traitordash_url", "")'))
     expect(lines).toHaveLength(1)

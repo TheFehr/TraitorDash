@@ -59,11 +59,22 @@ bun run dev
 | `TRAITORDASH_DB` | Path of the SQLite file (default `traitordash.sqlite`). |
 | `PORT` | Port to listen on (default 3000). `SERVER_PORT`, which Pelican sets, takes precedence. |
 
-Log in with Steam, add a server on the **Servers** page, and copy its **API token** (it is shown once; it can be regenerated).
+Log in with Steam and add a server on the **Servers** page. Pairing it with a game server needs no token copying: see the next step.
+`TRUST_PROXY=1` (optional) makes the pairing endpoint rate limit per client address using the last `X-Forwarded-For` entry; set it only behind a reverse proxy you control. Without it only the global limit (30 attempts a minute) applies.
 
 ### 2. Install the bridge on the GMod server
 
-Copy `addon/lua/` into the server's `garrysmod/lua/` (or install it as an addon) and tell the bridge where the dashboard is and which token it has. Create `garrysmod/data/traitordash/config.json` ([RFC 8](./docs/rfcs/RFC-008.md)):
+Copy `addon/lua/` into the server's `garrysmod/lua/` (or install it as an addon) and restart the server.
+
+**Pairing (recommended, [RFC 9](./docs/rfcs/RFC-009.md)).** On the **Servers** page press **Connect** for the server. The dashboard shows a command that works once and for 10 minutes; run it in the game server's console:
+
+```
+traitordash_connect https://traitordash.example.com ABCDE-FGHJK
+```
+
+The bridge trades the code for the server's token, stores it in `data/traitordash/config.json` and starts syncing. Pairing replaces the server's token (a server that is still using the old one stops working until it is paired), and the token is never shown or printed.
+
+**By hand.** Create `garrysmod/data/traitordash/config.json` ([RFC 8](./docs/rfcs/RFC-008.md)), with a token from the dashboard's **Regen token**:
 
 ```json
 { "url": "https://traitordash.example.com", "token": "<the server's API token>" }
@@ -111,10 +122,10 @@ The project is built following a series of Request for Comments (RFCs) that outl
 -   [RFC 5: Identity & Multi-Server](./docs/rfcs/RFC-005.md)
 -   [RFC 6: Secure Command Queue](./docs/rfcs/RFC-006.md)
 -   [RFC 7: Secure Session Management & CSRF Protection](./docs/rfcs/RFC-007.md)
--   [RFC 8: Bridge Configuration File](./docs/rfcs/RFC-008.md) *(proposed)*
--   [RFC 9: Pairing a Game Server](./docs/rfcs/RFC-009.md) *(proposed)*
+-   [RFC 8: Bridge Configuration File](./docs/rfcs/RFC-008.md)
+-   [RFC 9: Pairing a Game Server](./docs/rfcs/RFC-009.md)
 
-RFCs 6 and 7 describe what is implemented today; 8 and 9 are proposals; [docs/UI_DESIGN.md](./docs/UI_DESIGN.md) has the dashboard design notes.
+RFCs 6 to 9 describe what is implemented today; [docs/UI_DESIGN.md](./docs/UI_DESIGN.md) has the dashboard design notes.
 
 ---
 

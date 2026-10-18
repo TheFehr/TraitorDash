@@ -20,6 +20,11 @@ if not okCommands then print("[TraitorDash] commands.lua failed to load; all com
 local okConfig, errConfig = pcall(include, "traitordash/config.lua")
 if not okConfig then print("[TraitorDash] config.lua failed to load; the bridge stays idle: " .. tostring(errConfig)) end
 
+-- `traitordash_connect <url> <code>` (RFC 9): trades a pairing code from the dashboard for the
+-- token and writes config.json. Optional: without it the bridge works as before.
+local okPairing, errPairing = pcall(include, "traitordash/pairing.lua")
+if not okPairing then print("[TraitorDash] pairing.lua failed to load; traitordash_connect is not available: " .. tostring(errPairing)) end
+
 CreateConVar("traitordash_url", "http://localhost:3000", {FCVAR_ARCHIVE, FCVAR_PROTECTED}, "The base URL of the TraitorDash backend (server.cfg; data/traitordash/config.json takes precedence).")
 -- No default token: an empty one keeps the bridge idle instead of calling the backend with a
 -- well-known value.

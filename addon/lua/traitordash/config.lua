@@ -93,7 +93,7 @@ function TraitorDash.ReportConfig()
     local c = TraitorDash.GetConfig()
 
     if c.token == "" then
-        print("[TraitorDash] Not configured: no token. Create a server in the dashboard and put its token in data/" .. CONFIG_PATH .. " (or set traitordash_token in server.cfg).")
+        print("[TraitorDash] Not configured: no token. In the dashboard, open Manage Servers > Connect and run the command it shows (traitordash_connect <url> <code>). Or put the server's token in data/" .. CONFIG_PATH .. " (or set traitordash_token in server.cfg).")
     end
     if c.rawUrl == "" then
         print("[TraitorDash] Not configured: no dashboard URL. Set \"url\" in data/" .. CONFIG_PATH .. " (or traitordash_url in server.cfg).")

@@ -9,6 +9,8 @@ const read = (f: string) => fs.readFileSync(path.join(dir, f), 'utf8')
 export const COMMANDS = read('commands.lua')
 // config.lua is loaded between commands.lua and the bridge, as bridge.lua includes it.
 export const CONFIG = fs.existsSync(path.join(dir, 'config.lua')) ? read('config.lua') : ''
+// pairing.lua (RFC 9) is loaded after config.lua, as bridge.lua includes it.
+export const PAIRING = fs.existsSync(path.join(dir, 'pairing.lua')) ? read('pairing.lua') : ''
 export const BRIDGE = read('bridge.lua')
 
 import { createHash } from 'node:crypto'
@@ -86,8 +88,13 @@ export const PRELUDE = `
   SysTime = os.clock
   -- The server's data folder: DATA["traitordash/config.json"] = "<json text>". FILE_READS counts reads of it.
   DATA, FILE_READS = {}, 0
+  -- WRITE_LIMIT (when set) is how many writes succeed; later ones are silently lost, as GMod does for a path it cannot write.
+  WRITES, DIRS = 0, {}
   file = { Read = function(p, where) if where == "DATA" then FILE_READS = FILE_READS + 1 return DATA[p] end return nil end,
-           Write = function(p, c) DATA[p] = c end, CreateDir = function() end, Find = function() return {}, {} end }
+           Write = function(p, c) WRITES = WRITES + 1 if WRITE_LIMIT and WRITES > WRITE_LIMIT then return end DATA[p] = c end,
+           Exists = function(p, where) return where == "DATA" and DATA[p] ~= nil end,
+           Delete = function(p) DATA[p] = nil end,
+           CreateDir = function(d) DIRS[#DIRS + 1] = d end, Find = function() return {}, {} end }
   JSON_DECODE = JS_JSON_DECODE
   function HTTP(req) req.nonce = LAST_PAYLOAD and LAST_PAYLOAD.nonce SENT[#SENT + 1] = req end
   -- The backend's answer to request i, signed the way the backend signs it.
@@ -106,7 +113,7 @@ export function run(script: string, before = ''): { applied: string[], set: stri
     if (lauxlib.luaL_dostring(L, to_luastring(c)) !== lua.LUA_OK) throw new Error(to_jsstring(lua.lua_tostring(L, -1)))
   }
   try {
-    go(PRELUDE); go(before); go(COMMANDS); go(CONFIG); go(BRIDGE); go(script)
+    go(PRELUDE); go(before); go(COMMANDS); go(CONFIG); go(PAIRING); go(BRIDGE); go(script)
     go('OUT = table.concat(APPLIED, "|") .. "#" .. table.concat(SET, "|")')
     lua.lua_getglobal(L, to_luastring('OUT'))
     const [applied = '', set = ''] = to_jsstring(lua.lua_tostring(L, -1)).split('#')
