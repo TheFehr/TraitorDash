@@ -2,7 +2,8 @@ import { isServerOnline } from '../services/ServerUtils'
 import { Heartbeat } from './Heartbeat'
 
 type NewToken = { serverId: string, token: string }
-type Pairing = { serverId: string, command: string }
+/** `token` is set only for a server that was just created: it is offered for provisioning tools, under a disclosure. */
+type Pairing = { serverId: string, command: string, token?: string }
 
 export const ServerManager = ({ servers, newToken, pairing }: { servers: any[], newToken?: NewToken, pairing?: Pairing }) => {
   return (
@@ -24,6 +25,16 @@ export const ServerManager = ({ servers, newToken, pairing }: { servers: any[], 
               <span x-show="copied" x-cloak="true">Copied</span>
             </button>
           </div>
+          {pairing.token && (
+            <details class="mt-4 text-sm text-gray-400">
+              <summary class="cursor-pointer select-none hover:text-gray-200">Advanced / provisioning</summary>
+              <p class="mt-2">
+                For tools that write the configuration themselves: this server's API token. It is shown once and stored only as a hash.
+                Using the command above instead is the easier way, and pairing replaces it.
+              </p>
+              <code class="block mt-2 bg-gray-900 rounded-lg px-4 py-3 font-mono text-xs break-all select-all">{pairing.token}</code>
+            </details>
+          )}
         </div>
       )}
 
@@ -69,9 +80,9 @@ export const ServerManager = ({ servers, newToken, pairing }: { servers: any[], 
                     <td class="py-4 px-4 font-medium">{server.name}</td>
                     <td class="py-4 px-4 font-mono text-xs text-gray-500">{server.id}</td>
                     <td class="py-4 px-4">
-                      <span class={`flex items-center gap-2 ${isOnline ? 'text-green-400' : 'text-gray-500'}`}>
-                        <div class={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500 animate-pulse' : 'bg-gray-700'}`}></div>
-                        {isOnline ? 'Online' : 'Offline'}
+                      <span class={`flex items-center gap-2 ${isOnline ? 'text-green-400' : server.last_seen ? 'text-gray-500' : 'text-yellow-400'}`}>
+                        <div class={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500 animate-pulse' : server.last_seen ? 'bg-gray-700' : 'bg-yellow-500'}`}></div>
+                        {isOnline ? 'Online' : server.last_seen ? 'Offline' : 'Waiting for the first connection'}
                       </span>
                     </td>
                     <td class="py-4 px-4 text-sm text-gray-400"><Heartbeat lastSeen={server.last_seen} /></td>

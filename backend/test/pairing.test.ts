@@ -300,3 +300,87 @@ describe('schema', () => {
     expect(ins).toThrow()
   })
 })
+
+describe('adding a server ends with the pairing banner (RFC 9, section 6)', () => {
+  const add = (name: string) => app.request('/api/servers', {
+    method: 'POST',
+    headers: { Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ name }).toString(),
+  })
+  const codeIn = (html: string) => html.match(/traitordash_connect &quot;https:\/\/dash\.example\.com&quot; ([0-9A-HJKMNP-TV-Z]{5}-[0-9A-HJKMNP-TV-Z]{5})/)?.[1]
+
+  test('shows the connect command, not a raw token, and a code that works', async () => {
+    const res = await add('Brand New')
+    expect(res.headers.get('Cache-Control')).toBe('no-store')
+    const html = await res.text()
+    const code = codeIn(html)
+    expect(code).toBeDefined()
+    expect(html).not.toContain('New API token')
+    const redeemed = Store.redeemPairingCode(code!)
+    expect(redeemed?.name).toBe('Brand New')
+  })
+
+  test('the raw token is still available, inside an Advanced / provisioning disclosure, after the command', async () => {
+    const html = await (await add('Provisioned')).text()
+    const open = html.indexOf('<details')
+    expect(open).toBeGreaterThan(html.indexOf('traitordash_connect'))
+    expect(html.slice(open)).toContain('Advanced / provisioning')
+    const token = html.slice(open).match(/\b[0-9a-f]{64}\b/)?.[0]
+    expect(token).toBeDefined()
+    expect(Store.getServerByToken(token!)?.name).toBe('Provisioned')
+    // Nothing above the disclosure shows it.
+    expect(html.slice(0, open)).not.toContain(token!)
+  })
+
+  test('says that pairing replaces the token shown under Advanced', async () => {
+    const html = await (await add('Warned')).text()
+    expect(html.slice(html.indexOf('<details'))).toMatch(/pairing replaces it/i)
+  })
+
+  test('is recorded in the audit log: the server and the code', async () => {
+    const html = await (await add('Audited')).text()
+    const { id } = db.query("SELECT id FROM servers WHERE name = 'Audited'").get()
+    const actions = (db.query('SELECT action FROM audit_log WHERE server_id = ?').all(id) as any[]).map(r => r.action)
+    expect(actions).toContain('CREATE_SERVER')
+    expect(actions).toContain('PAIR_CODE_CREATED')
+    expect(JSON.stringify(db.query('SELECT * FROM audit_log WHERE server_id = ?').all(id))).not.toContain(codeIn(html)!)
+  })
+
+  test('a blank name creates nothing and shows no banner', async () => {
+    const before = db.query('SELECT COUNT(*) AS n FROM pairing_codes').get().n
+    const html = await (await add('   ')).text()
+    expect(html).not.toContain('traitordash_connect')
+    expect(db.query('SELECT COUNT(*) AS n FROM pairing_codes').get().n).toBe(before)
+  })
+
+  test('regenerating a token still shows the token itself (for provisioning)', async () => {
+    const { id } = Store.addServer('Regen')
+    const html = await (await app.request(`/api/servers/${id}/regenerate-token`, { method: 'POST', headers: { Cookie: cookie } })).text()
+    expect(html).toContain('New API token')
+    expect(html).toMatch(/\b[0-9a-f]{64}\b/)
+  })
+})
+
+describe('the server list says when a server has never connected', () => {
+  const list = async () => await (await app.request('/api/servers', { headers: { Cookie: cookie } })).text()
+  const row = (html: string, name: string) => {
+    const start = html.indexOf(`>${name}<`)
+    return html.slice(start, html.indexOf('</tr>', start))
+  }
+
+  test('a server that never reported is "Waiting for the first connection"', async () => {
+    Store.addServer('NeverSeen')
+    expect(row(await list(), 'NeverSeen')).toContain('Waiting for the first connection')
+  })
+
+  test('a server that reported recently is Online, and one that stopped is Offline', async () => {
+    const live = Store.addServer('SeenNow'), gone = Store.addServer('SeenLongAgo')
+    db.run("UPDATE servers SET last_seen = datetime('now') WHERE id = ?", [live.id])
+    db.run("UPDATE servers SET last_seen = datetime('now', '-1 day') WHERE id = ?", [gone.id])
+    const html = await list()
+    expect(row(html, 'SeenNow')).toContain('Online')
+    expect(row(html, 'SeenNow')).not.toContain('Waiting for the first connection')
+    expect(row(html, 'SeenLongAgo')).toContain('Offline')
+    expect(row(html, 'SeenLongAgo')).not.toContain('Waiting for the first connection')
+  })
+})

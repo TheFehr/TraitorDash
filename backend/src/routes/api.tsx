@@ -65,12 +65,21 @@ api.use('/servers/*', requireSession)
 api.use('/save/*', requireSession)
 
 // Token responses must never be cached: the plaintext token is shown exactly once.
-const serverManager = (c: any, newToken?: { serverId: string, token: string }, pairing?: { serverId: string, command: string }) => {
+const serverManager = (c: any, newToken?: { serverId: string, token: string }, pairing?: { serverId: string, command: string, token?: string }) => {
   c.header('Cache-Control', 'no-store')
   return c.html(<ServerManager servers={Store.getServers()} newToken={newToken} pairing={pairing} />)
 }
 
 api.get('/servers', async (c) => serverManager(c))
+
+/** The address the owner types into the game server: the dashboard's own, from BASE_URL. It is quoted in the command: the game console treats // as a comment. */
+const dashboardUrl = (c: any) => {
+  const configured = (process.env.BASE_URL || '').trim().replace(/\/+$/, '')
+  return configured || new URL(c.req.url).origin
+}
+
+/** The command shown to the owner, ready to paste into the game server's console. */
+const connectCommand = (c: any, code: string) => `traitordash_connect "${dashboardUrl(c)}" ${formatCode(code)}`
 
 api.post('/servers', async (c) => {
   const { name } = await c.req.parseBody()
@@ -79,7 +88,12 @@ api.post('/servers', async (c) => {
 
   const { id, token } = Store.addServer(trimmed)
   Store.audit(id, c.get('adminId'), 'CREATE_SERVER', `Name: ${trimmed}`)
-  return serverManager(c, { serverId: id, token })
+
+  // The way to connect it is a pairing code; the raw token stays available for provisioning tools.
+  const code = Store.createPairingCode(id, c.get('adminId'))
+  if (!code) return serverManager(c, { serverId: id, token })
+  Store.audit(id, c.get('adminId'), 'PAIR_CODE_CREATED')
+  return serverManager(c, undefined, { serverId: id, command: connectCommand(c, code), token })
 })
 
 api.post('/servers/:id/regenerate-token', async (c) => {
@@ -91,12 +105,6 @@ api.post('/servers/:id/regenerate-token', async (c) => {
   return serverManager(c, { serverId: id, token })
 })
 
-/** The address the owner types into the game server: the dashboard's own, from BASE_URL. It is quoted in the command: the game console treats // as a comment. */
-const dashboardUrl = (c: any) => {
-  const configured = (process.env.BASE_URL || '').trim().replace(/\/+$/, '')
-  return configured || new URL(c.req.url).origin
-}
-
 api.post('/servers/:id/pairing-code', async (c) => {
   const id = c.req.param('id')
   const code = Store.createPairingCode(id, c.get('adminId'))
@@ -104,7 +112,7 @@ api.post('/servers/:id/pairing-code', async (c) => {
 
   // The code itself is a credential for ten minutes: it is not written to the audit log.
   Store.audit(id, c.get('adminId'), 'PAIR_CODE_CREATED')
-  return serverManager(c, undefined, { serverId: id, command: `traitordash_connect "${dashboardUrl(c)}" ${formatCode(code)}` })
+  return serverManager(c, undefined, { serverId: id, command: connectCommand(c, code) })
 })
 
 api.delete('/servers/:id', async (c) => {
