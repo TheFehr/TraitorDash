@@ -112,8 +112,10 @@ The project is built following a series of Request for Comments (RFCs) that outl
 -   [RFC 5: Identity & Multi-Server](./docs/rfcs/RFC-005.md)
 -   [RFC 6: Secure Command Queue](./docs/rfcs/RFC-006.md)
 -   [RFC 7: Secure Session Management & CSRF Protection](./docs/rfcs/RFC-007.md)
+-   [RFC 8: Bridge Configuration File](./docs/rfcs/RFC-008.md) *(proposed)*
+-   [RFC 9: Pairing a Game Server](./docs/rfcs/RFC-009.md) *(proposed)*
 
-RFCs 6 and 7 describe what is implemented today; [docs/UI_DESIGN.md](./docs/UI_DESIGN.md) has the dashboard design notes.
+RFCs 6 and 7 describe what is implemented today; 8 and 9 are proposals; [docs/UI_DESIGN.md](./docs/UI_DESIGN.md) has the dashboard design notes.
 
 ---
 
