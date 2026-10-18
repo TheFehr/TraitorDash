@@ -23,6 +23,10 @@ import * as stats from './services/stats'
 
 const app = new Hono()
 
+// Expired and used pairing codes (RFC 9) are removed on startup and then hourly.
+Store.cleanupPairingCodes()
+setInterval(() => Store.cleanupPairingCodes(), 60 * 60_000).unref()
+
 // Static Assets
 app.use('/public/*', serveStatic({ root: './src' }))
 app.use('*', sameOrigin)

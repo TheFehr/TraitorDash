@@ -2,10 +2,31 @@ import { isServerOnline } from '../services/ServerUtils'
 import { Heartbeat } from './Heartbeat'
 
 type NewToken = { serverId: string, token: string }
+type Pairing = { serverId: string, command: string }
 
-export const ServerManager = ({ servers, newToken }: { servers: any[], newToken?: NewToken }) => {
+export const ServerManager = ({ servers, newToken, pairing }: { servers: any[], newToken?: NewToken, pairing?: Pairing }) => {
   return (
     <div id="server-manager" class="space-y-8">
+      {pairing && (
+        <div class="bg-green-500/10 border border-green-500/50 rounded-xl p-6" x-data="{ copied: false }">
+          <h3 class="text-lg font-bold text-green-400 mb-1">Connect a server</h3>
+          <p class="text-sm text-gray-300 mb-4">
+            Run this in the game server's console (or RCON). It works once and for 10 minutes, and replaces that server's token.
+          </p>
+          <div class="flex items-center gap-3">
+            <code class="flex-1 bg-gray-900 rounded-lg px-4 py-3 font-mono text-sm break-all select-all">{pairing.command}</code>
+            <button
+              type="button"
+              class="px-4 py-3 rounded-lg bg-green-500 hover:bg-green-400 text-gray-900 font-bold transition"
+              x-on:click={`navigator.clipboard.writeText(${JSON.stringify(pairing.command)}); copied = true; setTimeout(() => copied = false, 2000)`}
+            >
+              <span x-show="!copied">Copy</span>
+              <span x-show="copied" x-cloak="true">Copied</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {newToken && (
         <div class="bg-yellow-500/10 border border-yellow-500/50 rounded-xl p-6" x-data="{ copied: false }">
           <h3 class="text-lg font-bold text-yellow-400 mb-1">New API token</h3>
@@ -55,6 +76,15 @@ export const ServerManager = ({ servers, newToken }: { servers: any[], newToken?
                     </td>
                     <td class="py-4 px-4 text-sm text-gray-400"><Heartbeat lastSeen={server.last_seen} /></td>
                     <td class="py-4 px-4 text-right whitespace-nowrap">
+                      <button
+                        hx-post={`/api/servers/${server.id}/pairing-code`}
+                        hx-confirm={isOnline ? `${server.name} is online. Pairing replaces its token, and it stops working until it is paired. Continue?` : undefined}
+                        hx-target="#server-manager"
+                        hx-swap="outerHTML"
+                        class="mr-3 px-3 py-1.5 rounded-lg border border-green-700 text-green-400 hover:text-white hover:border-green-400 text-xs font-bold uppercase tracking-wider transition"
+                      >
+                        Connect
+                      </button>
                       <button
                         hx-post={`/api/servers/${server.id}/regenerate-token`}
                         hx-confirm={`Regenerate the token for ${server.name}? The current token stops working immediately.`}

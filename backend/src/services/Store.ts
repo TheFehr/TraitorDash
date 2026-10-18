@@ -1,6 +1,7 @@
 import db from './Database'
 import { createHash } from 'node:crypto'
 import { hashToken } from './migrations'
+import { CODE_TTL_MS, generateCode, hashCode } from './pairing'
 
 /** Change detection for language file contents. Not a security use: just "did this text change". */
 const contentHash = (text: string) => createHash('sha256').update(text).digest('hex')
@@ -55,6 +56,49 @@ export class Store {
     return result.changes > 0 ? token : null
   }
 
+  /**
+   * A new pairing code for a server (RFC 9), or null if the server does not exist. The previous
+   * unused code of that server stops working. Only the code's hash is stored.
+   */
+  static createPairingCode(serverId: string, adminId: string, now: number = Date.now()): string | null {
+    if (!Store.getServerById(serverId)) return null
+    const code = generateCode()
+    db.transaction(() => {
+      db.run('DELETE FROM pairing_codes WHERE server_id = ? AND used_at IS NULL', [serverId])
+      db.run(
+        'INSERT INTO pairing_codes (code_hash, server_id, created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?)',
+        [hashCode(code), serverId, adminId, now, now + CODE_TTL_MS]
+      )
+    })()
+    return code
+  }
+
+  /**
+   * Exchanges a valid code for a new token of its server, in one transaction: the code is marked
+   * used and the old token is replaced together, or neither happens. Returns null for an unknown,
+   * expired or already used code (the three are not told apart).
+   */
+  static redeemPairingCode(raw: string, now: number = Date.now()): { token: string, serverId: string, name: string } | null {
+    return db.transaction(() => {
+      const row = db.prepare(`
+        SELECT p.code_hash, p.server_id, s.name
+        FROM pairing_codes p JOIN servers s ON s.id = p.server_id
+        WHERE p.code_hash = ? AND p.used_at IS NULL AND p.expires_at > ?
+      `).get(hashCode(raw), now) as { code_hash: string, server_id: string, name: string } | null
+      if (!row) return null
+
+      db.run('UPDATE pairing_codes SET used_at = ? WHERE code_hash = ?', [now, row.code_hash])
+      const token = Store.regenerateToken(row.server_id)
+      if (!token) return null
+      return { token, serverId: row.server_id, name: row.name }
+    })()
+  }
+
+  /** Removes expired and used codes. */
+  static cleanupPairingCodes(now: number = Date.now()) {
+    db.run('DELETE FROM pairing_codes WHERE used_at IS NOT NULL OR expires_at <= ?', [now])
+  }
+
   static audit(serverId: string | null, steamId: string | null, action: string, details?: string) {
     db.prepare('INSERT INTO audit_log (server_id, steam_id, action, details) VALUES (?, ?, ?, ?)')
       .run(serverId, steamId, action, details ?? null)
@@ -69,6 +113,7 @@ export class Store {
     db.run('DELETE FROM deaths WHERE server_id = ?', [id])
     db.run('DELETE FROM round_players WHERE server_id = ?', [id])
     db.run('DELETE FROM rounds WHERE server_id = ?', [id])
+    db.run('DELETE FROM pairing_codes WHERE server_id = ?', [id])
     db.run('DELETE FROM servers WHERE id = ?', [id])
   }
 

@@ -186,6 +186,21 @@ export const migrations: Array<(db: Database) => void> = [
         FOREIGN KEY (server_id, round_id) REFERENCES rounds(server_id, round_id)
       )
     `)
+  },
+  // v8: single-use pairing codes (RFC 9). Only the hash of a code is stored, and the partial
+  // unique index allows one outstanding (unused) code per server.
+  (db) => {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS pairing_codes (
+        code_hash  TEXT PRIMARY KEY,
+        server_id  TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+        created_by TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        used_at    INTEGER
+      )
+    `)
+    db.run('CREATE UNIQUE INDEX IF NOT EXISTS pairing_codes_open ON pairing_codes(server_id) WHERE used_at IS NULL')
   }
 ]
 

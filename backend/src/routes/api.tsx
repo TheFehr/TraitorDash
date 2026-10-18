@@ -5,6 +5,7 @@ import { ServerManager } from '../components/ServerManager'
 import { requireSession } from '../middleware/session'
 import { normalizeConVarValue, formatConVarCommand } from '../services/convars'
 import { RateLimiter } from '../services/rateLimit'
+import { formatCode } from '../services/pairing'
 import { NONCE, signResponse } from '../services/signing'
 
 type Variables = {
@@ -64,9 +65,9 @@ api.use('/servers/*', requireSession)
 api.use('/save/*', requireSession)
 
 // Token responses must never be cached: the plaintext token is shown exactly once.
-const serverManager = (c: any, newToken?: { serverId: string, token: string }) => {
+const serverManager = (c: any, newToken?: { serverId: string, token: string }, pairing?: { serverId: string, command: string }) => {
   c.header('Cache-Control', 'no-store')
-  return c.html(<ServerManager servers={Store.getServers()} newToken={newToken} />)
+  return c.html(<ServerManager servers={Store.getServers()} newToken={newToken} pairing={pairing} />)
 }
 
 api.get('/servers', async (c) => serverManager(c))
@@ -88,6 +89,22 @@ api.post('/servers/:id/regenerate-token', async (c) => {
 
   Store.audit(id, c.get('adminId'), 'REGEN_TOKEN')
   return serverManager(c, { serverId: id, token })
+})
+
+/** The address the owner types into the game server: the dashboard's own, from BASE_URL. */
+const dashboardUrl = (c: any) => {
+  const configured = (process.env.BASE_URL || '').trim().replace(/\/+$/, '')
+  return configured || new URL(c.req.url).origin
+}
+
+api.post('/servers/:id/pairing-code', async (c) => {
+  const id = c.req.param('id')
+  const code = Store.createPairingCode(id, c.get('adminId'))
+  if (!code) return c.json({ error: 'Server not found' }, 404)
+
+  // The code itself is a credential for ten minutes: it is not written to the audit log.
+  Store.audit(id, c.get('adminId'), 'PAIR_CODE_CREATED')
+  return serverManager(c, undefined, { serverId: id, command: `traitordash_connect ${dashboardUrl(c)} ${formatCode(code)}` })
 })
 
 api.delete('/servers/:id', async (c) => {
@@ -438,3 +455,43 @@ api.post('/v1/poll', getServer, async (c) => {
 })
 
 export default api
+
+// Pairing (RFC 9): the code is the credential, so this endpoint needs no token or session and is
+// rate limited instead. Without TRUST_PROXY the client address is unknown (behind a reverse proxy
+// it would be the proxy's), so only the global limit applies.
+export const pairLimiter = new RateLimiter(5, 60_000)
+export const pairGlobalLimiter = new RateLimiter(30, 60_000)
+const MAX_PAIR_BODY = 512
+const PAIR_FAILED = { error: 'invalid or expired code' }
+
+/** The last X-Forwarded-For entry is the one our own proxy appended; earlier ones are client-supplied. */
+const clientAddress = (c: any): string | null => {
+  if (process.env.TRUST_PROXY !== '1') return null
+  const forwarded = c.req.header('X-Forwarded-For')
+  return forwarded ? forwarded.split(',').pop()!.trim() || null : null
+}
+
+api.post('/v1/pair', async (c) => {
+  c.header('Cache-Control', 'no-store')
+
+  const address = clientAddress(c)
+  const wait = Math.max(address ? pairLimiter.hit(address) : 0, pairGlobalLimiter.hit('global'))
+  if (wait > 0) {
+    console.warn(`[Pairing] Rate limit hit; refusing attempts for ${wait}s`)
+    c.header('Retry-After', String(wait))
+    return c.json({ error: 'Too many attempts; try again later' }, 429)
+  }
+
+  const text = await c.req.text().catch(() => '')
+  let body: any = null
+  if (text.length <= MAX_PAIR_BODY) { try { body = JSON.parse(text) } catch { /* a 400 below */ } }
+  if (!body || typeof body !== 'object' || Array.isArray(body) || typeof body.code !== 'string') {
+    return c.json(PAIR_FAILED, 400)
+  }
+
+  const paired = Store.redeemPairingCode(body.code)
+  if (!paired) return c.json(PAIR_FAILED, 400)
+
+  Store.audit(paired.serverId, null, 'PAIR_REDEEMED', address ? `From ${address}` : undefined)
+  return c.json({ token: paired.token, server_id: paired.serverId, name: paired.name })
+})
