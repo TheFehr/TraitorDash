@@ -10,7 +10,8 @@
 TraitorDash = TraitorDash or {}
 
 local CONFIG_PATH = "traitordash/config.json"
-local PROBE_PATH = "traitordash/.write_test"
+-- GMod only writes files with a known extension (txt, dat, json, ...) and drops others without an error.
+local PROBE_PATH = "traitordash/write_test.txt"
 local TIMEOUT = 15
 
 local pending = false -- one pairing at a time

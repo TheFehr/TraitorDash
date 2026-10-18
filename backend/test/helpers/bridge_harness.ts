@@ -91,7 +91,12 @@ export const PRELUDE = `
   -- WRITE_LIMIT (when set) is how many writes succeed; later ones are silently lost, as GMod does for a path it cannot write.
   WRITES, DIRS = 0, {}
   file = { Read = function(p, where) if where == "DATA" then FILE_READS = FILE_READS + 1 return DATA[p] end return nil end,
-           Write = function(p, c) WRITES = WRITES + 1 if WRITE_LIMIT and WRITES > WRITE_LIMIT then return end DATA[p] = c end,
+           Write = function(p, c)
+             -- GMod only writes files with these extensions and silently drops the rest.
+             local ext = tostring(p):match("%.(%w+)$")
+             local OK_EXT = { txt = true, dat = true, json = true, xml = true, csv = true, jpg = true, jpeg = true, png = true, vtf = true, vmt = true, mp3 = true, wav = true, ogg = true }
+             if not ext or not OK_EXT[ext:lower()] then return end
+             WRITES = WRITES + 1 if WRITE_LIMIT and WRITES > WRITE_LIMIT then return end DATA[p] = c end,
            Exists = function(p, where) return where == "DATA" and DATA[p] ~= nil end,
            Delete = function(p) DATA[p] = nil end,
            CreateDir = function(d) DIRS[#DIRS + 1] = d end, Find = function() return {}, {} end }
