@@ -1,6 +1,6 @@
 -- TraitorDash: pairing a game server with the dashboard (RFC 9).
 --
---   traitordash_connect <url> <code>
+--   traitordash_connect "<url>" <code>     (quote the url: the console treats // as a comment)
 --
 -- The dashboard shows a short single-use code. This command sends it to <url>/api/v1/pair, gets
 -- the server's API token back, and stores url and token in data/traitordash/config.json (RFC 8).
@@ -67,8 +67,15 @@ concommand.Add("traitordash_connect", function(ply, cmd, args)
     if IsValid(ply) and not ply:IsSuperAdmin() then return end
     args = args or {}
 
+    -- The game console treats // as a comment and : as a separator, so an unquoted
+    -- https://host arrives as "https" (and ":"). Say what to do instead of "refusing https".
+    if type(args[1]) == "string" and args[1]:lower():match("^https?:?$") then
+        Say('The URL was cut at "//" by the console. Put it in quotes: traitordash_connect "https://your-dashboard" ABCDE-FGHJK')
+        return
+    end
+
     if not args[1] or not args[2] then
-        Say("Usage: traitordash_connect <url> <code>   (both are shown in the dashboard under Connect)")
+        Say('Usage: traitordash_connect "<url>" <code>   (the whole command is shown in the dashboard under Connect)')
         return
     end
     if pending then

@@ -173,12 +173,12 @@ describe('POST /api/servers/:id/pairing-code', () => {
     expect((await create({ Cookie: cookie }, 'no-such-server')).status).toBe(404)
   })
 
-  test('shows the ready-to-paste command with the dashboard address, and never caches it', async () => {
+  test('shows the ready-to-paste command with the dashboard address in quotes (the console would cut at //), and never caches it', async () => {
     const res = await create({ Cookie: cookie, Origin: 'https://dash.example.com' })
     expect(res.status).toBe(200)
     expect(res.headers.get('Cache-Control')).toBe('no-store')
     const html = await res.text()
-    const m = html.match(/traitordash_connect https:\/\/dash\.example\.com ([0-9A-HJKMNP-TV-Z]{5}-[0-9A-HJKMNP-TV-Z]{5})/)
+    const m = html.match(/traitordash_connect &quot;https:\/\/dash\.example\.com&quot; ([0-9A-HJKMNP-TV-Z]{5}-[0-9A-HJKMNP-TV-Z]{5})/)
     expect(m).not.toBeNull()
     expect(openRows(id)).toHaveLength(1)
     expect(openRows(id)[0].code_hash).toBe(pairing.hashCode(m![1]!))

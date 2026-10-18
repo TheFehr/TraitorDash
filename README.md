@@ -69,8 +69,10 @@ Copy `addon/lua/` into the server's `garrysmod/lua/` (or install it as an addon)
 **Pairing (recommended, [RFC 9](./docs/rfcs/RFC-009.md)).** On the **Servers** page press **Connect** for the server. The dashboard shows a command that works once and for 10 minutes; run it in the game server's console:
 
 ```
-traitordash_connect https://traitordash.example.com ABCDE-FGHJK
+traitordash_connect "https://traitordash.example.com" ABCDE-FGHJK
 ```
+
+The address is in quotes because the game console treats `//` as a comment; the dashboard shows the command ready to paste, quotes included.
 
 The bridge trades the code for the server's token, stores it in `data/traitordash/config.json` and starts syncing. Pairing replaces the server's token (a server that is still using the old one stops working until it is paired), and the token is never shown or printed.
 

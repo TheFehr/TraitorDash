@@ -57,8 +57,18 @@ describe('traitordash_connect: before anything is sent', () => {
   test('without a url and a code it prints the usage and sends nothing', () => {
     for (const args of [[], ['https://dash.example']]) {
       const r = connect(args)
-      expect(r.printed.join('\n')).toContain('Usage: traitordash_connect <url> <code>')
+      expect(r.printed.join('\n')).toContain('Usage: traitordash_connect "<url>" <code>')
       expect(r.sent).toBe(0)
+    }
+  })
+
+  test('a url the console cut at "//" says to use quotes, and sends nothing', () => {
+    // GMod's console treats // as a comment and : as a separator, so an unquoted https://host arrives as "https" and ":".
+    for (const args of [['https', ':'], ['http', ':'], ['https:'], ['HTTPS']]) {
+      const r = connect(args)
+      expect(r.sent).toBe(0)
+      expect(r.printed.join('\n')).toContain('in quotes')
+      expect(r.printed.join('\n')).toContain('traitordash_connect "https://')
     }
   })
 
