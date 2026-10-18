@@ -63,14 +63,13 @@ Log in with Steam, add a server on the **Servers** page, and copy its **API toke
 
 ### 2. Install the bridge on the GMod server
 
-Copy `addon/lua/` into the server's `garrysmod/lua/` (or install it as an addon) and set two ConVars in `server.cfg`:
+Copy `addon/lua/` into the server's `garrysmod/lua/` (or install it as an addon) and tell the bridge where the dashboard is and which token it has. Create `garrysmod/data/traitordash/config.json` ([RFC 8](./docs/rfcs/RFC-008.md)):
 
-```
-traitordash_url   "https://traitordash.example.com"
-traitordash_token "<the server's API token>"
+```json
+{ "url": "https://traitordash.example.com", "token": "<the server's API token>" }
 ```
 
-The bridge only talks to an `https://` address or a private network address, and stays idle (with one warning) without a token. Restart the server; the console should show `Bridge Initialized`, `Language files OK` and `Sync complete!`. `traitordash_stats 0` turns the round statistics off without a restart.
+The two ConVars `traitordash_url` and `traitordash_token` in `server.cfg` still work as a fallback; for each setting the file wins. The file is read when the bridge starts and on `traitordash_reload`. The bridge only talks to an `https://` address or a private network address, and stays idle without a token, saying what is missing in the console. Restart the server; the console should show `Bridge Initialized`, `Language files OK` and `Sync complete!`. `traitordash_status` shows where each value came from and whether the token is set (never the token itself). `traitordash_stats 0` turns the round statistics off without a restart.
 
 ### 3. Deploy (optional)
 

@@ -1,94 +1,6 @@
 import { expect, test, describe } from 'bun:test'
 import { lauxlib, lua, lualib, to_luastring, to_jsstring } from 'fengari'
-import fs from 'fs'
-import path from 'path'
-
-// Runs the real addon/lua/traitordash/{commands,bridge}.lua against a minimal fake of GMod.
-// The bridge avoids GMod's `continue` (not Lua 5.3), so it loads unmodified.
-const dir = path.join(import.meta.dir, '../../addon/lua/traitordash')
-const read = (f: string) => fs.readFileSync(path.join(dir, f), 'utf8')
-const COMMANDS = read('commands.lua')
-const BRIDGE = read('bridge.lua')
-
-import { createHash } from 'node:crypto'
-// util.SHA256 as GMod has it: a string in, lowercase hex out.
-function addSha256(L: any) {
-  lua.lua_pushjsfunction(L, (st: any) => {
-    const input = to_jsstring(lauxlib.luaL_checklstring(st, 1))
-    lua.lua_pushstring(st, to_luastring(createHash('sha256').update(input).digest('hex')))
-    return 1
-  })
-  lua.lua_setglobal(L, to_luastring('JS_SHA256'))
-}
-
-const PRELUDE = `
-  FCVAR_ARCHIVE, FCVAR_PROTECTED = 1, 2
-  isnumber = function(v) return type(v) == "number" end
-  isstring = function(v) return type(v) == "string" end
-  istable = function(v) return type(v) == "table" end
-  IsValid = function(v) return v ~= nil and v ~= false end
-  include = function() end -- commands.lua is loaded by the harness before the bridge
-  APPLIED, SENT, SET = {}, {}, {}
-  PRINTS = {}
-  local realPrint = print
-  print = function(...) local t = {} for i = 1, select("#", ...) do t[i] = tostring((select(i, ...))) end PRINTS[#PRINTS + 1] = table.concat(t, " ") end
-  REAL_CVARS = { sv_hibernate_think = "0", ttt_known = "1", ttt2_other = "2", rcon_password = "secret", sv_password = "pw", ttt_survivalist_pct = "0.15" }
-  local CV = { traitordash_url = 'https://td.test/"', traitordash_token = "tok" }
-  function CreateConVar(n, v) if CV[n] == nil then CV[n] = tostring(v) end return { GetString = function() return CV[n] end } end
-  function SetCv(n, v) CV[n] = v end
-  function GetConVar(n)
-    if CV[n] == nil and REAL_CVARS[n] == nil then return nil end
-    return { GetString = function() return CV[n] or REAL_CVARS[n] end, GetName = function() return n end,
-             GetInt = function() return tonumber(CV[n] or REAL_CVARS[n]) end, GetDefault = function() return "0" end, GetMin = function() return 0 end, GetMax = function() return 1 end,
-             SetString = function(_, v) SET[#SET + 1] = n .. "=" .. v end }
-  end
-  cvars = { AddChangeCallback = function() end }
-  game = { ConsoleCommand = function(s) APPLIED[#APPLIED + 1] = "RAW:" .. s end } -- must never be used any more
-  RunConsoleCommand = function(n, v) APPLIED[#APPLIED + 1] = n .. "=" .. tostring(v) end
-  HOOKS, TIMERS = {}, {}
-  hook = { Add = function(ev, id, fn) HOOKS[#HOOKS + 1] = ev .. ":" .. id end }
-  timer = { Create = function(id, secs, reps, fn) TIMERS[#TIMERS + 1] = "create " .. id .. " " .. secs .. " " .. reps end,
-            Simple = function(secs, fn) TIMERS[#TIMERS + 1] = "simple " .. secs end, Exists = function() return false end }
-  concommand = { Add = function() end }  player = { GetAll = function() return {} end }
-  RealTime = os.clock
-  string.Explode = function(sep, s) local o = {} for p in (s .. sep):gmatch("(.-)" .. sep:gsub("%p", "%%%0")) do o[#o + 1] = p end return o end
-  util = { TableToJSON = function(t) LAST_PAYLOAD = t return "{}" end, JSONToTable = function() return JSON_NEXT end, MD5 = function() return "x" end, SHA256 = JS_SHA256 }
-  SysTime = os.clock
-  function HTTP(req) req.nonce = LAST_PAYLOAD and LAST_PAYLOAD.nonce SENT[#SENT + 1] = req end
-  -- The backend's answer to request i, signed the way the backend signs it.
-  function SIGNED(i, cj, key, nonce)
-    return '{"commands":' .. cj .. ',"sig":"' .. TraitorDash.ExpectedSignature(key or "tok", nonce or SENT[i].nonce, cj, util.SHA256) .. '"}'
-  end
-  function OK(i, cj) SENT[i].success(200, SIGNED(i, cj or "[]")) end
-  SetGlobalBool, SetGlobalInt, SetGlobalString = function() end, function() end, function() end
-`
-
-/** Runs `script` after loading the files and returns what was applied to the console, and which ConVars were SetString'd. */
-function run(script: string, before = ''): { applied: string[], set: string[], result: string } {
-  const L = lauxlib.luaL_newstate()
-  lualib.luaL_openlibs(L); addSha256(L)
-  const go = (c: string) => {
-    if (lauxlib.luaL_dostring(L, to_luastring(c)) !== lua.LUA_OK) throw new Error(to_jsstring(lua.lua_tostring(L, -1)))
-  }
-  try {
-    go(PRELUDE); go(before); go(COMMANDS); go(BRIDGE); go(script)
-    go('OUT = table.concat(APPLIED, "|") .. "#" .. table.concat(SET, "|")')
-    lua.lua_getglobal(L, to_luastring('OUT'))
-    const [applied = '', set = ''] = to_jsstring(lua.lua_tostring(L, -1)).split('#')
-    lua.lua_getglobal(L, to_luastring('RESULT'))
-    const result = lua.lua_isstring(L, -1) ? to_jsstring(lua.lua_tostring(L, -1)) : ''
-    return { applied: applied ? applied.split('|') : [], set: set ? set.split('|') : [], result }
-  } finally {
-    lua.lua_close(L)
-  }
-}
-
-// Fake network response: Poll() queues the request, the test then calls success() itself.
-const poll = (commands: string) => `
-  JSON_NEXT = { commands = ${commands} }
-  TraitorDash.Poll()
-  OK(1)`
-const convar = (payload: string) => run(poll(`{ { type = "convar", payload = ${JSON.stringify(payload)} } }`)).applied
+import { COMMANDS, CONFIG, BRIDGE, PRELUDE, addSha256, run, poll, convar } from './helpers/bridge_harness'
 
 describe('commands the bridge applies', () => {
   test('a normal ConVar change is applied as ONE console command', () => {
@@ -204,7 +116,7 @@ describe('acknowledging commands', () => {
       if (lauxlib.luaL_dostring(L, to_luastring(c)) !== lua.LUA_OK) throw new Error(to_jsstring(lua.lua_tostring(L, -1)))
     }
     try {
-      go(PRELUDE); go(COMMANDS); go(BRIDGE); go(script)
+      go(PRELUDE); go(COMMANDS); go(CONFIG); go(BRIDGE); go(script)
       go('OUT = table.concat(LAST_PAYLOAD.acked, ",")')
       lua.lua_getglobal(L, to_luastring('OUT'))
       return to_jsstring(lua.lua_tostring(L, -1))

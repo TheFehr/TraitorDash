@@ -14,10 +14,16 @@ TraitorDash.PendingValues = TraitorDash.PendingValues or {}   -- name -> role, w
 local okCommands, errCommands = pcall(include, "traitordash/commands.lua")
 if not okCommands then print("[TraitorDash] commands.lua failed to load; all commands will be refused: " .. tostring(errCommands)) end
 
-local cv_url = CreateConVar("traitordash_url", "http://localhost:3000", {FCVAR_ARCHIVE, FCVAR_PROTECTED}, "The base URL of the TraitorDash backend.")
+-- Where the URL and token come from: data/traitordash/config.json first, then these two ConVars
+-- (config.lua, RFC 8). Nothing else reads them: every sender asks TraitorDash.GetConfig(). If
+-- config.lua cannot be loaded there is no GetConfig and every sender stays idle.
+local okConfig, errConfig = pcall(include, "traitordash/config.lua")
+if not okConfig then print("[TraitorDash] config.lua failed to load; the bridge stays idle: " .. tostring(errConfig)) end
+
+CreateConVar("traitordash_url", "http://localhost:3000", {FCVAR_ARCHIVE, FCVAR_PROTECTED}, "The base URL of the TraitorDash backend (server.cfg; data/traitordash/config.json takes precedence).")
 -- No default token: an empty one keeps the bridge idle instead of calling the backend with a
--- well-known value. The token is set in server.cfg (or by whatever provisions the server).
-local cv_token = CreateConVar("traitordash_token", "", {FCVAR_ARCHIVE, FCVAR_PROTECTED}, "The API token for authenticating with the backend.")
+-- well-known value.
+CreateConVar("traitordash_token", "", {FCVAR_ARCHIVE, FCVAR_PROTECTED}, "The API token for authenticating with the backend (server.cfg; data/traitordash/config.json takes precedence).")
 
 -- Who is an admin right now. The result is only informational (the backend logs it), so
 -- this must NEVER be able to break a poll or an ingest.
@@ -86,10 +92,9 @@ local NAME_SUFFIXES = { "enabled", "random", "traitor_button", "pct", "max", "mi
 local ABBR_SUFFIXES = { "credits_starting", "credits_award_dead_enb", "credits_award_kill_enb", "shop_fallback" }
 
 local function GetApi()
-    local baseUrl = TraitorDash.TrustedBaseUrl and TraitorDash.TrustedBaseUrl(cv_url:GetString())
-    local token = cv_token:GetString()
-    if not baseUrl or token == "" then return nil end
-    return baseUrl, token
+    local cfg = TraitorDash.GetConfig and TraitorDash.GetConfig()
+    if not cfg or not cfg.url or cfg.token == "" then return nil end
+    return cfg.url, cfg.token
 end
 
 function TraitorDash.ReadConVar(name, roleName)
@@ -265,11 +270,10 @@ function TraitorDash.PushLang(callback)
 end
 
 function TraitorDash.IngestRole(roleName, roleCode, hash, force, callback)
-    local token = cv_token:GetString()
     -- Cleaned, and only over a trusted channel (https or a private address).
-    local baseUrl = TraitorDash.TrustedBaseUrl and TraitorDash.TrustedBaseUrl(cv_url:GetString()) or ""
+    local baseUrl, token = GetApi()
 
-    if baseUrl == "" or token == "" then 
+    if not baseUrl then 
         print("[TraitorDash] ERROR: URL or Token not set!")
         if callback then callback() end
         return 
@@ -497,9 +501,8 @@ end)
 
 function TraitorDash.Poll()
     local ok, err = pcall(function()
-        local baseUrl = TraitorDash.TrustedBaseUrl and TraitorDash.TrustedBaseUrl(cv_url:GetString())
-        local token = cv_token:GetString()
-        if not baseUrl or token == "" then return end
+        local baseUrl, token = GetApi()
+        if not baseUrl then return end
 
         -- Ids of commands applied so far. The backend keeps a command queued until it is
         -- acknowledged here, so a lost response never loses a change.
@@ -626,6 +629,7 @@ function TraitorDash.Init()
     if TraitorDash.Initialized then return end
     TraitorDash.Initialized = true
     print("[TraitorDash] Bridge Initialized. Source: " .. debug.getinfo(TraitorDash.Init).source)
+    if TraitorDash.ReportConfig then TraitorDash.ReportConfig() end
     
     -- Start poller immediately
     TraitorDash.Poll()
@@ -646,7 +650,25 @@ concommand.Add("traitordash_status", function(ply)
     if IsValid(ply) and not ply:IsSuperAdmin() then return end
     print("--- TraitorDash Status ---")
     print("Source: " .. debug.getinfo(TraitorDash.Sync).source)
-    print("URL: " .. cv_url:GetString())
+    local cfg = TraitorDash.GetConfig and TraitorDash.GetConfig()
+    if not cfg then
+        print("Configuration: not loaded (config.lua failed to load); the bridge stays idle")
+    else
+        local label = TraitorDash.ConfigSourceLabel
+        if cfg.rawUrl == "" then
+            print("URL: (not set)")
+        elseif not cfg.url then
+            print("URL: " .. cfg.rawUrl .. " (refused: must be https:// or a private address)")
+        else
+            print("URL: " .. cfg.url .. " (from " .. label(cfg.urlSource) .. ")")
+        end
+        if cfg.token == "" then
+            print("Token: not set")
+        else
+            -- Only whether and how long, never the token itself.
+            print("Token: set, " .. #cfg.token .. " characters (from " .. label(cfg.tokenSource) .. ")")
+        end
+    end
     print("Initialized: " .. tostring(TraitorDash.Initialized))
     print("Timer: " .. tostring(timer.Exists("TraitorDash_Poller")))
     print("RealTime: " .. RealTime())

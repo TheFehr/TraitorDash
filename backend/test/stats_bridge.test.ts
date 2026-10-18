@@ -1,10 +1,13 @@
 import { expect, test, describe } from 'bun:test'
 import { lauxlib, lua, lualib, to_luastring, to_jsstring } from 'fengari'
+import fs from 'fs'
 import path from 'path'
+import { addJsonDecode } from './helpers/bridge_harness'
 
 // Runs the real addon/lua/traitordash/stats.lua against a minimal fake of GMod/TTT2, plays a
 // round through the hooks, and returns what the bridge would have POSTed.
 const COMMANDS_LUA = path.join(import.meta.dir, '../../addon/lua/traitordash/commands.lua')
+const CONFIG_LUA = path.join(import.meta.dir, '../../addon/lua/traitordash/config.lua')
 const STATS = path.join(import.meta.dir, '../../addon/lua/traitordash/stats.lua')
 
 const PRELUDE = `
@@ -41,7 +44,10 @@ const PRELUDE = `
     return "null"
   end
   SENT = {}
-  util = { TableToJSON = enc }
+  util = { TableToJSON = enc, JSONToTable = JS_JSON_DECODE }
+  -- The server's data folder (RFC 8): DATA["traitordash/config.json"] = "<json>".
+  DATA = {}
+  file = { Read = function(p, where) if where == "DATA" then return DATA[p] end return nil end }
   function HTTP(req) SENT[#SENT + 1] = { url = req.url, auth = req.headers.Authorization, body = req.body } end
 
   local function mkply(sid, nick, role, team, alive)
@@ -68,6 +74,7 @@ const PRELUDE = `
 function play(script: string): any[] {
   const L = lauxlib.luaL_newstate()
   lualib.luaL_openlibs(L)
+  addJsonDecode(L)
   const run = (code: string) => {
     if (lauxlib.luaL_dostring(L, to_luastring(code)) !== lua.LUA_OK) {
       throw new Error(to_jsstring(lua.lua_tostring(L, -1)))
@@ -75,8 +82,9 @@ function play(script: string): any[] {
   }
   try {
     run(PRELUDE)
-    run(require('fs').readFileSync(COMMANDS_LUA, 'utf8'))
-    run(require('fs').readFileSync(STATS, 'utf8'))
+    run(fs.readFileSync(COMMANDS_LUA, 'utf8'))
+    run(fs.existsSync(CONFIG_LUA) ? fs.readFileSync(CONFIG_LUA, 'utf8') : '')
+    run(fs.readFileSync(STATS, 'utf8'))
     run(script)
     run('SENT_JSON = "[" .. table.concat((function() local o = {} for i, s in ipairs(SENT) do o[i] = \'{"url":"\' .. s.url .. \'","auth":"\' .. s.auth .. \'","body":\' .. s.body .. "}" end return o end)(), ",") .. "]"')
     lua.lua_getglobal(L, to_luastring('SENT_JSON'))
@@ -169,6 +177,35 @@ describe('transport', () => {
     const round = 'Fire("TTTPrepareRound") Fire("TTTBeginRound") Fire("TTTEndRound", WIN_TRAITOR)'
     expect(play(`SetCv("traitordash_url", "http://td.example") ${round}`)).toHaveLength(0)
     expect(play(`SetCv("traitordash_url", "http://192.168.1.5:3000") ${round}`)).toHaveLength(1)
+  })
+})
+
+describe('configuration (RFC 8)', () => {
+  const round = 'Fire("TTTPrepareRound") Fire("TTTBeginRound") Fire("TTTEndRound", WIN_TRAITOR)'
+  const withConfig = (cfg: unknown) => `DATA["traitordash/config.json"] = ${JSON.stringify(JSON.stringify(cfg))}`
+
+  test('a round goes to the URL and token in data/traitordash/config.json', () => {
+    const [sent] = play(`${withConfig({ url: 'https://file.example', token: 'filetoken' })} ${round}`)
+    expect(sent.url).toBe('https://file.example/api/v1/round')
+    expect(sent.auth).toBe('Bearer filetoken')
+  })
+
+  test('with nothing configured nothing is sent, and no Lua error is logged every round', () => {
+    // The last entry reports how many printed lines looked like a Lua runtime error.
+    const out = play(`SetCv("traitordash_url", "") SetCv("traitordash_token", "")
+      local errors = 0
+      print = function(...) if tostring((...)):find("attempt to", 1, true) or tostring((...)):find("error", 1, true) then errors = errors + 1 end end
+      ${round}
+      SENT[#SENT + 1] = { url = "errors:" .. errors, auth = "", body = "null" }`)
+    expect(out.map((r: any) => r.url)).toEqual(['errors:0'])
+  })
+
+  test('if the configuration could not be loaded at all, nothing is sent (fail closed)', () => {
+    expect(play(`TraitorDash.GetConfig = nil ${round}`)).toHaveLength(0)
+  })
+
+  test('stats.lua does not read the ConVars itself', () => {
+    expect(/GetConVar\(\s*["']traitordash_(url|token)["']/.test(fs.readFileSync(STATS, 'utf8'))).toBe(false)
   })
 })
 

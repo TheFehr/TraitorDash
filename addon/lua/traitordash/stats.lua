@@ -104,10 +104,10 @@ local function Death(victim, inflictor, attacker)
 end
 
 local function Send(payload)
-    -- Same rule as the bridge: https or a private address only (commands.lua defines it).
-    local baseUrl = TraitorDash.TrustedBaseUrl and TraitorDash.TrustedBaseUrl(GetConVar("traitordash_url"):GetString())
-    local token = GetConVar("traitordash_token"):GetString()
-    if not baseUrl or token == "" then return end
+    -- Same configuration as the bridge (config.lua): the file or the ConVars, https or private only.
+    local cfg = TraitorDash.GetConfig and TraitorDash.GetConfig()
+    if not cfg or not cfg.url or cfg.token == "" then return end
+    local baseUrl, token = cfg.url, cfg.token
 
     HTTP({
         url = baseUrl .. "/api/v1/round",
