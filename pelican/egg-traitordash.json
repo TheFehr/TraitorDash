@@ -27,7 +27,7 @@
   },
   "scripts": {
     "installation": {
-      "script": "#!/bin/bash\n# TraitorDash installation\n#\n# Nothing to download: the app is deployed into /mnt/server (the server's files) by the\n# homelab-infrastructure `traitordash` Ansible role, and its dependencies are installed by the\n# startup command (bun install). This only makes sure the directory exists.\nmkdir -p /mnt/server\necho \"TraitorDash: nothing to install; deploy the app files, then start the server.\"\n",
+      "script": "#!/bin/bash\n# TraitorDash installation\n#\n# Nothing to download: the app is deployed into /mnt/server (the server's files) by\n# whatever deploys it (for example the backend.tar.gz from the releases), and its dependencies are installed by the\n# startup command (bun install). This only makes sure the directory exists.\nmkdir -p /mnt/server\necho \"TraitorDash: nothing to install; deploy the app files, then start the server.\"\n",
       "container": "ghcr.io/parkervcp/installers:debian",
       "entrypoint": "bash"
     }

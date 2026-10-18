@@ -16,7 +16,7 @@ if not okCommands then print("[TraitorDash] commands.lua failed to load; all com
 
 local cv_url = CreateConVar("traitordash_url", "http://localhost:3000", {FCVAR_ARCHIVE, FCVAR_PROTECTED}, "The base URL of the TraitorDash backend.")
 -- No default token: an empty one keeps the bridge idle instead of calling the backend with a
--- well-known value. The token is set in server.cfg (the Ansible role writes it).
+-- well-known value. The token is set in server.cfg (or by whatever provisions the server).
 local cv_token = CreateConVar("traitordash_token", "", {FCVAR_ARCHIVE, FCVAR_PROTECTED}, "The API token for authenticating with the backend.")
 
 -- Who is an admin right now. The result is only informational (the backend logs it), so

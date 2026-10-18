@@ -5,7 +5,7 @@ import db from './Database'
 
 // What is running, answerable from the running process alone. The deployed app has no .git
 // (it is shipped as a tarball), so the identity is a hash of the SOURCE FILES it was started from:
-// the same code gives the same hash however it was deployed (Ansible today, a release later).
+// the same code gives the same hash however it was deployed (a tarball, a container, a checkout).
 //
 // Covered: src/, package.json, bun.lock. Not covered, on purpose: src/public/ (CSS/JS built from
 // the sources at deploy time, and gitignored, so the hash can be reproduced from a plain checkout
