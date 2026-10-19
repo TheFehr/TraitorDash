@@ -1,5 +1,5 @@
 import { expect, test, describe } from 'bun:test'
-import { renderPlanSvg, planLevels, heightColour } from '../src/services/mapplan'
+import { renderPlanSvg, planLevels, heightColour, storeyModel } from '../src/services/mapplan'
 
 // RFC 10, 4.5: the admin preview of a stored floor plan, as an SVG drawn from the grid.
 
@@ -316,5 +316,56 @@ describe('heightColour: the one colour scale of pictures and legend', () => {
     const r = rects(svg(['-160|48|272']))
     expect(attr(r[0]!, 'fill')).toBe(heightColour(0))
     expect(attr(r[2]!, 'fill')).toBe(heightColour(1))
+  })
+})
+
+describe('storeyModel with weights (the same rule, for samples that are not all the same size)', () => {
+  const samples = (spec: [number, number, number][]) => { // [height, how many samples, weight each]
+    const z: number[] = [], w: number[] = []
+    for (const [h, n, each] of spec) for (let i = 0; i < n; i++) { z.push(h); w.push(each) }
+    return { z, w }
+  }
+
+  test('without weights every sample counts one, as before', () => {
+    const { z } = samples([[48, 60, 1], [272, 60, 1]])
+    expect(storeyModel(z).levels.map(l => [l.lo, l.cells])).toEqual([[48, 60], [272, 60]])
+    expect(storeyModel(z, z.map(() => 1)).levels).toEqual(storeyModel(z).levels)
+  })
+
+  test('many tiny samples are worth what they cover, not how many they are', () => {
+    // 50 slivers at 700 together weigh 2: next to 160 of floor that is 1%, not a storey. Unweighted, 50 of 210 is.
+    const { z, w } = samples([[48, 100, 1], [272, 60, 1], [700, 50, 0.04]])
+    expect(storeyModel(z).levels).toHaveLength(3)
+    const weighted = storeyModel(z, w).levels
+    expect(weighted).toHaveLength(2)
+    expect(weighted[1]).toMatchObject({ lo: 272, hi: 700 })
+  })
+
+  test('the share that makes a storey is of the total weight, not of the number of samples', () => {
+    // 10 samples of weight 100 and 5 of weight 4: the second group is 20 of 1020 (2%) however few samples there are in all
+    const { z, w } = samples([[48, 10, 100], [272, 5, 4]])
+    expect(storeyModel(z, w).levels).toHaveLength(1)
+    const { z: z2, w: w2 } = samples([[48, 10, 100], [272, 5, 8]]) // 40 of 1040: just over 3%
+    expect(storeyModel(z2, w2).levels).toHaveLength(2)
+  })
+
+  test('one big sample can be a storey on its own', () => {
+    const { z, w } = samples([[48, 100, 1], [272, 1, 40]])
+    expect(storeyModel(z, w).levels.map(l => l.lo)).toEqual([48, 272])
+  })
+
+  test('the cells of a level are the weights that fell into it', () => {
+    const { z, w } = samples([[48, 10, 5], [272, 4, 15]])
+    expect(storeyModel(z, w).levels.map(l => l.cells)).toEqual([50, 60])
+  })
+
+  test('weights that do not match the samples, or are not usable, are refused', () => {
+    expect(() => storeyModel([1, 2, 3], [1, 1])).toThrow()
+    expect(() => storeyModel([1, 2], [1, -1])).toThrow()
+    expect(() => storeyModel([1, 2], [1, NaN])).toThrow()
+  })
+
+  test('no samples, no storeys', () => {
+    expect(storeyModel([], []).levels).toEqual([])
   })
 })

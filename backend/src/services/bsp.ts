@@ -278,3 +278,51 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
 
   return { fingerprint: header.fingerprint, version: header.version, revision: header.revision, floors, walls, stats }
 }
+
+// ---- the spawn points -------------------------------------------------------------------------------
+
+export interface Spawn { class: string, x: number, y: number, z: number }
+export interface SpawnLimits { maxEntities?: number, maxEntityBytes?: number }
+const SPAWN_CLASS = /^info_player_[a-z_]+$/
+
+/**
+ * Where players start, from the map's entity lump (a few tens of KB of text: blocks of "key" "value"
+ * lines in braces). Used to find the playable area when there is no trace plan. Only the header and
+ * that one lump are read.
+ */
+export async function extractSpawns(src: ByteSource, limits: SpawnLimits = {}): Promise<Spawn[]> {
+  const maxEntities = limits.maxEntities ?? 100_000
+  const maxBytes = limits.maxEntityBytes ?? 4 * 1024 * 1024
+  const header = await readHeader(src)
+  const lump = header.lumps[0]!
+  if (lump.compressed) throw new BspError('the entity lump is compressed, which is not supported')
+  if (lump.length > maxBytes) throw new BspError(`the entity lump is ${lump.length} bytes, over the limit of ${maxBytes}`)
+  if (lump.length === 0) return []
+  const bytes = await src.read(lump.offset, lump.length)
+  if (bytes.length !== lump.length) throw new BspError('short read of the entity lump')
+  const text = Buffer.from(bytes).toString('latin1')
+
+  const spawns: Spawn[] = []
+  let entity: Record<string, string> | null = null
+  let key: string | null = null
+  let count = 0
+  for (const m of text.matchAll(/"([^"\r\n]*)"|([{}])/g)) {
+    const brace = m[2]
+    if (brace === '{') {
+      if (++count > maxEntities) throw new BspError(`too many entities (the limit is ${maxEntities})`)
+      entity = {}; key = null
+    } else if (brace === '}') {
+      const cls = entity?.['classname']
+      const origin = entity?.['origin']
+      if (entity && cls && SPAWN_CLASS.test(cls) && origin) {
+        const parts = origin.trim().split(/\s+/).map(Number)
+        if (parts.length === 3 && parts.every(n => Number.isFinite(n) && Math.abs(n) <= MAX_COORD)) spawns.push({ class: cls, x: parts[0]!, y: parts[1]!, z: parts[2]! })
+      }
+      entity = null; key = null
+    } else if (entity) {
+      if (key === null) key = m[1]!
+      else { entity[key] = m[1]!; key = null }
+    }
+  }
+  return spawns
+}

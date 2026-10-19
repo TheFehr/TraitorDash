@@ -28,6 +28,8 @@ export interface BspSpec {
   displacements?: { startPosition: [number, number, number], vertStart: number, power: number }[]
   /** The displacement vertex lump: a direction and a distance each (the position is the interpolated base plus direction * distance). */
   dispVerts?: { vec: [number, number, number], dist: number }[]
+  /** The text of the entity lump (the map's entities, as key/value blocks). */
+  entities?: string
   /** Raw bytes put into a lump instead of what the spec would produce. */
   raw?: Partial<Record<number, Buffer>>
   /** Lumps to mark as compressed (a non-zero fourCC in the directory). */
@@ -70,7 +72,7 @@ export function buildBsp(spec: BspSpec = {}): Buffer {
   lumps[LUMP.MODELS] = Buffer.concat((spec.models ?? [{ firstFace: 0, numFaces: (spec.faces ?? []).length }]).map(model))
   lumps[LUMP.DISPINFO] = Buffer.concat((spec.displacements ?? []).map(dispinfo))
   lumps[LUMP.DISP_VERTS] = Buffer.concat((spec.dispVerts ?? []).map(dispvert))
-  lumps[LUMP.ENTITIES] = Buffer.from('{ "classname" "worldspawn" }\0')
+  lumps[LUMP.ENTITIES] = Buffer.from((spec.entities ?? '{ "classname" "worldspawn" }') + '\0')
   if (spec.pakfileBytes) lumps[LUMP.PAKFILE] = Buffer.alloc(spec.pakfileBytes, 0x50)
   for (const [i, raw] of Object.entries(spec.raw ?? {})) lumps[Number(i)] = raw!
 

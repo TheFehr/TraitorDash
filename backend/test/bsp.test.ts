@@ -1,5 +1,5 @@
 import { expect, test, describe } from 'bun:test'
-import { readHeader, extractSurfaces, memorySource, bspFingerprint, BspError, type ByteSource } from '../src/services/bsp'
+import { readHeader, extractSurfaces, extractSpawns, memorySource, bspFingerprint, BspError, type ByteSource } from '../src/services/bsp'
 import { buildBsp, flatQuad, flatDisplacement, HEADER_BYTES, LUMP, SURF } from './helpers/bsp_builder'
 
 // RFC 11, step 1: reading the surface geometry out of a Source map without reading the map. The
@@ -506,4 +506,75 @@ describe('displacements (terrain)', () => {
   bad('a compressed displacement lump', { ...d2(), compressed: [LUMP.DISPINFO] }, /compressed/)
   bad('a compressed displacement vertex lump', { ...d2(), compressed: [LUMP.DISP_VERTS] }, /compressed/)
   bad('more displacement vertices than the limit', d2(), /too many|limit/, { maxVertices: 20 })
+})
+
+describe('spawn points (the entity lump)', () => {
+  const ent = (cls: string, origin?: string, extra = '') => `{\n"classname" "${cls}"\n${origin === undefined ? '' : `"origin" "${origin}"\n`}${extra}}\n`
+  const spawns = (entities: string, limits?: Parameters<typeof extractSpawns>[1]) => extractSpawns(memorySource(buildBsp({ entities })), limits)
+
+  test('lists the player spawns with their origin and class, and nothing else', async () => {
+    const s = await spawns(ent('worldspawn') + ent('info_player_start', '-100 200.5 32') + ent('light', '5 5 5') + ent('info_player_deathmatch', '10 20 30') + ent('prop_physics', '1 2 3'))
+    expect(s).toEqual([{ class: 'info_player_start', x: -100, y: 200.5, z: 32 }, { class: 'info_player_deathmatch', x: 10, y: 20, z: 30 }])
+  })
+
+  test.each(['info_player_start', 'info_player_deathmatch', 'info_player_terrorist', 'info_player_counterterrorist', 'info_player_teamspawn'])('%s is a spawn', async (cls) => {
+    expect(await spawns(ent(cls, '1 2 3'))).toHaveLength(1)
+  })
+
+  test('a class that only looks similar is not a spawn', async () => {
+    expect(await spawns(ent('info_player', '1 2 3') + ent('xinfo_player_start', '1 2 3') + ent('info_target', '1 2 3'))).toEqual([])
+  })
+
+  test('an empty entity lump, or one without spawns, is an empty list, not an error', async () => {
+    expect(await spawns('')).toEqual([])
+    expect(await spawns(ent('worldspawn'))).toEqual([])
+  })
+
+  test('an origin that is missing or not three finite numbers is skipped', async () => {
+    const s = await spawns(ent('info_player_start') + ent('info_player_start', '1 2') + ent('info_player_start', 'a b c') + ent('info_player_start', '1 2 NaN') + ent('info_player_start', '1 2 3 4') + ent('info_player_start', '7 8 9'))
+    expect(s).toEqual([{ class: 'info_player_start', x: 7, y: 8, z: 9 }])
+  })
+
+  test('an origin far outside any map is skipped', async () => {
+    expect(await spawns(ent('info_player_start', '1e9 0 0') + ent('info_player_start', '0 0 -999999'))).toEqual([])
+  })
+
+  test('keys in any order, other keys around them, and Windows line endings', async () => {
+    const text = '{\r\n"targetname" "a"\r\n"origin" "1 2 3"\r\n"angles" "0 90 0"\r\n"classname" "info_player_start"\r\n}\r\n'
+    expect(await spawns(text)).toEqual([{ class: 'info_player_start', x: 1, y: 2, z: 3 }])
+  })
+
+  test('a block that is never closed, and stray text, do not break the ones before', async () => {
+    const s = await spawns(ent('info_player_start', '1 2 3') + '"stray" "text"\n}\n}\n{\n"classname" "info_player_start"\n"origin" "4 5 6"\n')
+    expect(s).toEqual([{ class: 'info_player_start', x: 1, y: 2, z: 3 }]) // the stray text is not glued to the closed block, and the open one is not emitted
+  })
+
+  test('too many entities for the limit is refused', async () => {
+    await rejects(spawns(ent('worldspawn') + ent('light') + ent('light'), { maxEntities: 2 }), /too many entities/)
+  })
+
+  test('an entity lump over the size limit is refused before it is read', async () => {
+    const buf = buildBsp({ entities: ent('info_player_start', '1 2 3') })
+    const src = counting(buf)
+    await rejects(extractSpawns(src, { maxEntityBytes: 10 }), /entity lump/)
+    expect(src.reads).toEqual([[0, HEADER_BYTES]]) // only the header was read
+  })
+
+  test('a compressed entity lump is refused', async () => {
+    await rejects(extractSpawns(memorySource(buildBsp({ entities: ent('info_player_start', '1 2 3'), compressed: [LUMP.ENTITIES] }))), /compressed/)
+  })
+
+  test('reads the header and the entity lump, nothing else', async () => {
+    const buf = buildBsp({ ...flatQuad(0), entities: ent('info_player_start', '1 2 3'), pakfileBytes: 1_000_000 })
+    const src = counting(buf)
+    await extractSpawns(src)
+    const h = await readHeader(memorySource(buf))
+    const e = h.lumps[LUMP.ENTITIES]!
+    expect(src.reads).toHaveLength(2)
+    expect(src.reads[1]).toEqual([e.offset, e.length])
+  })
+
+  test('a map file that is not a map is refused, as everywhere', async () => {
+    await rejects(extractSpawns(memorySource(Buffer.from('nope'))), /short|header/)
+  })
 })

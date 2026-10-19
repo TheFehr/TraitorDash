@@ -128,12 +128,20 @@ export function planLevels(grid: Grid): Level[] {
   return storeyModel(parseRows(grid).flat(2).map(f => f.z)).levels
 }
 
-/** The storeys of a set of floor heights, and which storey (0-based) a height belongs to. */
-const storeyModel = (zs: number[]): { levels: Level[], storeyOf: (z: number) => number } => {
+/**
+ * The storeys of a set of floor heights, and which storey (0-based) a height belongs to. Every
+ * sample counts one, or `weights[i]` (for samples of different size, such as the triangles of a
+ * mesh weighted by the ground they cover, in units of one grid cell).
+ */
+export const storeyModel = (zs: number[], weights?: number[]): { levels: Level[], storeyOf: (z: number) => number } => {
+  if (weights && weights.length !== zs.length) throw new RangeError('there must be one weight per height')
+  if (weights && weights.some(w => !Number.isFinite(w) || w < 0)) throw new RangeError('weights must be finite and not negative')
   if (zs.length === 0) return { levels: [], storeyOf: () => 0 }
+  const weight = (i: number) => (weights ? weights[i]! : 1)
   const counts = new Map<number, number>()
-  for (const z of zs) counts.set(Math.floor(z / BIN), (counts.get(Math.floor(z / BIN)) ?? 0) + 1)
-  const need = Math.max(MIN_CELLS, MIN_SHARE * zs.length)
+  let total = 0
+  zs.forEach((z, i) => { counts.set(Math.floor(z / BIN), (counts.get(Math.floor(z / BIN)) ?? 0) + weight(i)); total += weight(i) })
+  const need = Math.max(MIN_CELLS, MIN_SHARE * total)
 
   let peaks: { z: number, n: number }[] = []
   for (const [bin, n] of counts) {
@@ -162,10 +170,11 @@ const storeyModel = (zs: number[]): { levels: Level[], storeyOf: (z: number) => 
     return best
   }
   const levels: Level[] = peaks.map((_, i) => ({ index: i + 1, lo: Infinity, hi: -Infinity, cells: 0 }))
-  for (const z of zs) {
+  zs.forEach((z, i) => {
     const l = levels[nearest(z)]!
-    l.lo = Math.min(l.lo, z); l.hi = Math.max(l.hi, z); l.cells++
-  }
+    l.lo = Math.min(l.lo, z); l.hi = Math.max(l.hi, z); l.cells += weight(i)
+  })
+  for (const l of levels) l.cells = Math.round(l.cells * 1000) / 1000
   return { levels, storeyOf: nearest }
 }
 
