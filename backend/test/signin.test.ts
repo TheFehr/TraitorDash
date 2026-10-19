@@ -360,10 +360,12 @@ describe('gated content: the mesh', () => {
     test('rows older than VIEW_LOG_DAYS are removed by the cleanup; other audit rows stay; 0 logs nothing', async () => {
       await mesh(USER)
       Store.audit(serverId, ADMIN, 'MAP_GEOMETRY_REQUESTED', 'ttt_a')
-      db.run("UPDATE audit_log SET timestamp = datetime('now', '-100 days')")
+      // Only this server's rows: all test files share one database, and the cleanup counts every view row.
+      db.run("DELETE FROM audit_log WHERE action IN ('VIEW_MESH', 'VIEW_REPLAY') AND server_id != ?", [serverId])
+      db.run("UPDATE audit_log SET timestamp = datetime('now', '-100 days') WHERE server_id = ?", [serverId])
       expect(Store.cleanupViewLog()).toBe(1)
       expect(views()).toHaveLength(0)
-      expect(db.query("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'MAP_GEOMETRY_REQUESTED'").get().n).toBe(1)
+      expect(db.query("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'MAP_GEOMETRY_REQUESTED' AND server_id = ?").get(serverId).n).toBe(1)
       process.env.VIEW_LOG_DAYS = '0'
       await mesh(USER2)
       expect(views(USER2)).toHaveLength(0)
