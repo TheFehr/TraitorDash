@@ -127,24 +127,20 @@ export const MapsDashboard = ({ server, state, maps, admin, showAll, plans }: Ma
           {admin && plans && plans.length > 0 && (
             <section>
               <h2 class="text-sm font-black uppercase tracking-widest text-gray-400 mb-3">Floor plans</h2>
-              <div class="bg-gray-800 border border-gray-700 rounded-xl overflow-x-auto">
-                <table class="w-full text-sm">
-                  <tbody>
-                    {plans.map(p => {
-                      const known = maps.find(m => m.name === p.map)
-                      const outdated = !!(p.fingerprint && known?.fingerprint && p.fingerprint !== known.fingerprint)
-                      return (
-                        <tr class="border-t border-gray-700 first:border-t-0">
-                          <td class="p-3 font-bold break-all">{p.map} {outdated && <Badge tone="yellow">Outdated</Badge>}</td>
-                          <td class="p-3 text-gray-400">{p.floorCells} floor cells, {p.crouchFloors} crouch-only</td>
-                          <td class="p-3 text-gray-500 text-xs">scanned <Heartbeat lastSeen={p.scannedAt} /></td>
-                          <td class="p-3 text-right"><a class="text-gray-400 hover:text-white underline" href={`/servers/${server.id}/maps/${p.map}/plan.json`}>JSON</a></td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              <ul class="bg-gray-800 border border-gray-700 rounded-xl divide-y divide-gray-700">
+                {plans.map(p => {
+                  const known = maps.find(m => m.name === p.map)
+                  const outdated = !!(p.fingerprint && known?.fingerprint && p.fingerprint !== known.fingerprint)
+                  return (
+                    <li class="p-3 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+                      <span class="font-bold break-all">{p.map} {outdated && <Badge tone="yellow">Outdated</Badge>}</span>
+                      <span class="text-sm text-gray-400">{p.floorCells} floor cells, {p.crouchFloors} crouch-only</span>
+                      <span class="text-xs text-gray-500">scanned <Heartbeat lastSeen={p.scannedAt} /></span>
+                      <a class="ml-auto text-sm text-gray-400 hover:text-white underline" href={`/servers/${server.id}/maps/${p.map}/plan.json`}>JSON</a>
+                    </li>
+                  )
+                })}
+              </ul>
             </section>
           )}
         </>
