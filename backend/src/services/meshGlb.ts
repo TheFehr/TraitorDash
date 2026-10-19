@@ -203,7 +203,7 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
   const scene = doc.createScene(opts.map)
   const root = doc.createNode('z-up').setRotation([-Math.SQRT1_2, 0, 0, Math.SQRT1_2]) // Source is Z-up, glTF is Y-up
   scene.addChild(root)
-  const material = (name: string, rgb: [number, number, number]) => doc.createMaterial(name).setBaseColorFactor([...rgb, 1]).setDoubleSided(true)
+  const material = (name: string, rgb: [number, number, number]) => doc.createMaterial(name).setBaseColorFactor([...rgb, 1]).setMetallicFactor(0).setRoughnessFactor(1).setDoubleSided(true)
   const mats = { floor: material('floor', [0.2, 0.7, 0.3]), wall: material('wall', [0.6, 0.6, 0.65]) }
 
   const info: GlbInfo = { vertices: 0, triangles: 0, droppedDegenerate: f.dropped + w.dropped, levels: [], cropped }

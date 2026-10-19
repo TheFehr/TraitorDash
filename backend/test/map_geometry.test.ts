@@ -247,3 +247,27 @@ describe('the map page', () => {
     expect(html).toContain('The addon could not be found.')
   })
 })
+
+describe('the 3D view on the map page', () => {
+  const page = async () => (await req(`/servers/${serverId}/maps/ttt_a`)).text()
+
+  test('appears once the mesh exists, with one button per level, and loads the viewer script', async () => {
+    await toggle(serverId, 'ttt_a', true)
+    expect(await page()).not.toContain('data-mapview')
+    await geo.runGeometryQueue(writer(file))
+    const html = await page()
+    expect(html).toContain('data-mapview')
+    expect(html).toContain(`data-src="/servers/${serverId}/maps/ttt_a/mesh.glb"`)
+    expect(html).toContain('src="/public/mapview.js"')
+    expect(html.match(/data-level="\d+"/g)).toHaveLength(1) // this map has one level
+    expect(html).toContain('data-level="all"')
+  })
+
+  test('is not on the page when the operator has the feature off, and the script is not loaded elsewhere', async () => {
+    await toggle(serverId, 'ttt_a', true)
+    await geo.runGeometryQueue(writer(file))
+    delete process.env.MAP_GEOMETRY
+    expect(await page()).not.toContain('data-mapview')
+    expect(await (await req(`/servers/${serverId}/maps`)).text()).not.toContain('mapview.js')
+  })
+})

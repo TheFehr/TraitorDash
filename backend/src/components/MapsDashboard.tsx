@@ -184,6 +184,8 @@ export interface MapPageProps {
   geometry?: { requested: boolean, status?: string, detail?: string | null, info?: { vertices: number, triangles: number, levels: number } | null }
 }
 
+const MV_BTN = 'px-3 py-1 rounded-md bg-gray-800 border border-gray-700 text-gray-300 hover:text-white aria-pressed:bg-red-600 aria-pressed:border-red-500 aria-pressed:text-white transition'
+
 const GeometryBadge = ({ status }: { status: string }) => {
   const tone = status === 'parsed' ? 'green' : status === 'failed' ? 'red' : 'yellow'
   const label = { queued: 'Queued', fetching: 'Fetching', parsed: 'Parsed', failed: 'Failed', unknown: 'Unknown' }[status] ?? 'Unknown'
@@ -229,6 +231,34 @@ export const MapPage = ({ server, map, name, next, plan, geometry }: MapPageProp
             {geometry.status === 'parsed' && <a class="px-4 py-2 rounded-lg text-gray-300 hover:text-white underline" href={`/servers/${server.id}/maps/${encodeURIComponent(name)}/mesh.glb`}>Download GLB</a>}
           </form>
         </div>
+      </section>
+    )}
+
+    {geometry?.status === 'parsed' && geometry.info && (
+      <section>
+        <h2 class="text-sm font-black uppercase tracking-widest text-gray-400 mb-3">3D view</h2>
+        <div data-mapview data-src={`/servers/${server.id}/maps/${encodeURIComponent(name)}/mesh.glb`} class="space-y-3">
+          <div class="relative">
+            <canvas class="block w-full h-[60vh] rounded-xl bg-gray-900 touch-none" aria-label={`3D view of ${name}`}></canvas>
+            <p data-status class="absolute inset-0 grid place-items-center text-sm text-gray-400 pointer-events-none">This view needs JavaScript.</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+            <div class="flex flex-wrap items-center gap-1" role="group" aria-label="Levels shown">
+              <span class="text-xs font-black uppercase tracking-widest text-gray-500 mr-2">Up to level</span>
+              {Array.from({ length: geometry.info.levels }, (_, i) => i + 1).map(n => (
+                <button type="button" data-level={n} aria-pressed="false" class={MV_BTN}>{n}</button>
+              ))}
+              <button type="button" data-level="all" aria-pressed="true" class={MV_BTN}>All</button>
+            </div>
+            <div class="flex items-center gap-1" role="group" aria-label="View">
+              <button type="button" data-view="orbit" class={MV_BTN}>3D</button>
+              <button type="button" data-view="top" class={MV_BTN}>From above</button>
+            </div>
+            <label class="flex items-center gap-2 text-gray-300"><input type="checkbox" data-walls checked /> Walls</label>
+          </div>
+          <p class="text-xs text-gray-500">Drag to turn, scroll or pinch to zoom, right-drag to move. Floors are coloured by level, lowest green.</p>
+        </div>
+        <script defer src="/public/mapview.js"></script>
       </section>
     )}
 
