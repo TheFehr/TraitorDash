@@ -7,6 +7,7 @@ import { normalizeConVarValue, formatConVarCommand } from '../services/convars'
 import { RateLimiter } from '../services/rateLimit'
 import { validatePlan, MAX_PLAN_BYTES } from '../services/mapplan'
 import { formatCode } from '../services/pairing'
+import { validateTrack, MAX_TRACK_BYTES } from '../services/tracks'
 import { NONCE, signResponse } from '../services/signing'
 
 type Variables = {
@@ -341,6 +342,42 @@ api.post('/v1/round', getServer, async (c) => {
     `(map=${report.map}, result=${result}, ${players.length} players, ${deaths.length} deaths, ${report.duration ?? '?'}s)`
   )
   return c.json({ success: true, stored })
+})
+
+// The bridge uploads the position track of a round it has already reported (RFC 12, 3.3). Every
+// number is checked before anything is stored; a track that does not fit is refused whole.
+export const trackLimiter = new RateLimiter(10, 60_000)
+
+api.post('/v1/track', getServer, async (c) => {
+  const server = c.get('server')
+  const wait = trackLimiter.hit(server.id)
+  if (wait > 0) {
+    c.header('Retry-After', String(wait))
+    return c.json({ error: 'Too many tracks uploaded; slow down' }, 429)
+  }
+  const declared = Number(c.req.header('content-length') ?? 0)
+  if (declared > MAX_TRACK_BYTES) return c.json({ error: `A track is at most ${MAX_TRACK_BYTES / 1024 / 1024} MB` }, 413)
+  const text = await c.req.text().catch(() => '')
+  if (Buffer.byteLength(text) > MAX_TRACK_BYTES) return c.json({ error: `A track is at most ${MAX_TRACK_BYTES / 1024 / 1024} MB` }, 413)
+  let body: any = null
+  try { body = JSON.parse(text) } catch { /* handled below */ }
+  const bad = (msg: string) => {
+    console.warn(`[Track] Rejected track from ${server.name}: ${msg}`)
+    return c.json({ error: msg }, 400)
+  }
+  if (!body || typeof body.round_id !== 'string' || !ROUND_ID.test(body.round_id)) return bad('round_id is required')
+  const round = Store.getRoundForTrack(server.id, body.round_id)
+  if (!round) return bad('this server has not reported that round')
+  if (Store.hasTrack(server.id, body.round_id)) return c.json({ success: true, stored: false })
+
+  const checked = validateTrack(body, { roundId: body.round_id, map: round.map, players: round.players })
+  if (!checked.ok) return bad(checked.error)
+  const json = JSON.stringify(checked.track)
+  const result = Store.recordTrack(server.id, checked.track, json)
+  Store.updateHeartbeat(server.id)
+  if (result.status === 'too_big') return c.json({ error: `The track is too big: ${result.limit}` }, 413)
+  console.log(`[Track] Round ${body.round_id} from ${server.name}: ${result.status} (${checked.track.t.length} ticks, ${checked.track.players.length} players, ${(json.length / 1024).toFixed(0)} KB)`)
+  return c.json({ success: true, stored: result.status === 'stored' })
 })
 
 // The bridge reports the maps the server has and which it will play (RFC 10), on startup and when

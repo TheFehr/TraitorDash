@@ -1,3 +1,4 @@
+import { trackConfig } from './services/tracks'
 import { Hono } from 'hono'
 import { serveStatic } from 'hono/bun'
 
@@ -346,6 +347,11 @@ if (import.meta.main) {
   }
   Store.resetStaleGeometry()
   kickGeometryQueue()
+  try { Store.setTrackConfig(trackConfig()) } catch (e) {
+    console.error(`[Track] ${(e as Error).message}`)
+    process.exit(1)
+  }
+  Store.enforceAllTrackLimits()
 }
 
 export default {

@@ -3,6 +3,7 @@ import type { MapPlan } from './mapplan'
 import { createHash } from 'node:crypto'
 import { hashToken } from './migrations'
 import { CODE_TTL_MS, generateCode, hashCode } from './pairing'
+import { TRACK_DEFAULTS, effectiveLimits, type Track, type TrackConfig } from './tracks'
 
 /** Change detection for language file contents. Not a security use: just "did this text change". */
 const contentHash = (text: string) => createHash('sha256').update(text).digest('hex')
@@ -141,6 +142,7 @@ export class Store {
     db.run('DELETE FROM convar_values WHERE server_id = ?', [id])
     db.run('DELETE FROM lang_files WHERE server_id = ?', [id])
     db.run('DELETE FROM deaths WHERE server_id = ?', [id])
+    db.run('DELETE FROM round_tracks WHERE server_id = ?', [id])
     db.run('DELETE FROM round_players WHERE server_id = ?', [id])
     db.run('DELETE FROM rounds WHERE server_id = ?', [id])
     db.run('DELETE FROM pairing_codes WHERE server_id = ?', [id])
@@ -178,12 +180,120 @@ export class Store {
         'SELECT round_id FROM rounds WHERE server_id = ? ORDER BY received_at DESC, rowid DESC LIMIT -1 OFFSET ?'
       ).all(serverId, keep) as { round_id: string }[]
       for (const { round_id } of old) {
+        db.run('DELETE FROM round_tracks WHERE server_id = ? AND round_id = ?', [serverId, round_id])
         db.run('DELETE FROM deaths WHERE server_id = ? AND round_id = ?', [serverId, round_id])
         db.run('DELETE FROM round_players WHERE server_id = ? AND round_id = ?', [serverId, round_id])
         db.run('DELETE FROM rounds WHERE server_id = ? AND round_id = ?', [serverId, round_id])
       }
       return true
     })()
+  }
+
+  // ---- Position tracks (RFC 12, 3.4) ----
+
+  private static trackCfg: TrackConfig = TRACK_DEFAULTS
+
+  /** Sets what the instance keeps (from the environment, at start-up). */
+  static setTrackConfig(c: TrackConfig) { Store.trackCfg = c }
+  static getTrackConfig(): TrackConfig { return Store.trackCfg }
+
+  /** The round a track would belong to: its map and players; null when this server has no such round. */
+  static getRoundForTrack(serverId: string, roundId: string): { map: string | null, players: Set<string> } | null {
+    const r = db.prepare('SELECT map FROM rounds WHERE server_id = ? AND round_id = ?').get(serverId, roundId) as { map: string | null } | null
+    if (!r) return null
+    const rows = db.prepare('SELECT steam_id FROM round_players WHERE server_id = ? AND round_id = ?').all(serverId, roundId) as { steam_id: string }[]
+    return { map: r.map, players: new Set(rows.map(x => x.steam_id)) }
+  }
+
+  static hasTrack(serverId: string, roundId: string): boolean {
+    return !!db.prepare('SELECT 1 FROM round_tracks WHERE server_id = ? AND round_id = ?').get(serverId, roundId)
+  }
+
+  /** What this server keeps: its own override, else the instance default, never above the ceiling. */
+  static getTrackLimits(serverId: string): { count: number, mb: number, own: { count: number | null, mb: number | null } } {
+    const row = db.prepare('SELECT track_keep_count AS count, track_keep_mb AS mb FROM servers WHERE id = ?').get(serverId) as { count: number | null, mb: number | null } | null
+    const own = { count: row?.count ?? null, mb: row?.mb ?? null }
+    return { ...effectiveLimits(Store.trackCfg, own), own }
+  }
+
+  /** Stores the limits an admin chose (null: use the default). Takes effect now. */
+  static setTrackLimits(serverId: string, count: number | null, mb: number | null) {
+    db.prepare('UPDATE servers SET track_keep_count = ?, track_keep_mb = ? WHERE id = ?').run(count, mb, serverId)
+    Store.enforceTrackLimits(serverId)
+  }
+
+  static getTrackUsage(serverId: string): { count: number, bytes: number, pinned: number } {
+    const r = db.prepare('SELECT COUNT(*) AS count, COALESCE(SUM(bytes), 0) AS bytes, COALESCE(SUM(pinned), 0) AS pinned FROM round_tracks WHERE server_id = ?').get(serverId) as { count: number, bytes: number, pinned: number }
+    return r
+  }
+
+  /**
+   * Stores a validated track. `stored` is false and nothing is written when the round already has
+   * one, or when this server keeps no tracks (0); `tooBig` names the limit a track larger than the
+   * whole size limit hit.
+   */
+  static recordTrack(serverId: string, t: Track, json: string): { status: 'stored' | 'duplicate' | 'discarded' } | { status: 'too_big', limit: string } {
+    const limits = Store.getTrackLimits(serverId)
+    if (Store.hasTrack(serverId, t.roundId)) return { status: 'duplicate' }
+    if (limits.count === 0 || limits.mb === 0) return { status: 'discarded' }
+    const bytes = Buffer.byteLength(json)
+    if (bytes > limits.mb * 1024 * 1024) return { status: 'too_big', limit: `this server keeps at most ${limits.mb} MB of tracks` }
+    db.transaction(() => {
+      db.prepare(
+        'INSERT INTO round_tracks (server_id, round_id, map, fingerprint, truncated, degraded, bytes, created_at, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(serverId, t.roundId, t.map, t.fingerprint, t.truncated ? 1 : 0, t.degraded ? 1 : 0, bytes, new Date().toISOString(), json)
+      Store.enforceTrackLimits(serverId)
+    })()
+    return { status: 'stored' }
+  }
+
+  /** Removes the oldest unpinned tracks until the count and the size both fit. Pinned ones are never removed. */
+  static enforceTrackLimits(serverId: string) {
+    const limits = Store.getTrackLimits(serverId)
+    const rows = db.prepare('SELECT round_id, bytes FROM round_tracks WHERE server_id = ? AND pinned = 0 ORDER BY created_at ASC, rowid ASC').all(serverId) as { round_id: string, bytes: number }[]
+    let count = rows.length, bytes = rows.reduce((a, r) => a + r.bytes, 0)
+    const cap = limits.mb * 1024 * 1024
+    for (const r of rows) {
+      if (count <= limits.count && bytes <= cap) break
+      db.run('DELETE FROM round_tracks WHERE server_id = ? AND round_id = ?', [serverId, r.round_id])
+      count--; bytes -= r.bytes
+    }
+  }
+
+  /** The limits of every server, applied (at start-up, so a lowered limit takes effect at once). */
+  static enforceAllTrackLimits() {
+    for (const s of db.prepare('SELECT id FROM servers').all() as { id: string }[]) Store.enforceTrackLimits(s.id)
+  }
+
+  /** Pins or unpins a track. 'max' when the server already has the most pins the instance allows. */
+  static pinTrack(serverId: string, roundId: string, pinned: boolean, by: string): 'ok' | 'none' | 'max' {
+    const row = db.prepare('SELECT pinned FROM round_tracks WHERE server_id = ? AND round_id = ?').get(serverId, roundId) as { pinned: number } | null
+    if (!row) return 'none'
+    if (pinned) {
+      if (row.pinned === 1) return 'ok'
+      if (Store.getTrackUsage(serverId).pinned >= Store.trackCfg.maxPinned) return 'max'
+      db.prepare('UPDATE round_tracks SET pinned = 1, pinned_by = ?, pinned_at = ? WHERE server_id = ? AND round_id = ?').run(by, new Date().toISOString(), serverId, roundId)
+    } else {
+      db.prepare('UPDATE round_tracks SET pinned = 0, pinned_by = NULL, pinned_at = NULL WHERE server_id = ? AND round_id = ?').run(serverId, roundId)
+      Store.enforceTrackLimits(serverId) // an unpinned track is now subject to the limits
+    }
+    return 'ok'
+  }
+
+  /** The stored track and what is known about it; null when the round has none. */
+  static getTrack(serverId: string, roundId: string): { track: Track, meta: { map: string, fingerprint: string | null, truncated: boolean, degraded: boolean, bytes: number, createdAt: string, pinned: boolean } } | null {
+    const r = db.prepare('SELECT map, fingerprint, truncated, degraded, bytes, created_at, pinned, data FROM round_tracks WHERE server_id = ? AND round_id = ?').get(serverId, roundId) as any
+    if (!r) return null
+    return { track: JSON.parse(r.data) as Track, meta: { map: r.map, fingerprint: r.fingerprint, truncated: !!r.truncated, degraded: !!r.degraded, bytes: r.bytes, createdAt: r.created_at, pinned: !!r.pinned } }
+  }
+
+  /** Which of `roundIds` have a track (and whether it is pinned), for marking the round list. */
+  static getTrackedRounds(serverId: string, roundIds: string[]): Map<string, { pinned: boolean }> {
+    const out = new Map<string, { pinned: boolean }>()
+    if (roundIds.length === 0) return out
+    const rows = db.prepare(`SELECT round_id, pinned FROM round_tracks WHERE server_id = ? AND round_id IN (${roundIds.map(() => '?').join(',')})`).all(serverId, ...roundIds) as { round_id: string, pinned: number }[]
+    for (const r of rows) out.set(r.round_id, { pinned: !!r.pinned })
+    return out
   }
 
   /** Replaces the server's map report with `r`, as a whole and in one transaction (RFC 10). */

@@ -12,7 +12,7 @@ describe('migrations', () => {
     migrate(db)
 
     expect(version(db)).toBe(migrations.length)
-    expect(columns(db, 'servers')).toEqual(['id', 'name', 'api_token_hash', 'last_seen'])
+    expect(columns(db, 'servers')).toEqual(['id', 'name', 'api_token_hash', 'last_seen', 'track_keep_count', 'track_keep_mb'])
     expect(columns(db, 'audit_log')).toContain('action')
     expect(columns(db, 'authorized_admins')).toContain('steam_id')
   })

@@ -305,6 +305,31 @@ export const migrations: Array<(db: Database) => void> = [
         scanned_at TEXT NOT NULL
       )
     `)
+  },
+
+  // v13: the position track of a round (RFC 12, 3.4), one row per round, and the per-server
+  // override of how many tracks are kept (NULL: use the instance default).
+  (db) => {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS round_tracks (
+        server_id   TEXT NOT NULL,
+        round_id    TEXT NOT NULL,
+        map         TEXT NOT NULL,
+        fingerprint TEXT,
+        truncated   INTEGER NOT NULL DEFAULT 0,
+        degraded    INTEGER NOT NULL DEFAULT 0,
+        bytes       INTEGER NOT NULL,
+        created_at  TEXT NOT NULL,
+        pinned      INTEGER NOT NULL DEFAULT 0,
+        pinned_by   TEXT,
+        pinned_at   TEXT,
+        data        TEXT NOT NULL,
+        PRIMARY KEY (server_id, round_id),
+        FOREIGN KEY (server_id, round_id) REFERENCES rounds(server_id, round_id)
+      )
+    `)
+    db.run('ALTER TABLE servers ADD COLUMN track_keep_count INTEGER')
+    db.run('ALTER TABLE servers ADD COLUMN track_keep_mb INTEGER')
   }
 ]
 
