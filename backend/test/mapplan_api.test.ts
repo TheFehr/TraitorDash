@@ -201,6 +201,38 @@ describe('the plan on the Maps page (admins only)', () => {
     expect((await res.json()).rows).toEqual(['-160,48c|48|', '|272|-160'])
   })
 
+  test('the page shows each plan as a picture, for admins only', async () => {
+    const admin = await (await get(`/servers/${serverId}/maps`, true)).text()
+    expect(admin).toContain(`<img`)
+    expect(admin).toContain(`src="/servers/${serverId}/maps/ttt_a/plan.svg"`)
+    expect(await (await get(`/servers/${serverId}/maps`)).text()).not.toContain('plan.svg')
+  })
+
+  test('the picture is an SVG with a content-security policy that allows nothing to run or load', async () => {
+    const res = await get(`/servers/${serverId}/maps/ttt_a/plan.svg`, true)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toContain('image/svg+xml')
+    expect(res.headers.get('content-security-policy')).toContain("default-src 'none'")
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(res.headers.get('cache-control')).toBe('no-store')
+    const body = await res.text()
+    expect(body).toContain('<svg')
+    expect(body).toContain('<title>ttt_a</title>')
+  })
+
+  test('the picture is refused for guests, and a missing plan or server is a 404', async () => {
+    expect((await get(`/servers/${serverId}/maps/ttt_a/plan.svg`)).status).toBe(401)
+    expect((await get(`/servers/${serverId}/maps/ttt_b/plan.svg`, true)).status).toBe(404)
+    expect((await get('/servers/nope/maps/ttt_a/plan.svg', true)).status).toBe(404)
+  })
+
+  test('a plan too large to draw answers 422, and the JSON download still works', async () => {
+    const row = Array.from({ length: 300 }, (_, i) => (i % 2 ? '48' : '272')).join('|')
+    expect((await post(plan({ map: 'ttt_big', nx: 300, ny: 300, rows: Array(300).fill(row) }))).status).toBe(200)
+    expect((await get(`/servers/${serverId}/maps/ttt_big/plan.svg`, true)).status).toBe(422)
+    expect((await get(`/servers/${serverId}/maps/ttt_big/plan.json`, true)).status).toBe(200)
+  })
+
   test('the download is refused for guests, and a missing plan or server is a 404', async () => {
     expect((await get(`/servers/${serverId}/maps/ttt_a/plan.json`)).status).toBe(401)
     expect((await get(`/servers/${serverId}/maps/ttt_b/plan.json`, true)).status).toBe(404)

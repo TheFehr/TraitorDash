@@ -137,6 +137,10 @@ export const MapsDashboard = ({ server, state, maps, admin, showAll, plans }: Ma
                       <span class="text-sm text-gray-400">{p.floorCells} floor cells, {p.crouchFloors} crouch-only</span>
                       <span class="text-xs text-gray-500">scanned <Heartbeat lastSeen={p.scannedAt} /></span>
                       <a class="ml-auto text-sm text-gray-400 hover:text-white underline" href={`/servers/${server.id}/maps/${p.map}/plan.json`}>JSON</a>
+                      <a class="basis-full" href={`/servers/${server.id}/maps/${p.map}/plan.svg`}>
+                        <img class="w-full max-h-[80vh] object-contain rounded-lg bg-gray-900" loading="lazy" alt={`Floor plan of ${p.map}`}
+                             src={`/servers/${server.id}/maps/${p.map}/plan.svg`} />
+                      </a>
                     </li>
                   )
                 })}

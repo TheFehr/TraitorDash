@@ -81,3 +81,65 @@ export function validatePlan(body: any): { plan: MapPlan } | { error: string } {
     },
   }
 }
+
+// ---- the admin preview (RFC 10, 4.5) ---------------------------------------------------------
+// The same picture tools/render-mapscan.ts draws: a square per cell with a floor, blue (lowest)
+// to red (highest), north up. Only numbers and the (escaped) map name go into it.
+
+const PX = 8 // picture pixels per grid cell
+export const MAX_PREVIEW_RECTS = 50_000
+
+type Grid = MapPlan['grid']
+interface Floor { z: number, crouch: boolean }
+
+const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+/** The plan as an SVG, or null when it would need more than MAX_PREVIEW_RECTS rectangles. */
+export function renderPlanSvg(grid: Grid, map: string): string | null {
+  const rows: Floor[][][] = grid.rows.map(r =>
+    r.split('|').map(c => (c === '' ? [] : c.split(',').map(f => ({ z: parseInt(f, 10), crouch: f.endsWith('c') })))))
+
+  let lo = Infinity
+  let hi = -Infinity
+  for (const row of rows) for (const cell of row) for (const f of cell) { lo = Math.min(lo, f.z); hi = Math.max(hi, f.z) }
+  const colour = (z: number) => `hsl(${Math.round(240 - 240 * ((z - lo) / Math.max(1, hi - lo)))} 70% 50%)`
+
+  const rects: string[] = []
+  const dots: string[] = []
+  let minI = Infinity, maxI = -1, minJ = Infinity, maxJ = -1 // the cells that are drawn
+  for (let j = 0; j < rows.length; j++) {
+    const y = (grid.ny - 1 - j) * PX // y grows north in the world and down in a picture
+    // Horizontal runs of cells that look the same become one rectangle.
+    let run: { i: number, n: number, fill: string, faint: boolean } | null = null
+    const flush = () => {
+      if (run) rects.push(`<rect x="${run.i * PX}" y="${y}" width="${run.n * PX}" height="${PX}" fill="${run.fill}"${run.faint ? ' fill-opacity=".4"' : ''}/>`)
+      run = null
+    }
+    for (let i = 0; i < grid.nx; i++) {
+      const cell = rows[j]![i]!
+      if (cell.length === 0) { flush(); continue }
+      minI = Math.min(minI, i); maxI = Math.max(maxI, i); minJ = Math.min(minJ, j); maxJ = Math.max(maxJ, j)
+      const top = cell.reduce((a, b) => (b.z > a.z ? b : a))
+      const faint = cell.every(f => f.crouch)
+      const fill = colour(top.z)
+      if (faint) dots.push(`<rect x="${i * PX + 1}" y="${y + 1}" width="2" height="2" fill="#fff"/>`)
+      if (cell.length > 1) dots.push(`<rect x="${i * PX + 1}" y="${y + PX - 3}" width="2" height="2" fill="#000" fill-opacity=".55"/>`)
+      if (run && run.fill === fill && run.faint === faint && run.i + run.n === i) run.n++
+      else { flush(); run = { i, n: 1, fill, faint } }
+      if (rects.length + dots.length > MAX_PREVIEW_RECTS) return null
+    }
+    flush()
+    if (rects.length + dots.length > MAX_PREVIEW_RECTS) return null
+  }
+
+  // Crop to what is drawn, with a margin of two cells, so a small map in a huge world fills the picture.
+  const drawn = maxI >= 0
+  const x0 = drawn ? Math.max(0, minI - 2) * PX : 0
+  const x1 = drawn ? Math.min(grid.nx, maxI + 3) * PX : Math.max(1, grid.nx) * PX
+  const y0 = drawn ? Math.max(0, grid.ny - 1 - maxJ - 2) * PX : 0
+  const y1 = drawn ? Math.min(grid.ny, grid.ny - minJ + 2) * PX : Math.max(1, grid.ny) * PX
+  const legend = drawn
+    ? `<text x="${x0 + 4}" y="${y0 + 12}" fill="#ddd" font-family="sans-serif" font-size="10">lowest ${lo} · highest ${hi} · cells of ${grid.cell} units</text>`
+    : ''
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${x1 - x0}" height="${y1 - y0}" viewBox="${x0} ${y0} ${x1 - x0} ${y1 - y0}" style="background:#111"><title>${esc(map)}</title>${rects.join('')}${dots.join('')}${legend}</svg>`
+}

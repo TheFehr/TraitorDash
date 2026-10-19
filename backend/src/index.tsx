@@ -20,6 +20,7 @@ import { Sidebar, RoleListPartial } from './components/Sidebar'
 import { checkHealth, sourceHash } from './services/version'
 import { StatsDashboard, PlayerStats } from './components/StatsDashboard'
 import { MapsDashboard } from './components/MapsDashboard'
+import { renderPlanSvg } from './services/mapplan'
 import * as stats from './services/stats'
 
 const app = new Hono()
@@ -176,6 +177,22 @@ app.get('/servers/:serverId/maps', async (c) => {
         plans={steamId ? Store.getMapPlans(serverId) : undefined} />
     </Layout>
   )
+})
+
+/** A stored floor plan drawn as a picture (RFC 10, 4.5). Admins only; nothing in it can run or load anything. */
+app.get('/servers/:serverId/maps/:map/plan.svg', async (c) => {
+  if (!(await getAdminId(c))) return c.text('Unauthorized', 401)
+  const map = c.req.param('map')
+  const plan = Store.getMapPlan(c.req.param('serverId'), map)
+  if (!plan) return c.text('Not found', 404)
+  const svg = renderPlanSvg(JSON.parse(plan), map)
+  if (!svg) return c.text('This plan is too large to draw; download the JSON instead.', 422)
+  return c.body(svg, 200, {
+    'Content-Type': 'image/svg+xml; charset=utf-8',
+    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'",
+    'X-Content-Type-Options': 'nosniff',
+    'Cache-Control': 'no-store',
+  })
 })
 
 /** A stored floor plan as JSON (RFC 10, 4.5). Admins only. */
