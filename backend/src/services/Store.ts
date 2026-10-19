@@ -15,6 +15,20 @@ const newToken = () => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).t
 /** Stats history kept per server; older rounds are removed as new ones arrive. */
 export const MAX_ROUNDS_PER_SERVER = 50_000
 
+export interface MapRow {
+  name: string, size: number | null, fingerprint: string | null
+  matchesGamemode: boolean | null, inCycle: boolean | null, onCooldown: boolean | null
+  isCurrent: boolean | null, inVotePool: boolean | null, votable: boolean | null
+}
+export interface MapsState {
+  current: string | null, next: string | null, gamemode: string | null, pattern: string | null
+  poolBasis: string | null, configSource: string | null, voteAddon: boolean, reportedAt: string
+}
+export interface MapsReport {
+  current: string | null, next: string | null, gamemode: string | null, pattern: string | null
+  poolBasis: string | null, configSource: string | null, voteAddon: boolean, maps: MapRow[]
+}
+
 export interface RoundReport {
   roundId: string
   map: string | null
@@ -114,6 +128,8 @@ export class Store {
     db.run('DELETE FROM round_players WHERE server_id = ?', [id])
     db.run('DELETE FROM rounds WHERE server_id = ?', [id])
     db.run('DELETE FROM pairing_codes WHERE server_id = ?', [id])
+    db.run('DELETE FROM server_maps WHERE server_id = ?', [id])
+    db.run('DELETE FROM server_map_state WHERE server_id = ?', [id])
     db.run('DELETE FROM servers WHERE id = ?', [id])
   }
 
@@ -150,6 +166,49 @@ export class Store {
       }
       return true
     })()
+  }
+
+  /** Replaces the server's map report with `r`, as a whole and in one transaction (RFC 10). */
+  static setMaps(serverId: string, r: MapsReport) {
+    const now = new Date().toISOString()
+    const flag = (v: boolean | null) => (v === null ? null : v ? 1 : 0)
+    db.transaction(() => {
+      db.run('DELETE FROM server_maps WHERE server_id = ?', [serverId])
+      const insert = db.prepare(`
+        INSERT OR IGNORE INTO server_maps
+          (server_id, name, size, fingerprint, matches_gamemode, in_cycle, on_cooldown, is_current, in_vote_pool, votable, seen_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      for (const m of r.maps) {
+        insert.run(serverId, m.name, m.size, m.fingerprint, flag(m.matchesGamemode), flag(m.inCycle), flag(m.onCooldown), flag(m.isCurrent), flag(m.inVotePool), flag(m.votable), now)
+      }
+      db.prepare(`
+        INSERT INTO server_map_state (server_id, current_map, next_map, gamemode, pattern, pool_basis, config_source, vote_addon, reported_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(server_id) DO UPDATE SET
+          current_map = excluded.current_map, next_map = excluded.next_map, gamemode = excluded.gamemode,
+          pattern = excluded.pattern, pool_basis = excluded.pool_basis, config_source = excluded.config_source,
+          vote_addon = excluded.vote_addon, reported_at = excluded.reported_at
+      `).run(serverId, r.current, r.next, r.gamemode, r.pattern, r.poolBasis, r.configSource, r.voteAddon ? 1 : 0, now)
+    })()
+  }
+
+  /** The server's latest map report: its maps (by name) and the state around them. `state` is null before the first report. */
+  static getMaps(serverId: string): { state: MapsState | null, maps: MapRow[] } {
+    const bool = (v: number | null) => (v === null ? null : v === 1)
+    const rows = db.prepare('SELECT * FROM server_maps WHERE server_id = ? ORDER BY name').all(serverId) as any[]
+    const st = db.prepare('SELECT * FROM server_map_state WHERE server_id = ?').get(serverId) as any
+    return {
+      maps: rows.map(r => ({
+        name: r.name, size: r.size, fingerprint: r.fingerprint,
+        matchesGamemode: bool(r.matches_gamemode), inCycle: bool(r.in_cycle), onCooldown: bool(r.on_cooldown),
+        isCurrent: bool(r.is_current), inVotePool: bool(r.in_vote_pool), votable: bool(r.votable),
+      })),
+      state: st ? {
+        current: st.current_map, next: st.next_map, gamemode: st.gamemode, pattern: st.pattern,
+        poolBasis: st.pool_basis, configSource: st.config_source, voteAddon: st.vote_addon === 1, reportedAt: st.reported_at,
+      } : null,
+    }
   }
 
   static updateHeartbeat(serverId: string) {

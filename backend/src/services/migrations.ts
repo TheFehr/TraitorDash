@@ -201,6 +201,40 @@ export const migrations: Array<(db: Database) => void> = [
       )
     `)
     db.run('CREATE UNIQUE INDEX IF NOT EXISTS pairing_codes_open ON pairing_codes(server_id) WHERE used_at IS NULL')
+  },
+  // v9: the maps a server has and which of them it will play (RFC 10). The bridge's latest report
+  // replaces the previous one as a whole. The flags are nullable: NULL means "not known", which is
+  // different from "no" (for example, there was no gamemode pattern to match against).
+  (db) => {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS server_maps (
+        server_id        TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+        name             TEXT NOT NULL,
+        size             INTEGER,
+        fingerprint      TEXT,
+        matches_gamemode INTEGER,
+        in_cycle         INTEGER,
+        on_cooldown      INTEGER,
+        is_current       INTEGER,
+        in_vote_pool     INTEGER,
+        votable          INTEGER,
+        seen_at          TEXT NOT NULL,
+        PRIMARY KEY (server_id, name)
+      )
+    `)
+    db.run(`
+      CREATE TABLE IF NOT EXISTS server_map_state (
+        server_id     TEXT PRIMARY KEY REFERENCES servers(id) ON DELETE CASCADE,
+        current_map   TEXT,
+        next_map      TEXT,
+        gamemode      TEXT,
+        pattern       TEXT,
+        pool_basis    TEXT,
+        config_source TEXT,
+        vote_addon    INTEGER NOT NULL DEFAULT 0,
+        reported_at   TEXT NOT NULL
+      )
+    `)
   }
 ]
 

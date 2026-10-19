@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { Extractor } from '../services/Extractor'
-import { Store, type LiveConVarEntry, type RoundReport } from '../services/Store'
+import { Store, type LiveConVarEntry, type RoundReport, type MapRow } from '../services/Store'
 import { ServerManager } from '../components/ServerManager'
 import { requireSession } from '../middleware/session'
 import { normalizeConVarValue, formatConVarCommand } from '../services/convars'
@@ -340,6 +340,63 @@ api.post('/v1/round', getServer, async (c) => {
     `(map=${report.map}, result=${result}, ${players.length} players, ${deaths.length} deaths, ${report.duration ?? '?'}s)`
   )
   return c.json({ success: true, stored })
+})
+
+// The bridge reports the maps the server has and which it will play (RFC 10), on startup and when
+// the map changes. The latest report replaces the previous one. Flags the bridge could not decide
+// are null; anything that is not a boolean is stored as unknown instead of being trusted.
+const MAP_NAME = /^[A-Za-z0-9_.-]{1,64}$/
+const FINGERPRINT = /^[0-9a-f]{64}$/
+const POOL_BASES = ['prefixes', 'gamemode']
+const CONFIG_SOURCES = ['merged', 'global', 'file', 'none']
+const flag = (v: unknown) => (typeof v === 'boolean' ? v : null)
+const text = (v: unknown, max: number) => (typeof v === 'string' && v.length > 0 ? v.slice(0, max) : null)
+const oneOf = (v: unknown, allowed: string[]) => (typeof v === 'string' && allowed.includes(v) ? v : null)
+
+// A server reports its maps a few times per session; this only stops a runaway or hostile client.
+export const mapsLimiter = new RateLimiter(6, 60_000)
+
+api.post('/v1/maps', getServer, async (c) => {
+  const server = c.get('server')
+  const wait = mapsLimiter.hit(server.id)
+  if (wait > 0) {
+    console.warn(`[Maps] Rate limit hit by ${server.name}; refusing reports for ${wait}s`)
+    c.header('Retry-After', String(wait))
+    return c.json({ error: 'Too many map reports; slow down' }, 429)
+  }
+  const body = await c.req.json().catch(() => null)
+  const bad = (msg: string) => {
+    console.warn(`[Maps] Rejected report from ${server.name}: ${msg}`)
+    return c.json({ error: msg }, 400)
+  }
+  if (!body || !Array.isArray(body.maps) || body.maps.length > 500) return bad('maps must be an array of at most 500 entries')
+
+  const seen = new Set<string>()
+  const maps: MapRow[] = []
+  for (const m of body.maps) {
+    if (typeof m?.name !== 'string' || !MAP_NAME.test(m.name)) return bad(`invalid map name: ${String(m?.name).slice(0, 40)}`)
+    if (m.size !== null && m.size !== undefined && (typeof m.size !== 'number' || !Number.isFinite(m.size) || m.size < 0)) return bad(`invalid size for ${m.name}`)
+    if (m.fingerprint !== null && m.fingerprint !== undefined && (typeof m.fingerprint !== 'string' || !FINGERPRINT.test(m.fingerprint))) return bad(`invalid fingerprint for ${m.name}`)
+    if (seen.has(m.name)) continue
+    seen.add(m.name)
+    maps.push({
+      name: m.name,
+      size: typeof m.size === 'number' ? Math.round(m.size) : null,
+      fingerprint: typeof m.fingerprint === 'string' ? m.fingerprint : null,
+      matchesGamemode: flag(m.matchesGamemode), inCycle: flag(m.inCycle), onCooldown: flag(m.onCooldown),
+      isCurrent: flag(m.isCurrent), inVotePool: flag(m.inVotePool), votable: flag(m.votable),
+    })
+  }
+
+  const vote = body.mapvote && typeof body.mapvote === 'object' ? body.mapvote : {}
+  Store.setMaps(server.id, {
+    current: text(body.current, 64), next: text(body.next, 64), gamemode: text(body.gamemode, 64), pattern: text(body.pattern, 128),
+    poolBasis: oneOf(vote.poolBasis, POOL_BASES), configSource: oneOf(vote.configSource, CONFIG_SOURCES),
+    voteAddon: vote.present === true, maps,
+  })
+  Store.updateHeartbeat(server.id)
+  console.log(`[Maps] Report from ${server.name}: ${maps.length} maps (current=${text(body.current, 64)}, pool by ${oneOf(vote.poolBasis, POOL_BASES) ?? 'unknown'})`)
+  return c.json({ success: true, stored: maps.length })
 })
 
 api.post('/save/:serverId/:role', async (c) => {
