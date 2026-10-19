@@ -1,5 +1,5 @@
 import { expect, test, describe } from 'bun:test'
-import { readHeader, extractSurfaces, extractSpawns, memorySource, bspFingerprint, BspError, type ByteSource } from '../src/services/bsp'
+import { readHeader, extractSurfaces, extractSpawns, extractMapEntities, memorySource, bspFingerprint, BspError, type ByteSource } from '../src/services/bsp'
 import { buildBsp, flatQuad, flatDisplacement, HEADER_BYTES, LUMP, SURF } from './helpers/bsp_builder'
 
 // RFC 11, step 1: reading the surface geometry out of a Source map without reading the map. The
@@ -576,5 +576,34 @@ describe('spawn points (the entity lump)', () => {
 
   test('a map file that is not a map is refused, as everywhere', async () => {
     await rejects(extractSpawns(memorySource(Buffer.from('nope'))), /short|header/)
+  })
+})
+
+describe('the 3D skybox camera (the entity lump again)', () => {
+  const ent = (cls: string, origin: string) => `{\n"classname" "${cls}"\n"origin" "${origin}"\n}\n`
+  const entities = (text: string) => extractMapEntities(memorySource(buildBsp({ entities: text })))
+
+  test('lists the sky cameras and the spawns together, from one read of the lump', async () => {
+    const e = await entities(ent('sky_camera', '100 200 300') + ent('info_player_start', '1 2 3') + ent('light', '9 9 9'))
+    expect(e.skyCameras).toEqual([{ x: 100, y: 200, z: 300 }])
+    expect(e.spawns).toEqual([{ class: 'info_player_start', x: 1, y: 2, z: 3 }])
+  })
+
+  test('only sky_camera is a sky camera, and its origin has to be sound', async () => {
+    const e = await entities(ent('sky_camera2', '1 2 3') + ent('env_sky', '1 2 3') + ent('sky_camera', '1 2') + ent('sky_camera', 'x y z') + ent('sky_camera', '1e9 0 0') + ent('sky_camera', '7 8 9'))
+    expect(e.skyCameras).toEqual([{ x: 7, y: 8, z: 9 }])
+  })
+
+  test('no sky camera is an empty list (most maps have none)', async () => {
+    expect((await entities(ent('info_player_start', '1 2 3'))).skyCameras).toEqual([])
+  })
+
+  test('extractSpawns still returns just the spawns', async () => {
+    expect(await extractSpawns(memorySource(buildBsp({ entities: ent('sky_camera', '1 2 3') + ent('info_player_start', '4 5 6') })))).toEqual([{ class: 'info_player_start', x: 4, y: 5, z: 6 }])
+  })
+
+  test('the same limits apply: too many entities, an entity lump over the size limit', async () => {
+    await rejects(extractMapEntities(memorySource(buildBsp({ entities: ent('light', '1 2 3') + ent('light', '1 2 3') })), { maxEntities: 1 }), /too many entities/)
+    await rejects(extractMapEntities(memorySource(buildBsp({ entities: ent('light', '1 2 3') })), { maxEntityBytes: 5 }), /entity lump/)
   })
 })

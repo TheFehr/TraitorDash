@@ -16,6 +16,7 @@
   "devDependencies": {
     "@tailwindcss/cli": "^4.3.0",
     "@types/bun": "^1.3.13",
+    "gltf-validator": "2.0.0-dev.3.10",
     "husky": "^9.1.7",
     "tailwindcss": "^4.3.0"
   },
@@ -23,6 +24,7 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@gltf-transform/core": "4.5.1",
     "alpinejs": "^3.15.12",
     "fengari": "^0.1.5",
     "hono": "^4.12.18",
