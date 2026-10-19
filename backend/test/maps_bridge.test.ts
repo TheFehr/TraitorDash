@@ -63,6 +63,12 @@ describe('TraitorDash.MapFingerprint', () => {
     expect(r).toBe(`${fingerprint(h, 243312804)}|1036|maps/ttt_a.bsp|rb|GAME`)
   })
 
+  test('matches the shared test vector (the backend\'s BSP reader checks the same literal)', () => {
+    // header(7) with size 243312804: the value is written out, not computed, so both suites pin the same number.
+    const r = lua(`BYTES["maps/ttt_a.bsp"] = ${bin(h)} RESULT = tostring(TraitorDash.MapFingerprint("maps/ttt_a.bsp", 243312804))`)
+    expect(r).toBe('a6f7661d5ae421cdbe7b1b4da2d6eae9d9f3583faaa5b01ff31509698ff1f3d6')
+  })
+
   test('the same bytes with another size is another fingerprint', () => {
     const r = lua(`BYTES["maps/ttt_a.bsp"] = ${bin(h)}
       RESULT = TraitorDash.MapFingerprint("maps/ttt_a.bsp", 1) .. "," .. TraitorDash.MapFingerprint("maps/ttt_a.bsp", 2)`).split(',')
