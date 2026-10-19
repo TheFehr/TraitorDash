@@ -160,7 +160,7 @@ describe('migration v10', () => {
   })
 })
 
-describe('the plan on the Maps page (admins only)', () => {
+describe('floor plans: the Maps page links, the map\'s own page shows (admins only)', () => {
   const get = (path: string, withCookie = false) =>
     app.fetch(new Request(`http://x${path}`, { headers: withCookie ? { Cookie: cookie } : {} }))
 
@@ -173,24 +173,91 @@ describe('the plan on the Maps page (admins only)', () => {
     await post(plan())
   })
 
-  test('an admin sees which maps have a plan, with its statistics and a download link', async () => {
+  const mapPage = async (name: string, withCookie = true) => (await get(`/servers/${serverId}/maps/${name}`, withCookie)).text()
+
+  test('the Maps page marks the maps that have a plan, and links every map to its page, for admins', async () => {
     const html = await (await get(`/servers/${serverId}/maps`, true)).text()
-    expect(html).toContain('Floor plans')
-    expect(html).toContain('5 floor cells')
-    expect(html).toContain('1 crouch-only')
-    expect(html).toContain(`/servers/${serverId}/maps/ttt_a/plan.json`)
+    const rows = html.split('<tbody')[1]!.split('<tr').slice(1)
+    const row = (n: string) => rows.find((r: string) => r.includes(`>${n}<`) || r.includes(`>${n}</a>`))!
+    expect(row('ttt_a')).toContain(`href="/servers/${serverId}/maps/ttt_a"`)
+    expect(row('ttt_b')).toContain(`href="/servers/${serverId}/maps/ttt_b"`)
+    expect(row('ttt_a')).toContain('Floor plan')
+    expect(row('ttt_b')).not.toContain('Floor plan')
   })
 
-  test('a guest sees nothing of it', async () => {
+  test('the Maps page itself carries no pictures, no legend and no list of plans', async () => {
+    const html = await (await get(`/servers/${serverId}/maps`, true)).text()
+    expect(html).not.toContain('<img')
+    expect(html).not.toContain('How to read these pictures')
+    expect(html).not.toContain('plan.svg')
+    expect(html).not.toContain('FLOOR PLANS')
+    expect(html).not.toContain('>Floor plans<')
+  })
+
+  test('a plan made for another version of the map is marked outdated on the list too', async () => {
+    await post(plan({ fingerprint: 'cd'.repeat(32) }))
+    expect(await (await get(`/servers/${serverId}/maps`, true)).text()).toContain('Outdated')
+  })
+
+  test('a guest gets no links and no marks on the Maps page', async () => {
     const html = await (await get(`/servers/${serverId}/maps`)).text()
-    expect(html).not.toContain('Floor plans')
+    expect(html).not.toContain(`/maps/ttt_a"`)
+    expect(html).not.toContain('Floor plan')
     expect(html).not.toContain('plan.json')
   })
 
-  test('a plan made for another version of the map is marked outdated', async () => {
+  test('an admin sees the map\'s page: its status, and the plan with its statistics and the download links', async () => {
+    const html = await mapPage('ttt_a')
+    expect(html).toContain('ttt_a')
+    expect(html).toContain('Current') // its status, as in the list
+    expect(html).toContain('5 floor cells')
+    expect(html).toContain('1 crouch-only')
+    expect(html).toContain(`/servers/${serverId}/maps/ttt_a/plan.json`)
+    expect(html).toContain(`href="/servers/${serverId}/maps/ttt_a/plan.svg"`) // all floors
+  })
+
+  test('the map\'s page has a way back to the list, and the plans of other maps are not on it', async () => {
+    await post(plan({ map: 'ttt_b', rows: ['|48|', '||'] }))
+    const html = await mapPage('ttt_a')
+    expect(html).toContain(`href="/servers/${serverId}/maps"`)
+    expect(html).not.toContain('ttt_b/plan.svg')
+  })
+
+  test('a guest is sent back to the Maps page, and so is an unknown map or server', async () => {
+    const guest = await get(`/servers/${serverId}/maps/ttt_a`)
+    expect(guest.status).toBe(302)
+    expect(guest.headers.get('location')).toBe(`/servers/${serverId}/maps`)
+    const unknown = await get(`/servers/${serverId}/maps/ttt_nothing`, true)
+    expect(unknown.status).toBe(302)
+    expect(unknown.headers.get('location')).toBe(`/servers/${serverId}/maps`)
+    const noServer = await get('/servers/nope/maps/ttt_a', true)
+    expect(noServer.status).toBe(302)
+    expect(noServer.headers.get('location')).toBe('/')
+  })
+
+  test('a map that was reported but has no plan yet says how to make one', async () => {
+    const html = await mapPage('ttt_b')
+    expect(html).toContain('No floor plan yet')
+    expect(html).toContain('traitordash_mapscan')
+    expect(html).not.toContain('<img')
+  })
+
+  test('a map that only has a plan (it left the report) still has its page', async () => {
+    await post(plan({ map: 'ttt_gone', rows: ['|48|', '||'] }))
+    const res = await get(`/servers/${serverId}/maps/ttt_gone`, true)
+    expect(res.status).toBe(200)
+    expect(await res.text()).toContain('plan.svg?level=1')
+  })
+
+  test('a map name that is not a name is no page', async () => {
+    expect((await get(`/servers/${serverId}/maps/..%2Fx`, true)).status).toBe(302)
+  })
+
+  test('a plan made for another version of the map is marked outdated on its page, and not when they match again', async () => {
     await post(plan({ fingerprint: 'cd'.repeat(32) }))
-    expect(await (await get(`/servers/${serverId}/maps`, true)).text()).toContain('Outdated')
+    expect(await mapPage('ttt_a')).toContain('Outdated')
     await post(plan()) // matching again
+    expect(await mapPage('ttt_a')).not.toContain('Outdated')
     expect(await (await get(`/servers/${serverId}/maps`, true)).text()).not.toContain('Outdated')
   })
 
@@ -201,11 +268,10 @@ describe('the plan on the Maps page (admins only)', () => {
     expect((await res.json()).rows).toEqual(['-160,48c|48|', '|272|-160'])
   })
 
-  test('the page shows each plan as a picture, for admins only', async () => {
-    const admin = await (await get(`/servers/${serverId}/maps`, true)).text()
+  test('the map\'s page shows its plan as a picture', async () => {
+    const admin = await mapPage('ttt_a')
     expect(admin).toContain(`<img`)
     expect(admin).toContain(`src="/servers/${serverId}/maps/ttt_a/plan.svg?level=1"`)
-    expect(await (await get(`/servers/${serverId}/maps`)).text()).not.toContain('plan.svg')
   })
 
   test('a plan with several storeys gets a picture and a caption for each, and a link to the overview', async () => {
@@ -213,7 +279,7 @@ describe('the plan on the Maps page (admins only)', () => {
     const flat = [...cells(48, 40), ...cells(272, 40), ...cells(416, 40)]
     const rows = Array.from({ length: 6 }, (_, j) => flat.slice(j * 20, j * 20 + 20).concat(Array(20).fill('')).slice(0, 20).join('|'))
     expect((await post(plan({ map: 'ttt_tall', nx: 20, ny: 6, rows }))).status).toBe(200)
-    const html = await (await get(`/servers/${serverId}/maps`, true)).text()
+    const html = await mapPage('ttt_tall')
     for (const n of [1, 2, 3]) expect(html).toContain(`/servers/${serverId}/maps/ttt_tall/plan.svg?level=${n}`)
     expect(html).not.toContain('ttt_tall/plan.svg?level=4')
     expect(html).toContain('Level 1')
@@ -230,8 +296,8 @@ describe('the plan on the Maps page (admins only)', () => {
     expect((await get(`/servers/${serverId}/maps/ttt_a/plan.svg?level=1`)).status).toBe(401)
   })
 
-  test('the floor plans come with a legend: colours, crouch-only, no floor, north, cell size', async () => {
-    const html = await (await get(`/servers/${serverId}/maps`, true)).text()
+  test('the map\'s page comes with a legend: colours, crouch-only, no floor, north, cell size', async () => {
+    const html = await mapPage('ttt_a')
     expect(html).toContain('How to read these pictures')
     expect(html).toContain('lowest floor of the level')
     expect(html).toContain('highest floor of the level')
@@ -244,26 +310,28 @@ describe('the plan on the Maps page (admins only)', () => {
   })
 
   test('the legend\'s scale runs from the picture\'s blue (left) to its red (right), and shows the faint crouch-only mark', async () => {
-    const html = await (await get(`/servers/${serverId}/maps`, true)).text()
+    const html = await mapPage('ttt_a')
     const legend = html.split('data-legend="plans"')[1]!.split('How to read')[0]! + html.split('data-legend="plans"')[1]!.split('</ul>')[0]!
     expect(legend).toMatch(/linear-gradient\(to right, hsl\(240 70% 50%\),.*hsl\(0 70% 50%\)\)/)
     expect(legend).toContain('opacity:.4') // the crouch-only mark is drawn faint, as in the pictures
     expect(legend).toContain('bg-white') // ... with its white dot
   })
 
-  test('each picture has its own scale with its own lowest and highest height', async () => {
+  test('each picture\'s caption gives its level, its own heights and its floor cells (the scale itself is in the picture)', async () => {
     const cells = (z: number, n: number) => Array(n).fill(String(z))
     const flat = [...cells(48, 40), ...cells(272, 40)]
     const rows = Array.from({ length: 4 }, (_, j) => flat.slice(j * 20, j * 20 + 20).concat(Array(20).fill('')).slice(0, 20).join('|'))
     expect((await post(plan({ map: 'ttt_scale', nx: 20, ny: 4, rows }))).status).toBe(200)
-    const html = await (await get(`/servers/${serverId}/maps`, true)).text()
-    const scales = html.match(/data-scale="[^"]*"/g) ?? []
-    expect(scales).toContain('data-scale="ttt_scale 1 48 48"')
-    expect(scales).toContain('data-scale="ttt_scale 2 272 272"')
+    const html = await mapPage('ttt_scale')
+    expect(html).toContain('Level 1 of 2: 48 units, 40 floor cells')
+    expect(html).toContain('Level 2 of 2: 272 units, 40 floor cells')
+    expect(html).not.toContain('data-scale') // no second scale bar under the pictures: each picture carries its own
   })
 
-  test('a guest sees no legend (there is nothing to explain)', async () => {
-    expect(await (await get(`/servers/${serverId}/maps`)).text()).not.toContain('How to read these pictures')
+  test('a level that spans heights says from where to where', async () => {
+    const rows = ['48|100|130|230|272|' + '272|'.repeat(0)].map(r => r.replace(/\|$/, ''))
+    expect((await post(plan({ map: 'ttt_span', nx: 5, ny: 1, rows }))).status).toBe(200)
+    expect(await mapPage('ttt_span')).toMatch(/Level 1 of \d: 48 to \d+ units/)
   })
 
   test('the picture is an SVG with a content-security policy that allows nothing to run or load', async () => {

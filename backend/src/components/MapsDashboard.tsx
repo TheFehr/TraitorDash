@@ -16,13 +16,29 @@ const Card = ({ label, value, sub }: { label: string, value: any, sub?: string }
   </div>
 )
 
-const Badge = ({ children, tone }: { children: any, tone: 'red' | 'green' | 'yellow' | 'gray' }) => {
+export const Badge = ({ children, tone }: { children: any, tone: 'red' | 'green' | 'yellow' | 'gray' }) => {
   const tones = {
     red: 'border-red-500/50 text-red-400', green: 'border-green-500/50 text-green-400',
     yellow: 'border-yellow-500/50 text-yellow-400', gray: 'border-gray-600 text-gray-400',
   }
   return <span class={`inline-block text-[10px] font-black uppercase tracking-widest border rounded px-2 py-0.5 mr-1 ${tones[tone]}`}>{children}</span>
 }
+
+/** The marks of a map's status, as in the list and on the map's own page. */
+export const StatusBadges = ({ m, next }: { m: MapRow, next: string | null }) => (
+  <>
+    {m.isCurrent && <Badge tone="red">Current</Badge>}
+    {m.name === next && <Badge tone="yellow">Next</Badge>}
+    {m.votable === true && <Badge tone="green">Votable</Badge>}
+    {m.onCooldown === true && <Badge tone="gray">Cooldown</Badge>}
+    {m.inCycle === true && <Badge tone="gray">In map cycle</Badge>}
+    {m.inVotePool === false && <Badge tone="gray">Not in the pool</Badge>}
+  </>
+)
+
+/** A plan scanned for another version of the map than the one the server runs now. */
+export const planOutdated = (plan: { fingerprint: string | null }, m: MapRow | undefined) =>
+  !!(plan.fingerprint && m?.fingerprint && plan.fingerprint !== m.fingerprint)
 
 // Votable maps first, then the running map, then the rest; each group by name.
 const rank = (m: MapRow) => (m.votable === true ? 0 : m.isCurrent ? 1 : 2)
@@ -40,7 +56,7 @@ const basisText = (s: MapsState) => {
 }
 
 // The scale of the pictures as a CSS gradient, from the same colours the pictures use.
-const SCALE = `linear-gradient(to right, ${[0, 1, 2, 3, 4, 5, 6].map(i => heightColour(i / 6)).join(', ')})`
+export const SCALE = `linear-gradient(to right, ${[0, 1, 2, 3, 4, 5, 6].map(i => heightColour(i / 6)).join(', ')})`
 
 const Swatch = ({ style, dot }: { style: string, dot?: boolean }) => (
   <span class="relative inline-block w-5 h-5 rounded-sm shrink-0 align-middle" style={style}>
@@ -49,13 +65,13 @@ const Swatch = ({ style, dot }: { style: string, dot?: boolean }) => (
 )
 
 /** What the colours and marks in the floor-plan pictures mean. */
-const PlanLegend = ({ cells }: { cells: number[] }) => (
+export const PlanLegend = ({ cells }: { cells: number[] }) => (
   <div class="bg-gray-800 border border-gray-700 rounded-xl p-4 mb-4 text-sm text-gray-300 space-y-3" data-legend="plans">
     <h3 class="text-xs font-black uppercase tracking-widest text-gray-400">How to read these pictures</h3>
     <div>
       <div class="h-3 rounded" style={`background:${SCALE}`}></div>
       <div class="flex justify-between text-xs text-gray-400 mt-1"><span>lowest floor of the level</span><span>highest floor of the level</span></div>
-      <p class="text-xs text-gray-500 mt-1">Each picture is one level and has its own scale: the exact heights are under it. Stairs and ramps show as a gradient.</p>
+      <p class="text-xs text-gray-500 mt-1">Each picture is one level and has its own scale, drawn at the bottom of the picture. Stairs and ramps show as a gradient.</p>
     </div>
     <ul class="space-y-2">
       <li class="flex items-center gap-3"><Swatch style={`background:${heightColour(0.5)};opacity:.4`} dot /> <span><b>Crouch-only</b>: a floor you can only reach by crouching or crawling (vents, crawl spaces).</span></li>
@@ -71,8 +87,8 @@ export interface MapsDashboardProps {
   maps: MapRow[]
   /** Admins also see the file sizes and how many maps are on disk, and may ask for the maps outside the pool. */
   admin?: boolean
-  /** The stored floor plans (RFC 10, 4.5); only listed for admins. */
-  plans?: (MapPlanMeta & { levels: Level[] })[]
+  /** Which maps have a stored floor plan (RFC 10, 4.5); only given to admins, who get a mark and a link to the map's page. */
+  plans?: MapPlanMeta[]
   /** An admin's opt-in (?all=1) to list the maps outside the vote pool; never honoured for guests. */
   showAll?: boolean
 }
@@ -135,14 +151,15 @@ export const MapsDashboard = ({ server, state, maps, admin, showAll, plans }: Ma
               <tbody>
                 {sortMaps(listed).map(m => (
                   <tr class="border-t border-gray-700">
-                    <td class="p-3 font-bold break-all">{m.name}</td>
+                    <td class="p-3 font-bold break-all">
+                      {admin ? <a class="hover:text-red-400 transition" href={`/servers/${server.id}/maps/${m.name}`}>{m.name}</a> : m.name}
+                    </td>
                     <td class="p-3">
-                      {m.isCurrent && <Badge tone="red">Current</Badge>}
-                      {m.name === next && <Badge tone="yellow">Next</Badge>}
-                      {m.votable === true && <Badge tone="green">Votable</Badge>}
-                      {m.onCooldown === true && <Badge tone="gray">Cooldown</Badge>}
-                      {m.inCycle === true && <Badge tone="gray">In map cycle</Badge>}
-                      {m.inVotePool === false && <Badge tone="gray">Not in the pool</Badge>}
+                      <StatusBadges m={m} next={next} />
+                      {admin && plans?.some(p => p.map === m.name) && (
+                        <a href={`/servers/${server.id}/maps/${m.name}`}><Badge tone="green">Floor plan</Badge></a>
+                      )}
+                      {admin && plans?.some(p => p.map === m.name && planOutdated(p, m)) && <Badge tone="yellow">Outdated</Badge>}
                     </td>
                     {admin && <td class="p-3 text-right text-gray-400">{fmtMapSize(m.size)}</td>}
                   </tr>
@@ -150,48 +167,73 @@ export const MapsDashboard = ({ server, state, maps, admin, showAll, plans }: Ma
               </tbody>
             </table>
           </div>
-
-          {admin && plans && plans.length > 0 && (
-            <section>
-              <h2 class="text-sm font-black uppercase tracking-widest text-gray-400 mb-3">Floor plans</h2>
-              <PlanLegend cells={[...new Set(plans.map(p => p.cell))]} />
-              <ul class="bg-gray-800 border border-gray-700 rounded-xl divide-y divide-gray-700">
-                {plans.map(p => {
-                  const known = maps.find(m => m.name === p.map)
-                  const outdated = !!(p.fingerprint && known?.fingerprint && p.fingerprint !== known.fingerprint)
-                  return (
-                    <li class="p-3 flex flex-wrap items-baseline gap-x-4 gap-y-1">
-                      <span class="font-bold break-all">{p.map} {outdated && <Badge tone="yellow">Outdated</Badge>}</span>
-                      <span class="text-sm text-gray-400">{p.floorCells} floor cells, {p.crouchFloors} crouch-only</span>
-                      <span class="text-xs text-gray-500">scanned <Heartbeat lastSeen={p.scannedAt} /></span>
-                      <span class="ml-auto text-sm space-x-3">
-                        <a class="text-gray-400 hover:text-white underline" href={`/servers/${server.id}/maps/${p.map}/plan.svg`}>All floors</a>
-                        <a class="text-gray-400 hover:text-white underline" href={`/servers/${server.id}/maps/${p.map}/plan.json`}>JSON</a>
-                      </span>
-                      <div class="basis-full grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        {p.levels.map(l => (
-                          <figure class="space-y-1">
-                            <a href={`/servers/${server.id}/maps/${p.map}/plan.svg?level=${l.index}`}>
-                              <img class="w-full max-h-[60vh] object-contain rounded-lg bg-gray-900" loading="lazy" alt={`Floor plan of ${p.map}, level ${l.index}`}
-                                   src={`/servers/${server.id}/maps/${p.map}/plan.svg?level=${l.index}`} />
-                            </a>
-                            <div class="h-1.5 rounded" style={`background:${SCALE}`} data-scale={`${p.map} ${l.index} ${l.lo} ${l.hi}`}></div>
-                            <figcaption class="text-xs text-gray-400 flex justify-between gap-2">
-                              <span>{l.lo}</span>
-                              <span class="text-center">Level {l.index} of {p.levels.length}, {l.cells} floor cells</span>
-                              <span>{l.hi}</span>
-                            </figcaption>
-                          </figure>
-                        ))}
-                      </div>
-                    </li>
-                  )
-                })}
-              </ul>
-            </section>
-          )}
         </>
       )}
     </div>
   )
 }
+
+export interface MapPageProps {
+  server: { id: string, name: string }
+  /** The map as the server reported it, or null when it only has a plan left. */
+  map: MapRow | null
+  name: string
+  next: string | null
+  plan: (MapPlanMeta & { levels: Level[] }) | null
+}
+
+/** One map: its status, and its floor plan, a picture per level (RFC 10, 4.5). Admins only. */
+export const MapPage = ({ server, map, name, next, plan }: MapPageProps) => (
+  <div class="p-4 sm:p-8 space-y-8 sm:space-y-10">
+    <header>
+      <nav class="text-xs font-black text-gray-500 uppercase tracking-widest mb-4 flex flex-wrap gap-x-2">
+        <a href="/" class="hover:text-white transition">Dashboard</a>
+        <span>/</span>
+        <a href={`/servers/${server.id}`} class="hover:text-white transition">{server.name}</a>
+        <span>/</span>
+        <a href={`/servers/${server.id}/maps`} class="hover:text-white transition">Maps</a>
+        <span>/</span>
+        <span class="text-red-500 break-all">{name}</span>
+      </nav>
+      <h1 class="text-3xl sm:text-5xl font-black mb-3 break-all">{name}</h1>
+      <div class="flex flex-wrap items-center gap-y-2 text-sm text-gray-400">
+        {map ? <><StatusBadges m={map} next={next} /><span class="ml-2">{fmtMapSize(map.size)}</span></> : <span>Not in the server's latest map list.</span>}
+      </div>
+    </header>
+
+    <section>
+      <h2 class="text-sm font-black uppercase tracking-widest text-gray-400 mb-3">Floor plan</h2>
+      {plan === null ? (
+        <div class="bg-gray-800 border border-gray-700 rounded-xl p-6 text-gray-400 text-sm">
+          No floor plan yet. Run <code class="text-gray-200">traitordash_mapscan</code> in the server console while this map is running; the result appears here within a few seconds.
+        </div>
+      ) : (
+        <>
+          <div class="flex flex-wrap items-baseline gap-x-4 gap-y-1 mb-4">
+            <span class="text-gray-300">{plan.floorCells} floor cells, {plan.crouchFloors} crouch-only</span>
+            {planOutdated(plan, map ?? undefined) && <Badge tone="yellow">Outdated</Badge>}
+            <span class="text-xs text-gray-500">scanned <Heartbeat lastSeen={plan.scannedAt} /></span>
+            <span class="ml-auto text-sm space-x-3">
+              <a class="text-gray-400 hover:text-white underline" href={`/servers/${server.id}/maps/${name}/plan.svg`}>All floors</a>
+              <a class="text-gray-400 hover:text-white underline" href={`/servers/${server.id}/maps/${name}/plan.json`}>JSON</a>
+            </span>
+          </div>
+          <PlanLegend cells={[plan.cell]} />
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {plan.levels.map(l => (
+              <figure class="space-y-1">
+                <a href={`/servers/${server.id}/maps/${name}/plan.svg?level=${l.index}`}>
+                  <img class="w-full max-h-[60vh] object-contain rounded-lg bg-gray-900" loading="lazy" alt={`Floor plan of ${name}, level ${l.index}`}
+                       src={`/servers/${server.id}/maps/${name}/plan.svg?level=${l.index}`} />
+                </a>
+                <figcaption class="text-xs text-gray-400">
+                  Level {l.index} of {plan.levels.length}: {l.lo === l.hi ? l.lo : `${l.lo} to ${l.hi}`} units, {l.cells} floor cells
+                </figcaption>
+              </figure>
+            ))}
+          </div>
+        </>
+      )}
+    </section>
+  </div>
+)

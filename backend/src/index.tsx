@@ -19,7 +19,7 @@ import { ServerManager } from './components/ServerManager'
 import { Sidebar, RoleListPartial } from './components/Sidebar'
 import { checkHealth, sourceHash } from './services/version'
 import { StatsDashboard, PlayerStats } from './components/StatsDashboard'
-import { MapsDashboard } from './components/MapsDashboard'
+import { MapsDashboard, MapPage } from './components/MapsDashboard'
 import { renderPlanSvg, planLevels } from './services/mapplan'
 import * as stats from './services/stats'
 
@@ -174,7 +174,31 @@ app.get('/servers/:serverId/maps', async (c) => {
   return c.html(
     <Layout steamId={steamId || undefined} path="/">
       <MapsDashboard server={server} state={state} maps={maps} admin={!!steamId} showAll={!!steamId && c.req.query('all') === '1'}
-        plans={steamId ? Store.getMapPlans(serverId).map(p => ({ ...p, levels: planLevels(JSON.parse(Store.getMapPlan(serverId, p.map)!)) })) : undefined} />
+        plans={steamId ? Store.getMapPlans(serverId) : undefined} />
+    </Layout>
+  )
+})
+
+/** One map and its floor plan, a picture per level (RFC 10, 4.5). Admins only; everyone else goes back to the list. */
+app.get('/servers/:serverId/maps/:map', async (c) => {
+  const steamId = await getAdminId(c)
+  const serverId = c.req.param('serverId')
+  const server = Store.getServerById(serverId)
+  if (!server) return c.redirect('/')
+  if (!steamId) return c.redirect(`/servers/${serverId}/maps`)
+
+  const name = c.req.param('map')
+  const { state, maps } = Store.getMaps(serverId)
+  const map = maps.find(m => m.name === name) ?? null
+  const grid = Store.getMapPlan(serverId, name)
+  if (!map && !grid) return c.redirect(`/servers/${serverId}/maps`)
+
+  const meta = Store.getMapPlans(serverId).find(p => p.map === name)
+  const plan = meta && grid ? { ...meta, levels: planLevels(JSON.parse(grid)) } : null
+  const next = state && state.next && state.next !== state.current ? state.next : null
+  return c.html(
+    <Layout steamId={steamId} path="/">
+      <MapPage server={server} map={map} name={name} next={next} plan={plan} />
     </Layout>
   )
 })
