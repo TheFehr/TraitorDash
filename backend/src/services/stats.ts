@@ -143,3 +143,26 @@ export function getPlayer(serverId: string, steamId: string): PlayerDetail | nul
 }
 
 export const isBotId = (steamId: string) => steamId.startsWith(BOT_PREFIX)
+
+
+export interface ReplayRound {
+  roundId: string, map: string | null, result: string, duration: number | null, startedAt: string | null
+  players: { id: string, nick: string | null, role: string | null, team: string | null, won: boolean, survived: boolean }[]
+}
+
+/**
+ * A round as the replay shows it (RFC 12, 3.5): its header and its players. null when the server
+ * has no such round, or when it is a bot-only test round and `bots` was not asked for, as in the stats.
+ */
+export function getReplayRound(serverId: string, roundId: string, o?: StatsOptions): ReplayRound | null {
+  const r = db.prepare(`
+    SELECT r.round_id AS roundId, r.map, r.result, r.duration, r.started_at AS startedAt
+    FROM rounds r WHERE r.server_id = ? AND r.round_id = ? AND ${roundHasPlayers(o)}
+  `).get(serverId, roundId) as any
+  if (!r) return null
+  const players = db.prepare(`
+    SELECT rp.steam_id AS id, rp.nick, rp.role, rp.team, rp.won, rp.survived
+    FROM round_players rp WHERE rp.server_id = ? AND rp.round_id = ? AND ${botFilter(o)} ORDER BY rp.rowid
+  `).all(serverId, roundId) as any[]
+  return { ...r, players: players.map(p => ({ ...p, won: !!p.won, survived: !!p.survived })) }
+}

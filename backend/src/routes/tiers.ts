@@ -21,6 +21,8 @@ export const TIERS: Record<string, Tier> = {
 
   'GET /servers/:serverId/maps/:map': 'user',
   'GET /servers/:serverId/maps/:map/mesh.glb': 'user',
+  'GET /servers/:serverId/rounds/:roundId/replay': 'user',
+  'GET /servers/:serverId/rounds/:roundId/track.json': 'user',
 
   'GET /sidebar/:serverId': 'admin',
   'GET /servers': 'admin',

@@ -6,8 +6,11 @@ import { serveStatic } from 'hono/bun'
 import api from './routes/api'
 import auth from './routes/auth'
 import { Store, viewLogDays } from './services/Store'
+import { buildReplay } from './services/replay'
+import { ReplayPage } from './components/ReplayPage'
+import { gzipSync } from 'node:zlib'
 import { getRolesWithState } from './services/roles'
-import { getAdminId, getSession, openSignin, signinUrl, type Session } from './middleware/session'
+import { getAdminId, getSession, openSignin, signinUrl, safeNext, type Session } from './middleware/session'
 import { gated } from './services/gates'
 import { geometryEnabled, kickGeometryQueue, setGeometryFetcher } from './services/mapgeometry'
 import { helperAvailable, workshopFetcher } from './services/workshop'
@@ -155,6 +158,7 @@ app.get('/servers/:serverId/stats', async (c) => {
   // Hidden switch for checking the bot test scenario: ?bots=1 includes bot-only rounds.
   const opts = { bots: c.req.query('bots') === '1' }
 
+  const recent = stats.getRecentRounds(serverId, opts)
   return c.html(
     <Layout steamId={steamId || undefined} user={await userOf(c)} path="/">
       <StatsDashboard
@@ -163,14 +167,20 @@ app.get('/servers/:serverId/stats', async (c) => {
         roles={stats.getRoleStats(serverId, opts)}
         teams={stats.getTeamStats(serverId, opts)}
         leaders={stats.getLeaderboard(serverId, sort, opts)}
-        recent={stats.getRecentRounds(serverId, opts)}
+        recent={recent}
         sort={sort}
         bots={opts.bots}
         admin={!!steamId}
         tracks={steamId ? trackInfo(serverId) : undefined}
+        replays={replaysFor(serverId, recent, !!(steamId || await userOf(c)))}
       />
     </Layout>
   )
+})
+
+/** Which of the recent rounds have a replay, and what the visitor needs to open it (RFC 12, 3.5; RFC 13). */
+const replaysFor = (serverId: string, recent: stats.RecentRound[], signedIn: boolean) => ({
+  tracked: Store.getTrackedRounds(serverId, recent.map(r => r.roundId)), signedIn, signinOpen: openSignin(),
 })
 
 /** What a server keeps of position tracks, for the admin's card (RFC 12, 3.4). */
@@ -207,7 +217,7 @@ app.post('/servers/:serverId/rounds/:roundId/pin', async (c) => {
   if (result === 'none') return c.text('Not found', 404)
   if (result === 'max') return c.text(`This server already has ${Store.getTrackConfig().maxPinned} pinned tracks; unpin one first.`, 409)
   Store.audit(serverId, steamId, pin ? 'TRACK_PINNED' : 'TRACK_UNPINNED', roundId)
-  return c.redirect(`/servers/${serverId}/stats`)
+  return c.redirect(safeNext(String(form.next ?? '')) ?? `/servers/${serverId}/stats`)
 })
 
 /** The maps the server has and which of them it will play (RFC 10). Public, like the stats. */
@@ -334,6 +344,57 @@ app.get('/servers/:serverId/maps/:map/mesh.glb', gated('mesh'), async (c) => {
     'Content-Security-Policy': "default-src 'none'",
     'Cache-Control': 'no-store',
   })
+})
+
+/**
+ * The data of one round's replay (RFC 12, 3.5): its players, its track and the best background for
+ * its map, as one JSON document. For signed-in users (RFC 13), counted per account, logged once an
+ * hour per user and round. A track never changes, so the answer carries an ETag and is cached by
+ * the browser (privately: the answer is for a signed-in user); it is sent compressed.
+ */
+app.get('/servers/:serverId/rounds/:roundId/track.json', gated('track'), async (c) => {
+  const serverId = c.req.param('serverId'), roundId = c.req.param('roundId')
+  const found = buildReplay(serverId, roundId, { bots: c.req.query('bots') === '1' })
+  if (!found) return c.json({ error: 'No track for this round' }, 404)
+  Store.logView(serverId, c.get('session').steamId, 'VIEW_REPLAY', roundId)
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ETag: found.etag,
+    'Cache-Control': 'private, max-age=3600',
+    Vary: 'Accept-Encoding, Cookie',
+    'X-Content-Type-Options': 'nosniff',
+  }
+  const given = c.req.header('If-None-Match')
+  if (given && given.split(',').map(s => s.trim()).includes(found.etag)) return c.body(null, 304, headers)
+  const json = JSON.stringify(found.payload)
+  if (/\bgzip\b/.test(c.req.header('Accept-Encoding') ?? '')) {
+    return c.body(gzipSync(json) as unknown as Uint8Array<ArrayBuffer>, 200, { ...headers, 'Content-Encoding': 'gzip' })
+  }
+  return c.body(json, 200, headers)
+})
+
+/** One round's replay page (RFC 12, 3.5). For signed-in users; an anonymous visitor is sent to sign-in and back (RFC 13). */
+app.get('/servers/:serverId/rounds/:roundId/replay', async (c) => {
+  const serverId = c.req.param('serverId'), roundId = c.req.param('roundId')
+  const server = Store.getServerById(serverId)
+  if (!server) return c.redirect('/')
+  const bots = c.req.query('bots') === '1'
+  const query = bots ? '?bots=1' : ''
+  const here = `/servers/${serverId}/rounds/${encodeURIComponent(roundId)}/replay${query}`
+  const session = await getSession(c)
+  if (!session) return c.redirect(openSignin() ? signinUrl(here) : `/servers/${serverId}/stats`)
+
+  const round = stats.getReplayRound(serverId, roundId, { bots })
+  if (!round) return c.redirect(`/servers/${serverId}/stats`)
+  const track = Store.getTrack(serverId, roundId)
+  return c.html(
+    <Layout steamId={session.admin ? session.steamId : undefined} user={session.admin ? undefined : session.steamId} path="/">
+      <ReplayPage server={server} round={{ id: round.roundId, map: round.map, result: round.result, duration: round.duration }}
+        hasTrack={!!track} src={`/servers/${serverId}/rounds/${encodeURIComponent(roundId)}/track.json${query}`}
+        viewer={session.steamId} admin={session.admin} pinned={!!track?.meta.pinned} here={here}
+        pinnedCount={session.admin ? { used: Store.getTrackUsage(serverId).pinned, max: Store.getTrackConfig().maxPinned } : undefined} />
+    </Layout>
+  )
 })
 
 app.get('/servers/:serverId/players/:playerId', async (c) => {

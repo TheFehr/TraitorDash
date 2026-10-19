@@ -6,9 +6,9 @@
   "scripts": {
     "dev": "bun run --hot src/index.tsx",
     "watch:css": "tailwindcss -i src/style.css -o src/public/style.css --watch",
-    "watch:js": "bun build src/frontend.ts --outdir src/public --watch & bun build src/mapview.ts --outdir src/public --format=iife --watch",
+    "watch:js": "bun build src/frontend.ts --outdir src/public --watch & bun build src/mapview.ts --outdir src/public --format=iife --watch & bun build src/replay.ts --outdir src/public --format=iife --watch",
     "build:css": "tailwindcss -i src/style.css -o src/public/style.css",
-    "build:js": "bun build src/frontend.ts --outdir src/public --minify && bun build src/mapview.ts --outdir src/public --minify --format=iife",
+    "build:js": "bun build src/frontend.ts --outdir src/public --minify && bun build src/mapview.ts --outdir src/public --minify --format=iife && bun build src/replay.ts --outdir src/public --minify --format=iife",
     "build": "bun run build:css && bun run build:js",
     "source-hash": "bun run scripts/source-hash.ts",
     "prepare": "cd .. && husky backend/.husky || true"

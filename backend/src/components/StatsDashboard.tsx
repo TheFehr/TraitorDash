@@ -1,3 +1,4 @@
+import { signinUrl } from '../middleware/session'
 import { Heartbeat } from './Heartbeat'
 import { SORTS, type SortKey, type LeaderRow, type RecentRound, type WinRow, type PlayerDetail } from '../services/stats'
 
@@ -50,11 +51,15 @@ export const WinTable = ({ title, rows, empty }: { title: string, rows: WinRow[]
   </section>
 )
 
-export const RoundsTable = ({ rounds }: { rounds: RecentRound[] }) => (
+/**
+ * The recent rounds. A round with a stored track has a replay (RFC 12): the link goes to it for a
+ * signed-in visitor, and to sign-in (and back) for anyone else, so it says what it needs.
+ */
+export const RoundsTable = ({ rounds, serverId, tracks, signedIn, signinOpen, bots }: { rounds: RecentRound[], serverId?: string, tracks?: Map<string, { pinned: boolean }>, signedIn?: boolean, signinOpen?: boolean, bots?: boolean }) => (
   <div class="bg-gray-800 border border-gray-700 rounded-xl overflow-x-auto">
     <table class="w-full text-sm">
       <thead class="text-[10px] uppercase tracking-widest text-gray-500">
-        <tr><th class="text-left p-3">When</th><th class="text-left p-3">Map</th><th class="text-left p-3">Result</th><th class="text-right p-3">Players</th><th class="text-right p-3">Deaths</th><th class="text-right p-3">Length</th></tr>
+        <tr><th class="text-left p-3">When</th><th class="text-left p-3">Map</th><th class="text-left p-3">Result</th><th class="text-right p-3">Players</th><th class="text-right p-3">Deaths</th><th class="text-right p-3">Length</th>{tracks && tracks.size > 0 && <th class="text-right p-3">Replay</th>}</tr>
       </thead>
       <tbody>
         {rounds.map(r => (
@@ -65,6 +70,19 @@ export const RoundsTable = ({ rounds }: { rounds: RecentRound[] }) => (
             <td class="p-3 text-right">{r.players}</td>
             <td class="p-3 text-right">{r.deaths}</td>
             <td class="p-3 text-right text-gray-400">{fmtDuration(r.duration)}</td>
+            {tracks && tracks.size > 0 && (
+              <td class="p-3 text-right">
+                {tracks.has(r.roundId) && serverId && (() => {
+                  const path = `/servers/${serverId}/rounds/${encodeURIComponent(r.roundId)}/replay${bots ? '?bots=1' : ''}`
+                  return signedIn
+                    ? <a data-replay-link class="text-red-400 hover:text-red-300 underline" href={path}>Replay</a>
+                    : signinOpen
+                      ? <a data-replay-signin class="text-gray-400 hover:text-white underline" href={signinUrl(path)}>Replay (sign in)</a>
+                      : <span data-replay-locked class="text-gray-500">Replay (admins)</span>
+                })()}
+                {tracks.get(r.roundId)?.pinned && <span class="ml-1 text-yellow-400" title="Pinned">📌</span>}
+              </td>
+            )}
           </tr>
         ))}
       </tbody>
@@ -85,6 +103,8 @@ export interface StatsDashboardProps {
   admin?: boolean
   /** What the server keeps of position tracks and how much is used (RFC 12, 3.4); shown to admins. */
   tracks?: TracksInfo
+  /** Which recent rounds have a replay (RFC 12) and what the visitor needs to open it (RFC 13). */
+  replays?: { tracked: Map<string, { pinned: boolean }>, signedIn: boolean, signinOpen: boolean }
 }
 
 export interface TracksInfo {
@@ -123,7 +143,7 @@ export const TracksCard = ({ serverId, t }: { serverId: string, t: TracksInfo })
   </section>
 )
 
-export const StatsDashboard = ({ server, overview, roles, teams, leaders, recent, sort, bots, admin, tracks }: StatsDashboardProps) => (
+export const StatsDashboard = ({ server, overview, roles, teams, leaders, recent, sort, bots, admin, tracks, replays }: StatsDashboardProps) => (
   <div class="p-4 sm:p-8 space-y-8 sm:space-y-10">
     <header>
       <nav class="text-xs font-black text-gray-500 uppercase tracking-widest mb-4 flex gap-2">
@@ -213,7 +233,7 @@ export const StatsDashboard = ({ server, overview, roles, teams, leaders, recent
 
         <section>
           <h2 class="text-sm font-black uppercase tracking-widest text-gray-400 mb-3">Recent rounds</h2>
-          <RoundsTable rounds={recent} />
+          <RoundsTable rounds={recent} serverId={server.id} tracks={replays?.tracked} signedIn={replays?.signedIn} signinOpen={replays?.signinOpen} bots={bots} />
         </section>
       </>
     )}
