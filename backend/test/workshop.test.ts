@@ -1,5 +1,5 @@
 import { expect, test, describe, beforeAll, beforeEach, afterEach } from 'bun:test'
-import { mkdtempSync, writeFileSync, chmodSync, readdirSync, readFileSync, rmSync, existsSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, chmodSync, readdirSync, readFileSync, rmSync, existsSync, mkdirSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -34,6 +34,8 @@ echo "$@" >> "${log}/args"
 env > "${log}/env-$$"
 while [ $# -gt 0 ]; do case "$1" in -pubfile) ID="$2"; shift 2;; -dir) OUT="$2"; shift 2;; *) shift;; esac; done
 [ -f "${fix}/$ID.fail" ] && exit 1
+if [ -f "${fix}/$ID.failmsg" ]; then cat "${fix}/$ID.failmsg"; exit 1; fi
+if [ -f "${fix}/$ID.noisy" ]; then head -c 3000000 /dev/zero | tr '\\0' 'x' | fold -w 80; echo; echo "Error: No space left on device"; echo "100.00% done"; exit 1; fi
 [ -f "${fix}/$ID.sleep" ] && exec sleep 30
 mkdir -p "$OUT/sub"
 if [ -f "${fix}/$ID.big" ]; then dd if=/dev/zero of="$OUT/sub/big.gma" bs=1M count=3 2>/dev/null; exec sleep 30; fi
@@ -171,6 +173,69 @@ describe('running the helper', () => {
     expect(status('ttt_a')).toMatchObject({ status: 'failed', detail: 'The download helper (DepotDownloader) is not installed.' })
     expect(readdirSync(scratch)).toEqual([])
     expect(await ws.helperAvailable(join(dir, 'missing'))).toBe(false)
+  })
+
+  test('a helper that fails says why, in the detail the admin sees', async () => {
+    writeFileSync(join(fix, '222.failmsg'), 'Connecting to Steam3...\nLogging anonymously into Steam3... Done.\nERROR: Unable to locate manifest ID for published file 222\n')
+    report([['ttt_a', bspA]], ['222'])
+    want('ttt_a')
+    await geo.runGeometryQueue(fetcher())
+    expect(status('ttt_a')).toMatchObject({ status: 'failed', detail: 'The download failed (the helper said: ERROR: Unable to locate manifest ID for published file 222)' })
+    expect(readdirSync(scratch)).toEqual([])
+  })
+
+  test('a helper that prints a lot (megabytes of progress) is not blocked, and the cause is still found', async () => {
+    writeFileSync(join(fix, '222.noisy'), '')
+    report([['ttt_a', bspA]], ['222'])
+    want('ttt_a')
+    await geo.runGeometryQueue(fetcher())
+    expect(status('ttt_a').detail).toBe('The download failed (the helper said: Error: No space left on device)')
+  }, 20000)
+
+  test('a helper that fails without a word is named by its exit code', async () => {
+    writeFileSync(join(fix, '222.fail'), '')
+    report([['ttt_a', bspA]], ['222'])
+    want('ttt_a')
+    await geo.runGeometryQueue(fetcher())
+    expect(status('ttt_a').detail).toBe('The download failed (the helper exited with code 1).')
+  })
+
+  test('with several addons, the failure counts those that could not be downloaded; the others are still searched', async () => {
+    writeFileSync(join(fix, '111.failmsg'), 'Error: no space left\n')
+    addon('222', buildGma({ 'maps/ttt_other.bsp': bspC }))
+    writeFileSync(join(fix, '333.failmsg'), 'Error: still no space\n')
+    report([['ttt_a', bspA]], ['111', '222', '333'])
+    want('ttt_a')
+    await geo.runGeometryQueue(fetcher())
+    expect(status('ttt_a').detail).toBe('2 of 3 addons could not be downloaded and none of the others holds this version of the map. The last error: The download failed (the helper said: Error: still no space)')
+    expect(db.prepare('SELECT wsid FROM addon_scans').all()).toEqual([{ wsid: '222' }]) // the one that worked is remembered
+  })
+
+  test('where the downloads go: GEOMETRY_TMP, else a folder in the working directory (never the system temp directory, a small memory disk in a container)', () => {
+    expect(ws.scratchRoot({ GEOMETRY_TMP: '/data/scratch' }, '/app')).toBe('/data/scratch')
+    expect(ws.scratchRoot({}, '/home/container')).toBe('/home/container/.geometry-tmp')
+    expect(ws.scratchRoot({ GEOMETRY_TMP: '' }, '/home/container')).toBe('/home/container/.geometry-tmp')
+  })
+
+  test('a job folder left by a crash (over an hour old) is removed at the next job; a recent one is not touched', async () => {
+    const stale = join(scratch, 'job-stale'), recent = join(scratch, 'job-recent'), other = join(scratch, 'keep-me')
+    for (const d of [stale, recent, other]) mkdirSync(join(d, 'a-1'), { recursive: true })
+    const old = new Date(Date.now() - 2 * 3600_000)
+    utimesSync(stale, old, old)
+    addon('222', buildGma({ 'maps/ttt_a.bsp': bspA }))
+    report([['ttt_a', bspA]], ['222'])
+    want('ttt_a')
+    await geo.runGeometryQueue(fetcher())
+    expect(readdirSync(scratch).sort()).toEqual(['job-recent', 'keep-me'])
+  })
+
+  test('what the helper said is cut down to one short printable line', () => {
+    expect(ws.helperComplaint('')).toBe('')
+    expect(ws.helperComplaint('Connecting...\r\n 10.00% file\r 80.00% file\r\n')).toBe('80.00% file')
+    expect(ws.helperComplaint('Error: disk full\n 99.00% file\n')).toBe('Error: disk full')
+    expect(ws.helperComplaint('Error: first\nERROR: second\n 5% x')).toBe('ERROR: second')
+    expect(ws.helperComplaint('Error: bell\x07 and\x1b[31m colour')).toBe('Error: bell and[31m colour')
+    expect(ws.helperComplaint('Error: ' + 'x'.repeat(500))).toHaveLength(160)
   })
 
   test('a download that grows past the size limit is killed', async () => {

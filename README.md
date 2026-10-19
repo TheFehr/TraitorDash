@@ -63,7 +63,7 @@ bun run dev
 | `TRAITORDASH_DB` | Path of the SQLite file (default `traitordash.sqlite`). |
 | `MAP_GEOMETRY` | `1` lets admins switch on exact map geometry per map (RFC 11): the backend then downloads the map's Workshop addon once and keeps a simplified 3D mesh. Off by default. Needs the download helper below. |
 | `DEPOTDOWNLOADER_PATH` | Where the [DepotDownloader](https://github.com/SteamRE/DepotDownloader) program is (default: `bin/DepotDownloader` in the working directory if there, else `DepotDownloader` on the PATH; the Pelican egg's installer puts it in `bin/`). It is run as a separate program, anonymously; it is not part of this project. Old Workshop items also need `xz` on the system. |
-| `GEOMETRY_TMP` | Scratch directory for those downloads (default: the system temp directory). One addon at a time, up to 1 GiB, deleted when the job ends. |
+| `GEOMETRY_TMP` | Scratch directory for those downloads (default: `.geometry-tmp` in the working directory, so in the server's own volume). **Not the system temp directory**: in a container `/tmp` is often a small memory-backed disk (Pelican's is 100 MB) and a map addon is larger than that. One addon at a time, up to 1 GiB, deleted when the job ends; a folder left by a crash is removed at the next job. |
 | `PORT` | Port to listen on (default 3000). `SERVER_PORT`, which Pelican sets, takes precedence. |
 
 Log in with Steam and add a server on the **Servers** page. Pairing it with a game server needs no token copying: see the next step.

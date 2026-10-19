@@ -1,6 +1,5 @@
 import { existsSync } from 'node:fs'
 import { mkdtemp, readdir, rm, stat, mkdir } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Store } from './Store'
 import { HEADER_BYTES, bspFingerprint } from './bsp'
@@ -16,7 +15,7 @@ const GAME_APP = '4000' // Garry's Mod
 export interface WorkshopOptions {
   /** The helper program. Default: see `helperPath`. */
   binary?: string
-  /** Where scratch directories are made. Default: GEOMETRY_TMP, else the system temp directory. */
+  /** Where scratch directories are made. Default: see `scratchRoot`. */
   scratch?: string
   /** A download is stopped when its files pass this many bytes. Default 1 GiB. */
   maxBytes?: number
@@ -27,6 +26,39 @@ export interface WorkshopOptions {
 }
 
 const WSID = /^\d{1,12}$/
+
+/**
+ * Where the downloads are made: GEOMETRY_TMP, else `.geometry-tmp` in the working directory. Not the
+ * system temp directory: in a container /tmp is often a small memory-backed disk (Pelican gives
+ * 100 MB), and a map addon is bigger than that, so every large addon failed to download. The working
+ * directory is the server's own volume.
+ */
+export function scratchRoot(env: Record<string, string | undefined> = process.env, cwd: string = process.cwd()): string {
+  return env.GEOMETRY_TMP || join(cwd, '.geometry-tmp')
+}
+
+/** The end of a stream, as text: at most `keep` characters, read as it comes so the helper never blocks on a full pipe. */
+async function tail(stream: ReadableStream<Uint8Array> | number | null | undefined, keep = 4000): Promise<string> {
+  if (!stream || typeof stream === 'number') return ''
+  const decoder = new TextDecoder()
+  const reader = stream.getReader()
+  let text = ''
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      text = (text + decoder.decode(value, { stream: true })).slice(-keep)
+    }
+  } catch { /* what was read is what there is */ }
+  return text
+}
+
+/** The line of the helper's output that says what went wrong: the last one that looks like an error, else the last one. Short and printable. */
+export function helperComplaint(output: string): string {
+  const lines = output.split(/[\r\n]+/).map(l => l.replace(/[^\x20-\x7e]/g, '').trim()).filter(Boolean)
+  const pick = [...lines].reverse().find(l => /error|fail|unable|denied|space|not found|exception|no such|timed out|refused|unauthor|invalid/i.test(l)) ?? lines[lines.length - 1] ?? ''
+  return pick.length > 160 ? pick.slice(0, 157) + '...' : pick
+}
 
 async function dirBytes(dir: string): Promise<number> {
   let total = 0
@@ -51,13 +83,15 @@ async function download(binary: string, wsid: string, dir: string, o: Required<P
   try {
     proc = Bun.spawn([binary, '-app', GAME_APP, '-pubfile', wsid, '-dir', join(dir, 'out')], {
       cwd: dir,
-      stdin: 'ignore', stdout: 'ignore', stderr: 'ignore',
+      stdin: 'ignore', stdout: 'pipe', stderr: 'pipe',
       // Nothing of this process's environment is handed on: no tokens, no database path.
       env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: join(dir, 'home'), DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: '1', DOTNET_CLI_TELEMETRY_OPTOUT: '1' },
     })
   } catch {
     return 'The download helper (DepotDownloader) is not installed.'
   }
+  // The helper's output is read (so it never blocks) and only its last lines kept: it says why it failed.
+  const output = Promise.all([tail(proc.stdout), tail(proc.stderr)]).then(([o, e]) => `${o}\n${e}`)
   let reason: string | null = null
   const stop = (why: string) => { if (!reason) { reason = why; proc.kill('SIGKILL') } }
   const timer = setTimeout(() => stop('The download took too long.'), o.timeoutMs)
@@ -65,7 +99,9 @@ async function download(binary: string, wsid: string, dir: string, o: Required<P
   try {
     const code = await proc.exited
     if (reason) return reason
-    return code === 0 ? null : 'The download failed.'
+    if (code === 0) return null
+    const why = helperComplaint(await output)
+    return why ? `The download failed (the helper said: ${why})` : `The download failed (the helper exited with code ${code}).`
   } finally { clearTimeout(timer); clearInterval(watch) }
 }
 
@@ -106,7 +142,7 @@ async function archives(dir: string, maxBytes: number): Promise<{ paths: string[
 /** The Workshop fetcher: finds the addon that holds this exact version of the map and downloads it. */
 export function workshopFetcher(opts: WorkshopOptions = {}): Fetcher {
   const binary = opts.binary ?? helperPath()
-  const root = opts.scratch ?? process.env.GEOMETRY_TMP ?? join(tmpdir(), 'traitordash-geometry')
+  const root = opts.scratch ?? scratchRoot()
   const limits = { maxBytes: opts.maxBytes ?? 1024 ** 3, timeoutMs: opts.timeoutMs ?? 15 * 60_000 }
   const maxCandidates = opts.maxCandidates ?? 60
 
@@ -135,6 +171,13 @@ export function workshopFetcher(opts: WorkshopOptions = {}): Fetcher {
 
   return async (map, fingerprint) => {
     await mkdir(root, { recursive: true })
+    // Jobs run one at a time; a job folder that is over an hour old was left by a crash. It is in the
+    // server's own volume now, so it would take its disk.
+    for (const e of await readdir(root).catch(() => [] as string[])) {
+      if (!e.startsWith('job-')) continue
+      const st = await stat(join(root, e)).catch(() => null)
+      if (st && Date.now() - st.mtimeMs > 3600_000) await rm(join(root, e), { recursive: true, force: true })
+    }
     const dir = await mkdtemp(join(root, 'job-'))
     const cleanup = () => rm(dir, { recursive: true, force: true })
     try {
@@ -146,16 +189,19 @@ export function workshopFetcher(opts: WorkshopOptions = {}): Fetcher {
       if (order.length === 0) { await cleanup(); return { error: 'No mounted map addon is known to hold this version of the map.' } }
 
       let lastError: string | null = null
+      let failed = 0
       for (const wsid of order) {
         const attempt = join(dir, `a-${wsid}`)
         await mkdir(attempt)
         const r = await tryAddon(wsid, map, fingerprint, attempt)
-        if ('error' in r) { lastError = r.error; await rm(attempt, { recursive: true, force: true }); continue }
+        if ('error' in r) { lastError = r.error; failed++; await rm(attempt, { recursive: true, force: true }); continue }
         if (r.hit) return { ...r.hit, cleanup }
         await rm(attempt, { recursive: true, force: true })
       }
       await cleanup()
-      return { error: lastError ?? 'None of the mounted map addons holds this version of the map.' }
+      if (!lastError) return { error: 'None of the mounted map addons holds this version of the map.' }
+      // Say how many could not be looked into: the map may be in one of them.
+      return { error: order.length === 1 ? lastError : `${failed} of ${order.length} addons could not be downloaded and none of the others holds this version of the map. The last error: ${lastError}` }
     } catch (e) {
       await cleanup().catch(() => {})
       throw e
