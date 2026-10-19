@@ -168,6 +168,19 @@ describe('the Maps page', () => {
     expect(html).toMatch(/Votable now<\/div>\s*<div[^>]*>1</)
   })
 
+  test('does not call the running map the next one (an empty map cycle reports it that way)', async () => {
+    const same = Store.addServer('Echo').id
+    Store.setMaps(same, R({ current: 'ttt_a', next: 'ttt_a', maps: [M('ttt_a', { isCurrent: true, votable: false }), M('ttt_b')] }))
+    const html = await adminPage(same)
+    expect(html).not.toContain('Next')
+    expect(rowFor(html, 'ttt_a')).toContain('Current')
+  })
+
+  test('shows the next map when it differs', async () => {
+    const html = await page()
+    expect(html).toContain('Next: ttt_next')
+  })
+
   test('says it is derived, so nobody takes it for what the vote addon reports', async () => {
     expect(await page()).toContain('worked out')
   })

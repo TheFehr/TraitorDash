@@ -55,6 +55,8 @@ export const MapsDashboard = ({ server, state, maps, admin, showAll, plans }: Ma
   const outside = maps.filter(m => m.inVotePool === false).length
   const listed = admin && showAll ? maps : maps.filter(m => m.inVotePool !== false)
   const known = maps.some(m => m.votable !== null)
+  // With an empty map cycle the engine names the running map as the next one; the vote decides, so that is no information.
+  const next = state && state.next && state.next !== state.current ? state.next : null
   const pool = maps.filter(m => m.inVotePool === true).length
   const votable = maps.filter(m => m.votable === true).length
   return (
@@ -81,7 +83,7 @@ export const MapsDashboard = ({ server, state, maps, admin, showAll, plans }: Ma
             {admin && <Card label="Maps on disk" value={maps.length} />}
             <Card label="In the vote pool" value={known ? pool : '–'} />
             <Card label="Votable now" value={known ? votable : '–'} />
-            <Card label="Running map" value={state.current ?? '–'} sub={state.next ? `Next: ${state.next}` : undefined} />
+            <Card label="Running map" value={state.current ?? '–'} sub={next ? `Next: ${next}` : undefined} />
           </div>
 
           <section class="space-y-2 text-sm text-gray-400">
@@ -109,7 +111,7 @@ export const MapsDashboard = ({ server, state, maps, admin, showAll, plans }: Ma
                     <td class="p-3 font-bold break-all">{m.name}</td>
                     <td class="p-3">
                       {m.isCurrent && <Badge tone="red">Current</Badge>}
-                      {m.name === state.next && <Badge tone="yellow">Next</Badge>}
+                      {m.name === next && <Badge tone="yellow">Next</Badge>}
                       {m.votable === true && <Badge tone="green">Votable</Badge>}
                       {m.onCooldown === true && <Badge tone="gray">Cooldown</Badge>}
                       {m.inCycle === true && <Badge tone="gray">In map cycle</Badge>}
