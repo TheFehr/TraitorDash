@@ -57,6 +57,9 @@ bun run dev
 | `ADMIN_STEAM_IDS` | Comma-separated SteamID64s allowed to administer. Empty means nobody can log in. |
 | `BASE_URL` | The public address of the dashboard (the Steam login returns here). An `https://` address makes the session cookie `Secure` with the `__Host-` prefix. |
 | `TRAITORDASH_DB` | Path of the SQLite file (default `traitordash.sqlite`). |
+| `MAP_GEOMETRY` | `1` lets admins switch on exact map geometry per map (RFC 11): the backend then downloads the map's Workshop addon once and keeps a simplified 3D mesh. Off by default. Needs the download helper below. |
+| `DEPOTDOWNLOADER_PATH` | Where the [DepotDownloader](https://github.com/SteamRE/DepotDownloader) program is (default: `DepotDownloader` on the PATH). It is run as a separate program, anonymously; it is not part of this project. Old Workshop items also need `xz` on the system. |
+| `GEOMETRY_TMP` | Scratch directory for those downloads (default: the system temp directory). One addon at a time, up to 1 GiB, deleted when the job ends. |
 | `PORT` | Port to listen on (default 3000). `SERVER_PORT`, which Pelican sets, takes precedence. |
 
 Log in with Steam and add a server on the **Servers** page. Pairing it with a game server needs no token copying: see the next step.

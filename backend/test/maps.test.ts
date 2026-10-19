@@ -104,6 +104,14 @@ describe('CollectMaps', () => {
     expect(out(`ADDONS = { { mounted = true, tags = "map,fun" }, { mounted = true, tags = "gamemode" }, { mounted = false, tags = "map" } }
       local r = MAPS() RESULT = r.addons.mounted .. " " .. r.addons.maps`)).toBe('2 1')
   })
+
+  test('lists the Workshop IDs of the mounted map addons, digits only', () => {
+    expect(out(`ADDONS = {
+        { mounted = true, tags = "map", wsid = "3415635566" }, { mounted = true, tags = "map", wsid = "12ab" },
+        { mounted = true, tags = "map" }, { mounted = true, tags = "gamemode", wsid = "999" },
+        { mounted = false, tags = "map", wsid = "555" }, { mounted = true, tags = "map", wsid = "1234567890123" } }
+      local r = MAPS() RESULT = table.concat(r.addons.ids, ",")`)).toBe('3415635566')
+  })
 })
 
 describe('the map vote: config file, cooldown list and ConVars', () => {

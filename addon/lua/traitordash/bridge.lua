@@ -287,6 +287,7 @@ end
 -- /api/v1/maps when the bridge starts. Only what the dashboard shows is sent: no vote settings,
 -- ConVars or recent-map list. Idle without a configuration or without maps.lua.
 local MAX_MAPS = 500
+local MAX_MAP_ADDONS = 300
 
 function TraitorDash.PushMaps()
     local baseUrl, token = GetApi()
@@ -307,10 +308,15 @@ function TraitorDash.PushMaps()
             isCurrent = m.isCurrent, inVotePool = m.inVotePool, votable = m.votable,
         }
     end
+    local mapAddons = {}
+    for i, id in ipairs(report.addons and report.addons.ids or {}) do
+        if i > MAX_MAP_ADDONS then break end
+        mapAddons[i] = id
+    end
     local vote = report.mapvote or {}
     local payload = util.TableToJSON({
         current = report.current, next = report.next, gamemode = report.gamemode, pattern = report.pattern,
-        maps = maps,
+        maps = maps, mapAddons = mapAddons,
         mapvote = { present = vote.present == true, poolBasis = vote.poolBasis, configSource = vote.configSource },
     })
     if not payload or payload == "" then

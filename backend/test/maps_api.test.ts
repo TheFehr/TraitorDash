@@ -46,6 +46,21 @@ const post = (body: unknown, auth: string | null = `Bearer ${token}`, id = serve
 
 const stored = (id = serverId) => Store.getMaps(id)
 
+describe('POST /api/v1/maps: the addons the maps come from', () => {
+  test('keeps the Workshop IDs of the mounted map addons, once each, and drops what is not digits', async () => {
+    await post(report({ mapAddons: ['3415635566', '3415635566', '12', 'x; rm -rf /', 5, '1234567890123', null] }))
+    const row = db.prepare('SELECT map_addons FROM server_map_state WHERE server_id = ?').get(serverId)
+    expect(JSON.parse(row.map_addons)).toEqual(['3415635566', '12'])
+  })
+
+  test('a report without them, or with something else, stores an empty list; and at most 300', async () => {
+    await post(report({ mapAddons: 'nope' }))
+    expect(JSON.parse(db.prepare('SELECT map_addons FROM server_map_state WHERE server_id = ?').get(serverId).map_addons)).toEqual([])
+    await post(report({ mapAddons: Array.from({ length: 400 }, (_, i) => String(i + 1)) }))
+    expect(JSON.parse(db.prepare('SELECT map_addons FROM server_map_state WHERE server_id = ?').get(serverId).map_addons)).toHaveLength(300)
+  })
+})
+
 describe('POST /api/v1/maps: accepting a report', () => {
   test('stores the maps and the state, and answers how many', async () => {
     const res = await post(report())

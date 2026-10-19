@@ -7,7 +7,8 @@ import auth from './routes/auth'
 import { Store } from './services/Store'
 import { getRolesWithState } from './services/roles'
 import { getAdminId } from './middleware/session'
-import { geometryEnabled, kickGeometryQueue } from './services/mapgeometry'
+import { geometryEnabled, kickGeometryQueue, setGeometryFetcher } from './services/mapgeometry'
+import { helperAvailable, workshopFetcher } from './services/workshop'
 import { sameOrigin } from './middleware/csrf'
 
 // Components
@@ -337,6 +338,12 @@ export const STARTUP_LOG_LINE = '[TraitorDash] Listening on port'
 // so the line is logged right after, and only when run as the program (not by the tests).
 if (import.meta.main) {
   setTimeout(() => console.log(`${STARTUP_LOG_LINE} ${port} (source ${sourceHash()})`), 0)
+  if (geometryEnabled()) {
+    setGeometryFetcher(workshopFetcher())
+    helperAvailable().then(ok => console.log(ok
+      ? '[Geometry] Exact map geometry is on.'
+      : '[Geometry] MAP_GEOMETRY=1, but the download helper (DepotDownloader) was not found; requested maps will fail. Set DEPOTDOWNLOADER_PATH.'))
+  }
   Store.resetStaleGeometry()
   kickGeometryQueue()
 }

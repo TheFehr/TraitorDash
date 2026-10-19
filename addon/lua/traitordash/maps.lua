@@ -197,11 +197,17 @@ function TraitorDash.CollectMaps()
         if not onDisk[name] then mapvote.recentMissing[#mapvote.recentMissing + 1] = name end
     end
 
-    local addons = { mounted = 0, maps = 0 }
+    -- `ids` are the Workshop IDs of the mounted map addons (digits only). The backend uses them as
+    -- the places to look when it fetches a map's file (RFC 11, 3.2).
+    local addons = { mounted = 0, maps = 0, ids = {} }
     for _, addon in ipairs(engine.GetAddons() or {}) do
         if addon.mounted then
             addons.mounted = addons.mounted + 1
-            if HasTag(addon.tags, "map") then addons.maps = addons.maps + 1 end
+            if HasTag(addon.tags, "map") then
+                addons.maps = addons.maps + 1
+                local id = tostring(addon.wsid or "")
+                if id:match("^%d+$") and #id <= 12 then addons.ids[#addons.ids + 1] = id end
+            end
         end
     end
 

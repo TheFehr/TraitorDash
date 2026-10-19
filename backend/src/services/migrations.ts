@@ -284,6 +284,27 @@ export const migrations: Array<(db: Database) => void> = [
         PRIMARY KEY (server_id, map_name)
       )
     `)
+  },
+
+  // v12: the Workshop IDs of a server's mounted map addons, as reported (RFC 11, 3.2): where the
+  // backend looks when it fetches a map's file. And what was found inside the addons it has
+  // downloaded, so the next request for any of those maps skips the search.
+  (db) => {
+    db.run('ALTER TABLE server_map_state ADD COLUMN map_addons TEXT')
+    db.run(`
+      CREATE TABLE IF NOT EXISTS addon_maps (
+        wsid        TEXT NOT NULL,
+        map_name    TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        PRIMARY KEY (wsid, map_name, fingerprint)
+      )
+    `)
+    db.run(`
+      CREATE TABLE IF NOT EXISTS addon_scans (
+        wsid       TEXT PRIMARY KEY,
+        scanned_at TEXT NOT NULL
+      )
+    `)
   }
 ]
 

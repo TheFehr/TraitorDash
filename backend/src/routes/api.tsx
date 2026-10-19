@@ -389,11 +389,16 @@ api.post('/v1/maps', getServer, async (c) => {
     })
   }
 
+  // Workshop IDs are plain digits; anything else is dropped, and the list is capped.
+  const mapAddons = Array.isArray(body.mapAddons)
+    ? [...new Set<string>(body.mapAddons.filter((id: unknown): id is string => typeof id === 'string' && /^\d{1,12}$/.test(id)))].slice(0, 300)
+    : []
+
   const vote = body.mapvote && typeof body.mapvote === 'object' ? body.mapvote : {}
   Store.setMaps(server.id, {
     current: text(body.current, 64), next: text(body.next, 64), gamemode: text(body.gamemode, 64), pattern: text(body.pattern, 128),
     poolBasis: oneOf(vote.poolBasis, POOL_BASES), configSource: oneOf(vote.configSource, CONFIG_SOURCES),
-    voteAddon: vote.present === true, maps,
+    voteAddon: vote.present === true, maps, mapAddons,
   })
   Store.updateHeartbeat(server.id)
   console.log(`[Maps] Report from ${server.name}: ${maps.length} maps (current=${text(body.current, 64)}, pool by ${oneOf(vote.poolBasis, POOL_BASES) ?? 'unknown'})`)

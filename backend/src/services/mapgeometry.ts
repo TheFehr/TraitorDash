@@ -6,16 +6,19 @@ import { removeSkybox, surfacesToGlb } from './meshGlb'
 /** Is the feature switched on for this backend (RFC 11, 3.1)? Off unless the operator sets MAP_GEOMETRY=1. */
 export const geometryEnabled = () => process.env.MAP_GEOMETRY === '1'
 
-/** A `.bsp` on disk, read in ranges; the file is never held in memory as a whole. */
-export async function fileSource(path: string): Promise<{ src: ByteSource, close: () => Promise<void> }> {
-  const size = (await stat(path)).size
+/** A `.bsp` on disk (or a range of a larger file, such as a map inside an addon archive), read in ranges; the file is never held in memory as a whole. */
+export async function fileSource(path: string, offset = 0, length?: number): Promise<{ src: ByteSource, close: () => Promise<void> }> {
+  const fileSize = (await stat(path)).size
+  const size = length ?? fileSize - offset
+  if (offset < 0 || size < 0 || offset + size > fileSize) throw new Error('range outside the file')
   const fh = await open(path, 'r')
   return {
     src: {
       size,
-      async read(offset, length) {
-        const buf = new Uint8Array(length)
-        const { bytesRead } = await fh.read(buf, 0, length, offset)
+      async read(at, len) {
+        const want = Math.max(0, Math.min(len, size - at))
+        const buf = new Uint8Array(want)
+        const { bytesRead } = await fh.read(buf, 0, want, offset + at)
         return buf.subarray(0, bytesRead)
       },
     },
@@ -47,8 +50,8 @@ export async function buildGeometry(src: ByteSource, map: string, fingerprint: s
   }
 }
 
-/** Gets the `.bsp` for a map: the path of a file in a scratch directory, and a function that removes it. */
-export type Fetcher = (map: string, fingerprint: string) => Promise<{ path: string, cleanup: () => Promise<void> } | { error: string }>
+/** Gets the `.bsp` for a map: a file in a scratch directory (or a range inside one), and a function that removes it. */
+export type Fetcher = (map: string, fingerprint: string) => Promise<{ path: string, offset?: number, length?: number, cleanup: () => Promise<void> } | { error: string }>
 
 let running = false
 
@@ -69,7 +72,7 @@ export async function runGeometryQueue(fetcher: Fetcher): Promise<number> {
       try { got = await fetcher(job.map, job.fingerprint) } catch { got = { error: 'The download failed.' } }
       if ('error' in got) { Store.finishGeometry(job.map, job.fingerprint, { error: got.error }); continue }
       try {
-        const { src, close } = await fileSource(got.path)
+        const { src, close } = await fileSource(got.path, got.offset, got.length)
         try {
           const r = await buildGeometry(src, job.map, job.fingerprint)
           Store.finishGeometry(job.map, job.fingerprint, r.ok ? { mesh: r.glb, info: r.info } : { error: r.error })

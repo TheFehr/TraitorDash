@@ -41,6 +41,8 @@ export interface MapsState {
 export interface MapsReport {
   current: string | null, next: string | null, gamemode: string | null, pattern: string | null
   poolBasis: string | null, configSource: string | null, voteAddon: boolean, maps: MapRow[]
+  /** Workshop IDs of the mounted map addons (digits). */
+  mapAddons?: string[]
 }
 
 export interface RoundReport {
@@ -199,13 +201,13 @@ export class Store {
         insert.run(serverId, m.name, m.size, m.fingerprint, flag(m.matchesGamemode), flag(m.inCycle), flag(m.onCooldown), flag(m.isCurrent), flag(m.inVotePool), flag(m.votable), now)
       }
       db.prepare(`
-        INSERT INTO server_map_state (server_id, current_map, next_map, gamemode, pattern, pool_basis, config_source, vote_addon, reported_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO server_map_state (server_id, current_map, next_map, gamemode, pattern, pool_basis, config_source, vote_addon, reported_at, map_addons)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(server_id) DO UPDATE SET
           current_map = excluded.current_map, next_map = excluded.next_map, gamemode = excluded.gamemode,
           pattern = excluded.pattern, pool_basis = excluded.pool_basis, config_source = excluded.config_source,
-          vote_addon = excluded.vote_addon, reported_at = excluded.reported_at
-      `).run(serverId, r.current, r.next, r.gamemode, r.pattern, r.poolBasis, r.configSource, r.voteAddon ? 1 : 0, now)
+          vote_addon = excluded.vote_addon, reported_at = excluded.reported_at, map_addons = excluded.map_addons
+      `).run(serverId, r.current, r.next, r.gamemode, r.pattern, r.poolBasis, r.configSource, r.voteAddon ? 1 : 0, now, JSON.stringify(r.mapAddons ?? []))
     })()
   }
 
@@ -294,6 +296,37 @@ export class Store {
   }
 
   /** Requested (server, map, fingerprint) triples that no job has picked up yet, oldest request first. */
+  /** The Workshop addons that the servers asking for this map version have mounted (the places to look). */
+  static getCandidateAddons(map: string, fingerprint: string): string[] {
+    const rows = db.prepare(`
+      SELECT st.map_addons AS a FROM map_geometry_requests r
+      JOIN server_maps m ON m.server_id = r.server_id AND m.name = r.map_name AND m.fingerprint = ?
+      JOIN server_map_state st ON st.server_id = r.server_id
+      WHERE r.map_name = ?
+    `).all(fingerprint, map) as { a: string | null }[]
+    const out = new Set<string>()
+    for (const r of rows) for (const id of r.a ? JSON.parse(r.a) : []) out.add(String(id))
+    return [...out]
+  }
+
+  /** Addons already known to hold this exact map version. */
+  static getKnownAddons(map: string, fingerprint: string): string[] {
+    return (db.prepare('SELECT wsid FROM addon_maps WHERE map_name = ? AND fingerprint = ?').all(map, fingerprint) as any[]).map(r => r.wsid)
+  }
+
+  static isAddonScanned(wsid: string): boolean {
+    return !!db.prepare('SELECT 1 FROM addon_scans WHERE wsid = ?').get(wsid)
+  }
+
+  /** Records what a downloaded addon holds (every map in it, whether or not anyone asked for it). */
+  static recordAddonScan(wsid: string, maps: { name: string, fingerprint: string }[]) {
+    db.transaction(() => {
+      db.prepare('INSERT OR REPLACE INTO addon_scans (wsid, scanned_at) VALUES (?, ?)').run(wsid, new Date().toISOString())
+      const ins = db.prepare('INSERT OR IGNORE INTO addon_maps (wsid, map_name, fingerprint) VALUES (?, ?, ?)')
+      for (const m of maps) ins.run(wsid, m.name, m.fingerprint)
+    })()
+  }
+
   static getGeometryQueue(): { map: string, fingerprint: string }[] {
     return db.prepare(`
       SELECT r.map_name AS map, m.fingerprint AS fingerprint

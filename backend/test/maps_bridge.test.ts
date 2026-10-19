@@ -123,13 +123,24 @@ describe('TraitorDash.PushMaps', () => {
     expect(r).toBe('POST|https://td.test/api/v1/maps|Bearer tok|application/json|30|{json}')
   })
 
+  test('the payload carries the Workshop IDs of the mounted map addons, at most 300', () => {
+    const r = lua(`${FILESET}
+      local addons = {}
+      for i = 1, 320 do addons[i] = { mounted = true, tags = "map", wsid = tostring(1000 + i) } end
+      engine.GetAddons = function() return addons end
+      TraitorDash.PushMaps()
+      local ids = LAST_PAYLOAD.mapAddons
+      RESULT = #ids .. "|" .. ids[1] .. "|" .. ids[300]`)
+    expect(r).toBe('300|1001|1300')
+  })
+
   test('the payload has the maps, the current/next map, the gamemode and the pool basis, and nothing else', () => {
     const r = lua(`${FILESET} TraitorDash.PushMaps()
       local p = LAST_PAYLOAD
       local function keys(t) local k = {} for key in pairs(t) do k[#k + 1] = key end table.sort(k) return table.concat(k, ",") end
       RESULT = keys(p) .. "|" .. keys(p.maps[2]) .. "|" .. keys(p.mapvote) .. "|" .. #p.maps .. "|" .. p.current .. "|" .. p.next .. "|" .. p.gamemode .. "|" .. p.pattern`)
     expect(r).toBe([
-      'current,gamemode,maps,mapvote,next,pattern',
+      'current,gamemode,mapAddons,maps,mapvote,next,pattern',
       'fingerprint,inCycle,inVotePool,isCurrent,matchesGamemode,name,onCooldown,size,votable',
       'configSource,poolBasis,present',
       '3', 'ttt_a', 'ttt_b', 'terrortown', '^ttt_',
