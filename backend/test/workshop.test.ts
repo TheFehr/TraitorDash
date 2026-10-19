@@ -235,3 +235,21 @@ describe('old items (one LZMA stream around the archive)', () => {
     expect(status('ttt_a').status).toBe('failed')
   })
 })
+
+describe('where the helper is', () => {
+  test('DEPOTDOWNLOADER_PATH first, then bin/DepotDownloader beside the app, then the PATH', () => {
+    const cwd = process.cwd(), saved = process.env.DEPOTDOWNLOADER_PATH
+    try {
+      delete process.env.DEPOTDOWNLOADER_PATH
+      process.chdir(dir)
+      expect(ws.helperPath()).toBe('DepotDownloader')
+      spawnSync('mkdir', ['-p', join(dir, 'bin')]); writeFileSync(join(dir, 'bin', 'DepotDownloader'), '')
+      expect(ws.helperPath()).toBe(join(process.cwd(), 'bin', 'DepotDownloader'))
+      process.env.DEPOTDOWNLOADER_PATH = '/opt/dd'
+      expect(ws.helperPath()).toBe('/opt/dd')
+    } finally {
+      process.chdir(cwd)
+      if (saved === undefined) delete process.env.DEPOTDOWNLOADER_PATH; else process.env.DEPOTDOWNLOADER_PATH = saved
+    }
+  })
+})

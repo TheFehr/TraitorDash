@@ -27,7 +27,7 @@
   },
   "scripts": {
     "installation": {
-      "script": "#!/bin/bash\n# TraitorDash installation\n#\n# Nothing to download: the app is deployed into /mnt/server (the server's files) by\n# whatever deploys it (for example the backend.tar.gz from the releases), and its dependencies are installed by the\n# startup command (bun install). This only makes sure the directory exists.\nmkdir -p /mnt/server\necho \"TraitorDash: nothing to install; deploy the app files, then start the server.\"\n",
+      "script": "#!/bin/bash\n# TraitorDash installation\n#\n# The app itself is deployed into /mnt/server (the server's files) by whatever deploys it (for\n# example the backend.tar.gz from the releases), and its dependencies are installed by the startup\n# command (bun install). This only makes sure the directory exists, and, when exact map geometry is\n# switched on (MAP_GEOMETRY=1, RFC 11), fetches the download helper it needs.\nDIR=\"${SERVER_DIR:-/mnt/server}\"\nmkdir -p \"$DIR\"\n\nif [ \"${MAP_GEOMETRY}\" != \"1\" ]; then\n    echo \"TraitorDash: nothing to install; deploy the app files, then start the server.\"\n    exit 0\nfi\n\n# DepotDownloader (GPL-2.0, https://github.com/SteamRE/DepotDownloader) is downloaded from its\n# upstream release, not shipped with TraitorDash, and run only as a separate program. The version\n# and the checksums are pinned: a different file is refused.\nVERSION=\"3.4.0\"\ncase \"$(uname -m)\" in\n    x86_64)          ARCH=\"x64\";   SUM=\"a999dec66b4850fc961bd50366696d23c2d0fad7b18790e6a5647b2f19097a53\" ;;\n    aarch64|arm64)   ARCH=\"arm64\"; SUM=\"d9fb612ccebc1db8eeea3b4045d2221ec70431381393ce908fb72f01d4f9c812\" ;;\n    armv7l|armv8l)   ARCH=\"arm\";   SUM=\"6cd66cd4f4f1e99ca2b30ca5ce097545d93bdad1fa754d9a74d8738e9e4e1022\" ;;\n    *) echo \"TraitorDash: no DepotDownloader build for $(uname -m); exact map geometry will not work.\"; exit 0 ;;\nesac\n\nTMP=\"$(mktemp -d)\"\ntrap 'rm -rf \"$TMP\"' EXIT\nURL=\"https://github.com/SteamRE/DepotDownloader/releases/download/DepotDownloader_${VERSION}/DepotDownloader-linux-${ARCH}.zip\"\necho \"TraitorDash: downloading DepotDownloader ${VERSION} (${ARCH})\"\nif ! curl -fsSL --retry 3 -o \"$TMP/dd.zip\" \"$URL\"; then\n    echo \"TraitorDash: the download failed; exact map geometry will not work until the server is reinstalled.\"\n    exit 0\nfi\nif ! echo \"${SUM}  $TMP/dd.zip\" | sha256sum -c --quiet -; then\n    echo \"TraitorDash: the downloaded file does not match the pinned checksum and was discarded.\"\n    exit 0\nfi\nmkdir -p \"$DIR/bin\"\nunzip -o -q \"$TMP/dd.zip\" DepotDownloader LICENSE -d \"$DIR/bin\"\nmv \"$DIR/bin/LICENSE\" \"$DIR/bin/DepotDownloader.LICENSE\"\nchmod 755 \"$DIR/bin/DepotDownloader\"\necho \"TraitorDash: DepotDownloader ${VERSION} installed in bin/.\"\n",
       "container": "ghcr.io/parkervcp/installers:debian",
       "entrypoint": "bash"
     }
@@ -98,6 +98,20 @@
       "rules": [
         "required",
         "string"
+      ]
+    },
+    {
+      "sort": 6,
+      "name": "Exact map geometry",
+      "description": "1 downloads the Steam download helper (DepotDownloader, GPL-2.0, pinned and checked) at install time and lets admins switch on exact map geometry per map. Changing this needs a reinstall to fetch the helper. Off by default.",
+      "env_variable": "MAP_GEOMETRY",
+      "default_value": "0",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": [
+        "required",
+        "string",
+        "in:0,1"
       ]
     }
   ]

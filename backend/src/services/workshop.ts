@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { mkdtemp, readdir, rm, stat, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -13,7 +14,7 @@ import { fileSource, type Fetcher } from './mapgeometry'
 const GAME_APP = '4000' // Garry's Mod
 
 export interface WorkshopOptions {
-  /** The helper program. Default: DEPOTDOWNLOADER_PATH, else `DepotDownloader` on the PATH. */
+  /** The helper program. Default: see `helperPath`. */
   binary?: string
   /** Where scratch directories are made. Default: GEOMETRY_TMP, else the system temp directory. */
   scratch?: string
@@ -104,7 +105,7 @@ async function archives(dir: string, maxBytes: number): Promise<{ paths: string[
 
 /** The Workshop fetcher: finds the addon that holds this exact version of the map and downloads it. */
 export function workshopFetcher(opts: WorkshopOptions = {}): Fetcher {
-  const binary = opts.binary ?? process.env.DEPOTDOWNLOADER_PATH ?? 'DepotDownloader'
+  const binary = opts.binary ?? helperPath()
   const root = opts.scratch ?? process.env.GEOMETRY_TMP ?? join(tmpdir(), 'traitordash-geometry')
   const limits = { maxBytes: opts.maxBytes ?? 1024 ** 3, timeoutMs: opts.timeoutMs ?? 15 * 60_000 }
   const maxCandidates = opts.maxCandidates ?? 60
@@ -162,8 +163,18 @@ export function workshopFetcher(opts: WorkshopOptions = {}): Fetcher {
   }
 }
 
+/**
+ * Where the helper is: DEPOTDOWNLOADER_PATH, else `bin/DepotDownloader` in the working directory (where
+ * the Pelican egg's installer puts it), else whatever `DepotDownloader` the PATH finds.
+ */
+export function helperPath(): string {
+  if (process.env.DEPOTDOWNLOADER_PATH) return process.env.DEPOTDOWNLOADER_PATH
+  const local = join(process.cwd(), 'bin', 'DepotDownloader')
+  return existsSync(local) ? local : 'DepotDownloader'
+}
+
 /** Is the helper there? Used at start-up to say so once in the log instead of failing every job. */
-export async function helperAvailable(binary = process.env.DEPOTDOWNLOADER_PATH ?? 'DepotDownloader'): Promise<boolean> {
+export async function helperAvailable(binary = helperPath()): Promise<boolean> {
   try {
     const p = Bun.spawn([binary, '-h'], { stdin: 'ignore', stdout: 'ignore', stderr: 'ignore' })
     await p.exited
