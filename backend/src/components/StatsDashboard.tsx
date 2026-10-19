@@ -83,9 +83,47 @@ export interface StatsDashboardProps {
   bots?: boolean
   /** The role settings link only makes sense for admins; guests see the stats alone. */
   admin?: boolean
+  /** What the server keeps of position tracks and how much is used (RFC 12, 3.4); shown to admins. */
+  tracks?: TracksInfo
 }
 
-export const StatsDashboard = ({ server, overview, roles, teams, leaders, recent, sort, bots, admin }: StatsDashboardProps) => (
+export interface TracksInfo {
+  count: number, bytes: number, pinned: number
+  limits: { count: number, mb: number, own: { count: number | null, mb: number | null } }
+  ceiling: { count: number, mb: number, pinned: number }
+}
+
+const mb = (bytes: number) => (bytes / 1024 / 1024).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)
+
+/** The retention limits of a server's position tracks, how much room is used, and where to change them. */
+export const TracksCard = ({ serverId, t }: { serverId: string, t: TracksInfo }) => (
+  <section data-tracks class="bg-gray-800/50 border border-gray-700 rounded-2xl p-4 sm:p-6">
+    <h2 class="text-sm font-black uppercase tracking-widest text-gray-400 mb-3">Position tracks</h2>
+    <p data-tracks-usage class="text-gray-300 mb-4">
+      {t.count} {t.count === 1 ? 'track' : 'tracks'}, {mb(t.bytes)} MB used of {t.limits.count} tracks / {t.limits.mb} MB
+      {t.pinned > 0 && <span class="text-gray-400"> ({t.pinned} pinned, kept regardless; at most {t.ceiling.pinned})</span>}
+    </p>
+    <form method="post" action={`/servers/${serverId}/tracks/limits`} class="flex flex-wrap items-end gap-4">
+      <label class="text-xs font-bold text-gray-400 uppercase tracking-widest">
+        Keep at most N tracks
+        <input name="count" inputmode="numeric" value={t.limits.own.count ?? ''} placeholder={t.limits.own.count === null ? `default (${t.limits.count})` : 'default'}
+          class="block mt-1 w-40 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white normal-case tracking-normal" />
+      </label>
+      <label class="text-xs font-bold text-gray-400 uppercase tracking-widest">
+        ... at most M MB
+        <input name="mb" inputmode="numeric" value={t.limits.own.mb ?? ''} placeholder={t.limits.own.mb === null ? `default (${t.limits.mb})` : 'default'}
+          class="block mt-1 w-40 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white normal-case tracking-normal" />
+      </label>
+      <button type="submit" class="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 font-bold text-white transition">Save</button>
+    </form>
+    <p class="mt-3 text-xs text-gray-500">
+      Empty uses the default. At most {t.ceiling.count} tracks and {t.ceiling.mb} MB on this instance. 0 stores nothing: the game server still uploads, the dashboard discards.
+      Pinned tracks are never removed by these limits.
+    </p>
+  </section>
+)
+
+export const StatsDashboard = ({ server, overview, roles, teams, leaders, recent, sort, bots, admin, tracks }: StatsDashboardProps) => (
   <div class="p-4 sm:p-8 space-y-8 sm:space-y-10">
     <header>
       <nav class="text-xs font-black text-gray-500 uppercase tracking-widest mb-4 flex gap-2">
@@ -97,6 +135,7 @@ export const StatsDashboard = ({ server, overview, roles, teams, leaders, recent
       </nav>
       <h1 class="text-3xl sm:text-5xl font-black mb-2 break-words">Round stats</h1>
       <p class="text-gray-400 text-lg">{server.name}</p>
+      {admin && tracks && <div class="mt-6"><TracksCard serverId={server.id} t={tracks} /></div>}
       <a href={`/servers/${server.id}/maps`} class="inline-block mt-4 px-4 py-2 rounded-lg border border-gray-700 text-sm font-bold text-gray-300 hover:text-white hover:border-red-500 transition">
         🗺 Maps
       </a>

@@ -1,4 +1,4 @@
-import { trackConfig } from './services/tracks'
+import { trackConfig, parseLimit } from './services/tracks'
 import { Hono } from 'hono'
 import { serveStatic } from 'hono/bun'
 
@@ -160,9 +160,47 @@ app.get('/servers/:serverId/stats', async (c) => {
         sort={sort}
         bots={opts.bots}
         admin={!!steamId}
+        tracks={steamId ? trackInfo(serverId) : undefined}
       />
     </Layout>
   )
+})
+
+/** What a server keeps of position tracks, for the admin's card (RFC 12, 3.4). */
+const trackInfo = (serverId: string) => {
+  const cfg = Store.getTrackConfig()
+  return { ...Store.getTrackUsage(serverId), limits: Store.getTrackLimits(serverId), ceiling: { count: cfg.maxCount, mb: cfg.maxMb, pinned: cfg.maxPinned } }
+}
+
+/** How many position tracks a server keeps (RFC 12, 3.4). Admins only, audited. */
+app.post('/servers/:serverId/tracks/limits', async (c) => {
+  const steamId = await getAdminId(c)
+  if (!steamId) return c.text('Unauthorized', 401)
+  const serverId = c.req.param('serverId')
+  if (!Store.getServerById(serverId)) return c.text('Not found', 404)
+  const form = await c.req.parseBody()
+  const cfg = Store.getTrackConfig()
+  const count = parseLimit(String(form.count ?? ''), cfg.maxCount, 'The number of tracks')
+  const mb = parseLimit(String(form.mb ?? ''), cfg.maxMb, 'The size')
+  if (!count.ok) return c.text(count.error, 400)
+  if (!mb.ok) return c.text(mb.error, 400)
+  Store.setTrackLimits(serverId, count.value, mb.value)
+  Store.audit(serverId, steamId, 'TRACK_LIMITS_CHANGED', `count=${count.value ?? 'default'} mb=${mb.value ?? 'default'}`)
+  return c.redirect(`/servers/${serverId}/stats`)
+})
+
+/** Pins a round's track so the limits never remove it, or unpins it (RFC 12, 3.4). Admins only, audited. */
+app.post('/servers/:serverId/rounds/:roundId/pin', async (c) => {
+  const steamId = await getAdminId(c)
+  if (!steamId) return c.text('Unauthorized', 401)
+  const serverId = c.req.param('serverId'), roundId = c.req.param('roundId')
+  const form = await c.req.parseBody()
+  const pin = form.pin === '1'
+  const result = Store.pinTrack(serverId, roundId, pin, steamId)
+  if (result === 'none') return c.text('Not found', 404)
+  if (result === 'max') return c.text(`This server already has ${Store.getTrackConfig().maxPinned} pinned tracks; unpin one first.`, 409)
+  Store.audit(serverId, steamId, pin ? 'TRACK_PINNED' : 'TRACK_UNPINNED', roundId)
+  return c.redirect(`/servers/${serverId}/stats`)
 })
 
 /** The maps the server has and which of them it will play (RFC 10). Public, like the stats. */
