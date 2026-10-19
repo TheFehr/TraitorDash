@@ -11,6 +11,10 @@ export const COMMANDS = read('commands.lua')
 export const CONFIG = fs.existsSync(path.join(dir, 'config.lua')) ? read('config.lua') : ''
 // pairing.lua (RFC 9) is loaded after config.lua, as bridge.lua includes it.
 export const PAIRING = fs.existsSync(path.join(dir, 'pairing.lua')) ? read('pairing.lua') : ''
+// mapscan.lua (map floor plan prototype) is loaded after pairing.lua, as bridge.lua includes it.
+export const MAPSCAN = fs.existsSync(path.join(dir, 'mapscan.lua')) ? read('mapscan.lua') : ''
+// maps.lua (map inventory prototype) is loaded after mapscan.lua, as bridge.lua includes it.
+export const MAPS = fs.existsSync(path.join(dir, 'maps.lua')) ? read('maps.lua') : ''
 export const BRIDGE = read('bridge.lua')
 
 import { createHash } from 'node:crypto'
@@ -77,7 +81,7 @@ export const PRELUDE = `
   game = { ConsoleCommand = function(s) APPLIED[#APPLIED + 1] = "RAW:" .. s end } -- must never be used any more
   RunConsoleCommand = function(n, v) APPLIED[#APPLIED + 1] = n .. "=" .. tostring(v) end
   HOOKS, TIMERS = {}, {}
-  hook = { Add = function(ev, id, fn) HOOKS[#HOOKS + 1] = ev .. ":" .. id end }
+  hook = { Add = function(ev, id, fn) HOOKS[#HOOKS + 1] = ev .. ":" .. id end, Remove = function() end }
   timer = { Create = function(id, secs, reps, fn) TIMERS[#TIMERS + 1] = "create " .. id .. " " .. secs .. " " .. reps end,
             Simple = function(secs, fn) TIMERS[#TIMERS + 1] = "simple " .. secs end, Exists = function() return false end }
   CONCMDS = {}
@@ -118,7 +122,7 @@ export function run(script: string, before = ''): { applied: string[], set: stri
     if (lauxlib.luaL_dostring(L, to_luastring(c)) !== lua.LUA_OK) throw new Error(to_jsstring(lua.lua_tostring(L, -1)))
   }
   try {
-    go(PRELUDE); go(before); go(COMMANDS); go(CONFIG); go(PAIRING); go(BRIDGE); go(script)
+    go(PRELUDE); go(before); go(COMMANDS); go(CONFIG); go(PAIRING); go(MAPSCAN); go(MAPS); go(BRIDGE); go(script)
     go('OUT = table.concat(APPLIED, "|") .. "#" .. table.concat(SET, "|")')
     lua.lua_getglobal(L, to_luastring('OUT'))
     const [applied = '', set = ''] = to_jsstring(lua.lua_tostring(L, -1)).split('#')

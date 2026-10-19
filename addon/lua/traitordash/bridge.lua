@@ -25,6 +25,15 @@ if not okConfig then print("[TraitorDash] config.lua failed to load; the bridge 
 local okPairing, errPairing = pcall(include, "traitordash/pairing.lua")
 if not okPairing then print("[TraitorDash] pairing.lua failed to load; traitordash_connect is not available: " .. tostring(errPairing)) end
 
+-- `traitordash_mapscan [cell]`: measures the map's floors with traces (prototype for a round
+-- replay). Optional: without it nothing else changes.
+local okMapscan, errMapscan = pcall(include, "traitordash/mapscan.lua")
+if not okMapscan then print("[TraitorDash] mapscan.lua failed to load; traitordash_mapscan is not available: " .. tostring(errMapscan)) end
+
+-- `traitordash_maps`: lists the server's maps and which ones it plays (prototype). Optional.
+local okMaps, errMaps = pcall(include, "traitordash/maps.lua")
+if not okMaps then print("[TraitorDash] maps.lua failed to load; traitordash_maps is not available: " .. tostring(errMaps)) end
+
 CreateConVar("traitordash_url", "http://localhost:3000", {FCVAR_ARCHIVE, FCVAR_PROTECTED}, "The base URL of the TraitorDash backend (server.cfg; data/traitordash/config.json takes precedence).")
 -- No default token: an empty one keeps the bridge idle instead of calling the backend with a
 -- well-known value.
@@ -270,6 +279,63 @@ function TraitorDash.PushLang(callback)
         failed = function(err)
             print("[TraitorDash] Language files failed: " .. tostring(err))
             if callback then callback() end
+        end
+    })
+end
+
+-- The map report (RFC 10): which maps the server has and which it will play, sent to
+-- /api/v1/maps when the bridge starts. Only what the dashboard shows is sent: no vote settings,
+-- ConVars or recent-map list. Idle without a configuration or without maps.lua.
+local MAX_MAPS = 500
+
+function TraitorDash.PushMaps()
+    local baseUrl, token = GetApi()
+    if not baseUrl or not TraitorDash.CollectMaps then return end
+
+    local ok, report = pcall(TraitorDash.CollectMaps)
+    if not ok then
+        print("[TraitorDash] Could not collect the map list: " .. tostring(report))
+        return
+    end
+
+    local maps = {}
+    for i, m in ipairs(report.maps) do
+        if i > MAX_MAPS then break end
+        maps[i] = {
+            name = m.name, size = m.size, fingerprint = m.fingerprint,
+            matchesGamemode = m.matchesGamemode, inCycle = m.inCycle, onCooldown = m.onCooldown,
+            isCurrent = m.isCurrent, inVotePool = m.inVotePool, votable = m.votable,
+        }
+    end
+    local vote = report.mapvote or {}
+    local payload = util.TableToJSON({
+        current = report.current, next = report.next, gamemode = report.gamemode, pattern = report.pattern,
+        maps = maps,
+        mapvote = { present = vote.present == true, poolBasis = vote.poolBasis, configSource = vote.configSource },
+    })
+    if not payload or payload == "" then
+        print("[TraitorDash] Could not encode the map report")
+        return
+    end
+
+    HTTP({
+        url = baseUrl .. "/api/v1/maps",
+        method = "POST",
+        headers = {
+            ["Content-Type"] = "application/json",
+            ["Authorization"] = "Bearer " .. token
+        },
+        body = payload,
+        timeout = 30,
+        success = function(code, body)
+            if code == 200 then
+                print("[TraitorDash] Map report OK (" .. #maps .. " maps)")
+            else
+                print("[TraitorDash] Map report rejected (HTTP " .. code .. "): " .. tostring(body))
+            end
+        end,
+        failed = function(err)
+            print("[TraitorDash] Map report failed: " .. tostring(err))
         end
     })
 end
@@ -643,7 +709,14 @@ function TraitorDash.Init()
     timer.Create("TraitorDash_Poller", 10, 0, TraitorDash.Poll)
     
     -- Queue initial sync
-    timer.Simple(5, TraitorDash.Sync)
+    -- The map report goes out right after the sync; if it fails the sync has already been started.
+    timer.Simple(5, function()
+        TraitorDash.Sync()
+        if TraitorDash.PushMaps then
+            local ok, err = pcall(TraitorDash.PushMaps)
+            if not ok then print("[TraitorDash] Map report failed: " .. tostring(err)) end
+        end
+    end)
 end
 
 concommand.Add("traitordash_sync", function(ply)
