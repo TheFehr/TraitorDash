@@ -172,9 +172,19 @@ app.get('/servers/:serverId/maps', async (c) => {
   const { state, maps } = Store.getMaps(serverId)
   return c.html(
     <Layout steamId={steamId || undefined} path="/">
-      <MapsDashboard server={server} state={state} maps={maps} admin={!!steamId} showAll={!!steamId && c.req.query('all') === '1'} />
+      <MapsDashboard server={server} state={state} maps={maps} admin={!!steamId} showAll={!!steamId && c.req.query('all') === '1'}
+        plans={steamId ? Store.getMapPlans(serverId) : undefined} />
     </Layout>
   )
+})
+
+/** A stored floor plan as JSON (RFC 10, 4.5). Admins only. */
+app.get('/servers/:serverId/maps/:map/plan.json', async (c) => {
+  if (!(await getAdminId(c))) return c.text('Unauthorized', 401)
+  const plan = Store.getMapPlan(c.req.param('serverId'), c.req.param('map'))
+  if (!plan) return c.text('Not found', 404)
+  c.header('Cache-Control', 'no-store')
+  return c.body(plan, 200, { 'Content-Type': 'application/json' })
 })
 
 app.get('/servers/:serverId/players/:playerId', async (c) => {

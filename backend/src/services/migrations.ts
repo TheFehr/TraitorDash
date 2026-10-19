@@ -235,6 +235,28 @@ export const migrations: Array<(db: Database) => void> = [
         reported_at   TEXT NOT NULL
       )
     `)
+  },
+  // v10: the latest floor-plan scan per server and map (RFC 10, 4.5). The plan is the grid as JSON
+  // text; the counts are computed by the backend from it, never taken from the client.
+  (db) => {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS map_plans (
+        server_id     TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+        map_name      TEXT NOT NULL,
+        fingerprint   TEXT,
+        cell          INTEGER NOT NULL,
+        nx            INTEGER NOT NULL,
+        ny            INTEGER NOT NULL,
+        floor_cells   INTEGER NOT NULL,
+        crouch_floors INTEGER NOT NULL,
+        seeds         INTEGER NOT NULL,
+        traces        INTEGER,
+        seconds       REAL,
+        scanned_at    TEXT NOT NULL,
+        plan          TEXT NOT NULL,
+        PRIMARY KEY (server_id, map_name)
+      )
+    `)
   }
 ]
 

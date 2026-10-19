@@ -5,6 +5,7 @@ import { ServerManager } from '../components/ServerManager'
 import { requireSession } from '../middleware/session'
 import { normalizeConVarValue, formatConVarCommand } from '../services/convars'
 import { RateLimiter } from '../services/rateLimit'
+import { validatePlan, MAX_PLAN_BYTES } from '../services/mapplan'
 import { formatCode } from '../services/pairing'
 import { NONCE, signResponse } from '../services/signing'
 
@@ -397,6 +398,35 @@ api.post('/v1/maps', getServer, async (c) => {
   Store.updateHeartbeat(server.id)
   console.log(`[Maps] Report from ${server.name}: ${maps.length} maps (current=${text(body.current, 64)}, pool by ${oneOf(vote.poolBasis, POOL_BASES) ?? 'unknown'})`)
   return c.json({ success: true, stored: maps.length })
+})
+
+// The bridge uploads a finished floor-plan scan (RFC 10, 4.5). The latest plan per map is kept.
+// A real plan is tens of KB; this only stops a runaway client.
+export const mapPlanLimiter = new RateLimiter(3, 60_000)
+
+api.post('/v1/mapplan', getServer, async (c) => {
+  const server = c.get('server')
+  const wait = mapPlanLimiter.hit(server.id)
+  if (wait > 0) {
+    console.warn(`[Maps] Plan rate limit hit by ${server.name}; refusing uploads for ${wait}s`)
+    c.header('Retry-After', String(wait))
+    return c.json({ error: 'Too many plan uploads; slow down' }, 429)
+  }
+  const text = await c.req.text().catch(() => '')
+  if (text.length > MAX_PLAN_BYTES) return c.json({ error: `plans are limited to ${MAX_PLAN_BYTES} bytes` }, 413)
+
+  let body: unknown = null
+  try { body = JSON.parse(text) } catch { /* answered below */ }
+  const checked = validatePlan(body)
+  if ('error' in checked) {
+    console.warn(`[Maps] Rejected plan from ${server.name}: ${checked.error}`)
+    return c.json({ error: checked.error }, 400)
+  }
+
+  Store.setMapPlan(server.id, checked.plan)
+  Store.updateHeartbeat(server.id)
+  console.log(`[Maps] Plan for ${checked.plan.map} from ${server.name}: ${checked.plan.floorCells} floor cells (${checked.plan.crouchFloors} crouch-only), ${checked.plan.nx}x${checked.plan.ny}`)
+  return c.json({ success: true, floorCells: checked.plan.floorCells })
 })
 
 api.post('/save/:serverId/:role', async (c) => {

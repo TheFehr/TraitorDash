@@ -1,4 +1,5 @@
 import db from './Database'
+import type { MapPlan } from './mapplan'
 import { createHash } from 'node:crypto'
 import { hashToken } from './migrations'
 import { CODE_TTL_MS, generateCode, hashCode } from './pairing'
@@ -14,6 +15,11 @@ const newToken = () => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).t
 
 /** Stats history kept per server; older rounds are removed as new ones arrive. */
 export const MAX_ROUNDS_PER_SERVER = 50_000
+
+export interface MapPlanMeta {
+  map: string, fingerprint: string | null, cell: number, nx: number, ny: number
+  floorCells: number, crouchFloors: number, seeds: number, scannedAt: string
+}
 
 export interface MapRow {
   name: string, size: number | null, fingerprint: string | null
@@ -130,6 +136,7 @@ export class Store {
     db.run('DELETE FROM pairing_codes WHERE server_id = ?', [id])
     db.run('DELETE FROM server_maps WHERE server_id = ?', [id])
     db.run('DELETE FROM server_map_state WHERE server_id = ?', [id])
+    db.run('DELETE FROM map_plans WHERE server_id = ?', [id])
     db.run('DELETE FROM servers WHERE id = ?', [id])
   }
 
@@ -209,6 +216,35 @@ export class Store {
         poolBasis: st.pool_basis, configSource: st.config_source, voteAddon: st.vote_addon === 1, reportedAt: st.reported_at,
       } : null,
     }
+  }
+
+  /** Stores a floor-plan scan, replacing the server's previous plan for that map (RFC 10, 4.5). */
+  static setMapPlan(serverId: string, p: MapPlan) {
+    db.prepare(`
+      INSERT INTO map_plans (server_id, map_name, fingerprint, cell, nx, ny, floor_cells, crouch_floors, seeds, traces, seconds, scanned_at, plan)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(server_id, map_name) DO UPDATE SET
+        fingerprint = excluded.fingerprint, cell = excluded.cell, nx = excluded.nx, ny = excluded.ny,
+        floor_cells = excluded.floor_cells, crouch_floors = excluded.crouch_floors, seeds = excluded.seeds,
+        traces = excluded.traces, seconds = excluded.seconds, scanned_at = excluded.scanned_at, plan = excluded.plan
+    `).run(serverId, p.map, p.fingerprint, p.cell, p.nx, p.ny, p.floorCells, p.crouchFloors, p.seeds, p.traces, p.seconds, new Date().toISOString(), JSON.stringify(p.grid))
+  }
+
+  /** What is known about the server's stored plans, without the plans themselves. */
+  static getMapPlans(serverId: string): MapPlanMeta[] {
+    return (db.prepare(`
+      SELECT map_name, fingerprint, cell, nx, ny, floor_cells, crouch_floors, seeds, scanned_at
+      FROM map_plans WHERE server_id = ? ORDER BY map_name
+    `).all(serverId) as any[]).map(r => ({
+      map: r.map_name, fingerprint: r.fingerprint, cell: r.cell, nx: r.nx, ny: r.ny,
+      floorCells: r.floor_cells, crouchFloors: r.crouch_floors, seeds: r.seeds, scannedAt: r.scanned_at,
+    }))
+  }
+
+  /** The plan itself (grid as JSON text), or null. */
+  static getMapPlan(serverId: string, map: string): string | null {
+    const row = db.prepare('SELECT plan FROM map_plans WHERE server_id = ? AND map_name = ?').get(serverId, map) as { plan: string } | null
+    return row ? row.plan : null
   }
 
   static updateHeartbeat(serverId: string) {

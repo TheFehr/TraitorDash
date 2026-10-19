@@ -1,5 +1,5 @@
 import { Heartbeat } from './Heartbeat'
-import type { MapRow, MapsState } from '../services/Store'
+import type { MapRow, MapsState, MapPlanMeta } from '../services/Store'
 
 // RFC 10: what the bridge reported about the server's maps. "Votable" is worked out by the bridge
 // from the vote addon's prefixes (or the gamemode's map pattern), the current map and the cooldown
@@ -44,11 +44,13 @@ export interface MapsDashboardProps {
   maps: MapRow[]
   /** Admins also see the file sizes and how many maps are on disk, and may ask for the maps outside the pool. */
   admin?: boolean
+  /** The stored floor plans (RFC 10, 4.5); only listed for admins. */
+  plans?: MapPlanMeta[]
   /** An admin's opt-in (?all=1) to list the maps outside the vote pool; never honoured for guests. */
   showAll?: boolean
 }
 
-export const MapsDashboard = ({ server, state, maps, admin, showAll }: MapsDashboardProps) => {
+export const MapsDashboard = ({ server, state, maps, admin, showAll, plans }: MapsDashboardProps) => {
   // Players only care about the maps the vote can offer. A map the bridge could not classify is shown.
   const outside = maps.filter(m => m.inVotePool === false).length
   const listed = admin && showAll ? maps : maps.filter(m => m.inVotePool !== false)
@@ -119,6 +121,30 @@ export const MapsDashboard = ({ server, state, maps, admin, showAll }: MapsDashb
               </tbody>
             </table>
           </div>
+
+          {admin && plans && plans.length > 0 && (
+            <section>
+              <h2 class="text-sm font-black uppercase tracking-widest text-gray-400 mb-3">Floor plans</h2>
+              <div class="bg-gray-800 border border-gray-700 rounded-xl overflow-x-auto">
+                <table class="w-full text-sm">
+                  <tbody>
+                    {plans.map(p => {
+                      const known = maps.find(m => m.name === p.map)
+                      const outdated = !!(p.fingerprint && known?.fingerprint && p.fingerprint !== known.fingerprint)
+                      return (
+                        <tr class="border-t border-gray-700 first:border-t-0">
+                          <td class="p-3 font-bold break-all">{p.map} {outdated && <Badge tone="yellow">Outdated</Badge>}</td>
+                          <td class="p-3 text-gray-400">{p.floorCells} floor cells, {p.crouchFloors} crouch-only</td>
+                          <td class="p-3 text-gray-500 text-xs">scanned <Heartbeat lastSeen={p.scannedAt} /></td>
+                          <td class="p-3 text-right"><a class="text-gray-400 hover:text-white underline" href={`/servers/${server.id}/maps/${p.map}/plan.json`}>JSON</a></td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
         </>
       )}
     </div>
