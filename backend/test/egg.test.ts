@@ -108,3 +108,9 @@ describe('the installer script (exact map geometry, RFC 11)', () => {
     r.cleanup()
   })
 })
+
+describe('the egg\'s author', () => {
+  test('is an email address, which is what the panel\'s import form requires', () => {
+    expect(egg.author).toMatch(/^[^@\s]+@[^@\s]+\.[^@\s]+$/)
+  })
+})
