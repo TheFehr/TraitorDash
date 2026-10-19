@@ -197,3 +197,50 @@ describe('Init sends the map report with the first sync', () => {
     expect(r).toBe('true')
   })
 })
+
+// RFC 10, 4.5: a finished floor-plan scan is posted to /api/v1/mapplan.
+describe('TraitorDash.PushMapPlan', () => {
+  // What the scanner's Result() returns, with its diagnostics.
+  const RESULT = `{
+    mode = "reach", map = "ttt_a", cell = 64, minx = -801, miny = -1569, nx = 3, ny = 2, zmin = -2465, zmax = 9889,
+    seeds = 107, traces = 14637, seconds = 0.08, columns = 530, floorCells = 5, crouchFloors = 1, ticks = 27, maxSliceMs = 3.5,
+    rows = { "-160,48c|48|", "|272|-160" },
+  }`
+  const FILE = `FILES = { ["maps/ttt_a.bsp"] = 500 } BYTES["maps/ttt_a.bsp"] = ${bin(header())}`
+
+  test('posts to /api/v1/mapplan with the token, a timeout and JSON', () => {
+    const r = lua(`TraitorDash.PushMapPlan(${RESULT})
+      local q = SENT[1]
+      RESULT = q.method .. "|" .. q.url .. "|" .. q.headers.Authorization .. "|" .. q.headers["Content-Type"] .. "|" .. tostring(q.timeout)`)
+    expect(r).toBe('POST|https://td.test/api/v1/mapplan|Bearer tok|application/json|60')
+  })
+
+  test('sends the grid and the scan\'s own statistics, and nothing else', () => {
+    const r = lua(`TraitorDash.PushMapPlan(${RESULT})
+      local k = {} for key in pairs(LAST_PAYLOAD) do k[#k + 1] = key end table.sort(k)
+      RESULT = table.concat(k, ",") .. "|" .. #LAST_PAYLOAD.rows .. "|" .. LAST_PAYLOAD.map`)
+    expect(r).toBe('cell,map,minx,miny,nx,ny,rows,seconds,seeds,traces,zmax,zmin|2|ttt_a')
+  })
+
+  test('adds the map file\'s fingerprint when it can be read', () => {
+    const h = header()
+    const r = lua(`${FILE} TraitorDash.PushMapPlan(${RESULT}) RESULT = tostring(LAST_PAYLOAD.fingerprint)`)
+    expect(r).toBe(fingerprint(h, 500))
+  })
+
+  test('is idle without a token (nothing is sent)', () => {
+    expect(lua(`SetCv("traitordash_token", "") TraitorDash.PushMapPlan(${RESULT}) RESULT = #SENT`)).toBe('0')
+  })
+
+  test('says what happened: accepted, rejected with the reason, or unreachable', () => {
+    const outcome = (call: string) => lua(`TraitorDash.PushMapPlan(${RESULT}) ${call} RESULT = table.concat(PRINTS, "\\n")`)
+    expect(outcome('SENT[1].success(200, "{}")')).toContain('Floor plan for ttt_a sent')
+    expect(outcome('SENT[1].success(400, "bad rows")')).toContain('Floor plan rejected (HTTP 400): bad rows')
+    expect(outcome('SENT[1].success(404, "Not Found")')).toContain('HTTP 404')
+    expect(outcome('SENT[1].failed("unsuccessful")')).toContain('Floor plan failed: unsuccessful')
+  })
+
+  test('the token is never printed', () => {
+    expect(lua(`TraitorDash.PushMapPlan(${RESULT}) SENT[1].success(500, "x") RESULT = table.concat(PRINTS, "\\n")`)).not.toContain('tok"')
+  })
+})

@@ -310,6 +310,13 @@ local function Finish(scan, timing)
     end
     Say(string.format("Map scan done in %.1f s over %d ticks (slowest tick %.1f ms): %s, %d traces, %d crouch-only floors. data/%s %s.",
         result.seconds, result.ticks, result.maxSliceMs, what, result.traces, result.crouchFloors, path, saved))
+
+    -- The reachable-area scan is the floor plan; it goes to the dashboard (RFC 10, 4.5). The
+    -- whole-grid scan is a diagnostic and stays in its file.
+    if result.mode == "reach" and TraitorDash.PushMapPlan then
+        local ok, err = pcall(TraitorDash.PushMapPlan, result)
+        if not ok then Say("Could not send the floor plan: " .. tostring(err)) end
+    end
 end
 
 concommand.Add("traitordash_mapscan", function(ply, _, args)

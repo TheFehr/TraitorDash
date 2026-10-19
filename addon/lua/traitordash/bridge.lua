@@ -340,6 +340,53 @@ function TraitorDash.PushMaps()
     })
 end
 
+-- A finished floor-plan scan (mapscan.lua) goes to /api/v1/mapplan (RFC 10, 4.5). Only the grid and
+-- the scan's own statistics are sent; the backend counts floors itself. The fingerprint says which
+-- version of the map was scanned. Idle without a configuration.
+function TraitorDash.PushMapPlan(result)
+    local baseUrl, token = GetApi()
+    if not baseUrl then return end
+
+    local fingerprint
+    if TraitorDash.MapFingerprint then
+        local path = "maps/" .. tostring(result.map) .. ".bsp"
+        local ok, fp = pcall(function() return TraitorDash.MapFingerprint(path, file.Size(path, "GAME")) end)
+        if ok then fingerprint = fp end
+    end
+
+    local payload = util.TableToJSON({
+        map = result.map, fingerprint = fingerprint,
+        cell = result.cell, minx = result.minx, miny = result.miny, nx = result.nx, ny = result.ny,
+        zmin = result.zmin, zmax = result.zmax, rows = result.rows,
+        seeds = result.seeds, traces = result.traces, seconds = result.seconds,
+    })
+    if not payload or payload == "" then
+        print("[TraitorDash] Could not encode the floor plan")
+        return
+    end
+
+    HTTP({
+        url = baseUrl .. "/api/v1/mapplan",
+        method = "POST",
+        headers = {
+            ["Content-Type"] = "application/json",
+            ["Authorization"] = "Bearer " .. token
+        },
+        body = payload,
+        timeout = 60,
+        success = function(code, body)
+            if code == 200 then
+                print("[TraitorDash] Floor plan for " .. tostring(result.map) .. " sent to the dashboard")
+            else
+                print("[TraitorDash] Floor plan rejected (HTTP " .. code .. "): " .. tostring(body))
+            end
+        end,
+        failed = function(err)
+            print("[TraitorDash] Floor plan failed: " .. tostring(err))
+        end
+    })
+end
+
 function TraitorDash.IngestRole(roleName, roleCode, hash, force, callback)
     -- Cleaned, and only over a trusted channel (https or a private address).
     local baseUrl, token = GetApi()

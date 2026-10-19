@@ -311,7 +311,7 @@ describe('traitordash_mapscan', () => {
   })
 
   test('times itself: seconds, ticks and the slowest tick are in the file and the console line', () => {
-    const r = run(`${CMD}\nSCANCMD(nil, "64") FINISH()\nlocal p = LAST_PAYLOAD\nRESULT = type(p.seconds) .. " " .. p.ticks .. " " .. type(p.maxSliceMs) .. " " .. p.mode .. " " .. table.concat(PRINTS, "\\n")`).result
+    const r = run(`${CMD}\nTraitorDash.PushMapPlan = nil -- LAST_PAYLOAD should be the file's, not the upload's\nSCANCMD(nil, "64") FINISH()\nlocal p = LAST_PAYLOAD\nRESULT = type(p.seconds) .. " " .. p.ticks .. " " .. type(p.maxSliceMs) .. " " .. p.mode .. " " .. table.concat(PRINTS, "\\n")`).result
     expect(r).toMatch(/^number \d+ number reach /)
     expect(r).toMatch(/done in [\d.]+ s over \d+ ticks \(slowest tick [\d.]+ ms\)/)
   })
@@ -319,5 +319,42 @@ describe('traitordash_mapscan', () => {
   test('falls back to a large default box when the world reports no bounds', () => {
     const r = cmd(`game.GetWorld = function() return { GetModelBounds = function() return Vector(0, 0, 0), Vector(0, 0, 0) end } end SCANCMD(nil, "256")`)
     expect(r).toContain('Scanning')
+  })
+
+  // RFC 10, 4.5: a finished reachable-area scan goes to the dashboard; the whole-grid one does not.
+  const pushed = (script: string) => run(`${CMD}
+    PUSHED = {}
+    TraitorDash.PushMapPlan = function(r) PUSHED[#PUSHED + 1] = r.mode .. ":" .. r.map .. ":" .. #r.rows end
+    ${script}
+    RESULT = table.concat(PUSHED, ",") .. "|" .. table.concat(PRINTS, "\\n")`).result
+
+  test('a finished scan is handed to the upload', () => {
+    expect(pushed('SCANCMD(nil, "64") FINISH()')).toMatch(/^reach:ttt_Some Map\/v2:\d+\|/)
+  })
+
+  test('a whole-grid scan is only written to a file, never uploaded', () => {
+    expect(pushed('SPAWNS = {} SCANCMD(nil, "64", "full") FINISH()')).toMatch(/^\|/)
+  })
+
+  test('nothing is uploaded while the scan is still running', () => {
+    expect(pushed('SCANCMD(nil, "64")')).toMatch(/^\|/)
+  })
+
+  test('a failing upload does not stop the scan from finishing, writing its file and saying so', () => {
+    const r = run(`${CMD}
+      TraitorDash.PushMapPlan = function() error("boom") end
+      SCANCMD(nil, "64") FINISH()
+      RESULT = tostring(DATA["traitordash/mapscan_ttt_Some_Map_v2.json"]) .. "|" .. table.concat(PRINTS, "\\n")`).result
+    expect(r).toContain('{json}|')
+    expect(r).toContain('Map scan done')
+    expect(r).toContain('boom')
+  })
+
+  test('without an upload function (the bridge did not load) the scan still finishes', () => {
+    const r = run(`${CMD}
+      TraitorDash.PushMapPlan = nil
+      SCANCMD(nil, "64") FINISH()
+      RESULT = table.concat(PRINTS, "\\n")`).result
+    expect(r).toContain('Map scan done')
   })
 })
