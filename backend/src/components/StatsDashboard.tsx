@@ -97,6 +97,9 @@ export const StatsDashboard = ({ server, overview, roles, teams, leaders, recent
       </nav>
       <h1 class="text-3xl sm:text-5xl font-black mb-2 break-words">Round stats</h1>
       <p class="text-gray-400 text-lg">{server.name}</p>
+      <a href={`/servers/${server.id}/maps`} class="inline-block mt-4 px-4 py-2 rounded-lg border border-gray-700 text-sm font-bold text-gray-300 hover:text-white hover:border-red-500 transition">
+        🗺 Maps
+      </a>
       {bots && <p class="mt-2 text-xs font-black uppercase tracking-widest text-yellow-400">Including bot test rounds</p>}
     </header>
 

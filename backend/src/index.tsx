@@ -19,6 +19,7 @@ import { ServerManager } from './components/ServerManager'
 import { Sidebar, RoleListPartial } from './components/Sidebar'
 import { checkHealth, sourceHash } from './services/version'
 import { StatsDashboard, PlayerStats } from './components/StatsDashboard'
+import { MapsDashboard } from './components/MapsDashboard'
 import * as stats from './services/stats'
 
 const app = new Hono()
@@ -156,6 +157,22 @@ app.get('/servers/:serverId/stats', async (c) => {
         bots={opts.bots}
         admin={!!steamId}
       />
+    </Layout>
+  )
+})
+
+/** The maps the server has and which of them it will play (RFC 10). Public, like the stats. */
+app.get('/servers/:serverId/maps', async (c) => {
+  const steamId = await getAdminId(c)
+
+  const serverId = c.req.param('serverId')
+  const server = Store.getServerById(serverId)
+  if (!server) return c.redirect('/')
+
+  const { state, maps } = Store.getMaps(serverId)
+  return c.html(
+    <Layout steamId={steamId || undefined} path="/">
+      <MapsDashboard server={server} state={state} maps={maps} admin={!!steamId} />
     </Layout>
   )
 })

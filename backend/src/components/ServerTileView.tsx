@@ -37,6 +37,9 @@ export const ServerTileView = ({ servers }: { servers: any[] }) => {
               <a href={`/servers/${server.id}/stats`} class="inline-block mt-6 px-4 py-2 rounded-lg border border-gray-700 text-sm font-bold text-gray-300 hover:text-white hover:border-red-500 transition">
                 📊 Round stats
               </a>
+              <a href={`/servers/${server.id}/maps`} class="inline-block mt-6 ml-2 px-4 py-2 rounded-lg border border-gray-700 text-sm font-bold text-gray-300 hover:text-white hover:border-red-500 transition">
+                🗺 Maps
+              </a>
             </div>
           )
         })}
