@@ -172,7 +172,7 @@ app.get('/servers/:serverId/maps', async (c) => {
   const { state, maps } = Store.getMaps(serverId)
   return c.html(
     <Layout steamId={steamId || undefined} path="/">
-      <MapsDashboard server={server} state={state} maps={maps} admin={!!steamId} />
+      <MapsDashboard server={server} state={state} maps={maps} admin={!!steamId} showAll={!!steamId && c.req.query('all') === '1'} />
     </Layout>
   )
 })

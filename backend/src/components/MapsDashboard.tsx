@@ -42,11 +42,16 @@ export interface MapsDashboardProps {
   server: { id: string, name: string }
   state: MapsState | null
   maps: MapRow[]
-  /** The rule settings link only makes sense for admins. */
+  /** Admins also see the file sizes and how many maps are on disk, and may ask for the maps outside the pool. */
   admin?: boolean
+  /** An admin's opt-in (?all=1) to list the maps outside the vote pool; never honoured for guests. */
+  showAll?: boolean
 }
 
-export const MapsDashboard = ({ server, state, maps, admin }: MapsDashboardProps) => {
+export const MapsDashboard = ({ server, state, maps, admin, showAll }: MapsDashboardProps) => {
+  // Players only care about the maps the vote can offer. A map the bridge could not classify is shown.
+  const outside = maps.filter(m => m.inVotePool === false).length
+  const listed = admin && showAll ? maps : maps.filter(m => m.inVotePool !== false)
   const known = maps.some(m => m.votable !== null)
   const pool = maps.filter(m => m.inVotePool === true).length
   const votable = maps.filter(m => m.votable === true).length
@@ -70,8 +75,8 @@ export const MapsDashboard = ({ server, state, maps, admin }: MapsDashboardProps
         </div>
       ) : (
         <>
-          <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-            <Card label="Maps on disk" value={maps.length} />
+          <div class={`grid grid-cols-2 gap-3 sm:gap-4 ${admin ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
+            {admin && <Card label="Maps on disk" value={maps.length} />}
             <Card label="In the vote pool" value={known ? pool : '–'} />
             <Card label="Votable now" value={known ? votable : '–'} />
             <Card label="Running map" value={state.current ?? '–'} sub={state.next ? `Next: ${state.next}` : undefined} />
@@ -83,13 +88,21 @@ export const MapsDashboard = ({ server, state, maps, admin }: MapsDashboardProps
             <p class="text-xs text-gray-500">Reported <Heartbeat lastSeen={state.reportedAt} /></p>
           </section>
 
+          {admin && outside > 0 && (
+            <p class="text-sm">
+              {showAll
+                ? <a href={`/servers/${server.id}/maps`} class="text-gray-400 hover:text-white underline">Hide maps outside the pool</a>
+                : <a href={`/servers/${server.id}/maps?all=1`} class="text-gray-400 hover:text-white underline">Show {outside} {outside === 1 ? 'map' : 'maps'} outside the pool</a>}
+            </p>
+          )}
+
           <div class="bg-gray-800 border border-gray-700 rounded-xl overflow-x-auto">
             <table class="w-full text-sm">
               <thead class="text-[10px] uppercase tracking-widest text-gray-500">
-                <tr><th class="text-left p-3">Map</th><th class="text-left p-3">Status</th><th class="text-right p-3">Size</th></tr>
+                <tr><th class="text-left p-3">Map</th><th class="text-left p-3">Status</th>{admin && <th class="text-right p-3">Size</th>}</tr>
               </thead>
               <tbody>
-                {sortMaps(maps).map(m => (
+                {sortMaps(listed).map(m => (
                   <tr class="border-t border-gray-700">
                     <td class="p-3 font-bold break-all">{m.name}</td>
                     <td class="p-3">
@@ -100,7 +113,7 @@ export const MapsDashboard = ({ server, state, maps, admin }: MapsDashboardProps
                       {m.inCycle === true && <Badge tone="gray">In map cycle</Badge>}
                       {m.inVotePool === false && <Badge tone="gray">Not in the pool</Badge>}
                     </td>
-                    <td class="p-3 text-right text-gray-400">{fmtMapSize(m.size)}</td>
+                    {admin && <td class="p-3 text-right text-gray-400">{fmtMapSize(m.size)}</td>}
                   </tr>
                 ))}
               </tbody>

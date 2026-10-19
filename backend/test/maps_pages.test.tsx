@@ -41,6 +41,10 @@ beforeAll(async () => {
 const get = (path: string, withCookie = false) =>
   app.fetch(new Request(`http://x${path}`, { headers: withCookie ? { Cookie: cookie } : {} }))
 const page = async (id = serverId) => (await get(`/servers/${id}/maps`)).text()
+/** The page as a signed-in admin sees it; `all` is the opt-in for maps outside the vote pool. */
+const adminPage = async (id = serverId, all = false) => (await get(`/servers/${id}/maps${all ? '?all=1' : ''}`, true)).text()
+const rowsOf = (html: string) => html.split('<tbody')[1]!.split('<tr').slice(1)
+const rowFor = (html: string, name: string) => rowsOf(html).find((r: string) => r.includes(`>${name}<`))
 
 describe('the Maps page', () => {
   test('is public, and a guest gets no link into the rule settings', async () => {
@@ -59,30 +63,66 @@ describe('the Maps page', () => {
     expect(res.headers.get('location')).toBe('/')
   })
 
-  test('lists every map with its size', async () => {
+  test('a guest sees the maps in the vote pool and nothing outside it', async () => {
     const html = await page()
-    for (const name of ['ttt_current', 'ttt_next', 'ttt_resting', 'ttt_cycled', 'gm_construct']) expect(html).toContain(name)
-    expect(html).toContain('232 MB') // 243 312 804 bytes
-    expect(html).toContain('21 MB')
+    for (const name of ['ttt_current', 'ttt_next', 'ttt_resting', 'ttt_cycled']) expect(rowFor(html, name)).toBeDefined()
+    expect(html).not.toContain('gm_construct')
+    expect(html).not.toContain('Not in the pool')
+    expect(html).not.toContain('outside the pool')
   })
 
-  test('shows the counts: on disk, in the vote pool, votable now', async () => {
+  test('a guest does not get the sizes, nor a way to ask for the hidden maps', async () => {
+    for (const path of [`/servers/${serverId}/maps`, `/servers/${serverId}/maps?all=1`]) {
+      const html = await (await get(path)).text()
+      expect(html).not.toContain(' MB')
+      expect(html).not.toContain('>Size<')
+      expect(html).not.toContain('gm_construct')
+    }
+  })
+
+  test('a guest sees the counts that matter to players, not how many maps are on disk', async () => {
     const html = await page()
-    expect(html).toMatch(/Maps on disk<\/div>\s*<div[^>]*>5</)
+    expect(html).not.toContain('Maps on disk')
     expect(html).toMatch(/In the vote pool<\/div>\s*<div[^>]*>4</)
     expect(html).toMatch(/Votable now<\/div>\s*<div[^>]*>2</)
   })
 
-  test('marks the current and the next map, and a map that is resting after its turn', async () => {
-    const html = await page()
-    expect(html).toContain('Current')
-    expect(html).toContain('Next')
-    expect(html).toContain('Cooldown')
-    expect(html).toContain('In map cycle')
+  test('an admin sees the sizes, and the on-disk count', async () => {
+    const html = await adminPage()
+    expect(html).toContain('>Size<')
+    expect(html).toContain('232 MB') // 243 312 804 bytes
+    expect(html).toContain('21 MB')
+    expect(html).toMatch(/Maps on disk<\/div>\s*<div[^>]*>5</)
+  })
+
+  test('an admin does not see the maps outside the pool until they ask', async () => {
+    const html = await adminPage()
+    expect(html).not.toContain('gm_construct')
+    expect(html).toContain(`/servers/${serverId}/maps?all=1`)
+    expect(html).toContain('Show 1 map outside the pool')
+  })
+
+  test('with ?all=1 an admin sees them, marked, with a way back', async () => {
+    const html = await adminPage(serverId, true)
+    expect(rowFor(html, 'gm_construct')).toContain('Not in the pool')
+    expect(rowFor(html, 'gm_construct')).toContain('5 MB')
+    expect(html).toContain('Hide maps outside the pool')
+    expect(html).toContain(`href="/servers/${serverId}/maps"`)
+  })
+
+  test('no toggle when every map is in the pool or the pool is unknown', async () => {
+    const all = Store.addServer('AllIn').id
+    Store.setMaps(all, R({ maps: [M('ttt_a'), M('ttt_b')] }))
+    expect(await adminPage(all)).not.toContain('outside the pool')
+    const unknown = Store.addServer('Unk2').id
+    Store.setMaps(unknown, R({ poolBasis: null, maps: [M('ttt_a', { inVotePool: null, votable: null })] }))
+    const html = await adminPage(unknown)
+    expect(html).not.toContain('outside the pool')
+    expect(rowFor(html, 'ttt_a')).toBeDefined() // unknown is shown, not hidden
   })
 
   test('votable maps come before the others', async () => {
-    const html = (await page()).split('<tbody')[1]! // the table only: the summary cards name maps too
+    const html = (await adminPage(serverId, true)).split('<tbody')[1]! // the table only: the summary cards name maps too
     const at = (name: string) => html.indexOf(name)
     expect(at('ttt_cycled')).toBeLessThan(at('ttt_next'))
     expect(at('ttt_next')).toBeLessThan(at('ttt_current'))
@@ -106,7 +146,7 @@ describe('the Maps page', () => {
   })
 
   test('each badge sits on the right map\'s row', async () => {
-    const rows = (await page()).split('<tbody')[1]!.split('<tr').slice(1)
+    const rows = rowsOf(await adminPage(serverId, true))
     const row = (name: string) => rows.find((r: string) => r.includes(`>${name}<`))!
     expect(row('ttt_next')).toContain('Next')
     expect(row('ttt_next')).toContain('Votable')
