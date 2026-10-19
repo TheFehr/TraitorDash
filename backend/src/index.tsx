@@ -20,7 +20,7 @@ import { Sidebar, RoleListPartial } from './components/Sidebar'
 import { checkHealth, sourceHash } from './services/version'
 import { StatsDashboard, PlayerStats } from './components/StatsDashboard'
 import { MapsDashboard } from './components/MapsDashboard'
-import { renderPlanSvg } from './services/mapplan'
+import { renderPlanSvg, planLevels } from './services/mapplan'
 import * as stats from './services/stats'
 
 const app = new Hono()
@@ -174,7 +174,7 @@ app.get('/servers/:serverId/maps', async (c) => {
   return c.html(
     <Layout steamId={steamId || undefined} path="/">
       <MapsDashboard server={server} state={state} maps={maps} admin={!!steamId} showAll={!!steamId && c.req.query('all') === '1'}
-        plans={steamId ? Store.getMapPlans(serverId) : undefined} />
+        plans={steamId ? Store.getMapPlans(serverId).map(p => ({ ...p, levels: planLevels(JSON.parse(Store.getMapPlan(serverId, p.map)!)) })) : undefined} />
     </Layout>
   )
 })
@@ -185,7 +185,15 @@ app.get('/servers/:serverId/maps/:map/plan.svg', async (c) => {
   const map = c.req.param('map')
   const plan = Store.getMapPlan(c.req.param('serverId'), map)
   if (!plan) return c.text('Not found', 404)
-  const svg = renderPlanSvg(JSON.parse(plan), map)
+  const grid = JSON.parse(plan)
+  // ?level=<n> picks one storey (1 is the lowest); without it, every floor is drawn.
+  const asked = c.req.query('level')
+  let level: number | undefined
+  if (asked !== undefined) {
+    level = /^\d{1,3}$/.test(asked) ? Number(asked) : 0
+    if (level < 1 || level > planLevels(grid).length) return c.text('Not found', 404)
+  }
+  const svg = renderPlanSvg(grid, map, level)
   if (!svg) return c.text('This plan is too large to draw; download the JSON instead.', 422)
   return c.body(svg, 200, {
     'Content-Type': 'image/svg+xml; charset=utf-8',

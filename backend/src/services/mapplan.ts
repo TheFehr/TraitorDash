@@ -83,30 +83,124 @@ export function validatePlan(body: any): { plan: MapPlan } | { error: string } {
 }
 
 // ---- the admin preview (RFC 10, 4.5) ---------------------------------------------------------
-// The same picture tools/render-mapscan.ts draws: a square per cell with a floor, blue (lowest)
-// to red (highest), north up. Only numbers and the (escaped) map name go into it.
+// A picture per storey (and an overview): a square per cell with a floor, blue (lowest) to red
+// (highest), north up. Only numbers and the (escaped) map name go into it.
+
+/** The colour of a floor at `t` (0 = lowest, 1 = highest of what is drawn): blue through green to red. Pictures and legend share it. */
+export const heightColour = (t: number) => `hsl(${Math.round(240 - 240 * t)} 70% 50%)`
 
 const PX = 8 // picture pixels per grid cell
 export const MAX_PREVIEW_RECTS = 50_000
 
 type Grid = MapPlan['grid']
 interface Floor { z: number, crouch: boolean }
+type Cells = Floor[][][]
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
-/** The plan as an SVG, or null when it would need more than MAX_PREVIEW_RECTS rectangles. */
-export function renderPlanSvg(grid: Grid, map: string): string | null {
-  const rows: Floor[][][] = grid.rows.map(r =>
-    r.split('|').map(c => (c === '' ? [] : c.split(',').map(f => ({ z: parseInt(f, 10), crouch: f.endsWith('c') })))))
+const parseRows = (grid: Grid): Cells =>
+  grid.rows.map(r => r.split('|').map(c => (c === '' ? [] : c.split(',').map(f => ({ z: parseInt(f, 10), crouch: f.endsWith('c') })))))
 
-  let lo = Infinity
-  let hi = -Infinity
-  for (const row of rows) for (const cell of row) for (const f of cell) { lo = Math.min(lo, f.z); hi = Math.max(hi, f.z) }
-  const colour = (z: number) => `hsl(${Math.round(240 - 240 * ((z - lo) / Math.max(1, hi - lo)))} 70% 50%)`
+export interface Level {
+  /** 1 is the lowest storey. */
+  index: number
+  /** The lowest and highest floor that belong to it. */
+  lo: number
+  hi: number
+  /** How many floors. */
+  cells: number
+}
+
+const BIN = 16 // units per height bin
+const PEAK_WINDOW = 3 // a storey height has no bigger bin within 3 bins (48 units)
+const MERGE_UNITS = 96 // two storey heights closer than this are one storey
+const MIN_SHARE = 0.03 // a storey height holds at least this share of all floors...
+const MIN_CELLS = 6 // ...and at least this many
+
+/**
+ * The storeys of a plan, lowest first. Heights are counted in bins; a bin with many floors and no
+ * bigger bin nearby is a storey height; every floor belongs to the nearest storey height, so stairs
+ * join the storey they lead to and a few cells at an odd height (a vent) do not form a storey.
+ */
+export function planLevels(grid: Grid): Level[] {
+  return storeyModel(parseRows(grid).flat(2).map(f => f.z)).levels
+}
+
+/** The storeys of a set of floor heights, and which storey (0-based) a height belongs to. */
+const storeyModel = (zs: number[]): { levels: Level[], storeyOf: (z: number) => number } => {
+  if (zs.length === 0) return { levels: [], storeyOf: () => 0 }
+  const counts = new Map<number, number>()
+  for (const z of zs) counts.set(Math.floor(z / BIN), (counts.get(Math.floor(z / BIN)) ?? 0) + 1)
+  const need = Math.max(MIN_CELLS, MIN_SHARE * zs.length)
+
+  let peaks: { z: number, n: number }[] = []
+  for (const [bin, n] of counts) {
+    if (n < need) continue
+    let biggest = true
+    for (let d = -PEAK_WINDOW; d <= PEAK_WINDOW; d++) {
+      const other = counts.get(bin + d) ?? 0
+      if (other > n || (other === n && d < 0)) biggest = false // a tie goes to the lower bin
+    }
+    if (biggest) peaks.push({ z: bin * BIN + BIN / 2, n })
+  }
+  peaks.sort((a, b) => a.z - b.z)
+  // Merge heights that are too close: the one with more floors wins.
+  const merged: typeof peaks = []
+  for (const p of peaks) {
+    const last = merged[merged.length - 1]
+    if (last && p.z - last.z < MERGE_UNITS) { if (p.n > last.n) merged[merged.length - 1] = p } else merged.push(p)
+  }
+  peaks = merged
+  if (peaks.length === 0) peaks = [{ z: 0, n: 0 }] // no clear storey: everything is one
+
+  // The nearest storey height wins, so stairs join the storey they lead to.
+  const nearest = (z: number) => {
+    let best = 0
+    for (let i = 1; i < peaks.length; i++) if (Math.abs(peaks[i]!.z - z) < Math.abs(peaks[best]!.z - z)) best = i
+    return best
+  }
+  const levels: Level[] = peaks.map((_, i) => ({ index: i + 1, lo: Infinity, hi: -Infinity, cells: 0 }))
+  for (const z of zs) {
+    const l = levels[nearest(z)]!
+    l.lo = Math.min(l.lo, z); l.hi = Math.max(l.hi, z); l.cells++
+  }
+  return { levels, storeyOf: nearest }
+}
+
+/**
+ * The plan as an SVG: storey `level` (1-based) on its own, or every floor (highest on top) when
+ * `level` is omitted. null when it would need more than MAX_PREVIEW_RECTS rectangles. Every
+ * picture of a plan has the same frame, so the storeys line up. The caller checks that `level`
+ * is one of planLevels().
+ */
+export function renderPlanSvg(grid: Grid, map: string, level?: number): string | null {
+  const rows = parseRows(grid)
+  const zs = rows.flat(2).map(f => f.z)
+  const { levels, storeyOf } = storeyModel(zs)
+
+  // Which floors are drawn: all of them, or those that belong to the chosen storey.
+  let keep = (_: Floor) => true
+  let lo = Math.min(...zs)
+  let hi = Math.max(...zs)
+  let caption = ''
+  if (level !== undefined) {
+    const chosen = levels[level - 1]
+    if (!chosen) return null
+    keep = f => storeyOf(f.z) === level - 1
+    lo = chosen.lo
+    hi = chosen.hi
+    caption = `level ${level} of ${levels.length} · `
+  }
+  const colour = (z: number) => heightColour((z - lo) / Math.max(1, hi - lo))
 
   const rects: string[] = []
   const dots: string[] = []
-  let minI = Infinity, maxI = -1, minJ = Infinity, maxJ = -1 // the cells that are drawn
+  let minI = Infinity, maxI = -1, minJ = Infinity, maxJ = -1 // the frame: cells drawn in ANY storey
+  for (let j = 0; j < rows.length; j++) for (let i = 0; i < grid.nx; i++) {
+    if (rows[j]![i]!.length === 0) continue
+    minI = Math.min(minI, i); maxI = Math.max(maxI, i); minJ = Math.min(minJ, j); maxJ = Math.max(maxJ, j)
+  }
+
   for (let j = 0; j < rows.length; j++) {
     const y = (grid.ny - 1 - j) * PX // y grows north in the world and down in a picture
     // Horizontal runs of cells that look the same become one rectangle.
@@ -116,14 +210,12 @@ export function renderPlanSvg(grid: Grid, map: string): string | null {
       run = null
     }
     for (let i = 0; i < grid.nx; i++) {
-      const cell = rows[j]![i]!
+      const cell = rows[j]![i]!.filter(keep)
       if (cell.length === 0) { flush(); continue }
-      minI = Math.min(minI, i); maxI = Math.max(maxI, i); minJ = Math.min(minJ, j); maxJ = Math.max(maxJ, j)
       const top = cell.reduce((a, b) => (b.z > a.z ? b : a))
       const faint = cell.every(f => f.crouch)
       const fill = colour(top.z)
       if (faint) dots.push(`<rect x="${i * PX + 1}" y="${y + 1}" width="2" height="2" fill="#fff"/>`)
-      if (cell.length > 1) dots.push(`<rect x="${i * PX + 1}" y="${y + PX - 3}" width="2" height="2" fill="#000" fill-opacity=".55"/>`)
       if (run && run.fill === fill && run.faint === faint && run.i + run.n === i) run.n++
       else { flush(); run = { i, n: 1, fill, faint } }
       if (rects.length + dots.length > MAX_PREVIEW_RECTS) return null
@@ -132,14 +224,14 @@ export function renderPlanSvg(grid: Grid, map: string): string | null {
     if (rects.length + dots.length > MAX_PREVIEW_RECTS) return null
   }
 
-  // Crop to what is drawn, with a margin of two cells, so a small map in a huge world fills the picture.
+  // Crop to the frame, with a margin of two cells, so a small map in a huge world fills the picture.
   const drawn = maxI >= 0
   const x0 = drawn ? Math.max(0, minI - 2) * PX : 0
   const x1 = drawn ? Math.min(grid.nx, maxI + 3) * PX : Math.max(1, grid.nx) * PX
   const y0 = drawn ? Math.max(0, grid.ny - 1 - maxJ - 2) * PX : 0
   const y1 = drawn ? Math.min(grid.ny, grid.ny - minJ + 2) * PX : Math.max(1, grid.ny) * PX
   const legend = drawn
-    ? `<text x="${x0 + 4}" y="${y0 + 12}" fill="#ddd" font-family="sans-serif" font-size="10">lowest ${lo} · highest ${hi} · cells of ${grid.cell} units</text>`
+    ? `<text x="${x0 + 4}" y="${y0 + 12}" fill="#ddd" font-family="sans-serif" font-size="10">${caption || 'all floors · '}${lo} to ${hi}</text>`
     : ''
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${x1 - x0}" height="${y1 - y0}" viewBox="${x0} ${y0} ${x1 - x0} ${y1 - y0}" style="background:#111"><title>${esc(map)}</title>${rects.join('')}${dots.join('')}${legend}</svg>`
 }

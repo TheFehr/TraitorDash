@@ -204,8 +204,66 @@ describe('the plan on the Maps page (admins only)', () => {
   test('the page shows each plan as a picture, for admins only', async () => {
     const admin = await (await get(`/servers/${serverId}/maps`, true)).text()
     expect(admin).toContain(`<img`)
-    expect(admin).toContain(`src="/servers/${serverId}/maps/ttt_a/plan.svg"`)
+    expect(admin).toContain(`src="/servers/${serverId}/maps/ttt_a/plan.svg?level=1"`)
     expect(await (await get(`/servers/${serverId}/maps`)).text()).not.toContain('plan.svg')
+  })
+
+  test('a plan with several storeys gets a picture and a caption for each, and a link to the overview', async () => {
+    const cells = (z: number, n: number) => Array(n).fill(String(z))
+    const flat = [...cells(48, 40), ...cells(272, 40), ...cells(416, 40)]
+    const rows = Array.from({ length: 6 }, (_, j) => flat.slice(j * 20, j * 20 + 20).concat(Array(20).fill('')).slice(0, 20).join('|'))
+    expect((await post(plan({ map: 'ttt_tall', nx: 20, ny: 6, rows }))).status).toBe(200)
+    const html = await (await get(`/servers/${serverId}/maps`, true)).text()
+    for (const n of [1, 2, 3]) expect(html).toContain(`/servers/${serverId}/maps/ttt_tall/plan.svg?level=${n}`)
+    expect(html).not.toContain('ttt_tall/plan.svg?level=4')
+    expect(html).toContain('Level 1')
+    expect(html).toContain('Level 3')
+    expect(html).toContain(`href="/servers/${serverId}/maps/ttt_tall/plan.svg"`) // the overview
+  })
+
+  test('one storey of a plan can be fetched; a storey that does not exist is a 404', async () => {
+    expect((await get(`/servers/${serverId}/maps/ttt_a/plan.svg?level=1`, true)).status).toBe(200)
+    expect((await get(`/servers/${serverId}/maps/ttt_a/plan.svg?level=2`, true)).status).toBe(404)
+    expect((await get(`/servers/${serverId}/maps/ttt_a/plan.svg?level=0`, true)).status).toBe(404)
+    expect((await get(`/servers/${serverId}/maps/ttt_a/plan.svg?level=abc`, true)).status).toBe(404)
+    expect((await get(`/servers/${serverId}/maps/ttt_a/plan.svg?level=1.5`, true)).status).toBe(404)
+    expect((await get(`/servers/${serverId}/maps/ttt_a/plan.svg?level=1`)).status).toBe(401)
+  })
+
+  test('the floor plans come with a legend: colours, crouch-only, no floor, north, cell size', async () => {
+    const html = await (await get(`/servers/${serverId}/maps`, true)).text()
+    expect(html).toContain('How to read these pictures')
+    expect(html).toContain('lowest floor of the level')
+    expect(html).toContain('highest floor of the level')
+    expect(html).toContain('Crouch-only')
+    expect(html).toContain('No floor a player can reach')
+    expect(html).toContain('North is up')
+    expect(html).toContain('64 units') // the cell size of the stored plan
+    expect(html).toContain('hsl(240 70% 50%)') // the same blue the pictures use
+    expect(html).toContain('hsl(0 70% 50%)')
+  })
+
+  test('the legend\'s scale runs from the picture\'s blue (left) to its red (right), and shows the faint crouch-only mark', async () => {
+    const html = await (await get(`/servers/${serverId}/maps`, true)).text()
+    const legend = html.split('data-legend="plans"')[1]!.split('How to read')[0]! + html.split('data-legend="plans"')[1]!.split('</ul>')[0]!
+    expect(legend).toMatch(/linear-gradient\(to right, hsl\(240 70% 50%\),.*hsl\(0 70% 50%\)\)/)
+    expect(legend).toContain('opacity:.4') // the crouch-only mark is drawn faint, as in the pictures
+    expect(legend).toContain('bg-white') // ... with its white dot
+  })
+
+  test('each picture has its own scale with its own lowest and highest height', async () => {
+    const cells = (z: number, n: number) => Array(n).fill(String(z))
+    const flat = [...cells(48, 40), ...cells(272, 40)]
+    const rows = Array.from({ length: 4 }, (_, j) => flat.slice(j * 20, j * 20 + 20).concat(Array(20).fill('')).slice(0, 20).join('|'))
+    expect((await post(plan({ map: 'ttt_scale', nx: 20, ny: 4, rows }))).status).toBe(200)
+    const html = await (await get(`/servers/${serverId}/maps`, true)).text()
+    const scales = html.match(/data-scale="[^"]*"/g) ?? []
+    expect(scales).toContain('data-scale="ttt_scale 1 48 48"')
+    expect(scales).toContain('data-scale="ttt_scale 2 272 272"')
+  })
+
+  test('a guest sees no legend (there is nothing to explain)', async () => {
+    expect(await (await get(`/servers/${serverId}/maps`)).text()).not.toContain('How to read these pictures')
   })
 
   test('the picture is an SVG with a content-security policy that allows nothing to run or load', async () => {
