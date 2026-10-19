@@ -452,6 +452,11 @@ describe('track.lua: the upload', () => {
     expect(r.sent[1]!.body.map).toBe('ttt_test_map')
   })
 
+  test('the time spent encoding the track is printed (the one hitch the tracker causes)', () => {
+    const r = play(`Begin(); Run(5) Fire("TTTEndRound", WIN_TRAITOR) Accept(1)`)
+    expect(r.printed.join('\n')).toMatch(/track encoded: \d+ KB in \d+\.\d ms/)
+  })
+
   test('a rejected round drops the track', () => {
     const r = play(`Begin(); Run(2) Fire("TTTEndRound", WIN_TRAITOR) Accept(1, 400)`)
     expect(r.sent).toHaveLength(1)

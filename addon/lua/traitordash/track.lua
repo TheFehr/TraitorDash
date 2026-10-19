@@ -306,7 +306,10 @@ end
 function Track.Upload(body)
     local cfg = TraitorDash.GetConfig and TraitorDash.GetConfig()
     if not cfg or not cfg.url or cfg.token == "" then return end
+    -- Encoding a big track is the one hitch the tracker causes (at the end of the round); its time is printed.
+    local t0 = SysTime()
     local json = util.TableToJSON(body)
+    if json then print(string.format("[TraitorDash:track] track encoded: %d KB in %.1f ms", math.floor(#json / 1024), (SysTime() - t0) * 1000)) end
     if not json or #json > MAX_BYTES then
         print("[TraitorDash:track] track dropped: " .. (json and (#json .. " bytes is over the 8 MB limit") or "it could not be encoded"))
         return

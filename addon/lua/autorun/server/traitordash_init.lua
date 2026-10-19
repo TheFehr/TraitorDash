@@ -14,6 +14,10 @@ if SERVER then
     local okTrack, errTrack = pcall(include, "traitordash/track.lua")
     if not okTrack then print("[TraitorDash] Position tracking failed to load: " .. tostring(errTrack)) end
 
+    -- A console tool for measuring the server's frame time (RFC 12); it does nothing until started.
+    local okFt, errFt = pcall(include, "traitordash/frametime.lua")
+    if not okFt then print("[TraitorDash] Frame-time tool failed to load: " .. tostring(errFt)) end
+
     -- Stats are optional: a failure here must never take the bridge down with it.
     local ok, err = pcall(include, "traitordash/stats.lua")
     if not ok then print("[TraitorDash] Stats tracker failed to load: " .. tostring(err)) end
