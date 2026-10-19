@@ -133,10 +133,10 @@ export function planLevels(grid: Grid): Level[] {
  * sample counts one, or `weights[i]` (for samples of different size, such as the triangles of a
  * mesh weighted by the ground they cover, in units of one grid cell).
  */
-export const storeyModel = (zs: number[], weights?: number[]): { levels: Level[], storeyOf: (z: number) => number } => {
+export const storeyModel = (zs: number[], weights?: number[]): { levels: Level[], storeyOf: (z: number) => number, bounds: number[] } => {
   if (weights && weights.length !== zs.length) throw new RangeError('there must be one weight per height')
   if (weights && weights.some(w => !Number.isFinite(w) || w < 0)) throw new RangeError('weights must be finite and not negative')
-  if (zs.length === 0) return { levels: [], storeyOf: () => 0 }
+  if (zs.length === 0) return { levels: [], storeyOf: () => 0, bounds: [] }
   const weight = (i: number) => (weights ? weights[i]! : 1)
   const counts = new Map<number, number>()
   let total = 0
@@ -175,7 +175,9 @@ export const storeyModel = (zs: number[], weights?: number[]): { levels: Level[]
     l.lo = Math.min(l.lo, z); l.hi = Math.max(l.hi, z); l.cells += weight(i)
   })
   for (const l of levels) l.cells = Math.round(l.cells * 1000) / 1000
-  return { levels, storeyOf: nearest }
+  // Where one storey ends and the next begins: halfway between their heights (what `nearest` decides by).
+  const bounds = peaks.slice(1).map((p, i) => (peaks[i]!.z + p.z) / 2)
+  return { levels, storeyOf: nearest, bounds }
 }
 
 /**

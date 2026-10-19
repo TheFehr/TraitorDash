@@ -154,6 +154,49 @@ function withoutDegenerate(soup: number[]): { kept: number[], dropped: number } 
   return { kept, dropped }
 }
 
+/**
+ * The triangles cut at the given heights, so that every piece lies between two of them. Wall
+ * triangles are big and slanted (a fan of one tall face spans many storeys); sorting whole
+ * triangles into a storey by their centre made a face half there and half missing when a storey is
+ * hidden. Cut pieces share their cut corners exactly, as each edge is cut the same way from either side.
+ */
+export function splitAtHeights(soup: number[], heights: number[]): number[] {
+  if (heights.length === 0) return soup
+  const out: number[] = []
+  type P = [number, number, number]
+  const cut = (a: P, b: P, h: number): P => {
+    const [lo, hi] = a[2] < b[2] || (a[2] === b[2] && (a[0] < b[0] || (a[0] === b[0] && a[1] <= b[1]))) ? [a, b] : [b, a]
+    const t = (h - lo[2]) / (hi[2] - lo[2])
+    return [lo[0] + (hi[0] - lo[0]) * t, lo[1] + (hi[1] - lo[1]) * t, h]
+  }
+  // Keep the part of a convex polygon above (keepAbove) or below the height h.
+  const clip = (poly: P[], h: number, keepAbove: boolean): P[] => {
+    const res: P[] = []
+    const inside = (p: P) => (keepAbove ? p[2] >= h : p[2] <= h)
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i]!, b = poly[(i + 1) % poly.length]!
+      const ia = inside(a), ib = inside(b)
+      if (ia) res.push(a)
+      if (ia !== ib && a[2] !== h && b[2] !== h) res.push(cut(a, b, h))
+    }
+    return res
+  }
+  for (let i = 0; i < soup.length; i += 9) {
+    const tri: P[] = [[soup[i]!, soup[i + 1]!, soup[i + 2]!], [soup[i + 3]!, soup[i + 4]!, soup[i + 5]!], [soup[i + 6]!, soup[i + 7]!, soup[i + 8]!]]
+    const zmin = Math.min(tri[0]![2], tri[1]![2], tri[2]![2]), zmax = Math.max(tri[0]![2], tri[1]![2], tri[2]![2])
+    const inner = heights.filter(h => h > zmin && h < zmax)
+    if (inner.length === 0) { out.push(...soup.slice(i, i + 9)); continue }
+    const edges = [-Infinity, ...inner, Infinity]
+    for (let s = 0; s + 1 < edges.length; s++) {
+      let poly = tri
+      if (edges[s]! > -Infinity) poly = clip(poly, edges[s]!, true)
+      if (edges[s + 1]! < Infinity) poly = clip(poly, edges[s + 1]!, false)
+      for (let k = 1; k + 1 < poly.length; k++) for (const p of [poly[0]!, poly[k]!, poly[k + 1]!]) out.push(p[0], p[1], p[2])
+    }
+  }
+  return out
+}
+
 /** Indexed vertices from a triangle soup: identical corners are one vertex. */
 function indexed(soup: number[]) {
   const ids = new Map<string, number>()
@@ -196,6 +239,7 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
   const count = Math.max(1, model.levels.length)
   const byLevel = Array.from({ length: count }, () => ({ floors: [] as number[], walls: [] as number[] }))
   for (let i = 0, n = 0; i < floors.length; i += 9, n++) byLevel[model.storeyOf(heights[n]!)]!.floors.push(...floors.slice(i, i + 9))
+  walls = withoutDegenerate(splitAtHeights(walls, model.bounds)).kept
   for (let i = 0; i < walls.length; i += 9) byLevel[model.levels.length ? model.storeyOf(centre(walls, i)) : 0]!.walls.push(...walls.slice(i, i + 9))
 
   const doc = new Document()

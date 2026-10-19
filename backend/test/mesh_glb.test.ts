@@ -1,7 +1,7 @@
 import { expect, test, describe } from 'bun:test'
 import { NodeIO } from '@gltf-transform/core'
 import validator from 'gltf-validator'
-import { surfacesToGlb, cropTriangles, planBounds, spawnBounds, expandBounds, removeSkybox } from '../src/services/meshGlb'
+import { surfacesToGlb, cropTriangles, planBounds, spawnBounds, expandBounds, removeSkybox, splitAtHeights } from '../src/services/meshGlb'
 
 // RFC 11, 3.6: the exact geometry as glTF 2.0 (GLB): one node per level, floors and walls as two
 // primitives, the playable area only. The Khronos reference validator is the test oracle.
@@ -366,5 +366,53 @@ describe('removing the 3D skybox', () => {
     const cleaned = run([...main(), ...sky()], wall(0, 100, 0, 0, 800), [camera])
     const r = await ok(cleaned.floors, cleaned.walls)
     expect(r.info.triangles).toBe(cleaned.floors.length / 9 + cleaned.walls.length / 9)
+  })
+})
+
+describe('splitAtHeights (a tall wall is cut where one storey ends, so hiding a storey leaves a clean edge)', () => {
+  const area = (s: number[]) => {
+    let a = 0
+    for (let i = 0; i < s.length; i += 9) {
+      const u = [s[i + 3]! - s[i]!, s[i + 4]! - s[i + 1]!, s[i + 5]! - s[i + 2]!], v = [s[i + 6]! - s[i]!, s[i + 7]! - s[i + 1]!, s[i + 8]! - s[i + 2]!]
+      a += Math.hypot(u[1]! * v[2]! - u[2]! * v[1]!, u[2]! * v[0]! - u[0]! * v[2]!, u[0]! * v[1]! - u[1]! * v[0]!) / 2
+    }
+    return a
+  }
+  const zs = (s: number[]) => s.filter((_, i) => i % 3 === 2)
+  // A slanted wall triangle that reaches from z = 0 to z = 400.
+  const tall = [0, 0, 0, 200, 100, 0, 100, 50, 400]
+
+  test('with no heights the triangles stay as they are', () => {
+    expect(splitAtHeights(tall, [])).toEqual(tall)
+  })
+
+  test('no piece crosses a cut height, and the area is the same', () => {
+    const out = splitAtHeights(tall, [100, 250])
+    expect(area(out)).toBeCloseTo(area(tall), 6)
+    for (let i = 0; i < out.length; i += 9) {
+      const z = zs(out.slice(i, i + 9))
+      for (const h of [100, 250]) expect(Math.min(...z) < h - 1e-9 && Math.max(...z) > h + 1e-9).toBe(false)
+    }
+    expect(out.length / 9).toBeGreaterThan(3)
+  })
+
+  test('a triangle that touches a height without crossing it is left whole', () => {
+    expect(splitAtHeights(tall, [0, 400])).toEqual(tall)
+  })
+
+  test('two triangles that share an edge are cut at the same points', () => {
+    const a = [0, 0, 0, 100, 0, 400, 0, 100, 400], b = [0, 0, 0, 100, 0, 400, 100, 0, 0]
+    const key = (s: number[]) => new Set(Array.from({ length: s.length / 3 }, (_, i) => s.slice(i * 3, i * 3 + 3).join(',')))
+    const ka = key(splitAtHeights(a, [123])), kb = key(splitAtHeights(b, [123]))
+    const shared = [...ka].filter(p => kb.has(p) && p.endsWith(',123'))
+    expect(shared.length).toBe(1)
+  })
+
+  test('the GLB puts each piece on one level, so the levels meet at a clean height', async () => {
+    // Floors at z = 0 and z = 300 make two levels; a wall from 0 to 300 reaches across both.
+    const r = await ok([...floor(0, 0, 0, 256), ...floor(300, 0, 0, 256)], [0, 0, 0, 256, 0, 300, 0, 0, 300])
+    expect(r.info.levels).toHaveLength(2)
+    expect(r.info.levels[0]!.wallTriangles).toBeGreaterThan(0)
+    expect(r.info.levels[1]!.wallTriangles).toBeGreaterThan(0)
   })
 })

@@ -256,7 +256,7 @@ export const MapPage = ({ server, map, name, next, plan, geometry }: MapPageProp
             </div>
             <label class="flex items-center gap-2 text-gray-300"><input type="checkbox" data-walls checked /> Walls</label>
           </div>
-          <p class="text-xs text-gray-500">Drag to turn, scroll or pinch to zoom, right-drag to move. Floors are coloured by level, lowest green.</p>
+          <p class="text-xs text-gray-500">Drag to turn, scroll or pinch to zoom, right-drag to move. Floors are coloured by level, lowest green. A simplified map (no doors, glass or props): it shows the layout, not what a player could see.</p>
         </div>
         <script defer src="/public/mapview.js"></script>
       </section>
