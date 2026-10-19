@@ -90,6 +90,8 @@ export function validatePlan(body: any): { plan: MapPlan } | { error: string } {
 export const heightColour = (t: number) => `hsl(${Math.round(240 - 240 * t)} 70% 50%)`
 
 const PX = 8 // picture pixels per grid cell
+const LEGEND_WIDTH = 180 // the narrowest picture that holds its legend
+const LEGEND_STRIP = 36 // the height of the legend strip below the plan
 export const MAX_PREVIEW_RECTS = 50_000
 
 type Grid = MapPlan['grid']
@@ -230,8 +232,24 @@ export function renderPlanSvg(grid: Grid, map: string, level?: number): string |
   const x1 = drawn ? Math.min(grid.nx, maxI + 3) * PX : Math.max(1, grid.nx) * PX
   const y0 = drawn ? Math.max(0, grid.ny - 1 - maxJ - 2) * PX : 0
   const y1 = drawn ? Math.min(grid.ny, grid.ny - minJ + 2) * PX : Math.max(1, grid.ny) * PX
-  const legend = drawn
+  // The legend: a title line over the plan, and a strip below it (so it never covers a square) with
+  // the colour scale and the meaning of the faint square. Drawn with <path>, never <rect>, so it is
+  // not counted as squares of the plan. The picture is widened to fit it.
+  const title = drawn
     ? `<text x="${x0 + 4}" y="${y0 + 12}" fill="#ddd" font-family="sans-serif" font-size="10">${caption || 'all floors · '}${lo} to ${hi}</text>`
     : ''
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${x1 - x0}" height="${y1 - y0}" viewBox="${x0} ${y0} ${x1 - x0} ${y1 - y0}" style="background:#111"><title>${esc(map)}</title>${rects.join('')}${dots.join('')}${legend}</svg>`
+  const wide = drawn ? Math.max(x1 - x0, LEGEND_WIDTH) : x1 - x0
+  const strip = drawn ? LEGEND_STRIP : 0
+  const sy = y1 // the strip starts where the plan ends
+  const bar = 140
+  const legend = drawn
+    ? `<defs><linearGradient id="scale" x1="0" x2="1" y1="0" y2="0">${[0, 1, 2, 3, 4, 5, 6].map(i => `<stop offset="${i / 6}" stop-color="${heightColour(i / 6)}"/>`).join('')}</linearGradient></defs>` +
+      `<path data-legend="scale" d="M${x0 + 4} ${sy + 6}h${bar}v6h-${bar}z" fill="url(#scale)"/>` +
+      `<text x="${x0 + 4}" y="${sy + 22}" fill="#ccc" font-family="sans-serif" font-size="9">${lo}</text>` +
+      `<text x="${x0 + 4 + bar}" y="${sy + 22}" fill="#ccc" font-family="sans-serif" font-size="9" text-anchor="end">${hi}</text>` +
+      `<path data-legend="crouch" d="M${x0 + 4} ${sy + 26}h8v8h-8z" fill="${heightColour(0.5)}" fill-opacity=".4"/>` +
+      `<path data-legend="crouch-dot" d="M${x0 + 5} ${sy + 27}h2v2h-2z" fill="#fff"/>` +
+      `<text x="${x0 + 16}" y="${sy + 33}" fill="#ccc" font-family="sans-serif" font-size="9">crouch-only</text>`
+    : ''
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${wide}" height="${y1 - y0 + strip}" viewBox="${x0} ${y0} ${wide} ${y1 - y0 + strip}" style="background:#111"><title>${esc(map)}</title>${rects.join('')}${dots.join('')}${title}${legend}</svg>`
 }

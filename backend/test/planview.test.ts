@@ -76,10 +76,11 @@ describe('renderPlanSvg', () => {
     expect(r.some(t => attr(t, 'fill-opacity') === '.4')).toBe(false)
   })
 
-  test('crops to the cells that are drawn, with a two-cell margin', () => {
+  test('crops to the cells that are drawn, with a two-cell margin, and makes room for the legend', () => {
     const rows = Array.from({ length: 10 }, (_, j) => Array.from({ length: 10 }, (_, i) => (i === 5 && j === 5 ? '48' : '')).join('|'))
     const s = svg(rows)
-    expect(/viewBox="([^"]*)"/.exec(s)![1]).toBe('24 16 40 40')
+    // 5 x 5 cells drawn area (with margin) is 40 x 40 pixels: widened to fit the legend (180) and taller by its strip (36)
+    expect(/viewBox="([^"]*)"/.exec(s)![1]).toBe('24 16 180 76')
   })
 
   test('states that it shows all floors and their height range', () => {
@@ -249,6 +250,58 @@ describe('renderPlanSvg: one storey', () => {
 
   test('a storey that does not exist is null-safe: the caller checks planLevels first', () => {
     expect(planLevels(two()).length).toBe(2)
+  })
+})
+
+describe('the legend inside every picture', () => {
+  const many = () => storeys({ 48: 40, 272: 40 })
+  const texts = (s: string) => (s.match(/<text[^>]*>[^<]*<\/text>/g) ?? []).map(t => t.replace(/<[^>]+>/g, ''))
+
+  test('a gradient bar in the same colours as the squares', () => {
+    const s = renderPlanSvg(many(), 'ttt_a')!
+    expect(s).toContain('<linearGradient')
+    for (let i = 0; i <= 6; i++) expect(s).toContain(`stop-color="${heightColour(i / 6)}"`)
+    expect(s.indexOf(`stop-color="${heightColour(0)}"`)).toBeLessThan(s.indexOf(`stop-color="${heightColour(1)}"`)) // blue first, red last
+    expect(s).toMatch(/<path [^>]*data-legend="scale"[^>]*fill="url\(#scale\)"|<path [^>]*fill="url\(#scale\)"[^>]*data-legend="scale"/)
+  })
+
+  test('the bar is labelled with the lowest and highest height drawn in this picture', () => {
+    expect(texts(renderPlanSvg(many(), 'ttt_a')!)).toEqual(expect.arrayContaining(['48', '272']))
+    const l2 = texts(renderPlanSvg(storeys({ 48: 40, 272: 40, 500: 40 }), 'ttt_a', 2)!)
+    expect(l2).toEqual(expect.arrayContaining(['272']))
+    expect(l2).not.toContain('500')
+  })
+
+  test('explains the faint square with a dot as crouch-only', () => {
+    const s = renderPlanSvg(many(), 'ttt_a')!
+    expect(texts(s)).toContain('crouch-only')
+    // a sample square drawn like a crouch-only cell: faint, with the white dot
+    const sample = (s.match(/<path [^>]*data-legend="crouch"[^>]*>/g) ?? [])
+    expect(sample).toHaveLength(1)
+    expect(sample[0]).toContain('fill-opacity=".4"')
+    const dot = (s.match(/<path [^>]*data-legend="crouch-dot"[^>]*>/g) ?? [])
+    expect(dot).toHaveLength(1)
+    expect(dot[0]).toContain('fill="#fff"')
+  })
+
+  test('the legend sits below the plan, inside the picture, and never over a square', () => {
+    const s = renderPlanSvg(grid(Array(10).fill('48|48')), 'ttt_a')! // tall enough that the plan is deeper than the legend's labels
+    const [x, y, w, h] = /viewBox="([^"]*)"/.exec(s)![1]!.split(' ').map(Number) as [number, number, number, number]
+    const strip = h - 36
+    const legendTops = (s.match(/<text[^>]*font-size="9"[^>]*>/g) ?? []).map(t => Number(attr(t, 'y')))
+    expect(legendTops.length).toBeGreaterThan(0)
+    for (const ty of legendTops) expect(ty).toBeGreaterThan(y + strip) // every legend label is below the plan area
+    for (const t of s.match(/<rect [^>]*>/g) ?? []) expect(Number(attr(t, 'y')) + Number(attr(t, 'height'))).toBeLessThanOrEqual(y + strip) // no square reaches into the strip
+    expect(w).toBeGreaterThanOrEqual(180)
+    expect(x).toBe(0)
+  })
+
+  test('an empty plan has no legend to draw', () => {
+    expect(renderPlanSvg(grid(['||']), 'ttt_a')!).not.toContain('linearGradient')
+  })
+
+  test('the legend is not made of <rect>, so it never counts as squares of the plan', () => {
+    expect(rects(renderPlanSvg(storeys({ 48: 40 }), 'ttt_a')!).every(t => !/data-legend/.test(t))).toBe(true)
   })
 })
 
