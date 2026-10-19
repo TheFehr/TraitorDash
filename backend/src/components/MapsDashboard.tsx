@@ -180,10 +180,18 @@ export interface MapPageProps {
   name: string
   next: string | null
   plan: (MapPlanMeta & { levels: Level[] }) | null
+  /** Exact geometry (RFC 11); undefined when the operator has not switched the feature on. */
+  geometry?: { requested: boolean, status?: string, detail?: string | null, info?: { vertices: number, triangles: number, levels: number } | null }
+}
+
+const GeometryBadge = ({ status }: { status: string }) => {
+  const tone = status === 'parsed' ? 'green' : status === 'failed' ? 'red' : 'yellow'
+  const label = { queued: 'Queued', fetching: 'Fetching', parsed: 'Parsed', failed: 'Failed', unknown: 'Unknown' }[status] ?? 'Unknown'
+  return <Badge tone={tone}>{label}</Badge>
 }
 
 /** One map: its status, and its floor plan, a picture per level (RFC 10, 4.5). Admins only. */
-export const MapPage = ({ server, map, name, next, plan }: MapPageProps) => (
+export const MapPage = ({ server, map, name, next, plan, geometry }: MapPageProps) => (
   <div class="p-4 sm:p-8 space-y-8 sm:space-y-10">
     <header>
       <nav class="text-xs font-black text-gray-500 uppercase tracking-widest mb-4 flex flex-wrap gap-x-2">
@@ -200,6 +208,29 @@ export const MapPage = ({ server, map, name, next, plan }: MapPageProps) => (
         {map ? <><StatusBadges m={map} next={next} /><span class="ml-2">{fmtMapSize(map.size)}</span></> : <span>Not in the server's latest map list.</span>}
       </div>
     </header>
+
+    {geometry && (
+      <section>
+        <h2 class="text-sm font-black uppercase tracking-widest text-gray-400 mb-3">Exact geometry</h2>
+        <div class="bg-gray-800 border border-gray-700 rounded-xl p-6 space-y-3 text-sm text-gray-300">
+          {!geometry.requested ? (
+            <p>Off. Turning it on makes the backend fetch this map's file from the Steam Workshop once and keep a simplified 3D mesh of its floors and walls. The file itself is deleted afterwards.</p>
+          ) : (
+            <p class="flex flex-wrap items-center gap-2">
+              <GeometryBadge status={geometry.status ?? 'queued'} />
+              {geometry.status === 'parsed' && geometry.info && <span>{geometry.info.triangles} triangles, {geometry.info.levels} {geometry.info.levels === 1 ? 'level' : 'levels'}</span>}
+              {geometry.status === 'failed' && geometry.detail && <span class="text-gray-400">{geometry.detail}</span>}
+              {geometry.status === 'unknown' && <span class="text-gray-400">The server has not reported a fingerprint for this map.</span>}
+            </p>
+          )}
+          <form method="post" action={`/servers/${server.id}/maps/${encodeURIComponent(name)}/geometry`} class="flex flex-wrap gap-3">
+            <input type="hidden" name="on" value={geometry.requested ? '0' : '1'} />
+            <button type="submit" class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white font-bold transition">{geometry.requested ? 'Turn off' : 'Turn on'}</button>
+            {geometry.status === 'parsed' && <a class="px-4 py-2 rounded-lg text-gray-300 hover:text-white underline" href={`/servers/${server.id}/maps/${encodeURIComponent(name)}/mesh.glb`}>Download GLB</a>}
+          </form>
+        </div>
+      </section>
+    )}
 
     <section>
       <h2 class="text-sm font-black uppercase tracking-widest text-gray-400 mb-3">Floor plan</h2>

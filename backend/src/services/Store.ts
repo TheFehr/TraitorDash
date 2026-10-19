@@ -16,6 +16,14 @@ const newToken = () => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).t
 /** Stats history kept per server; older rounds are removed as new ones arrive. */
 export const MAX_ROUNDS_PER_SERVER = 50_000
 
+export interface GeometryState {
+  fingerprint: string | null
+  /** queued | fetching | parsed | failed | unknown (the map has no fingerprint) */
+  status: string
+  detail: string | null
+  info: { vertices: number, triangles: number, levels: number } | null
+}
+
 export interface MapPlanMeta {
   map: string, fingerprint: string | null, cell: number, nx: number, ny: number
   floorCells: number, crouchFloors: number, seeds: number, scannedAt: string
@@ -137,6 +145,7 @@ export class Store {
     db.run('DELETE FROM server_maps WHERE server_id = ?', [id])
     db.run('DELETE FROM server_map_state WHERE server_id = ?', [id])
     db.run('DELETE FROM map_plans WHERE server_id = ?', [id])
+    db.run('DELETE FROM map_geometry_requests WHERE server_id = ?', [id])
     db.run('DELETE FROM servers WHERE id = ?', [id])
   }
 
@@ -245,6 +254,92 @@ export class Store {
   static getMapPlan(serverId: string, map: string): string | null {
     const row = db.prepare('SELECT plan FROM map_plans WHERE server_id = ? AND map_name = ?').get(serverId, map) as { plan: string } | null
     return row ? row.plan : null
+  }
+
+  /** Switches exact geometry on or off for one of the server's maps (RFC 11, 3.1). */
+  static setGeometryRequested(serverId: string, map: string, on: boolean, steamId: string | null) {
+    if (on) {
+      // Asking again is how a failed attempt is retried.
+      db.prepare("DELETE FROM map_geometry WHERE map_name = ? AND status = 'failed'").run(map)
+      db.prepare('INSERT OR IGNORE INTO map_geometry_requests (server_id, map_name, requested_by, requested_at) VALUES (?, ?, ?, ?)')
+        .run(serverId, map, steamId, new Date().toISOString())
+    } else {
+      db.prepare('DELETE FROM map_geometry_requests WHERE server_id = ? AND map_name = ?').run(serverId, map)
+    }
+  }
+
+  /**
+   * For each map the server asked geometry for: the state of the row for the fingerprint the server
+   * reported. `queued` when no row exists yet; `unknown` when the map has no fingerprint (nothing to
+   * fetch against). Meshes are not loaded.
+   */
+  static getGeometryStates(serverId: string): Map<string, GeometryState> {
+    const rows = db.prepare(`
+      SELECT r.map_name AS map, m.fingerprint AS fingerprint, g.status AS status, g.detail AS detail, g.info AS info
+      FROM map_geometry_requests r
+      LEFT JOIN server_maps m ON m.server_id = r.server_id AND m.name = r.map_name
+      LEFT JOIN map_geometry g ON g.map_name = r.map_name AND g.fingerprint = m.fingerprint
+      WHERE r.server_id = ?
+    `).all(serverId) as any[]
+    const out = new Map<string, GeometryState>()
+    for (const r of rows) {
+      out.set(r.map, {
+        fingerprint: r.fingerprint ?? null,
+        status: r.fingerprint ? (r.status ?? 'queued') : 'unknown',
+        detail: r.detail ?? null,
+        info: r.info ? JSON.parse(r.info) : null,
+      })
+    }
+    return out
+  }
+
+  /** Requested (server, map, fingerprint) triples that no job has picked up yet, oldest request first. */
+  static getGeometryQueue(): { map: string, fingerprint: string }[] {
+    return db.prepare(`
+      SELECT r.map_name AS map, m.fingerprint AS fingerprint
+      FROM map_geometry_requests r
+      JOIN server_maps m ON m.server_id = r.server_id AND m.name = r.map_name AND m.fingerprint IS NOT NULL
+      LEFT JOIN map_geometry g ON g.map_name = r.map_name AND g.fingerprint = m.fingerprint
+      WHERE g.status IS NULL
+      GROUP BY r.map_name, m.fingerprint
+      ORDER BY MIN(r.requested_at)
+    `).all() as any[]
+  }
+
+  /** Records that a job has taken the map (so it is not started twice), or replaces an earlier failure. */
+  static startGeometry(map: string, fingerprint: string): boolean {
+    const now = new Date().toISOString()
+    const r = db.prepare(`
+      INSERT INTO map_geometry (map_name, fingerprint, status, created_at) VALUES (?, ?, 'fetching', ?)
+      ON CONFLICT(map_name, fingerprint) DO UPDATE SET status = 'fetching', detail = NULL, created_at = excluded.created_at
+      WHERE status = 'failed'
+    `).run(map, fingerprint, now)
+    return r.changes > 0
+  }
+
+  static finishGeometry(map: string, fingerprint: string, r: { mesh: Uint8Array, info: unknown } | { error: string }) {
+    if ('error' in r) {
+      db.prepare("UPDATE map_geometry SET status = 'failed', detail = ?, mesh = NULL, info = NULL WHERE map_name = ? AND fingerprint = ?")
+        .run(r.error.slice(0, 300), map, fingerprint)
+    } else {
+      db.prepare("UPDATE map_geometry SET status = 'parsed', detail = NULL, mesh = ?, info = ? WHERE map_name = ? AND fingerprint = ?")
+        .run(r.mesh, JSON.stringify(r.info), map, fingerprint)
+    }
+  }
+
+  /** Jobs that were running when the process stopped never finish; a restart puts them back in the queue. */
+  static resetStaleGeometry() {
+    db.run("DELETE FROM map_geometry WHERE status = 'fetching'")
+  }
+
+  /** The stored mesh for the map as this server reported it (same fingerprint), or null. */
+  static getMesh(serverId: string, map: string): Uint8Array | null {
+    const row = db.prepare(`
+      SELECT g.mesh AS mesh FROM server_maps m
+      JOIN map_geometry g ON g.map_name = m.name AND g.fingerprint = m.fingerprint AND g.status = 'parsed'
+      WHERE m.server_id = ? AND m.name = ?
+    `).get(serverId, map) as { mesh: Uint8Array } | null
+    return row?.mesh ?? null
   }
 
   static updateHeartbeat(serverId: string) {

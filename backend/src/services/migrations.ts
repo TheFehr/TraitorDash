@@ -257,6 +257,33 @@ export const migrations: Array<(db: Database) => void> = [
         PRIMARY KEY (server_id, map_name)
       )
     `)
+  },
+
+  // v11: exact map geometry (RFC 11). The mesh belongs to the map file, so it is keyed by
+  // (map name, fingerprint) and shared by every server with that version. Who asked for it is per
+  // server, and kept apart from server_maps because a map report replaces that table as a whole.
+  (db) => {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS map_geometry (
+        map_name    TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        status      TEXT NOT NULL,
+        detail      TEXT,
+        mesh        BLOB,
+        info        TEXT,
+        created_at  TEXT NOT NULL,
+        PRIMARY KEY (map_name, fingerprint)
+      )
+    `)
+    db.run(`
+      CREATE TABLE IF NOT EXISTS map_geometry_requests (
+        server_id    TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+        map_name     TEXT NOT NULL,
+        requested_by TEXT,
+        requested_at TEXT NOT NULL,
+        PRIMARY KEY (server_id, map_name)
+      )
+    `)
   }
 ]
 

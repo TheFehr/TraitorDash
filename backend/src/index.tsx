@@ -7,6 +7,7 @@ import auth from './routes/auth'
 import { Store } from './services/Store'
 import { getRolesWithState } from './services/roles'
 import { getAdminId } from './middleware/session'
+import { geometryEnabled, kickGeometryQueue } from './services/mapgeometry'
 import { sameOrigin } from './middleware/csrf'
 
 // Components
@@ -179,6 +180,11 @@ app.get('/servers/:serverId/maps', async (c) => {
   )
 })
 
+const geometryProp = (serverId: string, name: string) => {
+  const g = Store.getGeometryStates(serverId).get(name)
+  return g ? { requested: true, ...g } : { requested: false }
+}
+
 /** One map and its floor plan, a picture per level (RFC 10, 4.5). Admins only; everyone else goes back to the list. */
 app.get('/servers/:serverId/maps/:map', async (c) => {
   const steamId = await getAdminId(c)
@@ -198,7 +204,8 @@ app.get('/servers/:serverId/maps/:map', async (c) => {
   const next = state && state.next && state.next !== state.current ? state.next : null
   return c.html(
     <Layout steamId={steamId} path="/">
-      <MapPage server={server} map={map} name={name} next={next} plan={plan} />
+      <MapPage server={server} map={map} name={name} next={next} plan={plan}
+        geometry={geometryEnabled() && map ? geometryProp(serverId, name) : undefined} />
     </Layout>
   )
 })
@@ -234,6 +241,38 @@ app.get('/servers/:serverId/maps/:map/plan.json', async (c) => {
   if (!plan) return c.text('Not found', 404)
   c.header('Cache-Control', 'no-store')
   return c.body(plan, 200, { 'Content-Type': 'application/json' })
+})
+
+/** Exact geometry on or off for one map (RFC 11, 3.1). Admins only; the operator switch must be on. */
+app.post('/servers/:serverId/maps/:map/geometry', async (c) => {
+  const steamId = await getAdminId(c)
+  if (!steamId) return c.text('Unauthorized', 401)
+  if (!geometryEnabled()) return c.text('Not found', 404)
+  const serverId = c.req.param('serverId'), name = c.req.param('map')
+  const { maps } = Store.getMaps(serverId)
+  if (!maps.some(m => m.name === name)) return c.text('Not found', 404)
+  const form = await c.req.parseBody()
+  const on = form.on === '1'
+  Store.setGeometryRequested(serverId, name, on, steamId)
+  Store.audit(serverId, steamId, on ? 'MAP_GEOMETRY_REQUESTED' : 'MAP_GEOMETRY_WITHDRAWN', name)
+  if (on) kickGeometryQueue()
+  return c.redirect(`/servers/${serverId}/maps/${encodeURIComponent(name)}`)
+})
+
+/**
+ * The map's mesh as a GLB (RFC 11, 3.6). Admins only until RFC 13 adds signed-in users.
+ * The body is a binary glTF the page loads into a viewer; it is never rendered as a page.
+ */
+app.get('/servers/:serverId/maps/:map/mesh.glb', async (c) => {
+  if (!(await getAdminId(c))) return c.text('Unauthorized', 401)
+  const mesh = Store.getMesh(c.req.param('serverId'), c.req.param('map'))
+  if (!mesh) return c.text('Not found', 404)
+  return c.body(mesh as Uint8Array<ArrayBuffer>, 200, {
+    'Content-Type': 'model/gltf-binary',
+    'X-Content-Type-Options': 'nosniff',
+    'Content-Security-Policy': "default-src 'none'",
+    'Cache-Control': 'no-store',
+  })
 })
 
 app.get('/servers/:serverId/players/:playerId', async (c) => {
@@ -298,6 +337,8 @@ export const STARTUP_LOG_LINE = '[TraitorDash] Listening on port'
 // so the line is logged right after, and only when run as the program (not by the tests).
 if (import.meta.main) {
   setTimeout(() => console.log(`${STARTUP_LOG_LINE} ${port} (source ${sourceHash()})`), 0)
+  Store.resetStaleGeometry()
+  kickGeometryQueue()
 }
 
 export default {
