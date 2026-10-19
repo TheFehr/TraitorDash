@@ -10,6 +10,10 @@ if SERVER then
         print("[TraitorDash] ERROR: Could not find " .. path)
     end
 
+    -- Position tracking is optional and off by default (traitordash_track); stats.lua calls it.
+    local okTrack, errTrack = pcall(include, "traitordash/track.lua")
+    if not okTrack then print("[TraitorDash] Position tracking failed to load: " .. tostring(errTrack)) end
+
     -- Stats are optional: a failure here must never take the bridge down with it.
     local ok, err = pcall(include, "traitordash/stats.lua")
     if not ok then print("[TraitorDash] Stats tracker failed to load: " .. tostring(err)) end

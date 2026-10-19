@@ -72,6 +72,7 @@ end
 
 local function Begin()
     round = { id = NewRoundId(), startedAt = os.time(), players = {}, deaths = {}, order = {} }
+    local tracked = {}
 
     for _, ply in ipairs(player.GetAll()) do
         if #round.order >= MAX_PLAYERS then break end
@@ -81,11 +82,14 @@ local function Begin()
             if sid then
                 round.players[sid] = { steam_id = sid, nick = ply:Nick(), role = RoleName(ply), team = ply:GetTeam() }
                 round.order[#round.order + 1] = sid
+                tracked[#tracked + 1] = { sid = sid, ply = ply }
             end
         end
     end
 
     Dbg(string.format("round %s began on %s with %d players", round.id, game.GetMap(), #round.order))
+    -- Position tracking (track.lua, RFC 12) is opt-in and does nothing unless traitordash_track is 1.
+    if TraitorDash.Track then TraitorDash.Track.Begin(round.id, tracked) end
 end
 
 local function Death(victim, inflictor, attacker)
@@ -100,10 +104,12 @@ local function Death(victim, inflictor, attacker)
 
     round.deaths[#round.deaths + 1] = { victim = vsid, attacker = asid, at = math.floor(os.time() - round.startedAt) }
     round.players[vsid].died = true
+    if TraitorDash.Track then TraitorDash.Track.Death(victim, inflictor, attacker, vsid, asid) end
     Dbg(string.format("death: %s (%s) <- %s", round.players[vsid].nick, round.players[vsid].role, asid or "world"))
 end
 
-local function Send(payload)
+-- `accepted` runs when the backend has accepted the round (the position track is sent after that).
+local function Send(payload, accepted)
     -- Same configuration as the bridge (config.lua): the file or the ConVars, https or private only.
     local cfg = TraitorDash.GetConfig and TraitorDash.GetConfig()
     if not cfg or not cfg.url or cfg.token == "" then return end
@@ -118,6 +124,10 @@ local function Send(payload)
         success = function(code, body)
             if code == 200 then
                 Dbg("round " .. payload.round_id .. " accepted: " .. tostring(body))
+                if accepted then
+                    local ok, err = pcall(accepted)
+                    if not ok then print("[TraitorDash:stats] track upload error: " .. tostring(err)) end
+                end
             else
                 print("[TraitorDash:stats] round rejected (HTTP " .. tostring(code) .. "): " .. tostring(body):sub(1, 200))
             end
@@ -133,6 +143,8 @@ local function End(rawResult)
     if not round then Dbg("round ended but none was in progress; ignored") return end
     local r = round
     round = nil
+    -- The recording always stops with the round, whatever happens to the report below.
+    local track = TraitorDash.Track and TraitorDash.Track.Finish(r.id) or nil
 
     local result = NormalizeResult(rawResult)
     local winners = WinningTeam(result)
@@ -169,7 +181,7 @@ local function End(rawResult)
         result = result,
         players = players,
         deaths = r.deaths,
-    })
+    }, track and function() TraitorDash.Track.Upload(track) end or nil)
 end
 
 hook.Add("TTTPrepareRound", "TraitorDash_StatsReset", Safe("prepare", function() round = nil end))
