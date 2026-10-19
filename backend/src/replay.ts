@@ -1,7 +1,7 @@
 /// <reference lib="dom" />
 import {
   WebGLRenderer, Scene, PerspectiveCamera, OrthographicCamera, HemisphereLight, DirectionalLight, AmbientLight, Box3, Vector3, Color, Group, Mesh,
-  MeshStandardMaterial, MeshBasicMaterial, CapsuleGeometry, ConeGeometry, BoxGeometry, InstancedMesh, Matrix4, Object3D, Plane, Sprite, SpriteMaterial,
+  MeshStandardMaterial, MeshBasicMaterial, SphereGeometry, RingGeometry, DoubleSide, ConeGeometry, BoxGeometry, InstancedMesh, Matrix4, Object3D, Plane, Sprite, SpriteMaterial,
   CanvasTexture, BufferGeometry, Float32BufferAttribute, Line, LineSegments, LineBasicMaterial, type Camera, type MeshStandardMaterial as StdMat,
 } from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
@@ -64,7 +64,6 @@ async function start(root: HTMLElement) {
   let ms = 0, playing = false, speed = 1, last = 0
   let selected = defaultSelection(ids, viewer, data.deaths)
   let camMode: 'orbit' | 'top' | 'follow' = 'orbit'
-  let markerScale = 1 // grows with the map, so a player is still seen from far away
   let followLevel = true
   let upTo: number | 'all' = 'all'
 
@@ -155,7 +154,7 @@ async function start(root: HTMLElement) {
   const wallMeshes: Mesh[] = []
   let bounds = new Box3(new Vector3(-512, -512, -64), new Vector3(512, 512, 256)) // Source coordinates
 
-  const finish = (b: Box3) => { bounds = b; markerScale = Math.max(1, b.getSize(new Vector3()).length() / 2200) }
+  const finish = (b: Box3) => { bounds = b }
 
   // The extent of all the positions in the track: the grid is fitted to it, and so is a map without a mesh.
   const trackBox = new Box3()
@@ -231,43 +230,99 @@ async function start(root: HTMLElement) {
   }
 
   // ---- markers
-  const bodyGeo = new CapsuleGeometry(16, 40, 4, 12)
-  bodyGeo.rotateX(Math.PI / 2) // upright along Source's Z
-  const arrowGeo = new ConeGeometry(9, 30, 10)
-  arrowGeo.rotateZ(-Math.PI / 2) // points along +x
-  const crossGeo = new BoxGeometry(46, 8, 8)
+  // A player is drawn at the size of a Source player: a box 32 wide and 72 tall, the eyes at 64. It is
+  // never enlarged to be seen; what keeps a player findable from far away is a pin and a name that
+  // stay the same size on the screen, whatever the distance.
+  const legGeo = new BoxGeometry(12, 12, 34)
+  const torsoGeo = new BoxGeometry(16, 28, 26)
+  const armGeo = new BoxGeometry(8, 8, 26)
+  const headGeo = new SphereGeometry(9, 16, 12)
+  const noseGeo = new ConeGeometry(3, 9, 8)
+  noseGeo.rotateZ(-Math.PI / 2) // points along +x, where the player faces
+  const groundArrowGeo = new ConeGeometry(7, 26, 10)
+  groundArrowGeo.rotateZ(-Math.PI / 2)
+  const ringGeo = new RingGeometry(26, 32, 40)
+  const matte = (c: number) => new MeshStandardMaterial({ color: c, metalness: 0, roughness: 0.8 })
+  const LEGS = 0x2b3547, SKIN = 0xe2c3a0
 
-  interface Marker { group: Group, body: Mesh, arrow: Mesh, label: Sprite, trail: Line, cross: Group, segs: Segment[] }
-  const markers = new Map<string, Marker>()
-  const labelTexture = (name: string, colour: number) => {
+  /** A person standing at the origin facing +x, in the team's colour; `dim` for a body that lies where its player died. */
+  const figure = (colour: number, dim: boolean) => {
+    const g = new Group()
+    const cloth = matte(dim ? new Color(colour).multiplyScalar(0.45).getHex() : colour)
+    const legs = matte(dim ? 0x1c2230 : LEGS), skin = matte(dim ? 0x8a7660 : SKIN)
+    for (const y of [-7, 7]) { const l = new Mesh(legGeo, legs); l.position.set(0, y, 17); g.add(l) }
+    const torso = new Mesh(torsoGeo, cloth); torso.position.z = 47
+    const head = new Mesh(headGeo, skin); head.position.z = 63
+    const nose = new Mesh(noseGeo, skin); nose.position.set(10, 0, 63)
+    g.add(torso, head, nose)
+    for (const y of [-18, 18]) { const a = new Mesh(armGeo, cloth); a.position.set(0, y, 47); g.add(a) }
+    return g
+  }
+
+  /** A sprite that is the same size on the screen at any distance. `size` is a fraction of the view's height. */
+  const screenSprite = (map: CanvasTexture, w: number, h: number) => {
+    const sp = new Sprite(new SpriteMaterial({ map, depthTest: false, transparent: true, sizeAttenuation: false }))
+    sp.scale.set(w, h, 1)
+    sp.renderOrder = 10
+    return sp
+  }
+  const canvasTexture = (w: number, h: number, draw: (g: CanvasRenderingContext2D) => void) => {
     const c = document.createElement('canvas')
-    c.width = 256; c.height = 64
-    const g = c.getContext('2d')!
+    c.width = w; c.height = h
+    draw(c.getContext('2d')!)
+    return new CanvasTexture(c)
+  }
+  const pinTexture = (colour: number, heading: boolean) => canvasTexture(heading ? 128 : 64, heading ? 128 : 64, g => {
+    const c = heading ? 64 : 32, r = heading ? 22 : 24
+    if (heading) { // a pointer to the right (+x); the sprite is turned to the player's heading
+      g.beginPath(); g.moveTo(c + r + 22, c); g.lineTo(c + r - 2, c - 15); g.lineTo(c + r - 2, c + 15); g.closePath()
+      g.fillStyle = '#ffffff'; g.fill()
+    }
+    g.beginPath(); g.arc(c, c, r, 0, Math.PI * 2)
+    g.fillStyle = hex(colour); g.fill()
+    g.lineWidth = 6; g.strokeStyle = '#ffffff'; g.stroke()
+  })
+  const crossTexture = (colour: number) => canvasTexture(64, 64, g => {
+    g.lineCap = 'round'
+    for (const [lw, st] of [[16, '#000000'], [9, hex(colour)]] as const) {
+      g.lineWidth = lw; g.strokeStyle = st
+      g.beginPath(); g.moveTo(14, 14); g.lineTo(50, 50); g.moveTo(50, 14); g.lineTo(14, 50); g.stroke()
+    }
+  })
+  const labelTexture = (name: string, colour: number) => canvasTexture(256, 64, g => {
     g.font = 'bold 30px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'
     g.lineWidth = 6; g.strokeStyle = 'rgba(0,0,0,0.85)'; g.strokeText(name, 128, 32)
     g.fillStyle = hex(colour); g.fillText(name, 128, 32)
-    return new CanvasTexture(c)
-  }
+  })
+
+  interface Marker { group: Group, pin: Sprite, label: Sprite, ring: Mesh, trail: Line, corpse: Group, deadPin: Sprite, plain: CanvasTexture, pointer: CanvasTexture, segs: Segment[] }
+  const markers = new Map<string, Marker>()
+  const PIN = 0.03, LABEL_H = 0.036
   for (const id of ids) {
     const colour = colourOf(id)
     const group = new Group()
-    const mat = new MeshStandardMaterial({ color: colour, metalness: 0, roughness: 0.7 })
-    const body = new Mesh(bodyGeo, mat); body.position.z = 36
-    const arrow = new Mesh(arrowGeo, new MeshStandardMaterial({ color: 0xffffff, metalness: 0, roughness: 0.7 })); arrow.position.set(30, 0, 48)
-    const label = new Sprite(new SpriteMaterial({ map: labelTexture(nick(id), colour), depthTest: false, transparent: true }))
-    label.scale.set(120, 30, 1); label.position.z = 96; label.renderOrder = 10
-    group.add(body, arrow, label)
-    const trailGeo = new BufferGeometry()
-    const trail = new Line(trailGeo, new LineBasicMaterial({ color: colour, transparent: true, opacity: 0.6 }))
+    group.add(figure(colour, false))
+    const arrow = new Mesh(groundArrowGeo, matte(0xffffff)); arrow.position.set(40, 0, 2)
+    const ring = new Mesh(ringGeo, new MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, side: DoubleSide })); ring.position.z = 1.5; ring.visible = false
+    const plain = pinTexture(colour, false), pointer = pinTexture(colour, true)
+    const pin = screenSprite(plain, PIN, PIN); pin.position.z = 86
+    const label = screenSprite(labelTexture(nick(id), colour), LABEL_H * 4, LABEL_H); label.position.z = 86; label.center.set(0.5, -0.55)
+    group.add(arrow, ring, pin, label)
+
+    const trail = new Line(new BufferGeometry(), new LineBasicMaterial({ color: colour, transparent: true, opacity: 0.6 }))
     trail.frustumCulled = false
-    const cross = new Group()
-    const cm = new MeshBasicMaterial({ color: colour })
-    const c1 = new Mesh(crossGeo, cm), c2 = new Mesh(crossGeo, cm)
-    c1.rotation.z = Math.PI / 4; c2.rotation.z = -Math.PI / 4
-    c1.position.z = c2.position.z = 6
-    cross.add(c1, c2); cross.visible = false
-    world.add(group, trail, cross)
-    markers.set(id, { group, body, arrow, label, trail, cross, segs: data.players.get(id) ?? [] })
+
+    // Where a player died: their body lies there, with a cross over it.
+    const corpse = new Group()
+    const lying = figure(colour, true)
+    lying.rotation.y = -Math.PI / 2 // onto its back, head towards -x
+    lying.position.z = 9
+    const deadPin = screenSprite(crossTexture(colour), PIN, PIN); deadPin.position.z = 50
+    corpse.add(lying, deadPin)
+    corpse.visible = false
+
+    world.add(group, trail, corpse)
+    markers.set(id, { group, pin, label, ring, trail, corpse, deadPin, plain, pointer, segs: data.players.get(id) ?? [] })
   }
   const killGeo = new BufferGeometry()
   killGeo.setAttribute('position', new Float32BufferAttribute(new Float32Array(6), 3))
@@ -349,26 +404,42 @@ async function start(root: HTMLElement) {
 
   // ---- what is shown at time `ms`
   const tmp = new Vector3()
+  // Pins and names are the same size on the screen. A perspective camera does that by itself
+  // (sizeAttenuation off); an orthographic one does not, so there they are sized by what the view shows.
+  const spriteUnit = () => (camera === ortho ? ((ortho.top - ortho.bottom) / ortho.zoom) / (2 * Math.tan((persp.fov * Math.PI) / 360)) : 1)
   const apply = () => {
+    const unit = spriteUnit(), top = camera === ortho
     for (const [id, m] of markers) {
       const p = poseAt(m.segs, ms)
       // A player on a level above the one shown would float in the air; one below is hidden by the floor, so its name is dimmed.
       const lv = p && levels.length > 0 && bg.kind !== 'none' ? levelOf(levels, p.z) : 0
       const above = typeof upTo === 'number' && lv > upTo
+      const dim = typeof upTo === 'number' && lv > 0 && lv < upTo
       m.group.visible = p !== null && !above
-      ;(m.label.material as SpriteMaterial).opacity = typeof upTo === 'number' && lv > 0 && lv < upTo ? 0.35 : 1
+      ;(m.label.material as SpriteMaterial).opacity = dim ? 0.35 : 1
+      ;(m.pin.material as SpriteMaterial).opacity = dim ? 0.35 : 1
       if (p) {
         m.group.position.set(p.x, p.y, p.z)
         m.group.rotation.z = (p.yaw / 256) * Math.PI * 2
-        // the label must not turn with the body
-        ;(m.label.material as SpriteMaterial).rotation = 0
       }
+      // from above the bodies are specks, so the pin itself points the way the player faces
+      const pinMat = m.pin.material as SpriteMaterial
+      const want = top ? m.pointer : m.plain
+      if (pinMat.map !== want) { pinMat.map = want; pinMat.needsUpdate = true }
+      pinMat.rotation = top && p ? (p.yaw / 256) * Math.PI * 2 : 0
+      m.pin.scale.set(PIN * unit * (top ? 2 : 1), PIN * unit * (top ? 2 : 1), 1)
+      m.label.scale.set(LABEL_H * 4 * unit, LABEL_H * unit, 1)
+      m.deadPin.scale.set(PIN * unit, PIN * unit, 1)
       const isSel = id === selected
-      m.group.scale.setScalar(markerScale * (isSel ? 1.35 : 1))
-      m.cross.scale.setScalar(markerScale)
+      m.ring.visible = isSel // the selected player is marked on the ground, not by a bigger body
       const death = data.deaths.find(d => d.victim === id && d.t <= ms)
-      m.cross.visible = !!death
-      if (death) m.cross.position.set(death.at[0], death.at[1], death.at[2])
+      const deathLevel = death && levels.length > 0 && bg.kind !== 'none' ? levelOf(levels, death.at[2]) : 0
+      m.corpse.visible = !!death && !(typeof upTo === 'number' && deathLevel > upTo)
+      if (death) {
+        m.corpse.position.set(death.at[0], death.at[1], death.at[2])
+        const last = lastPoseAt(m.segs, death.t)
+        m.corpse.rotation.z = last ? (last.yaw / 256) * Math.PI * 2 : 0
+      }
       const trail = trailBetween(m.segs, ms - TRAIL_MS, ms)
       const pts = trail.length >= 6 ? trail : []
       m.trail.geometry.setAttribute('position', new Float32BufferAttribute(pts, 3))
@@ -397,8 +468,8 @@ async function start(root: HTMLElement) {
       const px = sel.x, py = sel.y, pz = sel.z
       const dx = Math.cos(a), dy = Math.sin(a)
       // Source (x, y, z) -> three (x, z, -y)
-      persp.position.set(px - dx * 320 * markerScale, pz + 230 * markerScale, -(py - dy * 320 * markerScale))
-      tmp.set(px + dx * 100, pz + 40, -(py + dy * 100))
+      persp.position.set(px - dx * 300, pz + 170, -(py - dy * 300))
+      tmp.set(px + dx * 90, pz + 50, -(py + dy * 90))
       persp.lookAt(tmp)
     }
     scrub.value = String(ms)
