@@ -22,6 +22,10 @@ if SERVER then
     local ok, err = pcall(include, "traitordash/stats.lua")
     if not ok then print("[TraitorDash] Stats tracker failed to load: " .. tostring(err)) end
 
+    -- Console-only bot scenario for exercising position tracking (see the file header).
+    local okTt, errTt = pcall(include, "traitordash/track_test.lua")
+    if not okTt then print("[TraitorDash] Track test scenario failed to load: " .. tostring(errTt)) end
+
     -- Console-only bot scenario for exercising the stats tracker (see the file header).
     local okTest, errTest = pcall(include, "traitordash/stats_test.lua")
     if not okTest then print("[TraitorDash] Stats test scenario failed to load: " .. tostring(errTest)) end
