@@ -5,9 +5,10 @@ import { serveStatic } from 'hono/bun'
 // Routes & Services
 import api from './routes/api'
 import auth from './routes/auth'
-import { Store } from './services/Store'
+import { Store, viewLogDays } from './services/Store'
 import { getRolesWithState } from './services/roles'
-import { getAdminId } from './middleware/session'
+import { getAdminId, getSession, openSignin, signinUrl, type Session } from './middleware/session'
+import { gated } from './services/gates'
 import { geometryEnabled, kickGeometryQueue, setGeometryFetcher } from './services/mapgeometry'
 import { helperAvailable, workshopFetcher } from './services/workshop'
 import { sameOrigin } from './middleware/csrf'
@@ -26,7 +27,7 @@ import { MapsDashboard, MapPage } from './components/MapsDashboard'
 import { renderPlanSvg, planLevels } from './services/mapplan'
 import * as stats from './services/stats'
 
-const app = new Hono()
+export const app = new Hono<{ Variables: { session: Session } }>()
 
 // Expired and used pairing codes (RFC 9) are removed on startup and then hourly.
 Store.cleanupPairingCodes()
@@ -39,6 +40,12 @@ app.use('*', sameOrigin)
 // API & Auth Mounting
 app.route('/api', api)
 app.route('/auth', auth)
+
+/** A signed-in visitor who is not an admin (RFC 13): the header shows their SteamID64 and no admin links. */
+const userOf = async (c: any): Promise<string | undefined> => {
+  const session = await getSession(c)
+  return session && !session.admin ? session.steamId : undefined
+}
 
 /**
  * Liveness and identity: which code is running. Unauthenticated on purpose (monitoring and
@@ -75,7 +82,7 @@ app.get('/', async (c) => {
   
   if (!steamId) {
     return c.html(
-      <Layout path="/">
+      <Layout user={await userOf(c)} path="/">
         <ServerTileView servers={servers} />
       </Layout>
     )
@@ -149,7 +156,7 @@ app.get('/servers/:serverId/stats', async (c) => {
   const opts = { bots: c.req.query('bots') === '1' }
 
   return c.html(
-    <Layout steamId={steamId || undefined} path="/">
+    <Layout steamId={steamId || undefined} user={await userOf(c)} path="/">
       <StatsDashboard
         server={server}
         overview={stats.getOverview(serverId, opts)}
@@ -212,10 +219,15 @@ app.get('/servers/:serverId/maps', async (c) => {
   if (!server) return c.redirect('/')
 
   const { state, maps } = Store.getMaps(serverId)
+  const user = await userOf(c)
+  // The 3D view is for signed-in users (RFC 13); an anonymous visitor is offered it only when sign-in is open.
+  const meshes = geometryEnabled() && (steamId || user || openSignin())
+    ? new Set([...Store.getGeometryStates(serverId)].filter(([, g]) => g.status === 'parsed').map(([name]) => name))
+    : undefined
   return c.html(
-    <Layout steamId={steamId || undefined} path="/">
+    <Layout steamId={steamId || undefined} user={user} path="/">
       <MapsDashboard server={server} state={state} maps={maps} admin={!!steamId} showAll={!!steamId && c.req.query('all') === '1'}
-        plans={steamId ? Store.getMapPlans(serverId) : undefined} />
+        plans={steamId ? Store.getMapPlans(serverId) : undefined} meshes={meshes} signedIn={!!(steamId || user)} viewLogDays={viewLogDays()} />
     </Layout>
   )
 })
@@ -225,26 +237,33 @@ const geometryProp = (serverId: string, name: string) => {
   return g ? { requested: true, ...g } : { requested: false }
 }
 
-/** One map and its floor plan, a picture per level (RFC 10, 4.5). Admins only; everyone else goes back to the list. */
+/**
+ * One map (RFC 10, 4.5). An admin sees its floor plan and the geometry switch; a signed-in user
+ * (RFC 13) sees the 3D view, when the map has one; an anonymous visitor is sent to sign-in when
+ * sign-in is open, and back to the list when it is not.
+ */
 app.get('/servers/:serverId/maps/:map', async (c) => {
-  const steamId = await getAdminId(c)
+  const session = await getSession(c)
   const serverId = c.req.param('serverId')
   const server = Store.getServerById(serverId)
   if (!server) return c.redirect('/')
-  if (!steamId) return c.redirect(`/servers/${serverId}/maps`)
-
   const name = c.req.param('map')
+  if (!session) return c.redirect(openSignin() ? signinUrl(`/servers/${serverId}/maps/${encodeURIComponent(name)}`) : `/servers/${serverId}/maps`)
+
   const { state, maps } = Store.getMaps(serverId)
   const map = maps.find(m => m.name === name) ?? null
   const grid = Store.getMapPlan(serverId, name)
   if (!map && !grid) return c.redirect(`/servers/${serverId}/maps`)
 
-  const meta = Store.getMapPlans(serverId).find(p => p.map === name)
+  const g = Store.getGeometryStates(serverId).get(name)
+  if (!session.admin && (!geometryEnabled() || g?.status !== 'parsed')) return c.redirect(`/servers/${serverId}/maps`) // nothing for a plain user to see
+
+  const meta = session.admin ? Store.getMapPlans(serverId).find(p => p.map === name) : undefined
   const plan = meta && grid ? { ...meta, levels: planLevels(JSON.parse(grid)) } : null
   const next = state && state.next && state.next !== state.current ? state.next : null
   return c.html(
-    <Layout steamId={steamId} path="/">
-      <MapPage server={server} map={map} name={name} next={next} plan={plan}
+    <Layout steamId={session.admin ? session.steamId : undefined} user={session.admin ? undefined : session.steamId} path="/">
+      <MapPage server={server} map={map} name={name} next={next} plan={plan} admin={session.admin}
         geometry={geometryEnabled() && map ? geometryProp(serverId, name) : undefined} />
     </Layout>
   )
@@ -300,13 +319,15 @@ app.post('/servers/:serverId/maps/:map/geometry', async (c) => {
 })
 
 /**
- * The map's mesh as a GLB (RFC 11, 3.6). Admins only until RFC 13 adds signed-in users.
- * The body is a binary glTF the page loads into a viewer; it is never rendered as a page.
+ * The map's mesh as a GLB (RFC 11, 3.6): for signed-in users (RFC 13), counted per account, and
+ * every open is logged once an hour. The body is a binary glTF the page loads into a viewer; it is
+ * never rendered as a page.
  */
-app.get('/servers/:serverId/maps/:map/mesh.glb', async (c) => {
-  if (!(await getAdminId(c))) return c.text('Unauthorized', 401)
-  const mesh = Store.getMesh(c.req.param('serverId'), c.req.param('map'))
+app.get('/servers/:serverId/maps/:map/mesh.glb', gated('mesh'), async (c) => {
+  const serverId = c.req.param('serverId'), map = c.req.param('map')
+  const mesh = Store.getMesh(serverId, map)
   if (!mesh) return c.text('Not found', 404)
+  Store.logView(serverId, c.get('session').steamId, 'VIEW_MESH', map)
   return c.body(mesh as Uint8Array<ArrayBuffer>, 200, {
     'Content-Type': 'model/gltf-binary',
     'X-Content-Type-Options': 'nosniff',
@@ -324,7 +345,7 @@ app.get('/servers/:serverId/players/:playerId', async (c) => {
   if (!server || !player || (stats.isBotId(player.steamId) && c.req.query('bots') !== '1')) return c.redirect(`/servers/${serverId}/stats`)
 
   return c.html(
-    <Layout steamId={steamId || undefined} path="/">
+    <Layout steamId={steamId || undefined} user={await userOf(c)} path="/">
       <PlayerStats server={server} player={player} admin={!!steamId} />
     </Layout>
   )
@@ -390,6 +411,9 @@ if (import.meta.main) {
     process.exit(1)
   }
   Store.enforceAllTrackLimits()
+  // Views of gated content are kept for VIEW_LOG_DAYS (RFC 13, 6.3): cleaned now and once a day.
+  Store.cleanupViewLog()
+  setInterval(() => Store.cleanupViewLog(), 24 * 3600 * 1000).unref()
 }
 
 export default {

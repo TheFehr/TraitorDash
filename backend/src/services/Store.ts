@@ -14,6 +14,12 @@ const SERVER_COLS = 'id, name, last_seen'
 /** 256 random bits, hex. Shown to an admin once; only its hash is stored. */
 const newToken = () => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('hex')
 
+/** How long views of gated content are kept, in days (RFC 13, 6.3); 0 switches the logging off. */
+export const viewLogDays = () => {
+  const raw = (process.env.VIEW_LOG_DAYS ?? '').trim()
+  return /^\d+$/.test(raw) ? Number(raw) : 90
+}
+
 /** Stats history kept per server; older rounds are removed as new ones arrive. */
 export const MAX_ROUNDS_PER_SERVER = 50_000
 
@@ -133,6 +139,29 @@ export class Store {
   static audit(serverId: string | null, steamId: string | null, action: string, details?: string) {
     db.prepare('INSERT INTO audit_log (server_id, steam_id, action, details) VALUES (?, ?, ?, ?)')
       .run(serverId, steamId, action, details ?? null)
+  }
+
+  /**
+   * Writes one row for a signed-in user opening gated content (RFC 13, 6.3): the account, the server,
+   * what was opened. The same user opening the same thing again within the hour is one row.
+   * `days` 0 switches the log off. Returns whether a row was written.
+   */
+  static logView(serverId: string, steamId: string, action: 'VIEW_REPLAY' | 'VIEW_MESH', what: string, days: number = viewLogDays()): boolean {
+    if (days <= 0) return false
+    const recent = db.prepare(
+      "SELECT 1 FROM audit_log WHERE steam_id = ? AND action = ? AND details = ? AND server_id = ? AND timestamp > datetime('now', '-1 hour') LIMIT 1"
+    ).get(steamId, action, what, serverId)
+    if (recent) return false
+    Store.audit(serverId, steamId, action, what)
+    return true
+  }
+
+  /** Removes view rows older than `days` (RFC 13, 6.3). With 0 the log is off and the rows are removed too. */
+  static cleanupViewLog(days: number = viewLogDays()): number {
+    const r = days <= 0
+      ? db.prepare("DELETE FROM audit_log WHERE action IN ('VIEW_REPLAY', 'VIEW_MESH')").run()
+      : db.prepare("DELETE FROM audit_log WHERE action IN ('VIEW_REPLAY', 'VIEW_MESH') AND timestamp < datetime('now', ?)").run(`-${Math.floor(days)} days`)
+    return r.changes
   }
 
   static deleteServer(id: string) {

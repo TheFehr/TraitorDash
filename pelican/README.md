@@ -7,7 +7,7 @@ with one that:
   for exactly that line (Bun's own "Started development server" line is only printed in development mode,
   so with `NODE_ENV=production` a generic egg stays on "starting" forever);
 - takes the configuration as **egg variables** instead of values typed into the startup command:
-  `BASE_URL`, `ADMIN_STEAM_IDS`, `SESSION_SECRET` (at least 32 characters, admin-only), `NODE_ENV`, `MAIN_FILE`, `MAP_GEOMETRY`;
+  `BASE_URL`, `ADMIN_STEAM_IDS`, `SESSION_SECRET` (at least 32 characters, admin-only), `NODE_ENV`, `MAIN_FILE`, `MAP_GEOMETRY`, `OPEN_SIGNIN`, `BLOCKED_STEAM_IDS`, `VIEW_LOG_DAYS`;
 - has no git/clone logic: the files are put in the volume by whatever deploys the app (for example
   the `backend.tar.gz` from the `main-latest` release, unpacked into the server's files), and the
   startup command only runs `bun install --production` and the app.

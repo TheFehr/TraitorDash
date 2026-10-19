@@ -7,7 +7,11 @@ const FAVICON = `data:image/svg+xml,${encodeURIComponent(
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text x="50" y="50" font-size="80" text-anchor="middle" dominant-baseline="central">${LOGO_EMOJI}</text></svg>`
 )}`
 
-export const Layout = ({ children, steamId, path }: { children: any, steamId?: string, path?: string }) => (
+/**
+ * `steamId` is an admin's (as before: it shows the Servers link). `user` is a signed-in visitor who
+ * is not an admin (RFC 13, 4.5): their SteamID64, a logout, and no admin links.
+ */
+export const Layout = ({ children, steamId, user, path }: { children: any, steamId?: string, user?: string, path?: string }) => (
   <html lang="en">
     <head>
       <meta charset="UTF-8" />
@@ -37,11 +41,18 @@ export const Layout = ({ children, steamId, path }: { children: any, steamId?: s
                 <div class="hidden sm:block h-4 w-px bg-gray-700"></div>
                 <div class="flex items-center gap-3 bg-gray-900/50 px-3 py-1.5 rounded-full border border-gray-700 shrink-0">
                   <span class="hidden sm:inline text-xs text-gray-500 font-mono">{steamId}</span>
+                  <span data-admin-mark class="text-[10px] font-black uppercase tracking-widest text-red-400 border border-red-500/40 rounded px-1.5 py-0.5">admin</span>
                   <form method="post" action="/auth/logout" class="contents"><button type="submit" class="text-red-500 hover:text-red-400 text-xs font-black uppercase">Logout</button></form>
                 </div>
               </div>
             )}
-            {!steamId && (
+            {!steamId && user && (
+              <div data-user class="flex items-center gap-3 bg-gray-900/50 px-3 py-1.5 rounded-full border border-gray-700 shrink-0">
+                <span class="hidden sm:inline text-xs text-gray-500 font-mono">{user}</span>
+                <form method="post" action="/auth/logout" class="contents"><button type="submit" class="text-red-500 hover:text-red-400 text-xs font-black uppercase">Logout</button></form>
+              </div>
+            )}
+            {!steamId && !user && (
               <a href="/auth/steam" class="transition transform hover:scale-105">
                 <img src="https://community.cloudflare.steamstatic.com/public/images/signinthroughsteam/sits_01.png" alt="Login with Steam" class="h-8" />
               </a>

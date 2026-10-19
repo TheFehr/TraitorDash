@@ -5,6 +5,7 @@ import { ServerManager } from '../components/ServerManager'
 import { requireSession } from '../middleware/session'
 import { normalizeConVarValue, formatConVarCommand } from '../services/convars'
 import { RateLimiter } from '../services/rateLimit'
+import { clientAddress } from '../services/gates'
 import { validatePlan, MAX_PLAN_BYTES } from '../services/mapplan'
 import { formatCode } from '../services/pairing'
 import { validateTrack, MAX_TRACK_BYTES } from '../services/tracks'
@@ -600,13 +601,6 @@ export const pairLimiter = new RateLimiter(5, 60_000)
 export const pairGlobalLimiter = new RateLimiter(30, 60_000)
 const MAX_PAIR_BODY = 512
 const PAIR_FAILED = { error: 'invalid or expired code' }
-
-/** The last X-Forwarded-For entry is the one our own proxy appended; earlier ones are client-supplied. */
-const clientAddress = (c: any): string | null => {
-  if (process.env.TRUST_PROXY !== '1') return null
-  const forwarded = c.req.header('X-Forwarded-For')
-  return forwarded ? forwarded.split(',').pop()!.trim() || null : null
-}
 
 api.post('/v1/pair', async (c) => {
   c.header('Cache-Control', 'no-store')

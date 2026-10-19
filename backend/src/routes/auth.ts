@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { setSignedCookie, setCookie, getCookie, deleteCookie } from 'hono/cookie'
-import { SESSION_SECRET, SESSION_COOKIE, SESSION_COOKIE_SECURE, isAdmin } from '../middleware/session'
+import { SESSION_SECRET, SESSION_COOKIE, SESSION_COOKIE_SECURE, isAdmin, openSignin, isBlocked, safeNext } from '../middleware/session'
 
 const auth = new Hono()
 
@@ -11,6 +11,7 @@ const REALM = (process.env.BASE_URL || 'http://localhost:3000').trim().replace(/
 const CALLBACK_URL = `${REALM}/auth/steam/callback`
 const STEAM_CLAIMED_ID = /^https:\/\/steamcommunity\.com\/openid\/id\/(\d{17})$/
 const LOGIN_COOKIE = 'td_login'
+const NEXT_COOKIE = 'td_next'
 
 // Each login attempt carries a random value that is also kept in a cookie in the browser that
 // started it. The callback only accepts an assertion whose return_to contains that same value,
@@ -18,6 +19,13 @@ const LOGIN_COOKIE = 'td_login'
 const returnUrl = (state: string) => `${CALLBACK_URL}?td_state=${state}`
 
 auth.get('/steam', (c) => {
+  // Where to land afterwards (RFC 13, 4.2): kept beside the one-time state, and checked again at the callback.
+  const next = safeNext(c.req.query('next'))
+  if (next) {
+    setCookie(c, NEXT_COOKIE, next, { path: '/auth', httpOnly: true, secure: REALM.startsWith('https://'), maxAge: 600, sameSite: 'Lax' })
+  } else {
+    deleteCookie(c, NEXT_COOKIE, { path: '/auth' })
+  }
   const state = Buffer.from(crypto.getRandomValues(new Uint8Array(24))).toString('hex')
   setCookie(c, LOGIN_COOKIE, state, {
     path: '/auth',
@@ -45,6 +53,8 @@ auth.get('/steam/callback', async (c) => {
   // 0. Only an assertion made for THIS login attempt, by Steam, for a Steam account.
   const state = getCookie(c, LOGIN_COOKIE)
   deleteCookie(c, LOGIN_COOKIE, { path: '/auth' })
+  const next = safeNext(getCookie(c, NEXT_COOKIE))
+  deleteCookie(c, NEXT_COOKIE, { path: '/auth' })
   const claimedId = query['openid.claimed_id']
   const claimed = claimedId ? STEAM_CLAIMED_ID.exec(claimedId) : null
   // Which check failed goes in the log (never the state value itself), so a failed login can
@@ -90,9 +100,17 @@ auth.get('/steam/callback', async (c) => {
     // 3. The SteamID64 (already shape-checked above)
     const steamId = claimed[1]!
 
+    // An admin on the allow-list always signs in (it cannot be blocked, so a typo cannot lock the
+    // operator out). Anyone else needs open sign-in to be on (RFC 13, 4.7) and must not be blocked.
     if (!isAdmin(steamId)) {
-      console.warn(`[Auth] Login denied for non-admin SteamID ${steamId}`)
-      return c.text('This Steam account is not authorized to administer TraitorDash.', 403)
+      if (!openSignin()) {
+        console.warn(`[Auth] Login denied for non-admin SteamID ${steamId}`)
+        return c.text('This Steam account is not authorized to administer TraitorDash.', 403)
+      }
+      if (isBlocked(steamId)) {
+        console.warn(`[Auth] Login denied for blocked SteamID ${steamId}`)
+        return c.text('This Steam account may not sign in.', 403)
+      }
     }
 
     // 4. Set Secure Signed Session
@@ -104,7 +122,7 @@ auth.get('/steam/callback', async (c) => {
       sameSite: 'Lax',
     })
 
-    return c.redirect('/')
+    return c.redirect(next ?? '/')
   } catch (err) {
     console.error('[Auth] Error:', err)
     return c.text('Internal Auth Error', 500)

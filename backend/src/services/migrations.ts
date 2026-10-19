@@ -330,6 +330,11 @@ export const migrations: Array<(db: Database) => void> = [
     `)
     db.run('ALTER TABLE servers ADD COLUMN track_keep_count INTEGER')
     db.run('ALTER TABLE servers ADD COLUMN track_keep_mb INTEGER')
+  },
+
+  // v14: the once-an-hour check of the view log (RFC 13, 5) looks up one user's recent views.
+  (db) => {
+    db.run('CREATE INDEX IF NOT EXISTS idx_audit_views ON audit_log (steam_id, action, details, timestamp)')
   }
 ]
 

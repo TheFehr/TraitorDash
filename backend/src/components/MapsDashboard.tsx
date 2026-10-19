@@ -1,3 +1,4 @@
+import { signinUrl } from '../middleware/session'
 import { Heartbeat } from './Heartbeat'
 import type { MapRow, MapsState, MapPlanMeta } from '../services/Store'
 import { heightColour, type Level } from '../services/mapplan'
@@ -91,9 +92,15 @@ export interface MapsDashboardProps {
   plans?: MapPlanMeta[]
   /** An admin's opt-in (?all=1) to list the maps outside the vote pool; never honoured for guests. */
   showAll?: boolean
+  /** The maps that have a 3D view (RFC 11), when the visitor may be offered it (RFC 13): signed in, or sign-in is open. */
+  meshes?: Set<string>
+  /** Whether the visitor is signed in (admins and users): they get the link, others a link that signs in first. */
+  signedIn?: boolean
+  /** How many days a view is logged (RFC 13, 6.3); 0 means it is not. Said to the visitor next to the 3D links. */
+  viewLogDays?: number
 }
 
-export const MapsDashboard = ({ server, state, maps, admin, showAll, plans }: MapsDashboardProps) => {
+export const MapsDashboard = ({ server, state, maps, admin, showAll, plans, meshes, signedIn, viewLogDays }: MapsDashboardProps) => {
   // Players only care about the maps the vote can offer. A map the bridge could not classify is shown.
   const outside = maps.filter(m => m.inVotePool === false).length
   const listed = admin && showAll ? maps : maps.filter(m => m.inVotePool !== false)
@@ -143,6 +150,13 @@ export const MapsDashboard = ({ server, state, maps, admin, showAll, plans }: Ma
             </p>
           )}
 
+          {!admin && meshes && meshes.size > 0 && (
+            <p data-3d-note class="text-xs text-gray-500">
+              The 3D views are for signed-in visitors: any Steam account can sign in.
+              {viewLogDays ? ` Opening one is logged with your SteamID64 for ${viewLogDays} days.` : ''}
+            </p>
+          )}
+
           <div class="bg-gray-800 border border-gray-700 rounded-xl overflow-x-auto">
             <table class="w-full text-sm">
               <thead class="text-[10px] uppercase tracking-widest text-gray-500">
@@ -160,6 +174,9 @@ export const MapsDashboard = ({ server, state, maps, admin, showAll, plans }: Ma
                         <a href={`/servers/${server.id}/maps/${m.name}`}><Badge tone="green">Floor plan</Badge></a>
                       )}
                       {admin && plans?.some(p => p.map === m.name && planOutdated(p, m)) && <Badge tone="yellow">Outdated</Badge>}
+                      {!admin && meshes?.has(m.name) && (signedIn
+                        ? <a data-3d href={`/servers/${server.id}/maps/${encodeURIComponent(m.name)}`}><Badge tone="green">3D</Badge></a>
+                        : <a data-3d-signin href={signinUrl(`/servers/${server.id}/maps/${encodeURIComponent(m.name)}`)}><Badge tone="gray">3D: sign in</Badge></a>)}
                     </td>
                     {admin && <td class="p-3 text-right text-gray-400">{fmtMapSize(m.size)}</td>}
                   </tr>
@@ -182,6 +199,8 @@ export interface MapPageProps {
   plan: (MapPlanMeta & { levels: Level[] }) | null
   /** Exact geometry (RFC 11); undefined when the operator has not switched the feature on. */
   geometry?: { requested: boolean, status?: string, detail?: string | null, info?: { vertices: number, triangles: number, levels: number } | null }
+  /** An admin sees the floor plan and the geometry switch; a signed-in user (RFC 13) only the 3D view. Default: admin. */
+  admin?: boolean
 }
 
 const MV_BTN = 'px-3 py-1 rounded-md bg-gray-800 border border-gray-700 text-gray-300 hover:text-white aria-pressed:bg-red-600 aria-pressed:border-red-500 aria-pressed:text-white transition'
@@ -193,13 +212,13 @@ const GeometryBadge = ({ status }: { status: string }) => {
 }
 
 /** One map: its status, and its floor plan, a picture per level (RFC 10, 4.5). Admins only. */
-export const MapPage = ({ server, map, name, next, plan, geometry }: MapPageProps) => (
+export const MapPage = ({ server, map, name, next, plan, geometry, admin = true }: MapPageProps) => (
   <div class="p-4 sm:p-8 space-y-8 sm:space-y-10">
     <header>
       <nav class="text-xs font-black text-gray-500 uppercase tracking-widest mb-4 flex flex-wrap gap-x-2">
         <a href="/" class="hover:text-white transition">Dashboard</a>
         <span>/</span>
-        <a href={`/servers/${server.id}`} class="hover:text-white transition">{server.name}</a>
+        {admin ? <a href={`/servers/${server.id}`} class="hover:text-white transition">{server.name}</a> : <span>{server.name}</span>}
         <span>/</span>
         <a href={`/servers/${server.id}/maps`} class="hover:text-white transition">Maps</a>
         <span>/</span>
@@ -211,7 +230,7 @@ export const MapPage = ({ server, map, name, next, plan, geometry }: MapPageProp
       </div>
     </header>
 
-    {geometry && (
+    {admin && geometry && (
       <section>
         <h2 class="text-sm font-black uppercase tracking-widest text-gray-400 mb-3">Exact geometry</h2>
         <div class="bg-gray-800 border border-gray-700 rounded-xl p-6 space-y-3 text-sm text-gray-300">
@@ -262,7 +281,7 @@ export const MapPage = ({ server, map, name, next, plan, geometry }: MapPageProp
       </section>
     )}
 
-    <section>
+    {admin && <section>
       <h2 class="text-sm font-black uppercase tracking-widest text-gray-400 mb-3">Floor plan</h2>
       {plan === null ? (
         <div class="bg-gray-800 border border-gray-700 rounded-xl p-6 text-gray-400 text-sm">
@@ -295,6 +314,6 @@ export const MapPage = ({ server, map, name, next, plan, geometry }: MapPageProp
           </div>
         </>
       )}
-    </section>
+    </section>}
   </div>
 )

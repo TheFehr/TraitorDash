@@ -113,6 +113,47 @@
         "string",
         "in:0,1"
       ]
+    },
+    {
+      "sort": 7,
+      "name": "Open sign-in",
+      "description": "1 lets any Steam account sign in (RFC 13), not only the admins: signed-in users may open the 3D map views and, later, round replays. Admin rights still come only from ADMIN_STEAM_IDS. Off by default; anyone with a Steam account can sign in when on.",
+      "env_variable": "OPEN_SIGNIN",
+      "default_value": "0",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": [
+        "required",
+        "string",
+        "in:0,1"
+      ]
+    },
+    {
+      "sort": 8,
+      "name": "Blocked Steam IDs",
+      "description": "Comma-separated SteamID64s that may not sign in or keep a session when open sign-in is on. An admin on ADMIN_STEAM_IDS cannot be blocked. Empty by default.",
+      "env_variable": "BLOCKED_STEAM_IDS",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": [
+        "nullable",
+        "string"
+      ]
+    },
+    {
+      "sort": 9,
+      "name": "View log days",
+      "description": "How many days views of gated content (3D maps, replays) are kept in the audit log with the viewer's SteamID64. 0 switches the logging off.",
+      "env_variable": "VIEW_LOG_DAYS",
+      "default_value": "90",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": [
+        "required",
+        "integer",
+        "min:0"
+      ]
     }
   ]
 }

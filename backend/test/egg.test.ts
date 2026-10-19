@@ -73,6 +73,18 @@ describe('the installer script (exact map geometry, RFC 11)', () => {
     expect(vars.MAP_GEOMETRY.rules).toContain('in:0,1')
   })
 
+  test('the sign-in variables are declared with safe defaults, and the app reads the same names', () => {
+    expect(vars.OPEN_SIGNIN.default_value).toBe('0')
+    expect(vars.OPEN_SIGNIN.rules).toContain('in:0,1')
+    expect(vars.BLOCKED_STEAM_IDS.default_value).toBe('')
+    expect(vars.BLOCKED_STEAM_IDS.rules).toContain('nullable')
+    expect(vars.VIEW_LOG_DAYS.default_value).toBe('90')
+    const session = fs.readFileSync(path.join(root, 'backend/src/middleware/session.ts'), 'utf8')
+    expect(session).toContain('process.env.OPEN_SIGNIN')
+    expect(session).toContain('process.env.BLOCKED_STEAM_IDS')
+    expect(fs.readFileSync(path.join(root, 'backend/src/services/Store.ts'), 'utf8')).toContain('process.env.VIEW_LOG_DAYS')
+  })
+
   test('the app reads the same variable', () => {
     expect(fs.readFileSync(path.join(root, 'backend/src/services/mapgeometry.ts'), 'utf8')).toContain("process.env.MAP_GEOMETRY === '1'")
   })
