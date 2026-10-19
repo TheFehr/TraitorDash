@@ -76,9 +76,10 @@ const NEEDED = [
   { i: 1, name: 'planes', record: 20 }, { i: 3, name: 'vertices', record: 12 }, { i: 6, name: 'texinfo', record: 72 },
   { i: 7, name: 'faces', record: 56 }, { i: 12, name: 'edges', record: 4 }, { i: 13, name: 'surfedges', record: 4 },
   { i: 14, name: 'models', record: 48 },
+  { i: 26, name: 'displacement info', record: 176 }, { i: 33, name: 'displacement vertices', record: 20 },
 ] as const
-const L = { PLANES: 1, VERTEXES: 3, TEXINFO: 6, FACES: 7, EDGES: 12, SURFEDGES: 13, MODELS: 14 } as const
-const RECORD = { PLANES: 20, VERTEXES: 12, TEXINFO: 72, FACES: 56, EDGES: 4, SURFEDGES: 4, MODELS: 48 } as const
+const L = { PLANES: 1, VERTEXES: 3, TEXINFO: 6, FACES: 7, EDGES: 12, SURFEDGES: 13, MODELS: 14, DISPINFO: 26, DISPVERTS: 33 } as const
+const RECORD = { PLANES: 20, VERTEXES: 12, TEXINFO: 72, FACES: 56, EDGES: 4, SURFEDGES: 4, MODELS: 48, DISPINFO: 176, DISPVERTS: 20 } as const
 
 // Faces a player never meets: sky, triggers, nodraw, hints, skip.
 const SKIP_FLAGS = 0x4 | 0x2 | 0x40 | 0x80 | 0x100 | 0x200
@@ -96,13 +97,18 @@ export interface Surfaces {
   /** Triangles as flat x, y, z, x, y, z, ... in whole map units. */
   floors: number[]
   walls: number[]
-  stats: { faces: number, floorFaces: number, wallFaces: number, ceilingFaces: number, skipped: number, displacements: number, otherModelFaces: number }
+  stats: {
+    faces: number, floorFaces: number, wallFaces: number, ceilingFaces: number, skipped: number, otherModelFaces: number
+    /** Displacements (terrain) drawn, and the triangles they made (ceilings among them are dropped like any ceiling). */
+    displacements: number, displacementTriangles: number
+  }
 }
 
 /**
  * The floors (surfaces a player can stand on) and the walls of the world model, as triangles.
- * Ceilings, sky, triggers and the like are left out; so are doors and lifts (other brush models)
- * and displacements (terrain), which are counted in `stats` and not drawn in this version.
+ * Ceilings, sky, triggers and the like are left out, and so are doors and lifts (other brush
+ * models). A displacement (terrain) is turned into its grid of triangles: the face's four corners
+ * are interpolated across the grid and every vertex is pushed along its own direction.
  */
 export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {}): Promise<Surfaces> {
   const lim = { ...DEFAULT_LIMITS, ...limits }
@@ -130,12 +136,15 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
   const nPlanes = count(L.PLANES, RECORD.PLANES), nVerts = count(L.VERTEXES, RECORD.VERTEXES), nTex = count(L.TEXINFO, RECORD.TEXINFO)
   const nFaces = count(L.FACES, RECORD.FACES), nEdges = count(L.EDGES, RECORD.EDGES), nSurf = count(L.SURFEDGES, RECORD.SURFEDGES)
   const nModels = count(L.MODELS, RECORD.MODELS)
+  const nDispInfo = count(L.DISPINFO, RECORD.DISPINFO), nDispVerts = count(L.DISPVERTS, RECORD.DISPVERTS)
   if (nFaces > lim.maxFaces) throw new BspError(`too many faces (${nFaces}, the limit is ${lim.maxFaces})`)
   if (nVerts > lim.maxVertices) throw new BspError(`too many vertices (${nVerts}, the limit is ${lim.maxVertices})`)
+  if (nDispVerts > lim.maxVertices) throw new BspError(`too many displacement vertices (${nDispVerts}, the limit is ${lim.maxVertices})`)
   if (nModels < 1) throw new BspError('the map has no world model')
 
   const planes = data[L.PLANES]!, verts = data[L.VERTEXES]!, tex = data[L.TEXINFO]!, faces = data[L.FACES]!
   const edges = data[L.EDGES]!, surf = data[L.SURFEDGES]!, models = data[L.MODELS]!
+  const dispInfo = data[L.DISPINFO]!, dispVerts = data[L.DISPVERTS]!
 
   // The vertices are checked once, all of them: a corrupt coordinate is refused even if no face uses it.
   const xyz = new Float64Array(nVerts * 3)
@@ -156,7 +165,7 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
   }
 
   const floors: number[] = [], walls: number[] = []
-  const stats = { faces: numFaces, floorFaces: 0, wallFaces: 0, ceilingFaces: 0, skipped: 0, displacements: 0, otherModelFaces }
+  const stats = { faces: numFaces, floorFaces: 0, wallFaces: 0, ceilingFaces: 0, skipped: 0, otherModelFaces, displacements: 0, displacementTriangles: 0 }
   for (let f = firstFace; f < firstFace + numFaces; f++) {
     const at = f * RECORD.FACES
     const plane = faces.getUint16(at, true), side = faces.getUint8(at + 2)
@@ -168,16 +177,12 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
     if (numEdges < 3 || numEdges > MAX_FACE_EDGES) throw new BspError(`face ${f} has ${numEdges} edges`)
     if (firstEdge < 0 || firstEdge + numEdges > nSurf) throw new BspError(`face ${f} reaches past the surfedges`)
 
-    if (dispinfo >= 0) { stats.displacements++; continue }
     if ((tex.getInt32(texinfo * RECORD.TEXINFO + 64, true) & SKIP_FLAGS) !== 0) { stats.skipped++; continue }
 
-    const nx = planes.getFloat32(plane * RECORD.PLANES, true), ny = planes.getFloat32(plane * RECORD.PLANES + 4, true)
-    const nzRaw = planes.getFloat32(plane * RECORD.PLANES + 8, true)
-    if (!Number.isFinite(nx) || !Number.isFinite(ny) || !Number.isFinite(nzRaw)) throw new BspError(`plane ${plane} is not a finite number`)
-    const nz = side ? -nzRaw : nzRaw
-    if (nz <= -FLOOR_NZ + 1e-6) { stats.ceilingFaces++; continue }
-    const isFloor = nz + 1e-6 >= FLOOR_NZ
-    if (isFloor) stats.floorFaces++; else stats.wallFaces++
+    let nx = planes.getFloat32(plane * RECORD.PLANES, true), ny = planes.getFloat32(plane * RECORD.PLANES + 4, true)
+    let nz = planes.getFloat32(plane * RECORD.PLANES + 8, true)
+    if (!Number.isFinite(nx) || !Number.isFinite(ny) || !Number.isFinite(nz)) throw new BspError(`plane ${plane} is not a finite number`)
+    if (side) { nx = -nx; ny = -ny; nz = -nz } // the side of the plane the face is on
 
     // The corners, in order: a surfedge is an edge index, negative when the edge is walked backwards.
     const corner: number[] = []
@@ -189,9 +194,85 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
       if (v >= nVerts) throw new BspError(`an edge of face ${f} names a vertex that does not exist`)
       corner.push(v)
     }
+
+    if (dispinfo >= 0) {
+      stats.displacements++
+      displacement(f, dispinfo, corner, [nx, ny, nz])
+      continue
+    }
+
+    if (nz <= -FLOOR_NZ + 1e-6) { stats.ceilingFaces++; continue }
+    const isFloor = nz + 1e-6 >= FLOOR_NZ
+    if (isFloor) stats.floorFaces++; else stats.wallFaces++
     const out = isFloor ? floors : walls
     for (let k = 1; k + 1 < corner.length; k++) {
       for (const v of [corner[0]!, corner[k]!, corner[k + 1]!]) out.push(Math.round(xyz[v * 3]!), Math.round(xyz[v * 3 + 1]!), Math.round(xyz[v * 3 + 2]!))
+    }
+  }
+
+  /**
+   * One displacement: the face's four corners are the base quad; the grid starts at the corner
+   * nearest `startPosition`; the position of vertex (i, j) is the bilinear interpolation across the
+   * quad plus its direction times its distance. Each cell becomes two triangles, the diagonal
+   * alternating like a chessboard. A triangle is a floor, a wall or a ceiling by its own slope, with
+   * the face's plane deciding which way is "out" (so the order of the corners does not matter).
+   */
+  function displacement(f: number, index: number, corner: number[], out: [number, number, number]) {
+    if (index >= nDispInfo) throw new BspError(`face ${f} names a displacement that does not exist`)
+    if (corner.length !== 4) throw new BspError(`face ${f} has a displacement but ${corner.length} corners: a displacement is on a quad`)
+    const at = index * RECORD.DISPINFO
+    const start = [dispInfo.getFloat32(at, true), dispInfo.getFloat32(at + 4, true), dispInfo.getFloat32(at + 8, true)]
+    const vertStart = dispInfo.getInt32(at + 12, true), power = dispInfo.getInt32(at + 20, true)
+    if (!start.every(Number.isFinite)) throw new BspError(`displacement ${index} has a start position that is not a finite number`)
+    if (power < 2 || power > 4) throw new BspError(`displacement ${index} has power ${power} (2 to 4 are read)`)
+    const size = (1 << power) + 1
+    if (vertStart < 0 || vertStart + size * size > nDispVerts) throw new BspError(`displacement ${index} reaches past the displacement vertex lump`)
+
+    // The grid starts at the corner nearest the start position.
+    const pos = (v: number) => [xyz[v * 3]!, xyz[v * 3 + 1]!, xyz[v * 3 + 2]!] as const
+    let first = 0, best = Infinity
+    for (let k = 0; k < 4; k++) {
+      const p = pos(corner[k]!)
+      const d = (p[0] - start[0]!) ** 2 + (p[1] - start[1]!) ** 2 + (p[2] - start[2]!) ** 2
+      if (d < best) { best = d; first = k }
+    }
+    const c = [0, 1, 2, 3].map(k => pos(corner[(first + k) % 4]!))
+    const grid = new Float64Array(size * size * 3)
+    const last = size - 1
+    for (let i = 0; i < size; i++) {
+      for (let j = 0; j < size; j++) {
+        const left = [0, 1, 2].map(a => c[0]![a]! + (c[1]![a]! - c[0]![a]!) * (i / last))
+        const right = [0, 1, 2].map(a => c[3]![a]! + (c[2]![a]! - c[3]![a]!) * (i / last))
+        const v = (vertStart + i * size + j) * RECORD.DISPVERTS
+        const dist = dispVerts.getFloat32(v + 12, true)
+        for (let a = 0; a < 3; a++) {
+          const dir = dispVerts.getFloat32(v + a * 4, true)
+          const n = left[a]! + (right[a]! - left[a]!) * (j / last) + dir * dist
+          if (!Number.isFinite(n)) throw new BspError(`displacement ${index} has a vertex that is not a finite number`)
+          if (Math.abs(n) > MAX_COORD) throw new BspError(`displacement ${index} has a vertex out of range`)
+          grid[(i * size + j) * 3 + a] = n
+        }
+      }
+    }
+
+    const g = (i: number, j: number) => [grid[(i * size + j) * 3]!, grid[(i * size + j) * 3 + 1]!, grid[(i * size + j) * 3 + 2]!] as const
+    const emit = (a: readonly number[], b: readonly number[], d: readonly number[]) => {
+      stats.displacementTriangles++
+      const u = [b[0]! - a[0]!, b[1]! - a[1]!, b[2]! - a[2]!], w = [d[0]! - a[0]!, d[1]! - a[1]!, d[2]! - a[2]!]
+      let n = [u[1]! * w[2]! - u[2]! * w[1]!, u[2]! * w[0]! - u[0]! * w[2]!, u[0]! * w[1]! - u[1]! * w[0]!]
+      const len = Math.hypot(n[0]!, n[1]!, n[2]!)
+      if (len < 1e-9) return // a flat-out degenerate triangle covers nothing
+      if (n[0]! * out[0] + n[1]! * out[1] + n[2]! * out[2] < 0) n = n.map(x => -x) // point it out of the face
+      const nz = n[2]! / len
+      if (nz <= -FLOOR_NZ + 1e-6) return // a ceiling
+      const target = nz + 1e-6 >= FLOOR_NZ ? floors : walls
+      for (const p of [a, b, d]) target.push(Math.round(p[0]!), Math.round(p[1]!), Math.round(p[2]!))
+    }
+    for (let i = 0; i < last; i++) {
+      for (let j = 0; j < last; j++) {
+        const A = g(i, j), B = g(i, j + 1), C = g(i + 1, j + 1), D = g(i + 1, j)
+        if ((i + j) % 2 === 0) { emit(A, B, C); emit(A, C, D) } else { emit(A, B, D); emit(B, C, D) }
+      }
     }
   }
 

@@ -24,7 +24,10 @@ export interface BspSpec {
   faces?: Face[]
   texinfoFlags?: number[]
   models?: Model[]
-  dispinfoCount?: number
+  /** Displacement records (terrain): where the grid starts, where its vertices begin in the vertex lump, and its power (2 to 4). */
+  displacements?: { startPosition: [number, number, number], vertStart: number, power: number }[]
+  /** The displacement vertex lump: a direction and a distance each (the position is the interpolated base plus direction * distance). */
+  dispVerts?: { vec: [number, number, number], dist: number }[]
   /** Raw bytes put into a lump instead of what the spec would produce. */
   raw?: Partial<Record<number, Buffer>>
   /** Lumps to mark as compressed (a non-zero fourCC in the directory). */
@@ -44,6 +47,16 @@ const face = (f: Face) => {
   return b
 }
 const texinfo = (flags: number) => { const b = Buffer.alloc(72); b.writeInt32LE(flags, 64); return b }
+const dispinfo = (d: { startPosition: [number, number, number], vertStart: number, power: number }) => {
+  const b = Buffer.alloc(176)
+  d.startPosition.forEach((n, i) => b.writeFloatLE(n, i * 4)); b.writeInt32LE(d.vertStart, 12); b.writeInt32LE(d.power, 20)
+  return b
+}
+const dispvert = (v: { vec: [number, number, number], dist: number }) => {
+  const b = Buffer.alloc(20)
+  v.vec.forEach((n, i) => b.writeFloatLE(n, i * 4)); b.writeFloatLE(v.dist, 12)
+  return b
+}
 const model = (m: Model) => { const b = Buffer.alloc(48); b.writeInt32LE(m.firstFace, 40); b.writeInt32LE(m.numFaces, 44); return b }
 
 export function buildBsp(spec: BspSpec = {}): Buffer {
@@ -55,7 +68,8 @@ export function buildBsp(spec: BspSpec = {}): Buffer {
   lumps[LUMP.FACES] = Buffer.concat((spec.faces ?? []).map(face))
   lumps[LUMP.TEXINFO] = Buffer.concat((spec.texinfoFlags ?? [0]).map(texinfo))
   lumps[LUMP.MODELS] = Buffer.concat((spec.models ?? [{ firstFace: 0, numFaces: (spec.faces ?? []).length }]).map(model))
-  lumps[LUMP.DISPINFO] = Buffer.alloc((spec.dispinfoCount ?? 0) * 176)
+  lumps[LUMP.DISPINFO] = Buffer.concat((spec.displacements ?? []).map(dispinfo))
+  lumps[LUMP.DISP_VERTS] = Buffer.concat((spec.dispVerts ?? []).map(dispvert))
   lumps[LUMP.ENTITIES] = Buffer.from('{ "classname" "worldspawn" }\0')
   if (spec.pakfileBytes) lumps[LUMP.PAKFILE] = Buffer.alloc(spec.pakfileBytes, 0x50)
   for (const [i, raw] of Object.entries(spec.raw ?? {})) lumps[Number(i)] = raw!
@@ -85,5 +99,20 @@ export function flatQuad(z: number, x0 = 0, y0 = 0, size = 64, up = true): Requi
     edges: [[0, 0], [0, 1], [1, 2], [2, 3], [3, 0]], // edge 0 is unused, as in real maps
     surfedges: [1, 2, 3, 4],
     faces: [{ plane: 0, firstEdge: 0, numEdges: 4 }],
+  }
+}
+
+/**
+ * A displacement on a flat quad at height `z`: the quad's face points at dispinfo 0, the grid has
+ * (2^power + 1)^2 vertices, all with distance 0 unless `bump` raises one (index in the grid, height).
+ */
+export function flatDisplacement(power: number, z = 0, size = 64, opts: { start?: [number, number, number], bump?: Record<number, number>, up?: boolean } = {}) {
+  const quad = flatQuad(z, 0, 0, size, opts.up ?? true)
+  quad.faces[0]!.dispinfo = 0
+  const n = (2 ** power + 1) ** 2
+  return {
+    ...quad,
+    displacements: [{ startPosition: opts.start ?? [0, 0, z] as [number, number, number], vertStart: 0, power }],
+    dispVerts: Array.from({ length: n }, (_, i) => ({ vec: [0, 0, 1] as [number, number, number], dist: opts.bump?.[i] ?? 0 })),
   }
 }

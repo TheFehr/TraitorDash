@@ -1,6 +1,6 @@
 import { expect, test, describe } from 'bun:test'
 import { readHeader, extractSurfaces, memorySource, bspFingerprint, BspError, type ByteSource } from '../src/services/bsp'
-import { buildBsp, flatQuad, HEADER_BYTES, LUMP, SURF } from './helpers/bsp_builder'
+import { buildBsp, flatQuad, flatDisplacement, HEADER_BYTES, LUMP, SURF } from './helpers/bsp_builder'
 
 // RFC 11, step 1: reading the surface geometry out of a Source map without reading the map. The
 // reader only sees a ByteSource (a buffer, a file, later an HTTP range), asks for the 1036-byte
@@ -220,13 +220,6 @@ describe('surfaces', () => {
     expect((await surfaces(q)).floors).toHaveLength(3 * 3 * 3)
   })
 
-  test('a displacement (terrain) is counted and left out, as the first version does not draw it', async () => {
-    const q = flatQuad(0); q.faces[0]!.dispinfo = 0
-    const s = await surfaces({ ...q, dispinfoCount: 1 })
-    expect(s.floors).toHaveLength(0)
-    expect(s.stats.displacements).toBe(1)
-  })
-
   test('a map with no faces is an empty result, not an error', async () => {
     const s = await surfaces({})
     expect(s.floors).toHaveLength(0)
@@ -325,4 +318,192 @@ describe('surfaces: a file that does not add up is refused whole', () => {
     expect(e).toBeInstanceOf(BspError)
     expect(e!.message.length).toBeLessThan(200)
   })
+})
+
+describe('displacements (terrain)', () => {
+  const surfaces = (spec: Parameters<typeof buildBsp>[0], limits?: Parameters<typeof extractSurfaces>[1]) => extractSurfaces(memorySource(buildBsp(spec)), limits)
+  const zs = (t: number[]) => t.filter((_, i) => i % 3 === 2)
+  const xs = (t: number[]) => t.filter((_, i) => i % 3 === 0)
+  const ys = (t: number[]) => t.filter((_, i) => i % 3 === 1)
+
+  test.each([[2, 4], [3, 8], [4, 16]])('a power-%d displacement is a %d x %d grid of cells, two triangles each', async (power, cells) => {
+    const s = await surfaces(flatDisplacement(power, 48))
+    expect(s.floors).toHaveLength(cells * cells * 2 * 9)
+    expect(s.stats).toMatchObject({ displacements: 1, displacementTriangles: cells * cells * 2, floorFaces: 0 })
+    expect(new Set(zs(s.floors))).toEqual(new Set([48]))
+  })
+
+  test('the grid covers the quad exactly: from corner to corner, evenly', async () => {
+    const s = await surfaces(flatDisplacement(2, 0, 64))
+    expect(Math.min(...xs(s.floors))).toBe(0)
+    expect(Math.max(...xs(s.floors))).toBe(64)
+    expect(Math.min(...ys(s.floors))).toBe(0)
+    expect(Math.max(...ys(s.floors))).toBe(64)
+    expect(new Set(xs(s.floors))).toEqual(new Set([0, 16, 32, 48, 64]))
+  })
+
+  test('a vertex pushed along its direction raises the ground there', async () => {
+    // power 2 is 5 x 5 vertices; vertex 12 is the middle one
+    const s = await surfaces(flatDisplacement(2, 0, 64, { bump: { 12: 20 } }))
+    const all = [...s.floors, ...s.walls] // a 20-unit bump over 16-unit cells is steeper than a player can walk: its sides are walls
+    expect(Math.max(...zs(all))).toBe(20)
+    const peak = all.findIndex((v, i) => i % 3 === 2 && v === 20)
+    expect([all[peak - 2], all[peak - 1]]).toEqual([32, 32]) // at the middle of the quad
+  })
+
+  test('a steep hill gives wall triangles next to the floor triangles', async () => {
+    const s = await surfaces(flatDisplacement(2, 0, 64, { bump: { 12: 200 } }))
+    expect(s.walls.length).toBeGreaterThan(0)
+    expect(s.floors.length).toBeGreaterThan(0) // the flat rim is still ground
+  })
+
+  test('which corner is the start does not move the grid: the same flat ground comes out', async () => {
+    const corners: [number, number, number][] = [[0, 0, 0], [64, 0, 0], [64, 64, 0], [0, 64, 0]]
+    const counts = []
+    for (const start of corners) {
+      const s = await surfaces(flatDisplacement(2, 0, 64, { start }))
+      counts.push(s.floors.length)
+      expect(Math.max(...xs(s.floors))).toBe(64)
+    }
+    expect(new Set(counts)).toEqual(new Set([32 * 9]))
+  })
+
+  test('the start corner decides where the first vertex of the grid is (a raised vertex 0 appears at that corner)', async () => {
+    for (const [start, at] of [[[0, 0, 0], [0, 0]], [[64, 0, 0], [64, 0]], [[64, 64, 0], [64, 64]], [[0, 64, 0], [0, 64]]] as const) {
+      const s = await surfaces(flatDisplacement(2, 0, 64, { start: [...start], bump: { 0: 30 } }))
+      const all = [...s.floors, ...s.walls]
+      const peak = all.findIndex((v, i) => i % 3 === 2 && v === 30)
+      expect([all[peak - 2], all[peak - 1]]).toEqual([...at])
+    }
+  })
+
+  test('a start position that is only near a corner uses the nearest one', async () => {
+    const s = await surfaces(flatDisplacement(2, 0, 64, { start: [60, 3, 0], bump: { 0: 30 } }))
+    const all = [...s.floors, ...s.walls]
+    const peak = all.findIndex((v, i) => i % 3 === 2 && v === 30)
+    expect([all[peak - 2], all[peak - 1]]).toEqual([64, 0])
+  })
+
+  test('is floor whichever way round the face\'s corners are listed (the face\'s own plane decides which side is up)', async () => {
+    const d = flatDisplacement(2, 0, 64)
+    d.surfedges = [-4, -3, -2, -1]
+    expect((await surfaces(d)).floors).toHaveLength(32 * 9)
+  })
+
+  // A quad that is not horizontal, built by hand: corners A, B, C, D on a plane with the given normal.
+  const quad = (corners: [number, number, number][], normal: [number, number, number], side = 0, bump: Record<number, [[number, number, number], number]> = {}, start = corners[0]!) => ({
+    planes: [{ nx: normal[0], ny: normal[1], nz: normal[2], dist: 0 }],
+    vertices: corners, edges: [[0, 0], [0, 1], [1, 2], [2, 3], [3, 0]] as [number, number][], surfedges: [1, 2, 3, 4],
+    faces: [{ plane: 0, side, firstEdge: 0, numEdges: 4, dispinfo: 0 }],
+    displacements: [{ startPosition: start, vertStart: 0, power: 2 }],
+    dispVerts: Array.from({ length: 25 }, (_, i) => ({ vec: bump[i]?.[0] ?? [0, 0, 1] as [number, number, number], dist: bump[i]?.[1] ?? 0 })),
+  })
+
+  test('the start position is compared in all three dimensions (on a wall the corners differ only in height)', async () => {
+    const wall: [number, number, number][] = [[0, 0, 0], [0, 64, 0], [0, 64, 64], [0, 0, 64]]
+    for (const [start, at] of [[[0, 0, 0], [0, 0, 0]], [[0, 0, 64], [0, 0, 64]], [[0, 64, 64], [0, 64, 64]]] as const) {
+      const s = await surfaces(quad(wall, [1, 0, 0], 0, { 0: [[1, 0, 0], 30] }, [...start]))
+      const all = [...s.floors, ...s.walls]
+      const peak = all.findIndex((v, i) => i % 3 === 0 && v === 30) // the vertex pushed 30 along x
+      expect([all[peak + 1], all[peak + 2]]).toEqual([at[1], at[2]])
+    }
+  })
+
+  test('the diagonal of a cell alternates like a chessboard, so neighbouring cells do not share a direction', async () => {
+    const s = await surfaces(flatDisplacement(2, 0, 64))
+    const tri = (n: number) => { const t = s.floors.slice(n * 9, n * 9 + 9); return [[t[0]!, t[1]!], [t[3]!, t[4]!], [t[6]!, t[7]!]] as [number, number][] }
+    const shared = (a: [number, number][], b: [number, number][]) => a.filter(p => b.some(q => q[0] === p[0] && q[1] === p[1]))
+    const diag = (n: number) => { const [p, q] = shared(tri(n), tri(n + 1)); return Math.sign((q![0] - p![0]) * (q![1] - p![1])) }
+    // triangles 0-1 are cell (0,0), 2-3 are cell (0,1), 4-5 (0,2)
+    expect(diag(0)).not.toBe(0)
+    expect(diag(2)).toBe(-diag(0))
+    expect(diag(4)).toBe(diag(0))
+  })
+
+  test('a displacement that has collapsed to a point draws nothing, not a pile of empty triangles', async () => {
+    const s = await surfaces(flatDisplacement(2, 0, 0))
+    expect(s.floors).toHaveLength(0)
+    expect(s.walls).toHaveLength(0)
+  })
+
+  test('the side of the plane is the whole normal, not only its height: a tilted quad seen from behind is a ceiling', async () => {
+    const tilted: [number, number, number][] = [[0, 0, 0], [64, 0, 64], [64, 64, 64], [0, 64, 0]]
+    const n: [number, number, number] = [-0.7071068, 0, 0.7071068]
+    const reversed = [...tilted].reverse() // the same quad, the corners in the other order: the answer must not depend on it
+    for (const corners of [tilted, reversed]) {
+      expect((await surfaces(quad(corners, n, 0))).floors).toHaveLength(32 * 9)
+      expect((await surfaces(quad(corners, n, 1))).floors).toHaveLength(0)
+    }
+  })
+
+  test('a displacement whose face looks down is a ceiling: dropped, and counted', async () => {
+    const s = await surfaces(flatDisplacement(2, 0, 64, { up: false }))
+    expect(s.floors).toHaveLength(0)
+    expect(s.walls).toHaveLength(0)
+    expect(s.stats.ceilingFaces).toBe(0) // faces: the displacement is counted by its triangles
+    expect(s.stats.displacementTriangles).toBe(32)
+  })
+
+  test('a displacement with a skip texture (nodraw) is skipped like any face', async () => {
+    const s = await surfaces({ ...flatDisplacement(2), texinfoFlags: [SURF.NODRAW] })
+    expect(s.floors).toHaveLength(0)
+    expect(s.stats.skipped).toBe(1)
+    expect(s.stats.displacements).toBe(0)
+  })
+
+  test('two displacements side by side, each with its own vertices', async () => {
+    const a = flatDisplacement(2, 0, 64), b = flatDisplacement(2, 100, 64)
+    const spec = {
+      planes: [...a.planes, ...b.planes], vertices: [...a.vertices, ...b.vertices.map(v => [v[0] + 200, v[1], v[2]] as [number, number, number])],
+      edges: [...a.edges, [4, 5], [5, 6], [6, 7], [7, 4]] as [number, number][], surfedges: [...a.surfedges, 5, 6, 7, 8],
+      faces: [...a.faces, { plane: 1, firstEdge: 4, numEdges: 4, dispinfo: 1 }],
+      displacements: [a.displacements[0]!, { startPosition: [200, 0, 100] as [number, number, number], vertStart: 25, power: 2 }],
+      dispVerts: [...a.dispVerts, ...b.dispVerts],
+    }
+    const s = await surfaces(spec)
+    expect(s.floors).toHaveLength(2 * 32 * 9)
+    expect(new Set(zs(s.floors))).toEqual(new Set([0, 100]))
+    expect(s.stats.displacements).toBe(2)
+  })
+
+  test('a displacement on a door or a lift (another model) is not part of the world', async () => {
+    const d = flatDisplacement(2)
+    const s = await surfaces({ ...d, models: [{ firstFace: 0, numFaces: 0 }, { firstFace: 0, numFaces: 1 }] })
+    expect(s.floors).toHaveLength(0)
+    expect(s.stats.otherModelFaces).toBe(1)
+  })
+
+  test('reads the two displacement lumps and nothing beyond what it needs', async () => {
+    const buf = buildBsp({ ...flatDisplacement(3), pakfileBytes: 1_000_000 })
+    const src = counting(buf)
+    await extractSurfaces(src)
+    const h = await readHeader(memorySource(buf))
+    const touched = (i: number) => src.reads.some(([o, l]) => o >= h.lumps[i]!.offset && o + l <= h.lumps[i]!.offset + h.lumps[i]!.length)
+    expect(touched(LUMP.DISPINFO)).toBe(true)
+    expect(touched(LUMP.DISP_VERTS)).toBe(true)
+    expect(touched(LUMP.PAKFILE)).toBe(false)
+  })
+
+  const bad = (name: string, spec: Parameters<typeof buildBsp>[0], reason: RegExp, limits?: Parameters<typeof extractSurfaces>[1]) =>
+    test(name, async () => { await rejects(extractSurfaces(memorySource(buildBsp(spec)), limits), reason) })
+  const d2 = () => flatDisplacement(2, 0, 64)
+
+  bad('a face that names a displacement that does not exist', { ...d2(), displacements: [] }, /displacement/)
+  bad('a displacement that is not on a quad (five corners)', (() => {
+    const d = d2(); d.vertices.push([32, 96, 0]); d.edges = [[0, 0], [0, 1], [1, 2], [2, 4], [4, 3], [3, 0]]; d.surfedges = [1, 2, 3, 4, 5]; d.faces[0]!.numEdges = 5
+    return d
+  })(), /quad|four/)
+  for (const power of [0, 1, 5, 20, -1]) bad(`a displacement of power ${power}`, { ...d2(), displacements: [{ ...d2().displacements[0]!, power }] }, /power/)
+  bad('displacement vertices that run past the vertex lump', { ...d2(), displacements: [{ ...d2().displacements[0]!, vertStart: 10 }] }, /displacement vert/)
+  bad('a negative first displacement vertex', { ...d2(), displacements: [{ ...d2().displacements[0]!, vertStart: -1 }] }, /displacement vert/)
+  bad('too few displacement vertices for the power', { ...d2(), dispVerts: d2().dispVerts.slice(0, 10) }, /displacement vert/)
+  bad('a start position that is not a number', { ...d2(), displacements: [{ ...d2().displacements[0]!, startPosition: [NaN, 0, 0] }] }, /displacement|start|finite/)
+  bad('a vertex direction that is not a number', { ...d2(), dispVerts: d2().dispVerts.map((v, i) => (i === 3 ? { vec: [NaN, 0, 1] as [number, number, number], dist: 1 } : v)) }, /displacement|finite/)
+  bad('a vertex distance that is infinite', { ...d2(), dispVerts: d2().dispVerts.map((v, i) => (i === 3 ? { vec: v.vec, dist: Infinity } : v)) }, /displacement|finite/)
+  bad('a vertex pushed far outside any map', { ...d2(), dispVerts: d2().dispVerts.map((v, i) => (i === 3 ? { vec: v.vec, dist: 1e9 } : v)) }, /range|displacement/)
+  bad('a displacement lump that is not whole records', { ...d2(), raw: { [LUMP.DISPINFO]: Buffer.alloc(177) } }, /multiple|whole|record/)
+  bad('a displacement vertex lump that is not whole records', { ...d2(), raw: { [LUMP.DISP_VERTS]: Buffer.alloc(21) } }, /multiple|whole|record/)
+  bad('a compressed displacement lump', { ...d2(), compressed: [LUMP.DISPINFO] }, /compressed/)
+  bad('a compressed displacement vertex lump', { ...d2(), compressed: [LUMP.DISP_VERTS] }, /compressed/)
+  bad('more displacement vertices than the limit', d2(), /too many|limit/, { maxVertices: 20 })
 })
