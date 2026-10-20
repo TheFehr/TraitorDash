@@ -334,7 +334,7 @@ describe('GET /servers/:id (through the real app)', () => {
     const res = await app.fetch(new Request(`http://x/sidebar/${serverId}`, { headers: { Cookie: cookie } }))
     const html = await res.text()
     const rows: string[] = String(html).split('<a ').slice(1)
-    const row = (role: string) => rows.find(r => r.includes(`/roles/${role}"`)) ?? ''
+    const row = (role: string) => rows.find(r => r.includes(`/roles/${role}/config"`)) ?? ''
     expect(row('zombie')).toContain('opacity-50')
     expect(row('zombie')).toContain('Disabled on this server')
     expect(row('traitor')).not.toContain('opacity-50')

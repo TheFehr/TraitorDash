@@ -254,7 +254,7 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
               <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" x-bind:style="{ display: flat ? 'contents' : '' }">
                 {roleList.map((role: { name: string, enabled: boolean, metrics?: RoleMetrics }) => (
                   <a
-                    href={`/servers/${server.id}/roles/${role.name}`}
+                    href={`/servers/${server.id}/roles/${role.name}/config`}
                     data-role={role.name}
                     data-team={team}
                     data-enabled={role.enabled ? '1' : '0'}

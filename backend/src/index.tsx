@@ -11,7 +11,11 @@ import { ReplayPage } from './components/ReplayPage'
 import { gzipSync } from 'node:zlib'
 import { getRolesWithState } from './services/roles'
 import { getAdminId, getSession, openSignin, signinUrl, safeNext, type Session } from './middleware/session'
-import { gated } from './services/gates'
+import { gated, clientAddress } from './services/gates'
+import { RateLimiter } from './services/rateLimit'
+import { createHash } from 'node:crypto'
+import { buildRoleView, listRoles, publicRoles, publicRoleSettings, KNOWN_ROLE_NAME } from './services/roleview'
+import { RoleListPage, RolePage, RoleNotFound } from './components/RolePublic'
 import { geometryEnabled, kickGeometryQueue, setGeometryFetcher } from './services/mapgeometry'
 import { helperAvailable, workshopFetcher } from './services/workshop'
 import { sameOrigin } from './middleware/csrf'
@@ -416,9 +420,75 @@ app.get('/servers/:serverId/players/:playerId', async (c) => {
 })
 
 /**
- * Specific Role Configuration Page
+ * The public, read-only role pages (RFC 15). Script-free, with a strict Content-Security-Policy,
+ * limited per client address, and answered from a small cache that is keyed by what the page is
+ * built from, so a flood of identical requests costs a lookup and a change shows at once.
  */
-app.get('/servers/:serverId/roles/:roleName', async (c) => {
+const roleLimiter = new RateLimiter(Number(process.env.ROLE_PAGE_LIMIT) || 120, 60_000)
+export const resetRolePages = () => { roleLimiter.reset(); rolePageCache.clear() }
+const rolePageCache = new Map<string, string>()
+const ROLE_PAGE_CACHE_MAX = 500
+const ROLE_PAGE_HEADERS = {
+  'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'no-referrer',
+}
+
+async function rolePage(c: any, kind: 'list' | 'role') {
+  const admin = !!(await getAdminId(c))
+  if (!publicRoles() && !admin) return c.redirect('/')
+
+  const address = clientAddress(c)
+  const wait = address ? roleLimiter.hit(address) : 0
+  if (wait > 0) {
+    c.header('Retry-After', String(wait))
+    return c.text('Too many requests; slow down', 429, ROLE_PAGE_HEADERS)
+  }
+
+  const serverId = c.req.param('serverId')
+  const embed = ['1', 'true'].includes(c.req.query('embed') ?? '')
+  const server = Store.getServerById(serverId)
+  const roleName = kind === 'role' ? c.req.param('roleName') : ''
+  const missing = !server || (kind === 'role' && (!KNOWN_ROLE_NAME.test(roleName) || !Store.getRoles(serverId).some(r => r.role_name === roleName)))
+  const headers: Record<string, string> = { ...ROLE_PAGE_HEADERS }
+  if (embed) headers['X-Robots-Tag'] = 'noindex'
+  if (missing) {
+    headers['Cache-Control'] = 'no-store'
+    return c.html('<!DOCTYPE html>' + (<RoleNotFound embed={embed} />).toString(), 404, headers)
+  }
+
+  const showAdmin = admin && !embed
+  const query = kind === 'list' ? (c.req.query('q') ?? '').slice(0, 64) : ''
+  const key = [serverId, kind, roleName, query, embed, showAdmin, publicRoleSettings(), Store.getRoleDataVersion(serverId)].join('\u0000')
+  const etag = 'W/"' + createHash('sha1').update(key).digest('hex').slice(0, 20) + '"'
+  // The page differs for an admin (the edit link), so it is not shared.
+  headers['Cache-Control'] = showAdmin ? 'private, max-age=0, must-revalidate' : 'public, max-age=60'
+  headers.ETag = etag
+  const given = c.req.header('If-None-Match')
+  if (given && given.split(',').map((x: string) => x.trim()).includes(etag)) return c.body(null, 304, headers)
+
+  let html = rolePageCache.get(key)
+  if (html === undefined) {
+    const srv = { id: server!.id, name: server!.name }
+    const view = kind === 'role' ? buildRoleView(serverId, roleName) : null
+    const page = kind === 'list'
+      ? <RoleListPage server={srv} roles={listRoles(serverId, query)} query={query} embed={embed} admin={showAdmin} />
+      : <RolePage server={srv} role={view!} embed={embed} admin={showAdmin} />
+    html = '<!DOCTYPE html>' + page.toString()
+    if (rolePageCache.size >= ROLE_PAGE_CACHE_MAX) rolePageCache.delete(rolePageCache.keys().next().value!)
+    rolePageCache.set(key, html)
+  }
+  return c.html(html, 200, headers)
+}
+
+app.get('/servers/:serverId/roles', (c) => rolePage(c, 'list'))
+app.get('/servers/:serverId/roles/:roleName', (c) => rolePage(c, 'role'))
+
+/**
+ * Specific Role Configuration Page (admin). It used to be at the role's own address, which is the
+ * read-only page now (RFC 15).
+ */
+app.get('/servers/:serverId/roles/:roleName/config', async (c) => {
   const steamId = await getAdminId(c)
   if (!steamId) return c.redirect('/')
 
@@ -442,6 +512,7 @@ app.get('/servers/:serverId/roles/:roleName', async (c) => {
                 <a href={`/servers/${serverId}`} class="hover:text-white transition">{server.name}</a>
                 <span>/</span>
                 <span class="text-red-500">{roleName}</span>
+                <a href={`/servers/${serverId}/roles/${encodeURIComponent(roleName)}`} class="ml-auto hover:text-white transition">Public page</a>
             </nav>
             <RoleConfigForm serverId={serverId} role={roleName} schema={schema} live={Store.getConVarValues(serverId)} />
           </div>

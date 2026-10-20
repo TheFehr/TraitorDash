@@ -358,6 +358,14 @@ export const migrations: Array<(db: Database) => void> = [
     `)
     db.run('CREATE INDEX IF NOT EXISTS idx_round_revives_round ON round_revives (server_id, round_id)')
     db.run('CREATE INDEX IF NOT EXISTS idx_round_revives_reviver ON round_revives (server_id, reviver)')
+  },
+  // v16 (RFC 15): the role's description from the language files, kept with the role so the public
+  // role page does not run Lua. Clearing the hashes makes the bridge send every role again, so
+  // the existing roles get one.
+  (db) => {
+    if (!db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='roles'").get()) return
+    db.run('ALTER TABLE roles ADD COLUMN description TEXT')
+    db.run('UPDATE roles SET md5_hash = NULL')
   }
 ]
 

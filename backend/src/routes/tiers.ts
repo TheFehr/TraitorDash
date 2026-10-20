@@ -18,6 +18,8 @@ export const TIERS: Record<string, Tier> = {
   'GET /servers/:serverId/stats': 'public',
   'GET /servers/:serverId/maps': 'public',
   'GET /servers/:serverId/players/:playerId': 'public',
+  'GET /servers/:serverId/roles': 'public',
+  'GET /servers/:serverId/roles/:roleName': 'public',
 
   'GET /servers/:serverId/maps/:map': 'user',
   'GET /servers/:serverId/maps/:map/mesh.glb': 'user',
@@ -27,7 +29,7 @@ export const TIERS: Record<string, Tier> = {
   'GET /sidebar/:serverId': 'admin',
   'GET /servers': 'admin',
   'GET /servers/:serverId': 'admin',
-  'GET /servers/:serverId/roles/:roleName': 'admin',
+  'GET /servers/:serverId/roles/:roleName/config': 'admin',
   'GET /servers/:serverId/maps/:map/plan.svg': 'admin',
   'GET /servers/:serverId/maps/:map/plan.json': 'admin',
   'POST /servers/:serverId/maps/:map/geometry': 'admin',

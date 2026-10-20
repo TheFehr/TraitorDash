@@ -533,26 +533,43 @@ export class Store {
     return row ? row.md5_hash : null
   }
 
-  static saveSchema(serverId: string, roleName: string, team: string, isPolicing: boolean, baserole: number, schema: any[], md5Hash?: string) {
+  static saveSchema(serverId: string, roleName: string, team: string, isPolicing: boolean, baserole: number, schema: any[], md5Hash?: string, description: string | null = null) {
     this.updateHeartbeat(serverId)
     const upsert = db.prepare(`
-      INSERT INTO roles (server_id, role_name, team, is_policing, baserole, schema_json, md5_hash, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO roles (server_id, role_name, team, is_policing, baserole, schema_json, md5_hash, updated_at, description)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(server_id, role_name) DO UPDATE SET
         team = excluded.team,
         is_policing = excluded.is_policing,
         baserole = excluded.baserole,
         schema_json = excluded.schema_json,
         md5_hash = excluded.md5_hash,
-        updated_at = excluded.updated_at
+        updated_at = excluded.updated_at,
+        description = excluded.description
     `)
     const now = new Date().toISOString()
-    upsert.run(serverId, roleName, team, isPolicing ? 1 : 0, baserole, JSON.stringify(schema), md5Hash || null, now)
+    upsert.run(serverId, roleName, team, isPolicing ? 1 : 0, baserole, JSON.stringify(schema), md5Hash || null, now, description)
   }
 
   static getRoles(serverId: string): any[] {
     const query = db.prepare('SELECT role_name, team, is_policing, baserole FROM roles WHERE server_id = ? ORDER BY team ASC, role_name ASC')
     return query.all(serverId)
+  }
+
+  /** The role's description from the language files, as the extractor found it (untrusted text); null when it has none. */
+  static getRoleDescription(serverId: string, roleName: string): string | null {
+    const row = db.prepare('SELECT description FROM roles WHERE server_id = ? AND role_name = ?').get(serverId, roleName) as { description: string | null } | null
+    return row?.description ?? null
+  }
+
+  /** Changes when anything the public role pages show changes: roles, live values or language files. */
+  static getRoleDataVersion(serverId: string): string {
+    const one = (sql: string) => JSON.stringify(db.prepare(sql).get(serverId))
+    return [
+      one('SELECT COUNT(*) AS n, MAX(updated_at) AS u FROM roles WHERE server_id = ?'),
+      one('SELECT COUNT(*) AS n, MAX(updated_at) AS u FROM convar_values WHERE server_id = ?'),
+      one('SELECT COUNT(*) AS n, MAX(updated_at) AS u FROM lang_files WHERE server_id = ?'),
+    ].join('|')
   }
 
   static getSchema(serverId: string, roleName: string): any[] | null {

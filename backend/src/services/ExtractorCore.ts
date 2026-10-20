@@ -171,7 +171,7 @@ export class ExtractorCore {
     }
   }
 
-  public static async extractSchema(roleCode: string, convarState?: Record<string, string>, dataState?: Record<string, any>, roleName?: string, langSources: string[] = []): Promise<{ team: string, isPolicingRole: boolean, baserole: number, schema: any[] }> {
+  public static async extractSchema(roleCode: string, convarState?: Record<string, string>, dataState?: Record<string, any>, roleName?: string, langSources: string[] = []): Promise<{ team: string, isPolicingRole: boolean, baserole: number, schema: any[], description: string | null }> {
     const L = lauxlib.luaL_newstate()
     this.openSandboxedLibs(L)
 
@@ -376,13 +376,39 @@ export class ExtractorCore {
         schema = Object.values(rawSchema)
       }
 
-      return { team, isPolicingRole, baserole, schema }
+      return { team, isPolicingRole, baserole, schema, description: this.readDescription(L, roleName) }
     } catch (e) {
       console.error('[Extractor] Caught Exception:', e)
       throw e
     } finally {
       lua.lua_close(L)
     }
+  }
+
+  /**
+   * The role's description from the English language files that were loaded (RFC 15, 4.2): TTT2's own
+   * key first, then the popup text, then the plain names addons use. Untrusted text: returned as is
+   * (a string), cleaned and limited later, rendered as text only.
+   */
+  private static readDescription(L: any, roleName?: string): string | null {
+    if (!roleName) return null
+    const keys = [`ttt2_desc_${roleName}`, `info_popup_${roleName}`, `desc_${roleName}`, `description_${roleName}`, `${roleName}_desc`, `${roleName}_description`]
+    lua.lua_getglobal(L, to_luastring('__TD_LANGS'))
+    let found: string | null = null
+    if (lua.lua_type(L, -1) === lua.LUA_TTABLE) {
+      lua.lua_getfield(L, -1, to_luastring('en'))
+      if (lua.lua_type(L, -1) === lua.LUA_TTABLE) {
+        for (const key of keys) {
+          lua.lua_getfield(L, -1, to_luastring(key))
+          const text = lua.lua_type(L, -1) === lua.LUA_TSTRING ? to_jsstring(lua.lua_tostring(L, -1)) : ''
+          lua.lua_pop(L, 1)
+          if (text.trim() !== '') { found = text; break }
+        }
+      }
+      lua.lua_pop(L, 1)
+    }
+    lua.lua_pop(L, 1)
+    return found
   }
 
   private static luaTableToJS(L: any, index: number): any {

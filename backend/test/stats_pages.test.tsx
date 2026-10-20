@@ -96,7 +96,7 @@ describe('stats pages', () => {
 
   test('the rule settings stay admin-only', async () => {
     expect((await get(`/servers/${serverId}`, false)).status).toBe(302)
-    expect((await get(`/servers/${serverId}/roles/anything`, false)).status).toBe(302)
+    expect((await get(`/servers/${serverId}/roles/anything/config`, false)).status).toBe(302)
     expect((await get('/servers', false)).status).toBe(302)
     expect((await get(`/sidebar/${serverId}`, false)).status).toBe(401)
   })

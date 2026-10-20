@@ -1,9 +1,9 @@
 import type { LiveConVar } from '../services/Store'
 
-type FieldKind = 'toggle' | 'number' | 'text'
+export type FieldKind = 'toggle' | 'number' | 'text'
 
 /** Control for a conVarData value. Decided from the value's type and the key, never from a hard cap. */
-const kindForConVarData = (key: string, value: any): FieldKind => {
+export const kindForConVarData = (key: string, value: any): FieldKind => {
   if (typeof value === 'boolean') return 'toggle'
   if (typeof value === 'number') {
     // 0/1 flags (…Enable, togglable) are toggles; every other number is a number.
@@ -33,7 +33,7 @@ const parseLive = (kind: FieldKind, raw: string): any => {
  * null), so a 0/1 setting counts as a toggle unless the server reports bounds that
  * say otherwise.
  */
-const kindForLive = (lv: LiveConVar): FieldKind => {
+export const kindForLive = (lv: LiveConVar): FieldKind => {
   const boundsAllowFlag = (lv.min === null && lv.max === null) || (lv.min === 0 && lv.max === 1)
   if (isFlag(lv.default) && isFlag(lv.value) && boundsAllowFlag) return 'toggle'
   if (lv.default !== null && lv.default !== '' && !Number.isNaN(Number(lv.default))) return 'number'
@@ -41,9 +41,9 @@ const kindForLive = (lv: LiveConVar): FieldKind => {
 }
 
 /** Suffix of a ConVar name after ttt_<role-or-abbr>_ (ttt_surv_credits_starting -> credits_starting). */
-const suffixOf = (convar: string) => convar.replace(/^ttt_[a-z0-9]+_/i, '')
+export const suffixOf = (convar: string) => convar.replace(/^ttt_[a-z0-9]+_/i, '')
 
-const SUFFIX_TO_KEY: Record<string, string> = {
+export const SUFFIX_TO_KEY: Record<string, string> = {
   enabled: 'togglable', pct: 'pct', max: 'maximum', min_players: 'minPlayers', karma_min: 'minKarma',
   random: 'random', traitor_button: 'traitorButton', credits_starting: 'credits',
   credits_award_dead_enb: 'creditsAwardDeadEnable', credits_award_kill_enb: 'creditsAwardKillEnable',
@@ -210,7 +210,7 @@ export const RoleConfigForm = ({ serverId, role, schema, live = {} }: { serverId
   )
 }
 
-const cleanLabel = (label: string) => {
+export const cleanLabel = (label: string) => {
   if (!label) return 'Unknown Setting'
   
   if (label.startsWith('[') && label.endsWith(']')) {
@@ -247,13 +247,13 @@ const CONVAR_LABELS: Record<string, { label: string, hint?: string }> = {
   shopFallback: { label: 'Shop fallback' },
 }
 
-const humanizeKey = (key: string) =>
+export const humanizeKey = (key: string) =>
   key
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
     .replace(/_/g, ' ')
     .replace(/^\w/, (c) => c.toUpperCase())
 
-const conVarDataText = (key: string) => {
+export const conVarDataText = (key: string) => {
   const known = CONVAR_LABELS[key]
   return { label: known?.label ?? humanizeKey(key), hint: known?.hint }
 }

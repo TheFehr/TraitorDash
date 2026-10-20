@@ -28,7 +28,7 @@ export const Sidebar = ({ serverId, roles, query = '' }: { serverId: string, rol
         <div id="role-list" class="flex-1 overflow-y-auto p-2 space-y-1">
           {filteredRoles.map(role => (
             <a 
-              href={`/servers/${serverId}/roles/${role.role_name}`}
+              href={`/servers/${serverId}/roles/${role.role_name}/config`}
               class={`block px-3 py-2 rounded-lg text-sm font-medium hover:bg-gray-700 transition group flex justify-between items-center ${role.enabled === false ? 'opacity-50' : ''}`}
               title={role.enabled === false ? 'Disabled on this server' : undefined}
             >
@@ -46,7 +46,7 @@ export const RoleListPartial = ({ serverId, roles }: { serverId: string, roles: 
   <>
     {roles.map(role => (
       <a 
-        href={`/servers/${serverId}/roles/${role.role_name}`}
+        href={`/servers/${serverId}/roles/${role.role_name}/config`}
         class={`block px-3 py-2 rounded-lg text-sm font-medium hover:bg-gray-700 transition group flex justify-between items-center ${role.enabled === false ? 'opacity-50' : ''}`}
         title={role.enabled === false ? 'Disabled on this server' : undefined}
       >

@@ -154,6 +154,34 @@
         "integer",
         "min:0"
       ]
+    },
+    {
+      "sort": 10,
+      "name": "Public role pages",
+      "description": "1 (default) lets anyone read the role pages (RFC 15): what a role does and how it appears on this server. 0 keeps them admin-only. The settings form is always admin-only.",
+      "env_variable": "PUBLIC_ROLES",
+      "default_value": "1",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": [
+        "required",
+        "string",
+        "in:0,1"
+      ]
+    },
+    {
+      "sort": 11,
+      "name": "Public role settings",
+      "description": "1 (default) shows each role's settings with their values on the public role page; 0 hides that table and keeps the rest.",
+      "env_variable": "PUBLIC_ROLE_SETTINGS",
+      "default_value": "1",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": [
+        "required",
+        "string",
+        "in:0,1"
+      ]
     }
   ]
 }
