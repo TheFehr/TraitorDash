@@ -248,7 +248,7 @@ describe('the sweep: every route is declared, and behaves as declared', () => {
     for (const [key, r] of routes()) {
       if (TIERS[key] !== 'bridge') continue
       for (const as of [USER, ADMIN]) {
-        const res = await req(url(r.path), { method: r.method, as, headers: { 'Content-Type': 'application/json' }, body: '{}' })
+        const res = await req(url(r.path), { method: r.method, as, headers: { 'Content-Type': 'application/json' }, body: r.method === 'GET' ? undefined : '{}' })
         expect(res.status, `${key} took a session cookie from ${as}`).toBe(401)
       }
     }

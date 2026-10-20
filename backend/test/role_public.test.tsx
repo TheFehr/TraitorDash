@@ -227,3 +227,15 @@ describe('migration v16', () => {
     expect((d.query('SELECT md5_hash, description FROM roles').get() as any)).toEqual({ md5_hash: null, description: null })
   })
 })
+
+describe('GET /api/v1/whoami', () => {
+  test('returns the id of the server the token belongs to, and nothing else; 401 without or with a wrong token or a cookie', async () => {
+    const created = Store.addServer('Who') as any
+    const r = await app.fetch(new Request('http://localhost/api/v1/whoami', { headers: { Authorization: `Bearer ${created.token}` } }))
+    expect(r.status).toBe(200)
+    expect(await r.json()).toEqual({ server_id: created.id })
+    expect((await app.fetch(new Request('http://localhost/api/v1/whoami'))).status).toBe(401)
+    expect((await app.fetch(new Request('http://localhost/api/v1/whoami', { headers: { Authorization: 'Bearer nope' } }))).status).toBe(401)
+    expect((await get('/api/v1/whoami', ADMIN)).status).toBe(401)
+  })
+})

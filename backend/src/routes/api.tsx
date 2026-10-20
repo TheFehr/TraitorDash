@@ -557,6 +557,9 @@ api.post('/save/:serverId/:role', async (c) => {
   return c.json({ success: true, commands_staged: stagedCount })
 })
 
+/** Who the bridge's token belongs to (RFC 15, 4.5): the server's id, which the public role pages' addresses contain. Nothing else. */
+api.get('/v1/whoami', getServer, (c) => c.json({ server_id: c.get('server').id }))
+
 const warnedNoNonce = new Set<string>()
 api.post('/v1/poll', getServer, async (c) => {
   const server = c.get('server')
