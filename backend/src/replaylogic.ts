@@ -9,7 +9,10 @@ export interface RawTrack {
   t: number[]
   players: { id: string, segments: RawSegment[] }[]
   deaths: { victim: string, attacker: string | null, t: number, vx: number, vy: number, vz: number, ax: number | null, ay: number | null, az: number | null, weapon: string | null }[]
+  /** Revivals and role changes (RFC 14); absent in tracks stored before it. */
+  events?: TrackEvent[]
 }
+export interface TrackEvent { t: number, p: string, k: 'revive' | 'role', role?: string, team?: string, by?: string, how?: string, why?: string }
 
 /** One run of consecutive samples of one player, in Source units and degrees-in-256ths, at real times. */
 export interface Segment { t: number[], x: number[], y: number[], z: number[], a: number[] }
@@ -20,6 +23,8 @@ export interface Decoded {
   length: number
   players: Map<string, Segment[]>
   deaths: Death[]
+  /** In time order; empty for a track without any. */
+  events: TrackEvent[]
 }
 export interface Death { victim: string, attacker: string | null, t: number, at: [number, number, number], from: [number, number, number] | null, weapon: string | null }
 
@@ -51,7 +56,8 @@ export function decodeTrack(raw: RawTrack): Decoded {
     weapon: d.weapon,
   }))
   deaths.sort((a, b) => a.t - b.t)
-  return { times, length: times.length ? times[times.length - 1]! : 0, players, deaths }
+  const events = [...(raw.events ?? [])].sort((a, b) => a.t - b.t)
+  return { times, length: times.length ? times[times.length - 1]! : 0, players, deaths, events }
 }
 
 export interface Pose { x: number, y: number, z: number, /** Heading in 256ths of a turn, 0-255. */ yaw: number }
@@ -173,4 +179,65 @@ export function teamColour(team: string | null): number {
 export const clock = (ms: number) => {
   const s = Math.max(0, Math.floor(ms / 1000))
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
+/**
+ * A player's role and team at time `ms`: the ones they started with, then each role event up to
+ * then (RFC 14, 4.6). `was` lists the earlier roles, oldest first, without repeats of the current one.
+ */
+export function stateAt(start: { role: string | null, team: string | null }, events: TrackEvent[], player: string, ms: number): { role: string | null, team: string | null, was: string[] } {
+  let role = start.role, team = start.team
+  const was: string[] = []
+  for (const e of events) {
+    if (e.t > ms) break
+    if (e.k !== 'role' || e.p !== player) continue
+    if (role !== null && role !== e.role && !was.includes(role)) was.push(role)
+    role = e.role ?? role
+    team = e.team ?? team
+  }
+  return { role, team, was: was.filter(r => r !== role) }
+}
+
+/** The death a player is lying dead from at `ms`: their latest death by then, unless a revival came after it. null when alive. */
+export function currentDeath(deaths: Death[], events: TrackEvent[], player: string, ms: number): Death | null {
+  let death: Death | null = null
+  for (const d of deaths) if (d.victim === player && d.t <= ms && (!death || d.t >= death.t)) death = d
+  if (!death) return null
+  const d = death
+  return events.some(e => e.k === 'revive' && e.p === player && e.t >= d.t && e.t <= ms) ? null : death
+}
+
+/** How far before a revival the killer's death may be to be mentioned (RFC 14, 4.4). */
+export const KILLER_WINDOW_MS = 30000
+
+/**
+ * "They came back N seconds after their killer died": the player who last killed the revived one
+ * died in the 30 seconds before the revival. A sequence of recorded events, not a claimed cause.
+ */
+export function killerDiedBefore(deaths: Death[], revive: { t: number, p: string }): { killer: string, seconds: number } | null {
+  let own: Death | null = null
+  for (const d of deaths) if (d.victim === revive.p && d.t <= revive.t && (!own || d.t >= own.t)) own = d
+  if (!own || !own.attacker) return null
+  const killer = own.attacker
+  let theirs: Death | null = null
+  for (const d of deaths) if (d.victim === killer && d.t >= own.t && d.t <= revive.t && (!theirs || d.t >= theirs.t)) theirs = d
+  if (!theirs || revive.t - theirs.t > KILLER_WINDOW_MS) return null
+  return { killer, seconds: Math.round((revive.t - theirs.t) / 1000) }
+}
+
+/** A readable name for what revived someone: "Defibrillator", "role: haunter", or "source unknown". */
+export function reviveSource(how: string | null | undefined): string {
+  if (!how) return 'source unknown'
+  if (how.startsWith('role:')) return 'role: ' + how.slice(5)
+  const name = how.replace(/^weapon_ttt2?_/, '').replace(/^weapon_/, '').replace(/_/g, ' ')
+  return name.charAt(0).toUpperCase() + name.slice(1)
+}
+
+/** Where a revived player reappears: their first sample at or after the revival, within 3 s; null when there is none. */
+export function revivePose(segments: Segment[], t: number): Pose | null {
+  for (const s of segments) {
+    const i = s.t.findIndex(x => x >= t)
+    if (i >= 0 && s.t[i]! - t <= 3000) return { x: s.x[i]!, y: s.y[i]!, z: s.z[i]!, yaw: s.a[i]! }
+  }
+  return null
 }

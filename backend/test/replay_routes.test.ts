@@ -92,6 +92,17 @@ describe('track.json', () => {
     }
   })
 
+  test('carries where each player ended and the revivals of the round (RFC 14); a victim outside the round is left out', async () => {
+    const id = round()
+    db.run('UPDATE round_players SET end_role = ?, end_team = ? WHERE server_id = ? AND round_id = ? AND steam_id = ?', ['zombie', 'zombies', serverId, id, P2])
+    db.run('INSERT INTO round_revives (server_id, round_id, victim, reviver, how, why, at_seconds) VALUES (?, ?, ?, ?, ?, ?, ?)', [serverId, id, P2, P1, 'weapon_ttt_defibrillator', 'revived_by_player', 90])
+    db.run('INSERT INTO round_revives (server_id, round_id, victim, reviver, how, why, at_seconds) VALUES (?, ?, ?, ?, ?, ?, ?)', [serverId, id, '76561190000000999', null, null, null, 95])
+    const body = await (await data(id)).json() as any
+    expect(body.players[1]).toMatchObject({ role: 'innocent', team: 'innocents', endRole: 'zombie', endTeam: 'zombies' })
+    expect(body.players[0]).toMatchObject({ endRole: null, endTeam: null })
+    expect(body.revives).toEqual([{ victim: P2, reviver: P1, how: 'weapon_ttt_defibrillator', why: 'revived_by_player', at: 90 }])
+  })
+
   test('with sign-in closed a user is anonymous (401); an admin gets it', async () => {
     const id = round()
     delete process.env.OPEN_SIGNIN

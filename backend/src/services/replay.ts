@@ -12,7 +12,9 @@ import { chooseBackground, versionMismatch, type BackgroundKind } from '../repla
  */
 export interface ReplayPayload {
   round: { id: string, map: string | null, result: string, duration: number | null, startedAt: string | null }
-  players: { id: string, nick: string | null, role: string | null, team: string | null, won: boolean, survived: boolean }[]
+  players: { id: string, nick: string | null, role: string | null, team: string | null, endRole: string | null, endTeam: string | null, won: boolean, survived: boolean }[]
+  /** The revivals the bridge reported for the round (RFC 14); also known for a round whose track has no events. */
+  revives: { victim: string, reviver: string | null, how: string | null, why: string | null, at: number | null }[]
   track: unknown
   trackInfo: { truncated: boolean, degraded: boolean, fingerprint: string | null, pinned: boolean }
   background: {
@@ -71,6 +73,7 @@ export function buildReplay(serverId: string, roundId: string, o?: StatsOptions)
   const payload: ReplayPayload = {
     round: { id: round.roundId, map: round.map, result: round.result, duration: round.duration, startedAt: round.startedAt },
     players: round.players,
+    revives: round.revives,
     track: stored.track,
     trackInfo: { truncated: stored.meta.truncated, degraded: stored.meta.degraded, fingerprint: stored.meta.fingerprint, pinned: stored.meta.pinned },
     background,

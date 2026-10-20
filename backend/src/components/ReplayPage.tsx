@@ -88,6 +88,17 @@ export const ReplayPage = ({ server, round, hasTrack, src, viewer, admin, pinned
             <div data-players class="bg-gray-800 border border-gray-700 rounded-xl p-1 text-sm max-h-80 overflow-y-auto"></div>
           </section>
           <section>
+            <h2 class="text-sm font-black uppercase tracking-widest text-gray-400 mb-2">Selected player</h2>
+            <div class="bg-gray-800 border border-gray-700 rounded-xl p-3 text-sm text-gray-300 space-y-2">
+              <p data-selected-role class="font-bold"></p>
+              <ol data-player-events class="space-y-1 max-h-40 overflow-y-auto"></ol>
+            </div>
+          </section>
+          <section data-revives-wrap hidden>
+            <h2 class="text-sm font-black uppercase tracking-widest text-gray-400 mb-2">Revivals</h2>
+            <ol data-revives class="bg-gray-800 border border-gray-700 rounded-xl p-3 text-sm text-gray-300 space-y-1 max-h-64 overflow-y-auto"></ol>
+          </section>
+          <section>
             <h2 class="text-sm font-black uppercase tracking-widest text-gray-400 mb-2">Deaths</h2>
             <ol data-deaths class="bg-gray-800 border border-gray-700 rounded-xl p-3 text-sm text-gray-300 space-y-1 max-h-64 overflow-y-auto"></ol>
           </section>

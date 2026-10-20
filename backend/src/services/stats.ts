@@ -175,7 +175,9 @@ export const isBotId = (steamId: string) => steamId.startsWith(BOT_PREFIX)
 
 export interface ReplayRound {
   roundId: string, map: string | null, result: string, duration: number | null, startedAt: string | null
-  players: { id: string, nick: string | null, role: string | null, team: string | null, won: boolean, survived: boolean }[]
+  /** `role` and `team` are as dealt; `endRole` and `endTeam` are where the player ended (null for rounds from before RFC 14). */
+  players: { id: string, nick: string | null, role: string | null, team: string | null, endRole: string | null, endTeam: string | null, won: boolean, survived: boolean }[]
+  revives: RoundRevive[]
 }
 
 /**
@@ -189,10 +191,12 @@ export function getReplayRound(serverId: string, roundId: string, o?: StatsOptio
   `).get(serverId, roundId) as any
   if (!r) return null
   const players = db.prepare(`
-    SELECT rp.steam_id AS id, rp.nick, rp.role, rp.team, rp.won, rp.survived
+    SELECT rp.steam_id AS id, rp.nick, rp.role, rp.team, rp.end_role AS endRole, rp.end_team AS endTeam, rp.won, rp.survived
     FROM round_players rp WHERE rp.server_id = ? AND rp.round_id = ? AND ${botFilter(o)} ORDER BY rp.rowid
   `).all(serverId, roundId) as any[]
-  return { ...r, players: players.map(p => ({ ...p, won: !!p.won, survived: !!p.survived })) }
+  const ids = new Set(players.map(p => p.id))
+  const revives = getRevives(serverId, roundId).filter(v => ids.has(v.victim))
+  return { ...r, players: players.map(p => ({ ...p, won: !!p.won, survived: !!p.survived })), revives }
 }
 
 export interface RoundRevive { victim: string, reviver: string | null, how: string | null, why: string | null, at: number | null }

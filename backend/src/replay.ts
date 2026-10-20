@@ -6,7 +6,10 @@ import {
 } from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { decodeTrack, poseAt, lastPoseAt, trailBetween, levelOf, defaultSelection, teamColour, clock, type Decoded, type Segment, type LevelRange } from './replaylogic'
+import {
+  decodeTrack, poseAt, lastPoseAt, trailBetween, levelOf, defaultSelection, teamColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose,
+  type Decoded, type Segment, type LevelRange, type TrackEvent,
+} from './replaylogic'
 
 // The round replay (RFC 12, 3.5): one three.js scene that draws the best background there is (the
 // map's mesh, its floor plan as tiles, or an empty grid) and puts the players into the same
@@ -17,7 +20,8 @@ import { decodeTrack, poseAt, lastPoseAt, trailBetween, levelOf, defaultSelectio
 
 interface Payload {
   round: { id: string, map: string | null, result: string, duration: number | null, startedAt: string | null }
-  players: { id: string, nick: string | null, role: string | null, team: string | null, won: boolean, survived: boolean }[]
+  players: { id: string, nick: string | null, role: string | null, team: string | null, endRole: string | null, endTeam: string | null, won: boolean, survived: boolean }[]
+  revives: { victim: string, reviver: string | null, how: string | null, why: string | null, at: number | null }[]
   track: any
   trackInfo: { truncated: boolean, degraded: boolean, fingerprint: string | null, pinned: boolean }
   background: { kind: 'mesh' | 'plan' | 'none', meshUrl?: string, plan?: any, levels: LevelRange[], mismatch: boolean }
@@ -28,6 +32,8 @@ const levelColour = (index: number, count: number) => new Color().setHSL(0.38 - 
 const CUT_ABOVE = 128
 const TRAIL_MS = 4000
 const KILL_LINE_MS = 2500
+const REVIVE_MARK_MS = 2500
+const MAX_REVIVE_MARKS = 64
 const SPEEDS = [1, 2, 4, 8]
 
 const el = <T extends HTMLElement>(root: HTMLElement, sel: string) => root.querySelector<T>(sel)
@@ -58,7 +64,10 @@ async function start(root: HTMLElement) {
   const ids = payload.players.map(p => p.id).filter(id => data.players.has(id))
   const levels = payload.background.levels
   const nick = (id: string) => meta.get(id)?.nick || id.slice(-6)
-  const colourOf = (id: string) => teamColour(meta.get(id)?.team ?? null)
+  // The team a player has at the time shown: the one they started with, then each role change (RFC 14, 4.6).
+  const startOf = (id: string) => ({ role: meta.get(id)?.role ?? null, team: meta.get(id)?.team ?? null })
+  const stateOf = (id: string, at: number) => stateAt(startOf(id), data.events, id, at)
+  const colourOf = (id: string, at = 0) => teamColour(stateOf(id, at).team)
 
   // ---- state
   let ms = 0, playing = false, speed = 1, last = 0
@@ -75,6 +84,58 @@ async function start(root: HTMLElement) {
   if (payload.trackInfo.degraded) note('The game server was too busy to keep recording, so the track ends early.')
   const bgText = { mesh: 'Drawn in the map\'s 3D geometry.', plan: 'Drawn on the map\'s floor plan (no 3D geometry for this map).', none: 'No map is available for this round: positions are drawn on an empty grid.' }[payload.background.kind]
   el(root, '[data-background]')!.textContent = bgText
+
+  /** One line for a revival or a role change. */
+  function eventText(e: TrackEvent) {
+    if (e.k === 'role') return `${nick(e.p)} became ${e.role} (${e.team})`
+    return `${nick(e.p)} was revived${e.by ? ' by ' + nick(e.by) : ''} (${reviveSource(e.how)})`
+  }
+  /** The fact "came back N s after their killer died", when the recorded events show it. */
+  const killerFact = (e: { t: number, p: string }) => {
+    const k = killerDiedBefore(data.deaths, e)
+    return k ? `came back ${k.seconds} s after their killer, ${nick(k.killer)}, died` : null
+  }
+
+  // Every revival of the round: from the track when it has them (with the time to the millisecond),
+  // else from the round report (to the second).
+  const trackRevives = data.events.filter(e => e.k === 'revive')
+  const revivals: TrackEvent[] = trackRevives.length > 0 ? trackRevives
+    : (payload.revives ?? []).filter(v => v.at !== null).map(v => ({ t: (v.at as number) * 1000, p: v.victim, k: 'revive' as const, by: v.reviver ?? undefined, how: v.how ?? undefined, why: v.why ?? undefined }))
+  const revivesEl = el(root, '[data-revives]')
+  const revivesWrap = el(root, '[data-revives-wrap]')
+  if (revivesEl && revivesWrap) {
+    for (const e of revivals) {
+      const li = document.createElement('li')
+      const b = document.createElement('button')
+      b.type = 'button'
+      b.className = 'text-left hover:text-white'
+      const fact = killerFact(e)
+      b.textContent = `${clock(e.t)}  ${eventText(e)}${fact ? ' — ' + fact : ''}`
+      b.addEventListener('click', () => { selected = e.p; seek(e.t - 3000) })
+      li.append(b)
+      revivesEl.append(li)
+    }
+    revivesWrap.hidden = revivals.length === 0
+  }
+  // the selected player's own events, rebuilt when the selection changes
+  const eventsEl = el(root, '[data-player-events]')
+  let listedFor: string | null | undefined
+  const listEvents = () => {
+    if (!eventsEl || listedFor === selected) return
+    listedFor = selected
+    eventsEl.replaceChildren()
+    const mine = data.events.filter(e => e.p === selected)
+    for (const e of mine) {
+      const li = document.createElement('li')
+      const b = document.createElement('button')
+      b.type = 'button'; b.className = 'text-left hover:text-white'
+      b.textContent = `${clock(e.t)}  ${e.k === 'role' ? 'became ' + e.role + ' (' + e.team + ')' : 'revived' + (e.by ? ' by ' + nick(e.by) : '') + ' (' + reviveSource(e.how) + ')'}`
+      b.addEventListener('click', () => seek(e.t - 1000))
+      li.append(b)
+      eventsEl.append(li)
+    }
+    if (mine.length === 0) eventsEl.append(text(data.events.length === 0 && !payload.track.events ? 'No role changes or revivals recorded for this track.' : 'No role changes or revivals.', 'li', 'text-gray-500'))
+  }
 
   const deathsEl = el(root, '[data-deaths]')
   const seek = (t: number) => { ms = Math.max(0, Math.min(data.length, t)); changed() }
@@ -93,6 +154,7 @@ async function start(root: HTMLElement) {
 
   const listEl = el(root, '[data-players]')
   const rows = new Map<string, HTMLElement>()
+  const chips = new Map<string, { dot: HTMLElement, role: HTMLElement }>()
   for (const id of ids) {
     if (!listEl) break
     const b = document.createElement('button')
@@ -100,10 +162,12 @@ async function start(root: HTMLElement) {
     b.className = 'flex items-center gap-2 w-full text-left px-2 py-1 rounded hover:bg-gray-700'
     const dot = text('', 'span', 'inline-block w-3 h-3 rounded-full shrink-0')
     dot.style.background = hex(colourOf(id))
-    b.append(dot, text(nick(id), 'span', 'truncate'), text(meta.get(id)?.role ?? '', 'span', 'ml-auto text-xs text-gray-400'))
+    const roleEl = text(meta.get(id)?.role ?? '', 'span', 'ml-auto text-xs text-gray-400')
+    b.append(dot, text(nick(id), 'span', 'truncate'), roleEl)
     b.addEventListener('click', () => { selected = id; changed() })
     listEl.append(b)
     rows.set(id, b)
+    chips.set(id, { dot, role: roleEl })
   }
   const scrub = el<HTMLInputElement>(root, '[data-scrub]')!
   scrub.max = String(data.length); scrub.value = '0'
@@ -111,6 +175,15 @@ async function start(root: HTMLElement) {
   if (ticks) for (const d of data.deaths) {
     const t = text('', 'span', 'absolute top-0 bottom-0 w-0.5 bg-red-500 pointer-events-none')
     t.style.left = `${data.length ? (d.t / data.length) * 100 : 0}%`
+    t.title = `${clock(d.t)} ${nick(d.victim)} died`
+    ticks.append(t)
+  }
+  // revivals (green) and role changes (violet) beside the deaths
+  if (ticks) for (const e of data.events) {
+    const t = text('', 'span', `absolute top-0 bottom-0 w-0.5 pointer-events-none ${e.k === 'revive' ? 'bg-emerald-400' : 'bg-violet-400'}`)
+    t.style.left = `${data.length ? (e.t / data.length) * 100 : 0}%`
+    t.dataset.mark = e.k
+    t.title = `${clock(e.t)} ${eventText(e)}`
     ticks.append(t)
   }
   const timeEl = el(root, '[data-time]')!
@@ -256,6 +329,7 @@ async function start(root: HTMLElement) {
     const nose = new Mesh(noseGeo, skin); nose.position.set(10, 0, 63)
     g.add(torso, head, nose)
     for (const y of [-18, 18]) { const a = new Mesh(armGeo, cloth); a.position.set(0, y, 47); g.add(a) }
+    g.userData.cloth = cloth // so a change of team can repaint it
     return g
   }
 
@@ -295,18 +369,30 @@ async function start(root: HTMLElement) {
     g.fillStyle = hex(colour); g.fillText(name, 128, 32)
   })
 
-  interface Marker { group: Group, pin: Sprite, label: Sprite, ring: Mesh, trail: Line, corpse: Group, deadPin: Sprite, plain: CanvasTexture, pointer: CanvasTexture, segs: Segment[] }
+  interface Look { plain: CanvasTexture, pointer: CanvasTexture, cross: CanvasTexture, label: CanvasTexture }
+  interface Marker {
+    group: Group, pin: Sprite, label: Sprite, ring: Mesh, trail: Line, corpse: Group, deadPin: Sprite, segs: Segment[]
+    body: Group, lying: Group, colour: number, looks: Map<number, Look>
+  }
   const markers = new Map<string, Marker>()
   const PIN = 0.03, LABEL_H = 0.036
+  /** The textures of a player in one team colour; made once per colour, a team change swaps them. */
+  const lookOf = (m: { looks: Map<number, Look> }, id: string, colour: number): Look => {
+    let l = m.looks.get(colour)
+    if (!l) { l = { plain: pinTexture(colour, false), pointer: pinTexture(colour, true), cross: crossTexture(colour), label: labelTexture(nick(id), colour) }; m.looks.set(colour, l) }
+    return l
+  }
   for (const id of ids) {
     const colour = colourOf(id)
     const group = new Group()
-    group.add(figure(colour, false))
+    const body = figure(colour, false)
+    group.add(body)
     const arrow = new Mesh(groundArrowGeo, matte(0xffffff)); arrow.position.set(40, 0, 2)
     const ring = new Mesh(ringGeo, new MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, side: DoubleSide })); ring.position.z = 1.5; ring.visible = false
-    const plain = pinTexture(colour, false), pointer = pinTexture(colour, true)
-    const pin = screenSprite(plain, PIN, PIN); pin.position.z = 86
-    const label = screenSprite(labelTexture(nick(id), colour), LABEL_H * 4, LABEL_H); label.position.z = 86; label.center.set(0.5, -0.55)
+    const looks = new Map<number, Look>()
+    const look = lookOf({ looks }, id, colour)
+    const pin = screenSprite(look.plain, PIN, PIN); pin.position.z = 86
+    const label = screenSprite(look.label, LABEL_H * 4, LABEL_H); label.position.z = 86; label.center.set(0.5, -0.55)
     group.add(arrow, ring, pin, label)
 
     const trail = new Line(new BufferGeometry(), new LineBasicMaterial({ color: colour, transparent: true, opacity: 0.6 }))
@@ -317,18 +403,31 @@ async function start(root: HTMLElement) {
     const lying = figure(colour, true)
     lying.rotation.y = -Math.PI / 2 // onto its back, head towards -x
     lying.position.z = 9
-    const deadPin = screenSprite(crossTexture(colour), PIN, PIN); deadPin.position.z = 50
+    const deadPin = screenSprite(look.cross, PIN, PIN); deadPin.position.z = 50
     corpse.add(lying, deadPin)
     corpse.visible = false
 
     world.add(group, trail, corpse)
-    markers.set(id, { group, pin, label, ring, trail, corpse, deadPin, plain, pointer, segs: data.players.get(id) ?? [] })
+    markers.set(id, { group, pin, label, ring, trail, corpse, deadPin, segs: data.players.get(id) ?? [], body, lying, colour, looks })
   }
   const killGeo = new BufferGeometry()
   killGeo.setAttribute('position', new Float32BufferAttribute(new Float32Array(6), 3))
   const killLine = new Line(killGeo, new LineBasicMaterial({ color: 0xfacc15 }))
   killLine.frustumCulled = false; killLine.visible = false
   world.add(killLine)
+
+  // A revival is a ring where the player comes back and, when the reviver is known, a line from the
+  // reviver to them, for a moment. The gap in the trail stays a gap.
+  const reviveMarks = revivals.slice(0, MAX_REVIVE_MARKS).map(e => {
+    const pose = revivePose(data.players.get(e.p) ?? [], e.t)
+    const ring = new Mesh(new RingGeometry(34, 44, 40), new MeshBasicMaterial({ color: 0x34d399, transparent: true, opacity: 0.9, side: DoubleSide }))
+    ring.visible = false
+    const line = new Line(new BufferGeometry(), new LineBasicMaterial({ color: 0x34d399 }))
+    line.frustumCulled = false; line.visible = false
+    if (pose) ring.position.set(pose.x, pose.y, pose.z + 2)
+    world.add(ring, line)
+    return { e, pose, ring, line }
+  })
 
   // ---- drawing
   let queued = false
@@ -410,6 +509,21 @@ async function start(root: HTMLElement) {
   const apply = () => {
     const unit = spriteUnit(), top = camera === ortho
     for (const [id, m] of markers) {
+      const st = stateOf(id, ms)
+      const colour = teamColour(st.team)
+      if (colour !== m.colour) { // a conversion: the figure, its pin and its name change colour at that moment
+        m.colour = colour
+        ;(m.body.userData.cloth as MeshStandardMaterial).color.setHex(colour)
+        ;(m.lying.userData.cloth as MeshStandardMaterial).color.setHex(colour).multiplyScalar(0.45)
+        const look = lookOf(m, id, colour)
+        ;(m.label.material as SpriteMaterial).map = look.label
+        ;(m.deadPin.material as SpriteMaterial).map = look.cross
+        for (const sp of [m.label, m.deadPin, m.pin]) (sp.material as SpriteMaterial).needsUpdate = true
+        const c = chips.get(id); if (c) c.dot.style.background = hex(colour)
+      }
+      const look = lookOf(m, id, m.colour)
+      const chip = chips.get(id)
+      if (chip) chip.role.textContent = st.role ? (st.was.length ? `${st.role} (was ${st.was[0]})` : st.role) : ''
       const p = poseAt(m.segs, ms)
       // A player on a level above the one shown would float in the air; one below is hidden by the floor, so its name is dimmed.
       const lv = p && levels.length > 0 && bg.kind !== 'none' ? levelOf(levels, p.z) : 0
@@ -424,7 +538,7 @@ async function start(root: HTMLElement) {
       }
       // from above the bodies are specks, so the pin itself points the way the player faces
       const pinMat = m.pin.material as SpriteMaterial
-      const want = top ? m.pointer : m.plain
+      const want = top ? look.pointer : look.plain
       if (pinMat.map !== want) { pinMat.map = want; pinMat.needsUpdate = true }
       pinMat.rotation = top && p ? (p.yaw / 256) * Math.PI * 2 : 0
       m.pin.scale.set(PIN * unit * (top ? 2 : 1), PIN * unit * (top ? 2 : 1), 1)
@@ -432,7 +546,7 @@ async function start(root: HTMLElement) {
       m.deadPin.scale.set(PIN * unit, PIN * unit, 1)
       const isSel = id === selected
       m.ring.visible = isSel // the selected player is marked on the ground, not by a bigger body
-      const death = data.deaths.find(d => d.victim === id && d.t <= ms)
+      const death = currentDeath(data.deaths, data.events, id, ms) // a revived player is not dead any more
       const deathLevel = death && levels.length > 0 && bg.kind !== 'none' ? levelOf(levels, death.at[2]) : 0
       m.corpse.visible = !!death && !(typeof upTo === 'number' && deathLevel > upTo)
       if (death) {
@@ -450,6 +564,20 @@ async function start(root: HTMLElement) {
         row.classList.toggle('opacity-50', !!death)
         row.classList.toggle('line-through', !!death)
       }
+    }
+    for (const v of reviveMarks) {
+      const fresh = ms >= v.e.t && ms <= v.e.t + REVIVE_MARK_MS
+      v.ring.visible = fresh && v.pose !== null
+      const by = v.e.by ? markers.get(v.e.by) : undefined
+      const from = by ? lastPoseAt(by.segs, ms) : null
+      v.line.visible = fresh && !!from && v.pose !== null
+      if (v.line.visible && from && v.pose) v.line.geometry.setAttribute('position', new Float32BufferAttribute([from.x, from.y, from.z + 40, v.pose.x, v.pose.y, v.pose.z + 40], 3))
+    }
+    listEvents()
+    const panel = el(root, '[data-selected-role]')
+    if (panel) {
+      const st = selected ? stateOf(selected, ms) : null
+      panel.textContent = selected && st ? `${nick(selected)}: ${st.role ?? 'role unknown'}${st.was.length ? ' (was ' + st.was.join(', ') + ')' : ''}${st.team ? ', ' + st.team : ''}` : ''
     }
     // the line between victim and attacker while a kill is fresh
     const kill = data.deaths.find(d => d.from && ms >= d.t && ms <= d.t + KILL_LINE_MS)
