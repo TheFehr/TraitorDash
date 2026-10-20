@@ -8,7 +8,7 @@ import { RateLimiter } from '../services/rateLimit'
 import { clientAddress } from '../services/gates'
 import { validatePlan, MAX_PLAN_BYTES } from '../services/mapplan'
 import { formatCode } from '../services/pairing'
-import { validateTrack, MAX_TRACK_BYTES } from '../services/tracks'
+import { validateTrack, MAX_TRACK_BYTES, SOURCE_NAME } from '../services/tracks'
 import { NONCE, signResponse } from '../services/signing'
 
 type Variables = {
@@ -299,6 +299,7 @@ api.post('/v1/round', getServer, async (c) => {
   if (!result) return bad('result is required')
   if (!Array.isArray(body.players) || body.players.length === 0 || body.players.length > 128) return bad('players must be an array of 1-128 entries')
   if (body.deaths !== undefined && (!Array.isArray(body.deaths) || body.deaths.length > 512)) return bad('deaths must be an array of at most 512 entries')
+  if (body.revives !== undefined && (!Array.isArray(body.revives) || body.revives.length > 512)) return bad('revives must be an array of at most 512 entries')
 
   const players: RoundReport['players'] = []
   for (const p of body.players) {
@@ -310,6 +311,9 @@ api.post('/v1/round', getServer, async (c) => {
       team: label(p.team),
       survived: p.survived === true,
       won: p.won === true,
+      // The state the round ended in (RFC 14, 4.4); absent from older bridges.
+      endRole: label(p.end_role),
+      endTeam: label(p.end_team),
     })
   }
   // Deaths are checked against the round's own players: a death for someone who was not in the
@@ -326,6 +330,19 @@ api.post('/v1/round', getServer, async (c) => {
   }
   if (dropped > 0) console.warn(`[Stats] ${server.name}: ${dropped} death(s) for players not in the round were dropped`)
 
+  // Revivals (RFC 14, 4.4): the same rules as deaths. A reviver who is not in the round, or a name
+  // with other characters than a class or role name has, is stored as unknown, not refused.
+  const revives: NonNullable<RoundReport['revives']> = []
+  let droppedRevives = 0
+  for (const v of body.revives ?? []) {
+    if (typeof v?.victim !== 'string' || !STEAM_ID.test(v.victim)) return bad('invalid revive victim')
+    if (!inRound.has(v.victim)) { droppedRevives++; continue }
+    const named = (x: unknown) => (typeof x === 'string' && SOURCE_NAME.test(x) ? x : null)
+    const reviver = typeof v.reviver === 'string' && STEAM_ID.test(v.reviver) && inRound.has(v.reviver) ? v.reviver : null
+    revives.push({ victim: v.victim, reviver, how: named(v.how), why: named(v.why), at: whole(v.at) })
+  }
+  if (droppedRevives > 0) console.warn(`[Stats] ${server.name}: ${droppedRevives} revival(s) for players not in the round were dropped`)
+
   const report: RoundReport = {
     roundId: body.round_id,
     map: label(body.map),
@@ -334,6 +351,7 @@ api.post('/v1/round', getServer, async (c) => {
     result,
     players,
     deaths,
+    revives,
   }
 
   const stored = Store.recordRound(server.id, report)

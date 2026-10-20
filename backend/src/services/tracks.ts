@@ -8,9 +8,12 @@ export const MAX_TICKS = 20_000
 export const MAX_TRACK_PLAYERS = 128
 export const MAX_TRACK_DEATHS = 512
 export const MAX_SEGMENTS_PER_PLAYER = 64
+export const MAX_TRACK_EVENTS = 1024
 
 const STEAM_ID = /^\d{5,20}$/
 const MAP_NAME = /^[A-Za-z0-9_.-]{1,64}$/
+/** A weapon class, a role or team name, a revival reason: letters, digits, underscore, dot and hyphen. */
+export const SOURCE_NAME = /^[A-Za-z0-9_.-]{1,64}$/
 const FINGERPRINT = /^[0-9a-f]{64}$/
 
 /** Positions are whole numbers of 8 units: Source maps reach +-16384 units, so +-2048 here; this leaves room. */
@@ -27,6 +30,21 @@ export interface TrackDeath {
   ax: number | null, ay: number | null, az: number | null
   weapon: string | null
 }
+/** A revival or a change of role or team during the round (RFC 14, 4.3). */
+export interface TrackEvent {
+  /** Milliseconds since the round began. */
+  t: number
+  /** The player it happened to. */
+  p: string
+  k: 'revive' | 'role'
+  /** `role` events: the settled role and team. */
+  role?: string
+  team?: string
+  /** `revive` events: the reviver (a player in the round), the weapon class and the reason key; absent when unknown. */
+  by?: string
+  how?: string
+  why?: string
+}
 export interface Track {
   roundId: string
   map: string
@@ -37,6 +55,7 @@ export interface Track {
   t: number[]
   players: TrackPlayer[]
   deaths: TrackDeath[]
+  events: TrackEvent[]
 }
 
 export type TrackCheck = { ok: true, track: Track } | { ok: false, error: string }
@@ -124,9 +143,38 @@ export function validateTrack(body: unknown, round: { roundId: string, map: stri
     }
   }
 
+  // Revivals and role changes (RFC 14, 4.3). Optional: tracks from before it, and bridges that send none, have no events.
+  const events: TrackEvent[] = []
+  if (b.events !== undefined) {
+    if (!Array.isArray(b.events) || b.events.length > MAX_TRACK_EVENTS) return no(`events must be at most ${MAX_TRACK_EVENTS} entries`)
+    let last = 0
+    for (const e of b.events as Record<string, unknown>[]) {
+      if (!e || typeof e !== 'object') return no('an event must be an object')
+      if (typeof e.p !== 'string' || !round.players.has(e.p)) return no('an event names a player who was not in the round')
+      if (!isInt(e.t) || e.t < 0 || e.t > TIME_MAX) return no('an event has an invalid time')
+      if (e.t < last) return no('events must be in time order')
+      last = e.t
+      const named = (v: unknown) => typeof v === 'string' && SOURCE_NAME.test(v)
+      if (e.k === 'role') {
+        if (!named(e.role) || !named(e.team)) return no('a role event needs a role and a team')
+        if (e.by !== undefined || e.how !== undefined || e.why !== undefined) return no('a role event cannot carry reviver fields')
+        events.push({ t: e.t, p: e.p, k: 'role', role: e.role as string, team: e.team as string })
+      } else if (e.k === 'revive') {
+        if (e.role !== undefined || e.team !== undefined) return no('a revive event cannot carry a role or team')
+        for (const f of ['how', 'why'] as const) if (e[f] !== undefined && !named(e[f])) return no(`a revive event has an invalid ${f}`)
+        if (e.by !== undefined && (typeof e.by !== 'string' || !round.players.has(e.by))) return no('a revive event names a reviver who was not in the round')
+        const ev: TrackEvent = { t: e.t, p: e.p, k: 'revive' }
+        if (e.by !== undefined) ev.by = e.by as string
+        if (e.how !== undefined) ev.how = e.how as string
+        if (e.why !== undefined) ev.why = e.why as string
+        events.push(ev)
+      } else return no('an event has an unknown kind')
+    }
+  }
+
   return { ok: true, track: {
     roundId: round.roundId, map: b.map, fingerprint: typeof b.fingerprint === 'string' ? b.fingerprint : null,
-    truncated: b.truncated === true, degraded: b.degraded === true, t, players, deaths,
+    truncated: b.truncated === true, degraded: b.degraded === true, t, players, deaths, events,
   } }
 }
 

@@ -15,6 +15,22 @@ const SORT_LABELS: Record<SortKey, string> = {
   rounds: 'Rounds', wins: 'Wins', winrate: 'Win %', kills: 'Kills', kd: 'K/D',
 }
 
+/** The "as played" / "as dealt" switch of the role and team tables (RFC 14, 4.5); the link keeps the other query parameters. */
+export const ByToggle = ({ path, by, params = '', coverage }: { path: string, by: 'start' | 'end', params?: string, coverage?: { withEnd: number, total: number } }) => {
+  const link = (v: 'start' | 'end') => `${path}?${params}by=${v}`
+  const on = 'bg-red-600 text-white', off = 'bg-gray-800 border border-gray-700 text-gray-400 hover:text-white'
+  return (
+    <div class="flex flex-wrap items-center gap-3 text-xs font-bold">
+      <span class="text-gray-500 uppercase tracking-widest font-black">Roles and teams</span>
+      <a href={link('end')} class={`px-3 py-1 rounded-lg ${by === 'end' ? on : off}`}>As played</a>
+      <a href={link('start')} class={`px-3 py-1 rounded-lg ${by === 'start' ? on : off}`}>As dealt</a>
+      {coverage && coverage.total > coverage.withEnd && (
+        <span class="text-gray-500 font-normal">{coverage.total - coverage.withEnd} of {coverage.total} entries have no end state (earlier rounds) and count as dealt.</span>
+      )}
+    </div>
+  )
+}
+
 const Card = ({ label, value, sub }: { label: string, value: any, sub?: string }) => (
   <div class="bg-gray-800 border border-gray-700 rounded-xl p-4 sm:p-5">
     <div class="text-[10px] font-black uppercase tracking-widest text-gray-500">{label}</div>
@@ -99,6 +115,9 @@ export interface StatsDashboardProps {
   recent: RecentRound[]
   sort: SortKey
   bots?: boolean
+  /** Whether the role and team tables show the state at the end of the round or as dealt (RFC 14, 4.5). */
+  by?: 'start' | 'end'
+  coverage?: { withEnd: number, total: number }
   /** The role settings link only makes sense for admins; guests see the stats alone. */
   admin?: boolean
   /** What the server keeps of position tracks and how much is used (RFC 12, 3.4); shown to admins. */
@@ -143,7 +162,7 @@ export const TracksCard = ({ serverId, t }: { serverId: string, t: TracksInfo })
   </section>
 )
 
-export const StatsDashboard = ({ server, overview, roles, teams, leaders, recent, sort, bots, admin, tracks, replays }: StatsDashboardProps) => (
+export const StatsDashboard = ({ server, overview, roles, teams, leaders, recent, sort, bots, by = 'end', coverage, admin, tracks, replays }: StatsDashboardProps) => (
   <div class="p-4 sm:p-8 space-y-8 sm:space-y-10">
     <header>
       <nav class="text-xs font-black text-gray-500 uppercase tracking-widest mb-4 flex gap-2">
@@ -187,6 +206,7 @@ export const StatsDashboard = ({ server, overview, roles, teams, leaders, recent
           </div>
         </section>
 
+        <ByToggle path={`/servers/${server.id}/stats`} by={by} params={`${bots ? 'bots=1&' : ''}${sort !== 'rounds' ? `sort=${sort}&` : ''}`} coverage={coverage} />
         <div class="grid lg:grid-cols-2 gap-6 sm:gap-8">
           <WinTable title="Teams" rows={teams} empty="No team data." />
           <WinTable title="Roles" rows={roles} empty="No role data." />
@@ -197,7 +217,7 @@ export const StatsDashboard = ({ server, overview, roles, teams, leaders, recent
             <h2 class="text-sm font-black uppercase tracking-widest text-gray-400">Leaderboard</h2>
             <div class="flex gap-2 text-xs font-bold">
               {SORTS.map(s => (
-                <a href={`/servers/${server.id}/stats?sort=${s}${bots ? '&bots=1' : ''}`}
+                <a href={`/servers/${server.id}/stats?sort=${s}${bots ? '&bots=1' : ''}${by === 'start' ? '&by=start' : ''}`}
                    class={`px-3 py-1.5 rounded-lg border transition ${s === sort ? 'border-red-500 text-red-400 bg-red-500/10' : 'border-gray-700 text-gray-400 hover:text-white'}`}>
                   {SORT_LABELS[s]}
                 </a>
@@ -240,7 +260,7 @@ export const StatsDashboard = ({ server, overview, roles, teams, leaders, recent
   </div>
 )
 
-export const PlayerStats = ({ server, player, admin }: { server: { id: string, name: string }, player: PlayerDetail, admin?: boolean }) => (
+export const PlayerStats = ({ server, player, admin, by = 'end', bots }: { server: { id: string, name: string }, player: PlayerDetail, admin?: boolean, by?: 'start' | 'end', bots?: boolean }) => (
   <div class="p-4 sm:p-8 space-y-8 sm:space-y-10">
     <header>
       <nav class="text-xs font-black text-gray-500 uppercase tracking-widest mb-4 flex gap-2">
@@ -264,6 +284,14 @@ export const PlayerStats = ({ server, player, admin }: { server: { id: string, n
       <Card label="K/D" value={(player.kills / Math.max(player.deaths, 1)).toFixed(2)} sub={`${player.deaths} deaths`} />
     </div>
 
+    {(player.revived > 0 || player.revivals > 0) && (
+      <div class="grid grid-cols-2 gap-4 max-w-md">
+        <Card label="Times revived" value={player.revived} />
+        <Card label="Revivals done" value={player.revivals} />
+      </div>
+    )}
+
+    <ByToggle path={`/servers/${server.id}/players/${player.steamId}`} by={by} params={bots ? 'bots=1&' : ''} />
     <WinTable title="By role" rows={player.roles} empty="No role data." />
 
     <section>
@@ -278,7 +306,10 @@ export const PlayerStats = ({ server, player, admin }: { server: { id: string, n
               <tr class="border-t border-gray-700">
                 <td class="p-3 text-gray-400"><Heartbeat lastSeen={r.receivedAt} /></td>
                 <td class="p-3">{r.map ?? '–'}</td>
-                <td class="p-3 font-bold">{r.role ?? '–'}</td>
+                <td class="p-3 font-bold">
+                  {r.endRole && r.endRole !== r.role ? r.endRole : (r.role ?? '–')}
+                  {r.endRole && r.role && r.endRole !== r.role && <span class="text-gray-500 text-xs font-normal ml-1">(was {r.role})</span>}
+                </td>
                 <td class="p-3">{r.result}</td>
                 <td class="p-3 text-right">{r.kills}</td>
                 <td class="p-3 text-right">

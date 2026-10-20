@@ -156,7 +156,7 @@ app.get('/servers/:serverId/stats', async (c) => {
   const requested = c.req.query('sort') as stats.SortKey
   const sort = stats.SORTS.includes(requested) ? requested : 'rounds'
   // Hidden switch for checking the bot test scenario: ?bots=1 includes bot-only rounds.
-  const opts = { bots: c.req.query('bots') === '1' }
+  const opts = { bots: c.req.query('bots') === '1', by: stats.parseBy(c.req.query('by')) }
 
   const recent = stats.getRecentRounds(serverId, opts)
   return c.html(
@@ -170,6 +170,8 @@ app.get('/servers/:serverId/stats', async (c) => {
         recent={recent}
         sort={sort}
         bots={opts.bots}
+        by={opts.by}
+        coverage={stats.getEndStateCoverage(serverId, opts)}
         admin={!!steamId}
         tracks={steamId ? trackInfo(serverId) : undefined}
         replays={replaysFor(serverId, recent, !!(steamId || await userOf(c)))}
@@ -402,12 +404,13 @@ app.get('/servers/:serverId/players/:playerId', async (c) => {
 
   const serverId = c.req.param('serverId')
   const server = Store.getServerById(serverId)
-  const player = server && stats.getPlayer(serverId, c.req.param('playerId'))
+  const by = stats.parseBy(c.req.query('by'))
+  const player = server && stats.getPlayer(serverId, c.req.param('playerId'), { by })
   if (!server || !player || (stats.isBotId(player.steamId) && c.req.query('bots') !== '1')) return c.redirect(`/servers/${serverId}/stats`)
 
   return c.html(
     <Layout steamId={steamId || undefined} user={await userOf(c)} path="/">
-      <PlayerStats server={server} player={player} admin={!!steamId} />
+      <PlayerStats server={server} player={player} admin={!!steamId} by={by} bots={c.req.query('bots') === '1'} />
     </Layout>
   )
 })

@@ -10,7 +10,19 @@ const NOT_BOT = `rp.steam_id NOT LIKE '${BOT_PREFIX}%'`
 /** SQLite's `YYYY-MM-DD HH:MM:SS` (UTC) as an ISO instant, which the <Heartbeat> time element understands. */
 export const sqliteToIso = (v: string | null): string | null => (v ? `${v.replace(' ', 'T')}Z` : null)
 
-export interface StatsOptions { bots?: boolean }
+/**
+ * `bots` includes bot-only rounds. `by` picks the state the role and team tables group by
+ * (RFC 14, 4.5): `end`, the default, is the role and team a player finished the round with ("as
+ * played"); `start` is the state they were dealt. A round reported before the end state existed has
+ * none, and counts as dealt in both.
+ */
+export interface StatsOptions { bots?: boolean, by?: 'start' | 'end' }
+
+export const BY_VALUES = ['start', 'end'] as const
+export const parseBy = (v: string | undefined | null): 'start' | 'end' => (v === 'start' ? 'start' : 'end')
+
+const stateColumn = (column: 'role' | 'team', o?: StatsOptions) =>
+  o?.by === 'start' ? `rp.${column}` : `COALESCE(rp.end_${column}, rp.${column})`
 
 const botFilter = (o?: StatsOptions) => (o?.bots ? '1=1' : NOT_BOT)
 
@@ -47,7 +59,7 @@ export function getOverview(serverId: string, o?: StatsOptions) {
 
 const winRows = (column: 'role' | 'team', serverId: string, o?: StatsOptions) =>
   db.prepare(`
-    SELECT COALESCE(rp.${column}, 'unknown') AS name, COUNT(*) AS played,
+    SELECT COALESCE(${stateColumn(column, o)}, 'unknown') AS name, COUNT(*) AS played,
            SUM(rp.won) AS wins, SUM(rp.survived) AS survived
     FROM round_players rp WHERE rp.server_id = ? AND ${botFilter(o)}
     GROUP BY name ORDER BY played DESC, name ASC
@@ -55,6 +67,15 @@ const winRows = (column: 'role' | 'team', serverId: string, o?: StatsOptions) =>
 
 export const getRoleStats = (serverId: string, o?: StatsOptions) => winRows('role', serverId, o)
 export const getTeamStats = (serverId: string, o?: StatsOptions) => winRows('team', serverId, o)
+
+/** How many player rows have an end state, out of all of them: the "as played" tables are only as complete as this. */
+export function getEndStateCoverage(serverId: string, o?: StatsOptions): { withEnd: number, total: number } {
+  const row = db.prepare(`
+    SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN rp.end_role IS NOT NULL OR rp.end_team IS NOT NULL THEN 1 ELSE 0 END), 0) AS withEnd
+    FROM round_players rp WHERE rp.server_id = ? AND ${botFilter(o)}
+  `).get(serverId) as { total: number, withEnd: number }
+  return { withEnd: row.withEnd, total: row.total }
+}
 
 export const SORTS = ['rounds', 'wins', 'winrate', 'kills', 'kd'] as const
 export type SortKey = (typeof SORTS)[number]
@@ -108,11 +129,16 @@ export function getRecentRounds(serverId: string, o?: StatsOptions, limit = 15):
 
 export interface PlayerRound {
   roundId: string, map: string | null, result: string, receivedAt: string | null,
-  role: string | null, team: string | null, won: boolean, survived: boolean, kills: number
+  role: string | null, team: string | null, endRole: string | null, endTeam: string | null,
+  won: boolean, survived: boolean, kills: number
 }
-export interface PlayerDetail extends LeaderRow { roles: WinRow[], recent: PlayerRound[] }
+export interface PlayerDetail extends LeaderRow {
+  roles: WinRow[], recent: PlayerRound[]
+  /** Times this player was brought back, and times they brought someone back (a known reviver; RFC 14, 4.5). */
+  revived: number, revivals: number
+}
 
-export function getPlayer(serverId: string, steamId: string): PlayerDetail | null {
+export function getPlayer(serverId: string, steamId: string, o?: StatsOptions): PlayerDetail | null {
   const row = db.prepare(`
     SELECT rp.steam_id AS steamId, ${nickOf} AS nick, COUNT(*) AS rounds, SUM(rp.won) AS wins, SUM(rp.survived) AS survived,
            (SELECT COUNT(*) FROM deaths d WHERE d.server_id = rp.server_id AND d.attacker_steam_id = rp.steam_id) AS kills,
@@ -122,13 +148,13 @@ export function getPlayer(serverId: string, steamId: string): PlayerDetail | nul
   if (!row) return null
 
   const roles = db.prepare(`
-    SELECT COALESCE(role, 'unknown') AS name, COUNT(*) AS played, SUM(won) AS wins, SUM(survived) AS survived
-    FROM round_players WHERE server_id = ? AND steam_id = ? GROUP BY name ORDER BY played DESC, name ASC
+    SELECT COALESCE(${stateColumn('role', o)}, 'unknown') AS name, COUNT(*) AS played, SUM(rp.won) AS wins, SUM(rp.survived) AS survived
+    FROM round_players rp WHERE rp.server_id = ? AND rp.steam_id = ? GROUP BY name ORDER BY played DESC, name ASC
   `).all(serverId, steamId) as WinRow[]
 
   const recent = db.prepare(`
     SELECT r.round_id AS roundId, r.map, r.result, r.received_at AS receivedAt,
-           rp.role, rp.team, rp.won, rp.survived,
+           rp.role, rp.team, rp.end_role AS endRole, rp.end_team AS endTeam, rp.won, rp.survived,
            (SELECT COUNT(*) FROM deaths d WHERE d.server_id = r.server_id AND d.round_id = r.round_id AND d.attacker_steam_id = rp.steam_id) AS kills
     FROM round_players rp JOIN rounds r ON r.server_id = rp.server_id AND r.round_id = rp.round_id
     WHERE rp.server_id = ? AND rp.steam_id = ? ORDER BY r.received_at DESC, r.rowid DESC LIMIT 20
@@ -137,6 +163,8 @@ export function getPlayer(serverId: string, steamId: string): PlayerDetail | nul
   return {
     ...row,
     nick: row.nick ?? row.steamId,
+    revived: (db.prepare('SELECT COUNT(*) AS n FROM round_revives WHERE server_id = ? AND victim = ?').get(serverId, steamId) as { n: number }).n,
+    revivals: (db.prepare('SELECT COUNT(*) AS n FROM round_revives WHERE server_id = ? AND reviver = ? AND victim != reviver').get(serverId, steamId) as { n: number }).n,
     roles,
     recent: recent.map(r => ({ ...r, receivedAt: sqliteToIso(r.receivedAt), won: !!r.won, survived: !!r.survived })),
   }
@@ -166,3 +194,9 @@ export function getReplayRound(serverId: string, roundId: string, o?: StatsOptio
   `).all(serverId, roundId) as any[]
   return { ...r, players: players.map(p => ({ ...p, won: !!p.won, survived: !!p.survived })) }
 }
+
+export interface RoundRevive { victim: string, reviver: string | null, how: string | null, why: string | null, at: number | null }
+
+/** The revivals of one round, in the order they were reported (RFC 14, 4.4). */
+export const getRevives = (serverId: string, roundId: string): RoundRevive[] =>
+  db.prepare('SELECT victim, reviver, how, why, at_seconds AS at FROM round_revives WHERE server_id = ? AND round_id = ? ORDER BY id ASC').all(serverId, roundId) as RoundRevive[]

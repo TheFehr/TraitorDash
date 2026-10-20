@@ -335,6 +335,29 @@ export const migrations: Array<(db: Database) => void> = [
   // v14: the once-an-hour check of the view log (RFC 13, 5) looks up one user's recent views.
   (db) => {
     db.run('CREATE INDEX IF NOT EXISTS idx_audit_views ON audit_log (steam_id, action, details, timestamp)')
+  },
+
+  // v15: how a round ended for each player (RFC 14, 4.4) and who revived whom (4.2). `role` and
+  // `team` keep meaning the state at the start; the end state is NULL for rounds reported before
+  // this version.
+  (db) => {
+    db.run('ALTER TABLE round_players ADD COLUMN end_role TEXT')
+    db.run('ALTER TABLE round_players ADD COLUMN end_team TEXT')
+    db.run(`
+      CREATE TABLE IF NOT EXISTS round_revives (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        server_id  TEXT NOT NULL,
+        round_id   TEXT NOT NULL,
+        victim     TEXT NOT NULL,
+        reviver    TEXT,
+        how        TEXT,
+        why        TEXT,
+        at_seconds INTEGER,
+        FOREIGN KEY (server_id, round_id) REFERENCES rounds(server_id, round_id)
+      )
+    `)
+    db.run('CREATE INDEX IF NOT EXISTS idx_round_revives_round ON round_revives (server_id, round_id)')
+    db.run('CREATE INDEX IF NOT EXISTS idx_round_revives_reviver ON round_revives (server_id, reviver)')
   }
 ]
 

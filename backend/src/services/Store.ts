@@ -58,8 +58,10 @@ export interface RoundReport {
   startedAt: string | null
   duration: number | null
   result: string
-  players: { steamId: string, nick: string | null, role: string | null, team: string | null, survived: boolean, won: boolean }[]
+  players: { steamId: string, nick: string | null, role: string | null, team: string | null, survived: boolean, won: boolean, endRole?: string | null, endTeam?: string | null }[]
   deaths: { victim: string, attacker: string | null, at: number | null }[]
+  /** Who was brought back, by whom and how (RFC 14, 4.2); reviver, how and why are null when unknown. */
+  revives?: { victim: string, reviver: string | null, how: string | null, why: string | null, at: number | null }[]
 }
 
 export class Store {
@@ -171,6 +173,7 @@ export class Store {
     db.run('DELETE FROM convar_values WHERE server_id = ?', [id])
     db.run('DELETE FROM lang_files WHERE server_id = ?', [id])
     db.run('DELETE FROM deaths WHERE server_id = ?', [id])
+    db.run('DELETE FROM round_revives WHERE server_id = ?', [id])
     db.run('DELETE FROM round_tracks WHERE server_id = ?', [id])
     db.run('DELETE FROM round_players WHERE server_id = ?', [id])
     db.run('DELETE FROM rounds WHERE server_id = ?', [id])
@@ -195,15 +198,19 @@ export class Store {
       if (inserted.changes === 0) return false
 
       const player = db.prepare(
-        'INSERT OR REPLACE INTO round_players (server_id, round_id, steam_id, nick, role, team, survived, won) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT OR REPLACE INTO round_players (server_id, round_id, steam_id, nick, role, team, survived, won, end_role, end_team) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       )
       for (const p of r.players) {
-        player.run(serverId, r.roundId, p.steamId, p.nick, p.role, p.team, p.survived ? 1 : 0, p.won ? 1 : 0)
+        player.run(serverId, r.roundId, p.steamId, p.nick, p.role, p.team, p.survived ? 1 : 0, p.won ? 1 : 0, p.endRole ?? null, p.endTeam ?? null)
       }
       const death = db.prepare(
         'INSERT INTO deaths (server_id, round_id, victim_steam_id, attacker_steam_id, at_seconds) VALUES (?, ?, ?, ?, ?)'
       )
       for (const d of r.deaths) death.run(serverId, r.roundId, d.victim, d.attacker, d.at)
+      const revive = db.prepare(
+        'INSERT INTO round_revives (server_id, round_id, victim, reviver, how, why, at_seconds) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      )
+      for (const v of r.revives ?? []) revive.run(serverId, r.roundId, v.victim, v.reviver, v.how, v.why, v.at)
 
       const old = db.prepare(
         'SELECT round_id FROM rounds WHERE server_id = ? ORDER BY received_at DESC, rowid DESC LIMIT -1 OFFSET ?'
@@ -211,6 +218,7 @@ export class Store {
       for (const { round_id } of old) {
         db.run('DELETE FROM round_tracks WHERE server_id = ? AND round_id = ?', [serverId, round_id])
         db.run('DELETE FROM deaths WHERE server_id = ? AND round_id = ?', [serverId, round_id])
+        db.run('DELETE FROM round_revives WHERE server_id = ? AND round_id = ?', [serverId, round_id])
         db.run('DELETE FROM round_players WHERE server_id = ? AND round_id = ?', [serverId, round_id])
         db.run('DELETE FROM rounds WHERE server_id = ? AND round_id = ?', [serverId, round_id])
       }
