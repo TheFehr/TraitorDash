@@ -38,6 +38,7 @@ CreateConVar("traitordash_url", "http://localhost:3000", {FCVAR_ARCHIVE, FCVAR_P
 -- No default token: an empty one keeps the bridge idle instead of calling the backend with a
 -- well-known value.
 CreateConVar("traitordash_token", "", {FCVAR_ARCHIVE, FCVAR_PROTECTED}, "The API token for authenticating with the backend (server.cfg; data/traitordash/config.json takes precedence).")
+CreateConVar("traitordash_public_url", "", {FCVAR_ARCHIVE}, "The https address of the dashboard that PLAYERS can reach, for the role guide in the F1 menu (data/traitordash/config.json \"public_url\" takes precedence).")
 
 -- Who is an admin right now. The result is only informational (the backend logs it), so
 -- this must NEVER be able to break a poll or an ingest.

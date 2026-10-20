@@ -94,6 +94,8 @@ The bridge trades the code for the server's token, stores it in `data/traitordas
 
 The two ConVars `traitordash_url` and `traitordash_token` in `server.cfg` still work as a fallback; for each setting the file wins. The file is read when the bridge starts and on `traitordash_reload`. The bridge only talks to an `https://` address or a private network address, and stays idle without a token, saying what is missing in the console. Restart the server; the console should show `Bridge Initialized`, `Language files OK` and `Sync complete!`. `traitordash_status` shows where each value came from and whether the token is set (never the token itself). `traitordash_stats 0` turns the round statistics off without a restart.
 
+**Role guide in the F1 menu** ([RFC 15](./docs/rfcs/RFC-015.md)). The dashboard's role pages are public and read-only; with one more setting the game shows them as a **Server roles** tab in TTT2's F1 menu, and `!role`, `!role <name>` and `!roles` open it on a role or the list. Add `"public_url"` to the config file (or set the ConVar `traitordash_public_url`): the **https** address of the dashboard that *players* can reach, which may differ from the address the game server itself uses. Without it, or without an `https` one, the tab is off and the console says so. The client builds the page address itself and contacts the dashboard only when the player opens the tab or asks for a role.
+
 ### 3. Deploy (optional)
 
 -   `pelican/` has the [Pelican egg](./pelican/README.md) the backend runs under, configured through egg variables (`BASE_URL`, `ADMIN_STEAM_IDS`, `SESSION_SECRET`, ...).

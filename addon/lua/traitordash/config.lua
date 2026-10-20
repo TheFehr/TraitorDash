@@ -43,6 +43,7 @@ local function LoadFile()
 
     fromFile.url = NonEmptyString(parsed.url)
     fromFile.token = NonEmptyString(parsed.token)
+    fromFile.public_url = NonEmptyString(parsed.public_url)
 end
 
 -- Where `key` ("url" / "token") comes from, and its raw value.
@@ -76,6 +77,13 @@ function TraitorDash.GetConfig()
         url = url, rawUrl = rawUrl, token = token,
         urlSource = urlSource, tokenSource = tokenSource, source = source,
     }
+end
+
+--- The address players can reach (RFC 15), as configured: "public_url" in the file, else the ConVar
+--- traitordash_public_url. Not checked here; the role guide cleans it and accepts https only.
+function TraitorDash.GetPublicUrlRaw()
+    if not loaded then LoadFile() end
+    return (Resolve("public_url", "traitordash_public_url"))
 end
 
 --- Re-reads the file and lets the warn-once messages speak again.

@@ -18,6 +18,10 @@ if SERVER then
     local okFt, errFt = pcall(include, "traitordash/frametime.lua")
     if not okFt then print("[TraitorDash] Frame-time tool failed to load: " .. tostring(errFt)) end
 
+    -- The role guide in the F1 menu (RFC 15): the server's part. Optional; off without a public_url.
+    local okRg, errRg = pcall(include, "traitordash/rolemenu.lua")
+    if not okRg then print("[TraitorDash] Role guide failed to load: " .. tostring(errRg)) end
+
     -- Stats are optional: a failure here must never take the bridge down with it.
     local ok, err = pcall(include, "traitordash/stats.lua")
     if not ok then print("[TraitorDash] Stats tracker failed to load: " .. tostring(err)) end
