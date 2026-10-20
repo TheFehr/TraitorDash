@@ -533,11 +533,11 @@ export class Store {
     return row ? row.md5_hash : null
   }
 
-  static saveSchema(serverId: string, roleName: string, team: string, isPolicing: boolean, baserole: number, schema: any[], md5Hash?: string, description: string | null = null) {
+  static saveSchema(serverId: string, roleName: string, team: string, isPolicing: boolean, baserole: number, schema: any[], md5Hash?: string, description: string | null = null, color: string | null = null) {
     this.updateHeartbeat(serverId)
     const upsert = db.prepare(`
-      INSERT INTO roles (server_id, role_name, team, is_policing, baserole, schema_json, md5_hash, updated_at, description)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO roles (server_id, role_name, team, is_policing, baserole, schema_json, md5_hash, updated_at, description, color)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(server_id, role_name) DO UPDATE SET
         team = excluded.team,
         is_policing = excluded.is_policing,
@@ -545,14 +545,15 @@ export class Store {
         schema_json = excluded.schema_json,
         md5_hash = excluded.md5_hash,
         updated_at = excluded.updated_at,
-        description = excluded.description
+        description = excluded.description,
+        color = excluded.color
     `)
     const now = new Date().toISOString()
-    upsert.run(serverId, roleName, team, isPolicing ? 1 : 0, baserole, JSON.stringify(schema), md5Hash || null, now, description)
+    upsert.run(serverId, roleName, team, isPolicing ? 1 : 0, baserole, JSON.stringify(schema), md5Hash || null, now, description, /^#[0-9a-f]{6}$/.test(color ?? '') ? color : null)
   }
 
   static getRoles(serverId: string): any[] {
-    const query = db.prepare('SELECT role_name, team, is_policing, baserole FROM roles WHERE server_id = ? ORDER BY team ASC, role_name ASC')
+    const query = db.prepare('SELECT role_name, team, is_policing, baserole, color FROM roles WHERE server_id = ? ORDER BY team ASC, role_name ASC')
     return query.all(serverId)
   }
 

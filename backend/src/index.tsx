@@ -14,7 +14,7 @@ import { getAdminId, getSession, openSignin, signinUrl, safeNext, type Session }
 import { gated, clientAddress } from './services/gates'
 import { RateLimiter } from './services/rateLimit'
 import { createHash } from 'node:crypto'
-import { buildRoleView, listRoles, publicRoles, publicRoleSettings, KNOWN_ROLE_NAME } from './services/roleview'
+import { buildRoleView, listRoles, parsePlayers, publicRoles, publicRoleSettings, KNOWN_ROLE_NAME } from './services/roleview'
 import { RoleListPage, RolePage, RoleNotFound } from './components/RolePublic'
 import { geometryEnabled, kickGeometryQueue, setGeometryFetcher } from './services/mapgeometry'
 import { helperAvailable, workshopFetcher } from './services/workshop'
@@ -42,6 +42,15 @@ setInterval(() => Store.cleanupPairingCodes(), 60 * 60_000).unref()
 
 // Static Assets
 app.use('/public/*', serveStatic({ root: './src' }))
+// The role pages' fonts (src/fonts, SIL OFL): public, and a file never changes under its name.
+app.use('/fonts/*', async (c, next) => {
+  await next()
+  if (c.res.status === 200) {
+    c.res.headers.set('Cache-Control', 'public, max-age=604800, immutable')
+    c.res.headers.set('X-Content-Type-Options', 'nosniff')
+  }
+})
+app.use('/fonts/*', serveStatic({ root: './src' }))
 app.use('*', sameOrigin)
 
 // API & Auth Mounting
@@ -429,7 +438,7 @@ export const resetRolePages = () => { roleLimiter.reset(); rolePageCache.clear()
 const rolePageCache = new Map<string, string>()
 const ROLE_PAGE_CACHE_MAX = 500
 const ROLE_PAGE_HEADERS = {
-  'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+  'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; font-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer',
 }
@@ -459,7 +468,8 @@ async function rolePage(c: any, kind: 'list' | 'role') {
 
   const showAdmin = admin && !embed
   const query = kind === 'list' ? (c.req.query('q') ?? '').slice(0, 64) : ''
-  const key = [serverId, kind, roleName, query, embed, showAdmin, publicRoleSettings(), Store.getRoleDataVersion(serverId)].join('\u0000')
+  const players = parsePlayers(c.req.query('players'))
+  const key = [serverId, kind, roleName, query, players, embed, showAdmin, publicRoleSettings(), Store.getRoleDataVersion(serverId)].join('\u0000')
   const etag = 'W/"' + createHash('sha1').update(key).digest('hex').slice(0, 20) + '"'
   // The page differs for an admin (the edit link), so it is not shared.
   headers['Cache-Control'] = showAdmin ? 'private, max-age=0, must-revalidate' : 'public, max-age=60'
@@ -472,8 +482,8 @@ async function rolePage(c: any, kind: 'list' | 'role') {
     const srv = { id: server!.id, name: server!.name }
     const view = kind === 'role' ? buildRoleView(serverId, roleName) : null
     const page = kind === 'list'
-      ? <RoleListPage server={srv} roles={listRoles(serverId, query)} query={query} embed={embed} admin={showAdmin} />
-      : <RolePage server={srv} role={view!} embed={embed} admin={showAdmin} />
+      ? <RoleListPage server={srv} roles={listRoles(serverId, query)} query={query} embed={embed} admin={showAdmin} players={players} />
+      : <RolePage server={srv} role={view!} embed={embed} admin={showAdmin} players={players} />
     html = '<!DOCTYPE html>' + page.toString()
     if (rolePageCache.size >= ROLE_PAGE_CACHE_MAX) rolePageCache.delete(rolePageCache.keys().next().value!)
     rolePageCache.set(key, html)

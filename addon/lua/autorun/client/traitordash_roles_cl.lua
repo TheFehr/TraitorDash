@@ -42,6 +42,11 @@ function Guide.Url(name)
         if not ValidName(name) then return nil end
         url = url .. "/" .. name
     end
+    -- The page greys out the roles that need more players than are here now. A whole number from 1 to 128, nothing else.
+    local count = player and player.GetCount and player.GetCount()
+    if type(count) == "number" and count >= 1 and count <= 128 and count == math.floor(count) then
+        return url .. "?embed=1&players=" .. count
+    end
     return url .. "?embed=1"
 end
 

@@ -179,7 +179,7 @@ api.post('/ingest', getServer, async (c) => {
     }
 
     // Save to database via Store
-    Store.saveSchema(server.id, name, team, isPolicingRole, baserole, schema, md5_hash, extracted.description)
+    Store.saveSchema(server.id, name, team, isPolicingRole, baserole, schema, md5_hash, extracted.description, extracted.color)
 
     return c.json({
       success: true,

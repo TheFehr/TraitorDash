@@ -366,6 +366,13 @@ export const migrations: Array<(db: Database) => void> = [
     if (!db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='roles'").get()) return
     db.run('ALTER TABLE roles ADD COLUMN description TEXT')
     db.run('UPDATE roles SET md5_hash = NULL')
+  },
+  // v17 (RFC 15): the role's own colour (ROLE.color), for the public role pages. NULL when the role
+  // sets none; the page then uses its team's colour. Hashes are cleared so every role is sent again.
+  (db) => {
+    if (!db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='roles'").get()) return
+    db.run('ALTER TABLE roles ADD COLUMN color TEXT')
+    db.run('UPDATE roles SET md5_hash = NULL')
   }
 ]
 

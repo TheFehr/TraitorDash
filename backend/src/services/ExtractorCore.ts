@@ -171,7 +171,7 @@ export class ExtractorCore {
     }
   }
 
-  public static async extractSchema(roleCode: string, convarState?: Record<string, string>, dataState?: Record<string, any>, roleName?: string, langSources: string[] = []): Promise<{ team: string, isPolicingRole: boolean, baserole: number, schema: any[], description: string | null }> {
+  public static async extractSchema(roleCode: string, convarState?: Record<string, string>, dataState?: Record<string, any>, roleName?: string, langSources: string[] = []): Promise<{ team: string, isPolicingRole: boolean, baserole: number, schema: any[], description: string | null, color: string | null }> {
     const L = lauxlib.luaL_newstate()
     this.openSandboxedLibs(L)
 
@@ -259,6 +259,9 @@ export class ExtractorCore {
           if oldSetBaseRole then oldSetBaseRole(role, base) end
         end
 
+        -- The mock ROLE starts with a white colour; only a colour the role sets itself counts (RFC 15)
+        local __td_color0 = rawget(ROLE, "color")
+
         -- Call PreInitialize if it exists
         if ROLE and ROLE.PreInitialize then
           pcall(function() ROLE:PreInitialize() end)
@@ -267,6 +270,14 @@ export class ExtractorCore {
         -- Call Initialize if it exists (often sets baserole)
         if ROLE and ROLE.Initialize then
           pcall(function() ROLE:Initialize() end)
+        end
+
+        do
+          local c = rawget(ROLE, "color")
+          local function chan(v) return type(v) == "number" and v >= 0 and v <= 255 and v == math.floor(v) end
+          if c ~= __td_color0 and type(c) == "table" and chan(rawget(c, "r")) and chan(rawget(c, "g")) and chan(rawget(c, "b")) then
+            __TD_COLOR = string.format("#%02x%02x%02x", c.r, c.g, c.b)
+          end
         end
 
         -- Method 1: direct ROLE call
@@ -376,7 +387,11 @@ export class ExtractorCore {
         schema = Object.values(rawSchema)
       }
 
-      return { team, isPolicingRole, baserole, schema, description: this.readDescription(L, roleName) }
+      lua.lua_getglobal(L, to_luastring('__TD_COLOR'))
+      const color = lua.lua_type(L, -1) === lua.LUA_TSTRING ? to_jsstring(lua.lua_tostring(L, -1)) : null
+      lua.lua_pop(L, 1)
+
+      return { team, isPolicingRole, baserole, schema, description: this.readDescription(L, roleName), color }
     } catch (e) {
       console.error('[Extractor] Caught Exception:', e)
       throw e

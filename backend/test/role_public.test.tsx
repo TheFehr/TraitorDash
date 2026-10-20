@@ -118,7 +118,7 @@ describe('content', () => {
   test('a disabled role says so and keeps its numbers', async () => {
     Store.setConVarValues(serverId, [live('ttt_haunter_enabled', '0', '1')])
     const html = await page()
-    expect(html).toContain('disabled on this server')
+    expect(html).toContain('Disabled on this server')
     expect(html).toContain('20 %')
   })
   test('PUBLIC_ROLE_SETTINGS=0 removes the settings and keeps the rest', async () => {
@@ -232,6 +232,26 @@ describe('migration v16', () => {
     d.run("INSERT INTO roles (server_id, role_name, team, is_policing, baserole, schema_json, md5_hash) VALUES ('s', 'r', 't', 0, -1, '[]', 'abc')")
     migrate(d)
     expect((d.query('SELECT md5_hash, description FROM roles').get() as any)).toEqual({ md5_hash: null, description: null })
+  })
+})
+
+describe('migration v17', () => {
+  test('adds the colour column, empty, and clears the role hashes again', async () => {
+    const { Database } = await import('bun:sqlite')
+    const { migrate, migrations } = await import('../src/services/migrations') as any
+    const d = new Database(':memory:')
+    for (let i = 0; i < 16; i++) migrations[i](d)
+    d.run('PRAGMA user_version = 16')
+    d.run("INSERT INTO servers (id, name, api_token_hash) VALUES ('s', 'S', 'h')")
+    d.run("INSERT INTO roles (server_id, role_name, team, is_policing, baserole, schema_json, md5_hash, description) VALUES ('s', 'r', 't', 0, -1, '[]', 'abc', 'kept')")
+    migrate(d)
+    expect((d.query('SELECT md5_hash, description, color FROM roles').get() as any)).toEqual({ md5_hash: null, description: 'kept', color: null })
+  })
+  test('a database without a roles table is left alone', async () => {
+    const { Database } = await import('bun:sqlite')
+    const { migrations } = await import('../src/services/migrations') as any
+    const d = new Database(':memory:')
+    expect(() => migrations[16](d)).not.toThrow()
   })
 })
 

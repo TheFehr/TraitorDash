@@ -1,4 +1,5 @@
 import { Store, type LiveConVar } from './Store'
+import { teamColour } from '../replaylogic'
 import { isRoleEnabled, roleMetrics, METRICS, type MetricKey } from './roles'
 import { cleanLabel, conVarDataText, humanizeKey, kindForConVarData, kindForLive, suffixOf, SUFFIX_TO_KEY, type FieldKind } from '../components/RoleConfigForm'
 
@@ -9,7 +10,9 @@ import { cleanLabel, conVarDataText, humanizeKey, kindForConVarData, kindForLive
 export interface RoleView {
   name: string
   team: string
+  color: string
   enabled: boolean
+  min: number | null
   /** The description from the language files, cleaned; null when the addon has none. */
   description: string | null
   numbers: { key: MetricKey, label: string, text: string }[]
@@ -17,7 +20,19 @@ export interface RoleView {
   settings: { label: string, value: string | null, default: string | null }[] | null
 }
 
-export interface RoleListEntry { name: string, team: string, enabled: boolean, pct: string, minPlayers: string }
+/** `min` is the role's minimum player count as a number, null when the server has not reported it. */
+export interface RoleListEntry { name: string, team: string, color: string, enabled: boolean, pct: string, minPlayers: string, min: number | null }
+
+/** The role's own colour (ROLE.color, as TTT2 shows it), else its team's. Always `#rrggbb`. */
+export const roleColour = (own: unknown, team: string): string =>
+  typeof own === 'string' && /^#[0-9a-f]{6}$/.test(own) ? own : '#' + teamColour(team).toString(16).padStart(6, '0')
+
+/** The number of players a page is shown for (`?players=`): a whole number from 1 to 128, else none. */
+export function parsePlayers(raw: string | undefined | null): number | null {
+  if (!raw || !/^\d{1,3}$/.test(raw)) return null
+  const n = Number(raw)
+  return n >= 1 && n <= 128 ? n : null
+}
 
 /** Operator switches (RFC 15, 4.2), read at each request. */
 export const publicRoles = () => process.env.PUBLIC_ROLES !== '0'
@@ -101,7 +116,9 @@ export function buildRoleView(serverId: string, roleName: string): RoleView | nu
   return {
     name: roleName,
     team: String(role.team ?? ''),
+    color: roleColour(role.color, String(role.team ?? '')),
     enabled: isRoleEnabled(live, roleName),
+    min: metrics.minPlayers.sort,
     description: cleanDescription(Store.getRoleDescription(serverId, roleName)),
     numbers: (Object.keys(METRICS) as MetricKey[]).map(key => ({ key, label: METRICS[key].label, text: metrics[key].text })),
     settings: publicRoleSettings() ? settingsOf(Store.getSchema(serverId, roleName) ?? [], live, roleName) : null,
@@ -116,6 +133,7 @@ export function listRoles(serverId: string, query = ''): RoleListEntry[] {
     .filter(r => q === '' || String(r.role_name).toLowerCase().includes(q))
     .map(r => {
       const m = roleMetrics(live, r.role_name)
-      return { name: String(r.role_name), team: String(r.team ?? ''), enabled: isRoleEnabled(live, r.role_name), pct: m.pct.text, minPlayers: m.minPlayers.text }
+      const team = String(r.team ?? '')
+      return { name: String(r.role_name), team, color: roleColour(r.color, team), enabled: isRoleEnabled(live, r.role_name), pct: m.pct.text, minPlayers: m.minPlayers.text, min: m.minPlayers.sort }
     })
 }

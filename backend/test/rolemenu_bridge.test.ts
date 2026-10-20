@@ -231,6 +231,19 @@ describe('the client: building the address', () => {
     expect(o.out.slash).toBe('nil')
     expect(o.out.dots).toBeUndefined()  // "." and ".." are not names
   })
+  test('the number of players in the game goes on the address, as a whole number from 1 to 128 only', () => {
+    const url = (count: string) => client(`TraitorDash.RoleGuideClient.SetInit("https://d.example.org", "abc-1")
+      player = { GetCount = function() return ${count} end }
+      local c = TraitorDash.RoleGuideClient RESULT = { list = c.Url(), role = c.Url("haunter") }`).out
+    expect(url('7').list).toBe('https://d.example.org/servers/abc-1/roles?embed=1&players=7')
+    expect(url('7').role).toBe('https://d.example.org/servers/abc-1/roles/haunter?embed=1&players=7')
+    expect(url('128').list).toContain('players=128')
+    for (const bad of ['0', '129', '-1', '2.5', '"7"', 'nil', '1/0', '0/0']) expect(url(bad).list, bad).toBe('https://d.example.org/servers/abc-1/roles?embed=1')
+  })
+  test('without a player library the address has no count', () => {
+    const o = client(`TraitorDash.RoleGuideClient.SetInit("https://d.example.org", "abc-1") player = nil RESULT = { list = TraitorDash.RoleGuideClient.Url() }`)
+    expect(o.out.list).toBe('https://d.example.org/servers/abc-1/roles?embed=1')
+  })
   test('a base that is not https, or an id with odd characters, switches it off', () => {
     for (const [b, i] of [['http://x.org', 'a'], ['javascript:1', 'a'], ['https://x.org', 'a/b'], ['https://x.org', ''], ['https://x.org?x=1', 'a'], ['https://x y', 'a']]) {
       const o = client(`local c = TraitorDash.RoleGuideClient c.SetInit(${JSON.stringify(b)}, ${JSON.stringify(i)}) RESULT = { ok = c.Available(), url = c.Url("x") }`)
