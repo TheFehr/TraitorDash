@@ -1,4 +1,5 @@
 import { teamColour } from '../replaylogic'
+import { FAVICON } from './Layout'
 import type { RoleView, RoleListEntry } from '../services/roleview'
 
 // The public, read-only role pages (RFC 15). One shell for the normal and the embedded layout: no
@@ -36,6 +37,7 @@ const Shell = ({ title, embed, children }: { title: string, embed: boolean, chil
       <meta name="referrer" content="no-referrer" />
       {embed && <meta name="robots" content="noindex" />}
       <title>{title}</title>
+      <link rel="icon" href={FAVICON} />
       <style>{CSS}</style>
     </head>
     <body>

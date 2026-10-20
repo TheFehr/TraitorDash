@@ -146,13 +146,20 @@ describe('content', () => {
 })
 
 describe('embed and headers', () => {
+  test('both layouts carry the tab icon of the other pages', async () => {
+    for (const q of ['', '?embed=1']) {
+      for (const path of [`/servers/${serverId}/roles`, `/servers/${serverId}/roles/haunter`]) {
+        expect(await (await get(path + q)).text()).toContain('<link rel="icon" href="data:image/svg+xml,')
+      }
+    }
+  })
   test('the embed has no site header and no script; its links keep ?embed=1', async () => {
     const html = await (await get(`/servers/${serverId}/roles?embed=1`)).text()
     expect(html).not.toContain('TraitorDash')
     expect(html).not.toContain('<script')
     expect(html).not.toContain('Sign in')
     expect(html).toContain('noindex')
-    const links = [...html.matchAll(/href="([^"]+)"/g)].map(m => m[1]!)
+    const links = [...html.matchAll(/<a [^>]*href="([^"]+)"/g)].map(m => m[1]!)
     expect(links.length).toBeGreaterThan(0)
     for (const l of links) { expect(l.startsWith(`/servers/${serverId}/roles`)).toBe(true); expect(l.includes("embed=1")).toBe(true) }
     expect(html).toContain('name="embed"')
