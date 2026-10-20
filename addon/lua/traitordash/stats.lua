@@ -19,6 +19,8 @@ local cv_bots = CreateConVar("traitordash_stats_bots", "0", {}, "Also report bot
 
 local MAX_PLAYERS = 128
 local MAX_DEATHS = 512
+local MAX_REVIVES = 512
+local NOTE_SECONDS = 30 -- how long a defibrillator attempt may wait for its revival (RFC 14, 4.2)
 
 local round = nil -- the round in progress, or nil
 
@@ -62,6 +64,13 @@ local function RoleName(ply)
     return data and data.name or "unknown"
 end
 
+-- A class, role or reason name as the backend accepts it: letters, digits, underscore, dot, hyphen.
+local function CleanName(v)
+    if v == nil then return nil end
+    local s = tostring(v):gsub("[^%w_.%-]", ""):sub(1, 64)
+    return s ~= "" and s or nil
+end
+
 local function PlayerId(ply)
     if ply:IsBot() then
         if not cv_bots:GetBool() then return nil end
@@ -71,7 +80,7 @@ local function PlayerId(ply)
 end
 
 local function Begin()
-    round = { id = NewRoundId(), startedAt = os.time(), players = {}, deaths = {}, order = {} }
+    round = { id = NewRoundId(), startedAt = os.time(), players = {}, deaths = {}, order = {}, revives = {}, notes = {}, settling = {} }
     local tracked = {}
 
     for _, ply in ipairs(player.GetAll()) do
@@ -80,7 +89,10 @@ local function Begin()
         if IsValid(ply) and ply:IsTerror() then
             local sid = PlayerId(ply)
             if sid then
-                round.players[sid] = { steam_id = sid, nick = ply:Nick(), role = RoleName(ply), team = ply:GetTeam() }
+                local role, team = RoleName(ply), ply:GetTeam()
+                -- `role` and `team` stay the state at the start; `end_role` and `end_team` follow the
+                -- round (RFC 14, 4.4) and `ply` lets the revival event find the player again.
+                round.players[sid] = { steam_id = sid, nick = ply:Nick(), role = role, team = team, end_role = role, end_team = team, ply = ply }
                 round.order[#round.order + 1] = sid
                 tracked[#tracked + 1] = { sid = sid, ply = ply }
             end
@@ -104,8 +116,82 @@ local function Death(victim, inflictor, attacker)
 
     round.deaths[#round.deaths + 1] = { victim = vsid, attacker = asid, at = math.floor(os.time() - round.startedAt) }
     round.players[vsid].died = true
+    -- A revival that comes with no defibrillator is put down to the role the player died as (RFC 14, 4.2).
+    round.players[vsid].dead = true
+    round.players[vsid].death_role = CleanName(RoleName(victim))
     if TraitorDash.Track then TraitorDash.Track.Death(victim, inflictor, attacker, vsid, asid) end
     Dbg(string.format("death: %s (%s) <- %s", round.players[vsid].nick, round.players[vsid].role, asid or "world"))
+end
+
+-- ---- Role changes and revivals (RFC 14) ----
+
+local function ElapsedSeconds() return math.floor(os.time() - round.startedAt) end
+
+-- A role or team changed: the state is read once the change has settled, on the next tick, because
+-- the role and the team are set in one call that fires both hooks.
+local function RoleHook(ply)
+    if not round or not IsValid(ply) then return end
+    local sid = PlayerId(ply)
+    local p = sid and round.players[sid]
+    if not p or round.settling[sid] then return end
+    local r = round
+    r.settling[sid] = true
+    timer.Simple(0, function()
+        r.settling[sid] = nil
+        if round ~= r or not IsValid(ply) then return end
+        local ok, err = pcall(function()
+            local role, team = RoleName(ply), ply:GetTeam()
+            if role == p.end_role and team == p.end_team then return end -- it ended up where it was
+            p.end_role, p.end_team = role, team
+            if TraitorDash.Track then TraitorDash.Track.RoleChanged(sid, CleanName(role), CleanName(team)) end
+            Dbg(string.format("role change: %s is now %s (%s)", p.nick, role, tostring(team)))
+        end)
+        if not ok then print("[TraitorDash:stats] role change error: " .. tostring(err)) end
+    end)
+end
+
+-- The defibrillator announces every attempt before it starts (owner, the body, the weapon). The note
+-- waits for the revival of that player. This handler must return nothing: an answer blocks the revival.
+local function DefibAttempt(owner, ragdoll, defib)
+    if not round then return end
+    local victim = CORPSE and CORPSE.GetPlayer and CORPSE.GetPlayer(ragdoll)
+    if not IsValid(victim) then return end
+    local vsid = PlayerId(victim)
+    if not vsid or not round.players[vsid] then return end
+    local by = IsValid(owner) and PlayerId(owner) or nil
+    if by and not round.players[by] then by = nil end
+    local class = IsValid(defib) and defib.GetClass and defib:GetClass() or nil
+    round.notes[vsid] = {
+        by = by, how = CleanName(class), why = IsValid(defib) and CleanName(defib.revivalReason) or nil, at = CurTime(),
+    }
+end
+
+-- TTT2 logs a respawn event for every revival; the hook gives the exact moment.
+local function AddedEvent(name, event)
+    if not round or EVENT_RESPAWN == nil or name ~= EVENT_RESPAWN then return end
+    local data = event and event.event
+    local sid64 = data and data.sid64
+    local sid, p
+    for _, s in ipairs(round.order) do
+        local q = round.players[s]
+        if q.dead and IsValid(q.ply) and ((sid64 and tostring(q.ply:SteamID64()) == tostring(sid64)) or (q.ply:IsBot() and data and q.nick == data.nick)) then
+            sid, p = s, q
+            break
+        end
+    end
+    if not p then return end
+    p.dead = false
+
+    local info = { how = p.death_role and ("role:" .. p.death_role) or nil }
+    local note = round.notes[sid]
+    round.notes[sid] = nil
+    if note and CurTime() - note.at <= NOTE_SECONDS then info = { by = note.by, how = note.how, why = note.why } end
+
+    if #round.revives < MAX_REVIVES then
+        round.revives[#round.revives + 1] = { victim = sid, reviver = info.by, how = info.how, why = info.why, at = ElapsedSeconds() }
+    end
+    if TraitorDash.Track then TraitorDash.Track.Revive(sid, info) end
+    Dbg(string.format("revival: %s by %s (%s)", p.nick, info.by or "unknown", info.how or "unknown"))
 end
 
 -- `accepted` runs when the backend has accepted the round (the position track is sent after that).
@@ -163,10 +249,17 @@ local function End(rawResult)
     local players = {}
     for _, sid in ipairs(r.order) do
         local p = r.players[sid]
+        -- The last look: a player still here may have changed since the hooks (the hooks do the rest).
+        if IsValid(p.ply) then
+            local ok, role, team = pcall(function() return RoleName(p.ply), p.ply:GetTeam() end)
+            if ok then p.end_role, p.end_team = role, team end
+        end
         players[#players + 1] = {
             steam_id = p.steam_id, nick = p.nick, role = p.role, team = p.team,
+            end_role = p.end_role, end_team = p.end_team,
             survived = alive[sid] == true,
-            won = winners ~= nil and p.team == winners,
+            -- Whoever ended on the winning team won, whatever team they began on (RFC 14, 4.4).
+            won = winners ~= nil and (p.end_team or p.team) == winners,
         }
     end
 
@@ -181,6 +274,7 @@ local function End(rawResult)
         result = result,
         players = players,
         deaths = r.deaths,
+        revives = r.revives,
     }, track and function() TraitorDash.Track.Upload(track) end or nil)
 end
 
@@ -188,6 +282,11 @@ hook.Add("TTTPrepareRound", "TraitorDash_StatsReset", Safe("prepare", function()
 hook.Add("TTTBeginRound", "TraitorDash_StatsBegin", Safe("begin", Begin))
 hook.Add("TTT2PostPlayerDeath", "TraitorDash_StatsDeath", Safe("death", Death))
 hook.Add("TTTEndRound", "TraitorDash_StatsEnd", Safe("end", End))
+hook.Add("TTT2UpdateSubrole", "TraitorDash_StatsRole", Safe("role", RoleHook))
+hook.Add("TTT2UpdateTeam", "TraitorDash_StatsTeam", Safe("team", RoleHook))
+hook.Add("TTT2AddedEvent", "TraitorDash_StatsRevive", Safe("revive", AddedEvent))
+-- Safe() returns nothing, which the defibrillator needs: any answer from this hook blocks the revival.
+hook.Add("TTT2AttemptDefibPlayer", "TraitorDash_StatsDefib", Safe("defib", DefibAttempt))
 
 concommand.Add("traitordash_stats_status", function(ply)
     if IsValid(ply) and not ply:IsSuperAdmin() then return end

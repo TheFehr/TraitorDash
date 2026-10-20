@@ -31,6 +31,7 @@ local TIMER = "TraitorDash_Track"
 local MAX_TICKS = 20000          -- caps of RFC 12, 3.2 (the backend refuses more)
 local MAX_SEGMENTS = 64          -- per player
 local MAX_DEATHS = 512
+local MAX_EVENTS = 1024         -- revivals and role changes (RFC 14, 4.3)
 local MAX_BYTES = 8 * 1024 * 1024
 local SAFE_BYTES = 7 * 1024 * 1024 -- the size estimate at which recording stops, a margin below the cap
 local BYTES_PER_SAMPLE = 16
@@ -54,7 +55,7 @@ local function Settings()
 end
 
 local function EstimateBytes(r)
-    return r.samples * BYTES_PER_SAMPLE + #r.t * 6 + #r.deaths * 120
+    return r.samples * BYTES_PER_SAMPLE + #r.t * 6 + #r.deaths * 120 + #r.events * 100
 end
 
 local function Pos(ply)
@@ -100,15 +101,35 @@ end
 
 -- One sample of every tracked player at one tick. `also` is the SteamID of a player to sample even
 -- though they are no longer alive (the death hook: the death position is exact).
+-- Milliseconds since the round began, as the backend wants them (0 to six hours).
+local function RoundMs(r, now)
+    return math.min(math.max(Floor((now - r.t0) * 1000), 0), 6 * 3600 * 1000)
+end
+
+-- Adds a revival or role-change event (RFC 14, 4.3); beyond the cap the track is marked truncated instead.
+local function AddEvent(r, now, e)
+    if #r.events >= MAX_EVENTS then r.truncated = true return end
+    e.t = RoundMs(r, now)
+    r.events[#r.events + 1] = e
+end
+
 local function SampleAll(r, now, also)
     local idx = AddTick(r, now)
     for _, sid in ipairs(r.order) do
         local p = r.players[sid]
         local ply = p.ply
-        if IsValid(ply) and (ply:IsTerror() or sid == also) then
+        local alive = IsValid(ply) and ply:IsTerror()
+        if IsValid(ply) and (alive or sid == also) then
+            -- Dead at an earlier tick, alive now, and no respawn event came: a revival by a path that
+            -- fires none. The time is this tick's; the source is unknown (RFC 14, 4.1).
+            if alive and p.awaiting and p.sawDead then
+                p.awaiting, p.sawDead = false, false
+                AddEvent(r, now, { p = sid, k = "revive" })
+            end
             Push(r, p, idx, Pos(ply))
         else
             p.cur = nil -- not alive now: the segment ends here (a revived player starts a new one)
+            if p.awaiting then p.sawDead = true end
         end
     end
 end
@@ -213,7 +234,7 @@ function Track.Begin(roundId, players)
 
     local mn = Settings()
     local r = {
-        id = roundId, t0 = CurTime(), lastMs = 0, t = {}, order = {}, players = {}, deaths = {},
+        id = roundId, t0 = CurTime(), lastMs = 0, t = {}, order = {}, players = {}, deaths = {}, events = {},
         samples = 0, ticks = 0, skipped = 0, interval = mn, minUsed = math.huge, maxUsed = 0,
         ring = {}, costSum = 0, worst = 0, truncated = false, degraded = false, stopped = false,
     }
@@ -250,6 +271,7 @@ function Track.Death(victim, inflictor, attacker, vsid, asid)
         SampleAll(r, now, vsid)
         p.cur = nil
     end
+    p.awaiting, p.sawDead = true, false -- a revival is expected from here on
     local d = { victim = vsid, t = math.min(math.max(Floor((now - r.t0) * 1000), 0), 6 * 3600 * 1000) }
     d.vx, d.vy, d.vz = Pos(victim)
     if asid and r.players[asid] and IsValid(attacker) then
@@ -258,6 +280,26 @@ function Track.Death(victim, inflictor, attacker, vsid, asid)
     end
     d.weapon = Weapon(inflictor, attacker)
     r.deaths[#r.deaths + 1] = d
+end
+
+-- A tracked player came back to life (the respawn event of TTT2). `info` is { by = SteamID64 of the
+-- reviver, how = weapon class or "role:<name>", why = reason key }, every field optional.
+function Track.Revive(sid, info)
+    local r = rec
+    if not r or r.stopped then return end
+    local p = r.players[sid]
+    if not p then return end
+    p.awaiting, p.sawDead = false, false
+    local e = { p = sid, k = "revive" }
+    if info then e.by, e.how, e.why = info.by, info.how, info.why end
+    AddEvent(r, CurTime(), e)
+end
+
+-- A tracked player's role or team settled on a new value (RFC 14, 4.1).
+function Track.RoleChanged(sid, role, team)
+    local r = rec
+    if not r or r.stopped or not r.players[sid] then return end
+    AddEvent(r, CurTime(), { p = sid, k = "role", role = role, team = team })
 end
 
 -- The round is over: stops the timer, prints the one line, and returns the track to upload (or nil
@@ -299,6 +341,7 @@ function Track.Finish(roundId)
         round_id = r.id, map = game.GetMap(), fingerprint = fingerprint,
         truncated = r.truncated, degraded = r.degraded,
         t = r.t, players = players, deaths = r.deaths,
+        events = #r.events > 0 and r.events or nil,
     }
 end
 
