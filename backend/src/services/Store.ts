@@ -236,6 +236,11 @@ export class Store {
     return db.transaction(() => Store.removeRound(serverId, roundId))()
   }
 
+  /** Deletes several rounds with their replays. Returns the ids that existed and are now gone. */
+  static deleteRounds(serverId: string, roundIds: string[]): string[] {
+    return db.transaction(() => roundIds.filter(id => Store.removeRound(serverId, id)))()
+  }
+
   /** Deletes only a round's replay (its track); the round stays in the statistics. Returns whether there was one. */
   static deleteTrack(serverId: string, roundId: string): boolean {
     return db.run('DELETE FROM round_tracks WHERE server_id = ? AND round_id = ?', [serverId, roundId]).changes > 0

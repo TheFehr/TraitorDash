@@ -123,3 +123,59 @@ describe('the buttons', () => {
     expect(nothing).not.toContain('data-delete-bots')
   })
 })
+
+describe('ticked rounds', () => {
+  const post = (body: string, auth = true, headers: Record<string, string> = {}) => form(`/servers/${serverId}/rounds/delete-selected`, body, auth, headers)
+  test('deletes exactly the ticked rounds, with everything stored for them, and audits each', async () => {
+    const a = round(), b = round(), keep = round()
+    const r = await post(`round=${a}&round=${b}`)
+    expect(r.status).toBe(302)
+    expect(r.headers.get('location')).toBe(`/servers/${serverId}/stats`)
+    for (const id of [a, b]) for (const t of ['rounds', 'round_players', 'deaths', 'round_revives', 'round_tracks']) expect(count(t, id), `${id} ${t}`).toBe(0)
+    expect(count('rounds', keep)).toBe(1)
+    expect(audit('ROUND_DELETED').map(x => x.details).sort()).toEqual([a, b].sort())
+  })
+  test('one ticked round arrives as a single value; the bots view is kept in the redirect', async () => {
+    const a = round()
+    const r = await post(`round=${a}&bots=1`)
+    expect(r.headers.get('location')).toBe(`/servers/${serverId}/stats?bots=1`)
+    expect(count('rounds', a)).toBe(0)
+  })
+  test('nothing ticked, too many, or an id that is not an id: refused, nothing deleted', async () => {
+    const a = round()
+    expect((await post('')).status).toBe(400)
+    expect((await post(Array.from({ length: 101 }, (_, i) => `round=round-${String(i).padStart(6, '0')}`).join('&'))).status).toBe(400)
+    expect((await post(`round=${a}&round=x%27%3B--`)).status).toBe(400)
+    expect(count('rounds', a)).toBe(1)
+  })
+  test("a round of another server is not deleted by naming it; ids that do not exist are skipped", async () => {
+    const mine = round()
+    const other = (Store.addServer('Other') as any).id
+    const home = serverId
+    serverId = other
+    const theirs = round()
+    serverId = home
+    await post(`round=${theirs}&round=${mine}&round=round-999999`)
+    expect(count('rounds', mine)).toBe(0)
+    serverId = other
+    expect(count('rounds', theirs)).toBe(1)
+    serverId = home
+    expect(audit('ROUND_DELETED').map(x => x.details)).toEqual([mine])
+  })
+  test('not for guests, not from another site', async () => {
+    const a = round()
+    expect((await post(`round=${a}`, false)).status).toBe(401)
+    expect((await post(`round=${a}`, true, { Origin: 'https://evil.example' })).status).toBe(403)
+    expect(count('rounds', a)).toBe(1)
+  })
+  test('the stats page gives an admin a tick per recent round and the delete button; a guest gets neither', async () => {
+    const a = round()
+    const html = await (await req(`/servers/${serverId}/stats`)).text()
+    expect(html).toContain('data-delete-selected')
+    expect(html).toContain(`name="round" value="${a}"`)
+    expect(html).toContain('Delete selected rounds')
+    const guest = await (await req(`/servers/${serverId}/stats`, {}, false)).text()
+    expect(guest).not.toContain('data-delete-selected')
+    expect(guest).not.toContain('name="round"')
+  })
+})

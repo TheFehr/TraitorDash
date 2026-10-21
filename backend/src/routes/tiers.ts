@@ -37,6 +37,7 @@ export const TIERS: Record<string, Tier> = {
   'POST /servers/:serverId/rounds/:roundId/pin': 'admin',
   'POST /servers/:serverId/rounds/:roundId/delete': 'admin',
   'POST /servers/:serverId/rounds/delete-bots': 'admin',
+  'POST /servers/:serverId/rounds/delete-selected': 'admin',
   'GET /api/servers': 'admin',
   'POST /api/servers': 'admin',
   'POST /api/servers/:id/regenerate-token': 'admin',

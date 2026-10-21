@@ -34,7 +34,7 @@ import { StatsDashboard, PlayerStats } from './components/StatsDashboard'
 import { MapsDashboard, MapPage } from './components/MapsDashboard'
 import { renderPlanSvg, planLevels } from './services/mapplan'
 import * as stats from './services/stats'
-import { SMALL_INT } from './services/validators'
+import { ROUND_ID, SMALL_INT } from './services/validators'
 
 export const app = new Hono<{ Variables: { session: Session } }>()
 
@@ -267,6 +267,22 @@ app.post('/servers/:serverId/rounds/:roundId/delete', async (c) => {
   if (!done) return c.text('Not found', 404)
   Store.audit(serverId, steamId, what === 'replay' ? 'TRACK_DELETED' : 'ROUND_DELETED', roundId)
   return c.redirect(`/servers/${serverId}/stats${c.req.query('bots') === '1' ? '?bots=1' : ''}`)
+})
+
+/** Deletes the rounds ticked on the stats page (`round`, at most 100), each with its replay. Admins only, audited per round. */
+app.post('/servers/:serverId/rounds/delete-selected', async (c) => {
+  const steamId = await getAdminId(c)
+  if (!steamId) return c.text('Unauthorized', 401)
+  const serverId = c.req.param('serverId')
+  if (!Store.getServerById(serverId)) return c.text('Not found', 404)
+  const form = await c.req.parseBody({ all: true })
+  const asked = [form.round].flat().filter((v): v is string => typeof v === 'string')
+  if (asked.length === 0) return c.text('No round was selected', 400)
+  if (asked.length > 100) return c.text('At most 100 rounds at a time', 400)
+  if (!asked.every(id => ROUND_ID.test(id))) return c.text('Invalid round id', 400)
+  const gone = Store.deleteRounds(serverId, [...new Set(asked)])
+  for (const id of gone) Store.audit(serverId, steamId, 'ROUND_DELETED', id)
+  return c.redirect(`/servers/${serverId}/stats${form.bots === '1' ? '?bots=1' : ''}`)
 })
 
 /** Deletes every round only test bots played in, with their replays. Admins only, audited. */

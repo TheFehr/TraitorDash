@@ -70,15 +70,19 @@ export const WinTable = ({ title, rows, empty }: { title: string, rows: WinRow[]
  * The recent rounds. A round with a stored track has a replay (RFC 12): the link goes to it for a
  * signed-in visitor, and to sign-in (and back) for anyone else, so it says what it needs.
  */
-export const RoundsTable = ({ rounds, serverId, tracks, signedIn, signinOpen, bots }: { rounds: RecentRound[], serverId?: string, tracks?: Map<string, { pinned: boolean }>, signedIn?: boolean, signinOpen?: boolean, bots?: boolean }) => (
+export const RoundsTable = ({ rounds, serverId, tracks, signedIn, signinOpen, bots, admin }: { rounds: RecentRound[], serverId?: string, tracks?: Map<string, { pinned: boolean }>, signedIn?: boolean, signinOpen?: boolean, bots?: boolean, admin?: boolean }) => {
+  // An admin can tick rounds and delete them, each with its replay (RFC 12).
+  const pick = !!(admin && serverId && rounds.length > 0)
+  const table = (
   <div class="bg-gray-800 border border-gray-700 rounded-xl overflow-x-auto">
     <table class="w-full text-sm">
       <thead class="text-[10px] uppercase tracking-widest text-gray-500">
-        <tr><th class="text-left p-3">When</th><th class="text-left p-3">Map</th><th class="text-left p-3">Result</th><th class="text-right p-3">Players</th><th class="text-right p-3">Deaths</th><th class="text-right p-3">Length</th>{tracks && tracks.size > 0 && <th class="text-right p-3">Replay</th>}</tr>
+        <tr>{pick && <th class="p-3 w-8"></th>}<th class="text-left p-3">When</th><th class="text-left p-3">Map</th><th class="text-left p-3">Result</th><th class="text-right p-3">Players</th><th class="text-right p-3">Deaths</th><th class="text-right p-3">Length</th>{tracks && tracks.size > 0 && <th class="text-right p-3">Replay</th>}</tr>
       </thead>
       <tbody>
         {rounds.map(r => (
           <tr class="border-t border-gray-700">
+            {pick && <td class="p-3"><input type="checkbox" name="round" value={r.roundId} aria-label={`Select the round of ${r.receivedAt}`} class="accent-red-600 w-4 h-4" /></td>}
             <td class="p-3 text-gray-400"><Heartbeat lastSeen={r.receivedAt} /></td>
             <td class="p-3">{r.map ?? '–'}</td>
             <td class="p-3 font-bold">{r.result}</td>
@@ -103,7 +107,20 @@ export const RoundsTable = ({ rounds, serverId, tracks, signedIn, signinOpen, bo
       </tbody>
     </table>
   </div>
-)
+  )
+  if (!pick) return table
+  return (
+    <form method="post" action={`/servers/${serverId}/rounds/delete-selected`} data-delete-selected
+      x-data x-on:submit="if (!confirm('Delete the selected rounds with their replays? They leave the statistics too. This cannot be undone.')) $event.preventDefault()">
+      {bots && <input type="hidden" name="bots" value="1" />}
+      {table}
+      <div class="mt-3 flex items-center gap-3">
+        <button type="submit" class="px-4 py-2 rounded-lg border border-red-500/50 text-red-400 hover:bg-red-600 hover:text-white font-bold text-sm transition">Delete selected rounds</button>
+        <span class="text-xs text-gray-500">Tick the rounds first.</span>
+      </div>
+    </form>
+  )
+}
 
 export interface StatsDashboardProps {
   server: { id: string, name: string }
@@ -261,7 +278,7 @@ export const StatsDashboard = ({ server, overview, roles, teams, leaders, recent
 
         <section>
           <h2 class="text-sm font-black uppercase tracking-widest text-gray-400 mb-3">Recent rounds</h2>
-          <RoundsTable rounds={recent} serverId={server.id} tracks={replays?.tracked} signedIn={replays?.signedIn} signinOpen={replays?.signinOpen} bots={bots} />
+          <RoundsTable rounds={recent} serverId={server.id} tracks={replays?.tracked} signedIn={replays?.signedIn} signinOpen={replays?.signinOpen} bots={bots} admin={admin} />
         </section>
       </>
     )}
