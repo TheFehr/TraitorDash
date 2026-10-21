@@ -58,6 +58,20 @@ app.use('*', sameOrigin)
 app.route('/api', api)
 app.route('/auth', auth)
 
+/** The server named in the address, with its id; null when there is none (the caller redirects home). */
+const serverOf = (c: any) => {
+  const serverId: string = c.req.param('serverId')
+  const server = Store.getServerById(serverId)
+  return server ? { serverId, server } : null
+}
+
+/** What the page header needs to know about the viewer: admins get their links, other users their id. */
+const identity = (session: { admin: boolean, steamId: string }) =>
+  session.admin ? { steamId: session.steamId } : { user: session.steamId }
+
+/** Where an anonymous visitor goes: through sign-in and back to `here` when that is open, else to `fallback`. */
+const signinOr = (here: string, fallback: string) => (openSignin() ? signinUrl(here) : fallback)
+
 /** A signed-in visitor who is not an admin (RFC 13): the header shows their SteamID64 and no admin links. */
 const userOf = async (c: any): Promise<string | undefined> => {
   const session = await getSession(c)
@@ -137,9 +151,9 @@ app.get('/servers/:serverId', async (c) => {
   const steamId = await getAdminId(c)
   if (!steamId) return c.redirect('/')
 
-  const serverId = c.req.param('serverId')
-  const server = Store.getServerById(serverId)
-  if (!server) return c.redirect('/')
+  const found = serverOf(c)
+  if (!found) return c.redirect('/')
+  const { serverId, server } = found
 
   const roles = getRolesWithState(serverId)
 
@@ -163,9 +177,9 @@ app.get('/servers/:serverId', async (c) => {
 app.get('/servers/:serverId/stats', async (c) => {
   const steamId = await getAdminId(c)
 
-  const serverId = c.req.param('serverId')
-  const server = Store.getServerById(serverId)
-  if (!server) return c.redirect('/')
+  const found = serverOf(c)
+  if (!found) return c.redirect('/')
+  const { serverId, server } = found
 
   const requested = c.req.query('sort') as stats.SortKey
   const sort = stats.SORTS.includes(requested) ? requested : 'rounds'
@@ -240,9 +254,9 @@ app.post('/servers/:serverId/rounds/:roundId/pin', async (c) => {
 app.get('/servers/:serverId/maps', async (c) => {
   const steamId = await getAdminId(c)
 
-  const serverId = c.req.param('serverId')
-  const server = Store.getServerById(serverId)
-  if (!server) return c.redirect('/')
+  const found = serverOf(c)
+  if (!found) return c.redirect('/')
+  const { serverId, server } = found
 
   const { state, maps } = Store.getMaps(serverId)
   const user = await userOf(c)
@@ -270,11 +284,11 @@ const geometryProp = (serverId: string, name: string) => {
  */
 app.get('/servers/:serverId/maps/:map', async (c) => {
   const session = await getSession(c)
-  const serverId = c.req.param('serverId')
-  const server = Store.getServerById(serverId)
-  if (!server) return c.redirect('/')
+  const found = serverOf(c)
+  if (!found) return c.redirect('/')
+  const { serverId, server } = found
   const name = c.req.param('map')
-  if (!session) return c.redirect(openSignin() ? signinUrl(`/servers/${serverId}/maps/${encodeURIComponent(name)}`) : `/servers/${serverId}/maps`)
+  if (!session) return c.redirect(signinOr(`/servers/${serverId}/maps/${encodeURIComponent(name)}`, `/servers/${serverId}/maps`))
 
   const { state, maps } = Store.getMaps(serverId)
   const map = maps.find(m => m.name === name) ?? null
@@ -288,7 +302,7 @@ app.get('/servers/:serverId/maps/:map', async (c) => {
   const plan = meta && grid ? { ...meta, levels: planLevels(JSON.parse(grid)) } : null
   const next = state && state.next && state.next !== state.current ? state.next : null
   return c.html(
-    <Layout steamId={session.admin ? session.steamId : undefined} user={session.admin ? undefined : session.steamId} path="/">
+    <Layout {...identity(session)} path="/">
       <MapPage server={server} map={map} name={name} next={next} plan={plan} admin={session.admin}
         geometry={geometryEnabled() && map ? geometryProp(serverId, name) : undefined} />
     </Layout>
@@ -391,20 +405,21 @@ app.get('/servers/:serverId/rounds/:roundId/track.json', gated('track'), async (
 
 /** One round's replay page (RFC 12, 3.5). For signed-in users; an anonymous visitor is sent to sign-in and back (RFC 13). */
 app.get('/servers/:serverId/rounds/:roundId/replay', async (c) => {
-  const serverId = c.req.param('serverId'), roundId = c.req.param('roundId')
-  const server = Store.getServerById(serverId)
-  if (!server) return c.redirect('/')
+  const roundId = c.req.param('roundId')
+  const found = serverOf(c)
+  if (!found) return c.redirect('/')
+  const { serverId, server } = found
   const bots = c.req.query('bots') === '1'
   const query = bots ? '?bots=1' : ''
   const here = `/servers/${serverId}/rounds/${encodeURIComponent(roundId)}/replay${query}`
   const session = await getSession(c)
-  if (!session) return c.redirect(openSignin() ? signinUrl(here) : `/servers/${serverId}/stats`)
+  if (!session) return c.redirect(signinOr(here, `/servers/${serverId}/stats`))
 
   const round = stats.getReplayRound(serverId, roundId, { bots })
   if (!round) return c.redirect(`/servers/${serverId}/stats`)
   const track = Store.getTrack(serverId, roundId)
   return c.html(
-    <Layout steamId={session.admin ? session.steamId : undefined} user={session.admin ? undefined : session.steamId} path="/">
+    <Layout {...identity(session)} path="/">
       <ReplayPage server={server} round={{ id: round.roundId, map: round.map, result: round.result, duration: round.duration }}
         hasTrack={!!track} src={`/servers/${serverId}/rounds/${encodeURIComponent(roundId)}/track.json${query}`}
         viewer={session.steamId} admin={session.admin} pinned={!!track?.meta.pinned} here={here}

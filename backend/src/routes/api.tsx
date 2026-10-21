@@ -363,21 +363,34 @@ api.post('/v1/round', getServer, async (c) => {
 
 // The bridge uploads the position track of a round it has already reported (RFC 12, 3.3). Every
 // number is checked before anything is stored; a track that does not fit is refused whole.
+/** The 429 answer for a caller who is over a limit: Retry-After says how long to wait. */
+const tooMany = (c: any, waitSeconds: number, message: string) => {
+  c.header('Retry-After', String(waitSeconds))
+  return c.json({ error: message }, 429)
+}
+
+/**
+ * The request's body read as JSON, at most `maxBytes` long (a longer one is never parsed). `body` is null
+ * when the text is not JSON, so callers answer both a bad and a missing body the same way.
+ */
+async function readJson(c: any, maxBytes: number): Promise<{ tooLarge: true } | { tooLarge: false, body: any }> {
+  if (Number(c.req.header('content-length') ?? 0) > maxBytes) return { tooLarge: true }
+  const text: string = await c.req.text().catch(() => '')
+  if (Buffer.byteLength(text) > maxBytes) return { tooLarge: true }
+  let body: any = null
+  try { body = JSON.parse(text) } catch { /* the caller answers a null body */ }
+  return { tooLarge: false, body }
+}
+
 export const trackLimiter = new RateLimiter(10, 60_000)
 
 api.post('/v1/track', getServer, async (c) => {
   const server = c.get('server')
   const wait = trackLimiter.hit(server.id)
-  if (wait > 0) {
-    c.header('Retry-After', String(wait))
-    return c.json({ error: 'Too many tracks uploaded; slow down' }, 429)
-  }
-  const declared = Number(c.req.header('content-length') ?? 0)
-  if (declared > MAX_TRACK_BYTES) return c.json({ error: `A track is at most ${MAX_TRACK_BYTES / 1024 / 1024} MB` }, 413)
-  const text = await c.req.text().catch(() => '')
-  if (Buffer.byteLength(text) > MAX_TRACK_BYTES) return c.json({ error: `A track is at most ${MAX_TRACK_BYTES / 1024 / 1024} MB` }, 413)
-  let body: any = null
-  try { body = JSON.parse(text) } catch { /* handled below */ }
+  if (wait > 0) return tooMany(c, wait, 'Too many tracks uploaded; slow down')
+  const read = await readJson(c, MAX_TRACK_BYTES)
+  if (read.tooLarge) return c.json({ error: `A track is at most ${MAX_TRACK_BYTES / 1024 / 1024} MB` }, 413)
+  const body = read.body
   const bad = (msg: string) => {
     console.warn(`[Track] Rejected track from ${server.name}: ${msg}`)
     return c.json({ error: msg }, 400)
@@ -466,15 +479,11 @@ api.post('/v1/mapplan', getServer, async (c) => {
   const wait = mapPlanLimiter.hit(server.id)
   if (wait > 0) {
     console.warn(`[Maps] Plan rate limit hit by ${server.name}; refusing uploads for ${wait}s`)
-    c.header('Retry-After', String(wait))
-    return c.json({ error: 'Too many plan uploads; slow down' }, 429)
+    return tooMany(c, wait, 'Too many plan uploads; slow down')
   }
-  const text = await c.req.text().catch(() => '')
-  if (text.length > MAX_PLAN_BYTES) return c.json({ error: `plans are limited to ${MAX_PLAN_BYTES} bytes` }, 413)
-
-  let body: unknown = null
-  try { body = JSON.parse(text) } catch { /* answered below */ }
-  const checked = validatePlan(body)
+  const read = await readJson(c, MAX_PLAN_BYTES)
+  if (read.tooLarge) return c.json({ error: `plans are limited to ${MAX_PLAN_BYTES} bytes` }, 413)
+  const checked = validatePlan(read.body)
   if ('error' in checked) {
     console.warn(`[Maps] Rejected plan from ${server.name}: ${checked.error}`)
     return c.json({ error: checked.error }, 400)
@@ -626,13 +635,11 @@ api.post('/v1/pair', async (c) => {
   const wait = Math.max(address ? pairLimiter.hit(address) : 0, pairGlobalLimiter.hit('global'))
   if (wait > 0) {
     console.warn(`[Pairing] Rate limit hit; refusing attempts for ${wait}s`)
-    c.header('Retry-After', String(wait))
-    return c.json({ error: 'Too many attempts; try again later' }, 429)
+    return tooMany(c, wait, 'Too many attempts; try again later')
   }
 
-  const text = await c.req.text().catch(() => '')
-  let body: any = null
-  if (text.length <= MAX_PAIR_BODY) { try { body = JSON.parse(text) } catch { /* a 400 below */ } }
+  const read = await readJson(c, MAX_PAIR_BODY)
+  const body = read.tooLarge ? null : read.body
   if (!body || typeof body !== 'object' || Array.isArray(body) || typeof body.code !== 'string') {
     return c.json(PAIR_FAILED, 400)
   }
