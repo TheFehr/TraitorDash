@@ -184,3 +184,18 @@ describe('the extractor reads ROLE.color', () => {
     expect((await Extractor.extractSchema('function ROLE:Initialize() self.color = Color(1, 2, 3) end')).color).toBe('#010203')
   })
 })
+
+describe('numbers in the settings table', () => {
+  test('trailing zeros of a decimal are dropped, whole numbers stay', async () => {
+    Store.setConVarValues(serverId, [
+      { name: 'ttt_haunter_pct', role: 'haunter', present: true, value: '0.170000', default: '0.17', min: null, max: null },
+      { name: 'ttt_haunter_max', role: 'haunter', present: true, value: '10', default: null, min: null, max: null },
+    ])
+    const v = rv.buildRoleView(serverId, 'haunter')
+    const val = (label: RegExp) => v.settings.find((s: any) => label.test(s.label))?.value
+    expect(v.settings.some((s: any) => s.value === '0.170000')).toBe(false)
+    expect(v.settings.some((s: any) => s.value === '0.17')).toBe(true)
+    expect(v.settings.some((s: any) => s.value === '10')).toBe(true)
+    expect(val(/zzz/)).toBeUndefined()
+  })
+})

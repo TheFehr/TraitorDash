@@ -70,6 +70,8 @@ export function cleanDescription(raw: string | null | undefined): string | null 
 const show = (kind: FieldKind, v: string | null | undefined): string | null => {
   if (v === null || v === undefined || v === '') return null
   if (kind === 'toggle') return v === '0' || v.toLowerCase() === 'false' ? 'off' : 'on'
+  // 0.170000 reads as 0.17: a ConVar prints its value with the zeros it was stored with
+  if (kind === 'number' && /^-?\d+\.\d*0$/.test(v)) return v.replace(/0+$/, '').replace(/\.$/, '')
   return v
 }
 const showDefault = (kind: FieldKind, v: unknown): string | null => {
