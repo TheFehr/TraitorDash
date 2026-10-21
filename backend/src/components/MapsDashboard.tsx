@@ -3,6 +3,7 @@ import { Heartbeat } from './Heartbeat'
 import type { MapRow, MapsState, MapPlanMeta } from '../services/Store'
 import { heightColour, type Level } from '../services/mapplan'
 import { mapSize } from '../format'
+import { BTN, TONES } from '../ui'
 
 // RFC 10: what the bridge reported about the server's maps. "Votable" is worked out by the bridge
 // from the vote addon's prefixes (or the gamemode's map pattern), the current map and the cooldown
@@ -18,11 +19,7 @@ const Card = ({ label, value, sub }: { label: string, value: any, sub?: string }
 )
 
 export const Badge = ({ children, tone }: { children: any, tone: 'red' | 'green' | 'yellow' | 'gray' }) => {
-  const tones = {
-    red: 'border-red-500/50 text-red-400', green: 'border-green-500/50 text-green-400',
-    yellow: 'border-yellow-500/50 text-yellow-400', gray: 'border-gray-600 text-gray-400',
-  }
-  return <span class={`inline-block text-[10px] font-black uppercase tracking-widest border rounded px-2 py-0.5 mr-1 ${tones[tone]}`}>{children}</span>
+  return <span class={`inline-block text-[10px] font-black uppercase tracking-widest border rounded px-2 py-0.5 mr-1 ${TONES[tone]}`}>{children}</span>
 }
 
 /** The marks of a map's status, as in the list and on the map's own page. */
@@ -203,7 +200,6 @@ export interface MapPageProps {
   admin?: boolean
 }
 
-const MV_BTN = 'px-3 py-1 rounded-md bg-gray-800 border border-gray-700 text-gray-300 hover:text-white aria-pressed:bg-red-600 aria-pressed:border-red-500 aria-pressed:text-white transition'
 
 const GeometryBadge = ({ status }: { status: string }) => {
   const tone = status === 'parsed' ? 'green' : status === 'failed' ? 'red' : 'yellow'
@@ -265,13 +261,13 @@ export const MapPage = ({ server, map, name, next, plan, geometry, admin = true 
             <div class="flex flex-wrap items-center gap-1" role="group" aria-label="Levels shown">
               <span class="text-xs font-black uppercase tracking-widest text-gray-500 mr-2">Up to level</span>
               {Array.from({ length: geometry.info.levels }, (_, i) => i + 1).map(n => (
-                <button type="button" data-level={n} aria-pressed="false" class={MV_BTN}>{n}</button>
+                <button type="button" data-level={n} aria-pressed="false" class={BTN}>{n}</button>
               ))}
-              <button type="button" data-level="all" aria-pressed="true" class={MV_BTN}>All</button>
+              <button type="button" data-level="all" aria-pressed="true" class={BTN}>All</button>
             </div>
             <div class="flex items-center gap-1" role="group" aria-label="View">
-              <button type="button" data-view="orbit" class={MV_BTN}>3D</button>
-              <button type="button" data-view="top" class={MV_BTN}>From above</button>
+              <button type="button" data-view="orbit" class={BTN}>3D</button>
+              <button type="button" data-view="top" class={BTN}>From above</button>
             </div>
             <label class="flex items-center gap-2 text-gray-300"><input type="checkbox" data-walls checked /> Walls</label>
           </div>

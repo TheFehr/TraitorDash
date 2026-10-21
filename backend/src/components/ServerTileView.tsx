@@ -1,5 +1,6 @@
 import { isServerOnline } from '../services/ServerUtils'
 import { Heartbeat } from './Heartbeat'
+import { LINK_BTN } from '../ui'
 
 export const ServerTileView = ({ servers }: { servers: any[] }) => {
   return (
@@ -34,10 +35,10 @@ export const ServerTileView = ({ servers }: { servers: any[] }) => {
                 </p>
               </div>
 
-              <a href={`/servers/${server.id}/stats`} class="inline-block mt-6 px-4 py-2 rounded-lg border border-gray-700 text-sm font-bold text-gray-300 hover:text-white hover:border-red-500 transition">
+              <a href={`/servers/${server.id}/stats`} class={`${LINK_BTN} mt-6`}>
                 📊 Round stats
               </a>
-              <a href={`/servers/${server.id}/maps`} class="inline-block mt-6 ml-2 px-4 py-2 rounded-lg border border-gray-700 text-sm font-bold text-gray-300 hover:text-white hover:border-red-500 transition">
+              <a href={`/servers/${server.id}/maps`} class={`${LINK_BTN} mt-6 ml-2`}>
                 🗺 Maps
               </a>
             </div>

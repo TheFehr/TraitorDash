@@ -7,6 +7,7 @@ import {
 import { hex } from './teamColours'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { BTN } from './ui'
 import {
   decodeTrack, poseAt, lastPoseAt, trailBetween, levelOf, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
@@ -481,7 +482,6 @@ async function start(root: HTMLElement) {
     root.querySelectorAll<HTMLElement>('[data-level]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.level === String(upTo))))
   }
   const levelBar = el(root, '[data-levels]')
-  const BTN = 'px-3 py-1 rounded-md bg-gray-800 border border-gray-700 text-gray-300 hover:text-white aria-pressed:bg-red-600 aria-pressed:border-red-500 aria-pressed:text-white transition'
   if (levelBar && levels.length > 0 && bg.kind !== 'none') {
     for (const l of levels) {
       const b = text(String(l.index), 'button', BTN) as HTMLButtonElement

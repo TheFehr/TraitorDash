@@ -2,6 +2,7 @@ import { signinUrl } from '../middleware/session'
 import { duration, kd, mb, pct } from '../format'
 import { Heartbeat } from './Heartbeat'
 import { SORTS, type SortKey, type LeaderRow, type RecentRound, type WinRow, type PlayerDetail } from '../services/stats'
+import { LINK_BTN, TAB_OFF, TAB_ON } from '../ui'
 
 
 // Green at or above half, red below, grey with nothing to go on.
@@ -16,7 +17,7 @@ const SORT_LABELS: Record<SortKey, string> = {
 /** The "as played" / "as dealt" switch of the role and team tables (RFC 14, 4.5); the link keeps the other query parameters. */
 export const ByToggle = ({ path, by, params = '', coverage }: { path: string, by: 'start' | 'end', params?: string, coverage?: { withEnd: number, total: number } }) => {
   const link = (v: 'start' | 'end') => `${path}?${params}by=${v}`
-  const on = 'bg-red-600 text-white', off = 'bg-gray-800 border border-gray-700 text-gray-400 hover:text-white'
+  const on = TAB_ON, off = TAB_OFF
   return (
     <div class="flex flex-wrap items-center gap-3 text-xs font-bold">
       <span class="text-gray-500 uppercase tracking-widest font-black">Roles and teams</span>
@@ -172,7 +173,7 @@ export const StatsDashboard = ({ server, overview, roles, teams, leaders, recent
       <h1 class="text-3xl sm:text-5xl font-black mb-2 break-words">Round stats</h1>
       <p class="text-gray-400 text-lg">{server.name}</p>
       {admin && tracks && <div class="mt-6"><TracksCard serverId={server.id} t={tracks} /></div>}
-      <a href={`/servers/${server.id}/maps`} class="inline-block mt-4 px-4 py-2 rounded-lg border border-gray-700 text-sm font-bold text-gray-300 hover:text-white hover:border-red-500 transition">
+      <a href={`/servers/${server.id}/maps`} class={`${LINK_BTN} mt-4`}>
         🗺 Maps
       </a>
       {bots && <p class="mt-2 text-xs font-black uppercase tracking-widest text-yellow-400">Including bot test rounds</p>}

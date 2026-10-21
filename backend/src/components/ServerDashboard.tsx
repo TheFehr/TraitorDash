@@ -2,6 +2,7 @@ import { HEX6, TEAMS, hex, teamColour, teamLabel } from '../teamColours'
 import { isServerOnline } from '../services/ServerUtils'
 import { Heartbeat } from './Heartbeat'
 import { METRICS, type MetricKey, type RoleMetrics } from '../services/roles'
+import { LINK_BTN } from '../ui'
 
 // Filter, sort and grouping state for the role overview, run by Alpine in the browser.
 // - "Enabled only" is ON by default; unknown enabled state counts as enabled (services/roles.ts).
@@ -126,10 +127,10 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
           </nav>
           <h1 class="text-3xl sm:text-5xl font-black mb-2 break-words">{server.name}</h1>
           <p class="text-gray-400 text-lg">Server Role Registry</p>
-          <a href={`/servers/${server.id}/stats`} class="inline-block mt-4 px-4 py-2 rounded-lg border border-gray-700 text-sm font-bold text-gray-300 hover:text-white hover:border-red-500 transition">
+          <a href={`/servers/${server.id}/stats`} class={`${LINK_BTN} mt-4`}>
             📊 Round stats
           </a>
-          <a href={`/servers/${server.id}/maps`} class="inline-block mt-4 ml-2 px-4 py-2 rounded-lg border border-gray-700 text-sm font-bold text-gray-300 hover:text-white hover:border-red-500 transition">
+          <a href={`/servers/${server.id}/maps`} class={`${LINK_BTN} mt-4 ml-2`}>
             🗺 Maps
           </a>
         </div>

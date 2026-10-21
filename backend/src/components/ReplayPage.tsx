@@ -1,9 +1,9 @@
 import { duration } from '../format'
+import { BTN } from '../ui'
 
 // The round replay's page (RFC 12, 3.5): the markup the viewer (replay.ts) fills in. Without
 // JavaScript or WebGL the lists the viewer builds are not there, and the page says so.
 
-const BTN = 'px-3 py-1 rounded-md bg-gray-800 border border-gray-700 text-gray-300 hover:text-white aria-pressed:bg-red-600 aria-pressed:border-red-500 aria-pressed:text-white transition'
 
 export interface ReplayPageProps {
   server: { id: string, name: string }
