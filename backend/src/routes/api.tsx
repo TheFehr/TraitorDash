@@ -9,6 +9,7 @@ import { clientAddress } from '../services/gates'
 import { validatePlan, MAX_PLAN_BYTES } from '../services/mapplan'
 import { formatCode } from '../services/pairing'
 import { validateTrack, MAX_TRACK_BYTES } from '../services/tracks'
+import { refreshWorkshopText } from '../services/workshopText'
 import { NONCE, signResponse } from '../services/signing'
 import { FINGERPRINT, NAME, ROUND_ID, STEAM_ID, WSID } from '../services/validators'
 
@@ -468,6 +469,46 @@ api.post('/v1/maps', getServer, async (c) => {
   Store.updateHeartbeat(server.id)
   console.log(`[Maps] Report from ${server.name}: ${maps.length} maps (current=${text(body.current, 64)}, pool by ${oneOf(vote.poolBasis, POOL_BASES) ?? 'unknown'})`)
   return c.json({ success: true, stored: maps.length })
+})
+
+// Which Workshop addon each role comes from (RFC 15), read by the bridge from the addons' file lists.
+// Replaces the server's list; the backend then reads the addons' Workshop pages in the background.
+export const roleAddonsLimiter = new RateLimiter(6, 60_000)
+const MAX_ROLE_ADDON_ROLES = 500
+const MAX_ADDONS_PER_ROLE = 10
+
+api.post('/v1/roleaddons', getServer, async (c) => {
+  const server = c.get('server')
+  const wait = roleAddonsLimiter.hit(server.id)
+  if (wait > 0) return tooMany(c, wait, 'Too many role-addon reports; slow down')
+  const read = await readJson(c, 512 * 1024)
+  if (read.tooLarge) return c.json({ error: 'the report is too large' }, 413)
+  const bad = (msg: string) => {
+    console.warn(`[RoleAddons] Rejected report from ${server.name}: ${msg}`)
+    return c.json({ error: msg }, 400)
+  }
+  const roles = read.body?.roles
+  if (!roles || typeof roles !== 'object' || Array.isArray(roles)) return bad('roles must be an object')
+  const names = Object.keys(roles)
+  if (names.length > MAX_ROLE_ADDON_ROLES) return bad(`at most ${MAX_ROLE_ADDON_ROLES} roles`)
+
+  const rows: { role: string, wsid: string, title: string }[] = []
+  for (const role of names) {
+    if (!NAME.test(role)) return bad(`invalid role name: ${role.slice(0, 40)}`)
+    const list = roles[role]
+    if (!Array.isArray(list) || list.length > MAX_ADDONS_PER_ROLE) return bad(`invalid addon list for ${role}`)
+    for (const a of list) {
+      if (typeof a?.wsid !== 'string' || !WSID.test(a.wsid)) return bad(`invalid Workshop id for ${role}`)
+      const title = typeof a.title === 'string' ? a.title.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 200) : ''
+      rows.push({ role, wsid: a.wsid, title })
+    }
+  }
+  Store.setRoleAddons(server.id, rows)
+  Store.updateHeartbeat(server.id)
+  console.log(`[RoleAddons] Report from ${server.name}: ${names.length} roles in ${new Set(rows.map(r => r.wsid)).size} addons`)
+  // Not waited for: the answer does not depend on Steam.
+  void refreshWorkshopText(rows.map(r => r.wsid))
+  return c.json({ success: true, roles: names.length })
 })
 
 // The bridge uploads a finished floor-plan scan (RFC 10, 4.5). The latest plan per map is kept.

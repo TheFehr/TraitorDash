@@ -18,6 +18,8 @@ export interface RoleView {
   description: string | null
   /** What the server itself knows about the role, for a role the addon does not describe: its team, and whether it polices. */
   facts: string | null
+  /** For a role the addon does not describe: the text of the Workshop page of the addon it comes from, when that page is about few roles. */
+  workshop: { wsid: string, title: string, text: string, alsoCovers: string[] } | null
   numbers: { key: MetricKey, label: string, text: string }[]
   /** Null when the operator hides the settings (PUBLIC_ROLE_SETTINGS=0). */
   settings: { label: string, value: string | null, default: string | null }[] | null
@@ -33,6 +35,19 @@ export function parsePlayers(raw: string | undefined | null): number | null {
   if (!raw || !SMALL_INT.test(raw)) return null
   const n = Number(raw)
   return n >= 1 && n <= 128 ? n : null
+}
+
+/** An addon that holds more roles than this is a collection (the TTT2 base, a pack): its page is not about one role. */
+export const MAX_ROLES_PER_PAGE = 3
+
+/** The Workshop page text to show for a role, or null: its addon's, if read, readable and about few roles. */
+export function workshopOf(serverId: string, roleName: string): RoleView['workshop'] {
+  for (const a of Store.getRoleAddons(serverId, roleName)) {
+    if (a.roles.length + 1 > MAX_ROLES_PER_PAGE) continue
+    const t = Store.getWorkshopText(a.wsid)
+    if (t?.status === 'ok' && t.description) return { wsid: a.wsid, title: t.title || a.title, text: t.description, alsoCovers: a.roles }
+  }
+  return null
 }
 
 /** A plain sentence from what is known without a description: the team, and a policing role says so. */
@@ -130,6 +145,7 @@ export function buildRoleView(serverId: string, roleName: string): RoleView | nu
     min: metrics.minPlayers.sort,
     description: cleanDescription(Store.getRoleDescription(serverId, roleName)),
     facts: factsOf(String(role.team ?? ''), !!role.is_policing),
+    workshop: workshopOf(serverId, roleName),
     numbers: (Object.keys(METRICS) as MetricKey[]).map(key => ({ key, label: METRICS[key].label, text: metrics[key].text })),
     settings: publicRoleSettings() ? settingsOf(Store.getSchema(serverId, roleName) ?? [], live, roleName) : null,
   }

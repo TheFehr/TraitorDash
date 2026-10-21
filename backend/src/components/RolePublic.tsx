@@ -164,6 +164,16 @@ export const RolePage = ({ server, role, embed, admin, players = null }: { serve
           : <>
               <p class="none">The addon does not describe this role.</p>
               {role.facts && <p class="desc">{role.facts}</p>}
+              {role.workshop && (
+                <>
+                  <p class="desc">{role.workshop.text}</p>
+                  <p class="none">
+                    From the Workshop page of {role.workshop.title}
+                    {role.workshop.alsoCovers.length > 0 && `, which also covers ${role.workshop.alsoCovers.join(', ')}`}
+                    {!embed && <> · <a href={`https://steamcommunity.com/sharedfiles/filedetails/?id=${role.workshop.wsid}`} rel="noopener noreferrer">open it</a></>}
+                  </p>
+                </>
+              )}
             </>}
         <h2>How it appears on this server</h2>
         <dl class="ledger">

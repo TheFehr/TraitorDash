@@ -558,6 +558,40 @@ export class Store {
     return query.all(serverId)
   }
 
+  /** Replaces the server's role-to-addon list. `rows` are already checked. */
+  static setRoleAddons(serverId: string, rows: { role: string, wsid: string, title: string }[]) {
+    db.transaction(() => {
+      db.run('DELETE FROM role_addons WHERE server_id = ?', [serverId])
+      const insert = db.prepare('INSERT OR IGNORE INTO role_addons (server_id, role_name, wsid, title) VALUES (?, ?, ?, ?)')
+      for (const r of rows) insert.run(serverId, r.role, r.wsid, r.title)
+    })()
+  }
+
+  /** The addons a role comes from, each with the number of roles that addon holds on this server and the others it holds. */
+  static getRoleAddons(serverId: string, roleName: string): { wsid: string, title: string, roles: string[] }[] {
+    const own = db.prepare('SELECT wsid, title FROM role_addons WHERE server_id = ? AND role_name = ? ORDER BY wsid').all(serverId, roleName) as { wsid: string, title: string }[]
+    return own.map(a => ({
+      ...a,
+      roles: (db.prepare('SELECT role_name FROM role_addons WHERE server_id = ? AND wsid = ? AND role_name != ? ORDER BY role_name').all(serverId, a.wsid, roleName) as { role_name: string }[]).map(r => r.role_name),
+    }))
+  }
+
+  /** Every Workshop id the server's roles come from. */
+  static getRoleAddonIds(serverId: string): string[] {
+    return (db.prepare('SELECT DISTINCT wsid FROM role_addons WHERE server_id = ?').all(serverId) as { wsid: string }[]).map(r => r.wsid)
+  }
+
+  static getWorkshopText(wsid: string): { title: string | null, description: string | null, status: string, fetchedAt: string } | null {
+    const row = db.prepare('SELECT title, description, status, fetched_at FROM workshop_text WHERE wsid = ?').get(wsid) as any
+    return row ? { title: row.title, description: row.description, status: row.status, fetchedAt: row.fetched_at } : null
+  }
+
+  static setWorkshopText(wsid: string, title: string | null, description: string | null, status: 'ok' | 'missing' | 'failed') {
+    db.prepare(`INSERT INTO workshop_text (wsid, title, description, status, fetched_at) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(wsid) DO UPDATE SET title = excluded.title, description = excluded.description, status = excluded.status, fetched_at = excluded.fetched_at`)
+      .run(wsid, title, description, status, new Date().toISOString())
+  }
+
   /** The role's description from the language files, as the extractor found it (untrusted text); null when it has none. */
   static getRoleDescription(serverId: string, roleName: string): string | null {
     const row = db.prepare('SELECT description FROM roles WHERE server_id = ? AND role_name = ?').get(serverId, roleName) as { description: string | null } | null

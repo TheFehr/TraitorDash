@@ -49,6 +49,7 @@ export const TIERS: Record<string, Tier> = {
   'POST /api/v1/track': 'bridge',
   'POST /api/v1/maps': 'bridge',
   'POST /api/v1/mapplan': 'bridge',
+  'POST /api/v1/roleaddons': 'bridge',
   'GET /api/v1/whoami': 'bridge',
   'POST /api/v1/poll': 'bridge',
   'POST /api/v1/pair': 'credential',

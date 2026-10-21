@@ -379,6 +379,19 @@ export const migrations: Array<(db: Database) => void> = [
   (db) => {
     if (!db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='roles'").get()) return
     db.run('UPDATE roles SET md5_hash = NULL')
+  },
+  // v19 (RFC 15): which Workshop addon each role comes from (reported by the bridge from the addons'
+  // file lists), and the text of those addons' Workshop pages, fetched by the backend. A role can be
+  // in several addons and an addon can hold several roles.
+  (db) => {
+    db.run(`CREATE TABLE IF NOT EXISTS role_addons (
+      server_id TEXT NOT NULL, role_name TEXT NOT NULL, wsid TEXT NOT NULL, title TEXT NOT NULL,
+      PRIMARY KEY (server_id, role_name, wsid)
+    )`)
+    db.run('CREATE INDEX IF NOT EXISTS idx_role_addons_wsid ON role_addons (server_id, wsid)')
+    db.run(`CREATE TABLE IF NOT EXISTS workshop_text (
+      wsid TEXT PRIMARY KEY, title TEXT, description TEXT, status TEXT NOT NULL, fetched_at TEXT NOT NULL
+    )`)
   }
 ]
 

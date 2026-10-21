@@ -356,6 +356,62 @@ function TraitorDash.PushMaps()
     })
 end
 
+-- Which Workshop addon each role comes from (roleaddons.lua), sent to /api/v1/roleaddons after a sync.
+-- The dashboard uses it to read the addons' Workshop pages for roles the addon does not describe.
+-- Best effort; idle without a configuration or without roleaddons.lua.
+local MAX_ROLE_ADDON_ROLES = 500
+
+function TraitorDash.PushRoleAddons()
+    local baseUrl, token = GetApi()
+    if not baseUrl or not TraitorDash.FindRoleAddons then return end
+
+    local ok, found = pcall(TraitorDash.FindRoleAddons)
+    if not ok then
+        print("[TraitorDash] Could not read the role addons: " .. tostring(found))
+        return
+    end
+
+    local roles, count = {}, 0
+    for name, addons in pairs(found.roles or {}) do
+        if count >= MAX_ROLE_ADDON_ROLES then break end
+        count = count + 1
+        local list = {}
+        for i, a in ipairs(addons) do
+            if i > 10 then break end
+            list[i] = { wsid = a.wsid, title = a.title }
+        end
+        roles[name] = list
+    end
+    if count == 0 then return end
+
+    local payload = util.TableToJSON({ roles = roles })
+    if not payload or payload == "" then
+        print("[TraitorDash] Could not encode the role addons")
+        return
+    end
+
+    HTTP({
+        url = baseUrl .. "/api/v1/roleaddons",
+        method = "POST",
+        headers = {
+            ["Content-Type"] = "application/json",
+            ["Authorization"] = "Bearer " .. token
+        },
+        body = payload,
+        timeout = 30,
+        success = function(code, body)
+            if code == 200 then
+                print("[TraitorDash] Role addons OK (" .. count .. " roles)")
+            else
+                print("[TraitorDash] Role addons rejected (HTTP " .. code .. "): " .. tostring(body))
+            end
+        end,
+        failed = function(err)
+            print("[TraitorDash] Role addons failed: " .. tostring(err))
+        end
+    })
+end
+
 -- A finished floor-plan scan (mapscan.lua) goes to /api/v1/mapplan (RFC 10, 4.5). Only the grid and
 -- the scan's own statistics are sent; the backend counts floors itself. The fingerprint says which
 -- version of the map was scanned. Idle without a configuration.
@@ -609,6 +665,7 @@ function TraitorDash.Sync(force)
     local function processNext()
         if #queue == 0 then
             print("[TraitorDash] Sync complete! " .. count .. " roles processed.")
+            TraitorDash.PushRoleAddons()
             -- Restore hibernation setting
             RunConsoleCommand("sv_hibernate_think", tostring(oldHibernate))
             return
