@@ -392,6 +392,11 @@ export const migrations: Array<(db: Database) => void> = [
     db.run(`CREATE TABLE IF NOT EXISTS workshop_text (
       wsid TEXT PRIMARY KEY, title TEXT, description TEXT, status TEXT NOT NULL, fetched_at TEXT NOT NULL
     )`)
+  },
+  // v20 (RFC 15): the Workshop text is now kept as Steam sent it and cleaned when shown. Pages stored
+  // by v19 were already cleaned (and had lost their headings), so they are read again.
+  (db) => {
+    db.run('DELETE FROM workshop_text')
   }
 ]
 

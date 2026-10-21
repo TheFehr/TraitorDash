@@ -21,31 +21,63 @@ export const setFetcher = (f: Fetch | null) => { fetcher = f ?? ((url, init) => 
 
 const ENTITIES: Record<string, string> = { '&quot;': '"', '&amp;': '&', '&lt;': '<', '&gt;': '>', '&#39;': "'", '&apos;': "'", '&nbsp;': ' ' }
 
+/** Sections of a Workshop page that are about the addon's upkeep, not about the role. */
+const SKIP_HEADING = /convar|changelog|change log|install|requirement|credit|link|faq|donat|support|contact|discord|bug|report|workshop|collection|related|other roles|todo|how to|usage|command|setting|config|source|known issue|update/i
+/** A link that was only a pointer ("here", "this page"): the sentence around it points at something that is gone. */
+const POINTER = '\uE001', LINKED = '\uE000'
+
+/** Drops the sections whose heading says they are about the addon's upkeep. The text before the first heading stays. */
+function withoutUpkeep(raw: string): string {
+  const heading = /\[h([1-6])\]([\s\S]*?)\[\/h\1\]/gi
+  const marks = [...raw.matchAll(heading)]
+  if (marks.length === 0) return raw
+  let out = raw.slice(0, marks[0]!.index)
+  marks.forEach((m, i) => {
+    const end = i + 1 < marks.length ? marks[i + 1]!.index! : raw.length
+    if (!SKIP_HEADING.test(m[2]!)) out += raw.slice(m.index!, end)
+  })
+  return out
+}
+
 /**
- * A Workshop description (BBCode and a little HTML) as plain text: formatting tags dropped, list items
- * as "- " lines, links and images removed, blank runs collapsed, cut at a limit on a word. Null when
- * nothing readable is left.
+ * A Workshop description (BBCode and a little HTML) as plain text about the role: the sections about
+ * the addon's upkeep (convars, links, changelog) and lines that only pointed at a link are dropped,
+ * formatting tags go, list items become "- " lines, paragraphs stay apart, and the text is cut at a
+ * limit on a word. Null when nothing readable is left.
  */
 export function cleanWorkshopText(raw: string | null | undefined): string | null {
   if (!raw) return null
-  let t = raw.slice(0, MAX_RAW)
-    .replace(/\r/g, '')
+  let t = withoutUpkeep(raw.slice(0, MAX_RAW).replace(/\r/g, ''))
     .replace(/\[img\][\s\S]*?\[\/img\]/gi, '')
     .replace(/\[previewyoutube[^\]]*\][\s\S]*?\[\/previewyoutube\]/gi, '')
     .replace(/\[(?:previewyoutube|video|img)[^\]]*\]/gi, '')
-    .replace(/\[\*\]/g, '\n- ')
-    .replace(/\[\/?(?:h[1-6]|p|list|olist|quote|table|tr|td|th|hr)[^\]]*\]/gi, '\n')
-    .replace(/\[url(?:=[^\]]*)?\]([\s\S]*?)\[\/url\]/gi, '$1')
+    .replace(/\s*\[\*\]\s*/g, '\n- ')
+    .replace(/\[\/?(?:list|olist)[^\]]*\]/gi, '\n')
+    .replace(/\[\/?(?:h[1-6]|p|quote|table|tr|td|th|hr)[^\]]*\]/gi, '\n\n')
+    .replace(/\[url(?:=[^\]]*)?\]([\s\S]*?)\[\/url\]/gi, (_m, label: string) => (/^\s*(here|this|link|this link|this page|click here|page)\s*$/i.test(label) ? POINTER : label))
     .replace(/\[\/?[a-z0-9]+(?:=[^\]]*)?\]/gi, '')
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<[^>]*>/g, '')
-    .replace(/https?:\/\/\S+/gi, '')
+    .replace(/https?:\/\/\S+/gi, LINKED)
     .replace(/&(?:quot|amp|lt|gt|#39|apos|nbsp);/g, e => ENTITIES[e]!)
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '')
-    .replace(/[ \t]+/g, ' ')
-    .replace(/ ?\n ?/g, '\n')
-    .replace(/\n{2,}/g, '\n')
-    .trim()
+  const lines = t.split('\n').map(l => l.replace(/[ \t]+/g, ' ').trim()).filter(l => {
+    if (l.includes(POINTER)) return false
+    if (/^(todo|tbd)$/i.test(l.replace(/^- /, ''))) return false
+    if (/convar/i.test(l) || /^(#|ttt_)/.test(l)) return false
+    if (l.includes(LINKED)) {
+      const rest = l.split(LINKED).join('').trim()
+      if (rest.length < 25 || rest.endsWith(':')) return false
+    }
+    return true
+  }).map(l => l.split(LINKED).join('').trim())
+  // a label with nothing under it ("Play Best With:" once its entries are gone)
+  const kept = lines.filter((l, i) => {
+    if (!l.endsWith(':')) return true
+    const next = lines.slice(i + 1).find(x => x !== '')
+    return next !== undefined && !next.endsWith(':')
+  })
+  t = kept.join('\n').replace(/\n{3,}/g, '\n\n').trim()
   if (t === '') return null
   if (t.length > MAX_TEXT) {
     const cut = t.slice(0, MAX_TEXT)
@@ -88,7 +120,7 @@ export async function refreshWorkshopText(ids: string[], now = Date.now()): Prom
       const found = await fetchDetails(batch)
       for (const id of batch) {
         const d = found.get(id)
-        if (d) { Store.setWorkshopText(id, d.title, cleanWorkshopText(d.description), 'ok'); fetched++ }
+        if (d) { Store.setWorkshopText(id, d.title, d.description.slice(0, MAX_RAW), 'ok'); fetched++ }
         else Store.setWorkshopText(id, null, null, 'missing')
       }
     } catch (e) {

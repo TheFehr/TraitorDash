@@ -1,5 +1,6 @@
 import { Store, type LiveConVar } from './Store'
 import { roleColour, teamLabel } from '../teamColours'
+import { cleanWorkshopText } from './workshopText'
 import { isRoleEnabled, roleMetrics, METRICS, type MetricKey } from './roles'
 import { cleanLabel, conVarDataText, humanizeKey, kindForConVarData, kindForLive, suffixOf, SUFFIX_TO_KEY, type FieldKind } from '../components/RoleConfigForm'
 import { NAME, SMALL_INT } from './validators'
@@ -45,7 +46,9 @@ export function workshopOf(serverId: string, roleName: string): RoleView['worksh
   for (const a of Store.getRoleAddons(serverId, roleName)) {
     if (a.roles.length + 1 > MAX_ROLES_PER_PAGE) continue
     const t = Store.getWorkshopText(a.wsid)
-    if (t?.status === 'ok' && t.description) return { wsid: a.wsid, title: t.title || a.title, text: t.description, alsoCovers: a.roles }
+    // the page is kept as Steam sent it and cleaned when shown, so a better cleaning needs no new fetch
+    const text = t?.status === 'ok' ? cleanWorkshopText(t.description) : null
+    if (t && text) return { wsid: a.wsid, title: t.title || a.title, text, alsoCovers: a.roles }
   }
   return null
 }

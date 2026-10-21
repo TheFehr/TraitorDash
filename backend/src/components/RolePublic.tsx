@@ -163,7 +163,7 @@ export const RolePage = ({ server, role, embed, admin, players = null }: { serve
           ? <p class="desc">{role.description}</p>
           : <>
               <p class="none">The addon does not describe this role.</p>
-              {role.facts && <p class="desc">{role.facts}</p>}
+              {!role.workshop && role.facts && <p class="desc">{role.facts}</p>}
               {role.workshop && (
                 <>
                   <p class="desc">{role.workshop.text}</p>

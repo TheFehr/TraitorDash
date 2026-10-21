@@ -47,11 +47,34 @@ const settle = () => new Promise(r => setTimeout(r, 20))
 const html = async (role: string, q = '') => (await mod.app.fetch(new Request(`http://localhost/servers/${serverId}/roles/${role}${q}`))).text()
 
 describe('cleaning a Workshop description', () => {
-  test('BBCode and HTML become plain text; links and images go; list items become lines', () => {
-    const raw = '[h1]Arsonist[/h1]\r\n[b]Burns[/b] [i]things[/i] with [url=https://x.example/a]a lighter[/url].\n[img]https://i.example/a.png[/img]\n[list]\n[*] First\n[*] Second\n[/list]\nSee https://example.com/page &amp; &quot;more&quot;<br/>done'
+  test('BBCode and HTML become plain text; images go; list items become lines; paragraphs stay apart', () => {
+    const raw = '[h1]Arsonist[/h1]\r\n[b]Burns[/b] [i]things[/i] with [url=https://x.example/a]a lighter[/url].\n[img]https://i.example/a.png[/img]\n[list]\n[*] First\n[*] Second\n[/list]\nTwo &amp; &quot;more&quot; things in a sentence long enough to keep.<br/>done'
     const t = wt.cleanWorkshopText(raw)
-    expect(t).toBe('Arsonist\nBurns things with a lighter.\n- First\n- Second\nSee & "more"\ndone')
+    expect(t).toBe('Arsonist\n\nBurns things with a lighter.\n\n- First\n- Second\n\nTwo & "more" things in a sentence long enough to keep.\ndone')
     expect(t).not.toMatch(/https?:|\[|\]|<|>/)
+  })
+  test('a page like a real role addon keeps what the role does and drops the upkeep', () => {
+    const page = `He is an arsonist who likes things related to fire.
+You have to use TTT2. Report bugs concerning this role [url=https://x]here[/url] and submit new role ideas [url=https://y]here[/url].
+Discord: https://discord.gg/abc
+Source: https://github.com/x/y
+[h1]Description[/h1]
+The Arsonist is a partner of the Traitor. The Arsonist have a Flare gun and his own flamethrower.
+Play Best With:
+[list]
+[*] Occultist
+[*] TODO
+[*] TODO
+[/list]
+[h2]Convars[/h2]
+Convars are variables that are introduced to allow server owners to customize the gameplay.
+ttt_ars_enabled [0/1] (default: 1)
+[h2]Changelog[/h2]
+v1: made it`
+    expect(wt.cleanWorkshopText(page)).toBe('He is an arsonist who likes things related to fire.\n\nDescription\n\nThe Arsonist is a partner of the Traitor. The Arsonist have a Flare gun and his own flamethrower.\nPlay Best With:\n\n- Occultist')
+  })
+  test('a label with nothing under it, a lone link line and a convar line are dropped', () => {
+    expect(wt.cleanWorkshopText('Good text that stays here for sure.\nDiscord:\nSource: https://x.example\nttt_a_pct [0..1]\nPlay Best With:\n[list][*]TODO[/list]')).toBe('Good text that stays here for sure.')
   })
   test('nothing left means null; long text is cut on a word with an ellipsis; control characters go', () => {
     expect(wt.cleanWorkshopText('[img]x[/img] [b][/b]')).toBeNull()
@@ -97,6 +120,11 @@ describe('POST /api/v1/roleaddons', () => {
     let last = 200
     for (let i = 0; i < 8; i++) last = (await post({ roles: {} })).status
     expect(last).toBe(429)
+  })
+  test('the page is kept as Steam sent it, and cleaned only when shown', async () => {
+    steam({ '111': { title: 'A', description: '[b]Raw[/b] text' } })
+    await wt.refreshWorkshopText(['111'])
+    expect(Store.getWorkshopText('111').description).toBe('[b]Raw[/b] text')
   })
   test('starts reading the Workshop pages, without waiting for them', async () => {
     steam({ '111': { title: 'Arsonist Addon', description: 'Sets fire.' } })
