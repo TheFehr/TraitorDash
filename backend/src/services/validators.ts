@@ -9,6 +9,8 @@ export const NAME = /^[A-Za-z0-9_.-]{1,64}$/
 export const FINGERPRINT = /^[0-9a-f]{64}$/
 /** A SteamID64 or a bot's id as the bridge reports it. */
 export const STEAM_ID = /^\d{5,20}$/
+/** The test bots' ids start with this; they are hidden from the stats unless asked for. */
+export const BOT_ID_PREFIX = '999000'
 /** A real SteamID64: exactly 17 digits (sign-in). */
 export const STEAM_ID64 = /^\d{17}$/
 /** A Workshop item id. */

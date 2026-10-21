@@ -129,6 +129,8 @@ export interface TracksInfo {
   count: number, bytes: number, pinned: number
   limits: { count: number, mb: number, own: { count: number | null, mb: number | null } }
   ceiling: { count: number, mb: number, pinned: number }
+  /** Rounds only test bots played in. */
+  botRounds: number
 }
 
 
@@ -153,6 +155,14 @@ export const TracksCard = ({ serverId, t }: { serverId: string, t: TracksInfo })
       </label>
       <button type="submit" class="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 font-bold text-white transition">Save</button>
     </form>
+    {t.botRounds > 0 && (
+      <form method="post" action={`/servers/${serverId}/rounds/delete-bots`} data-delete-bots class="mt-4"
+        x-data x-on:submit={`if (!confirm('Delete ${t.botRounds} test ${t.botRounds === 1 ? 'round' : 'rounds'} played only by bots, with their replays? This cannot be undone.')) $event.preventDefault()`}>
+        <button type="submit" class="px-4 py-2 rounded-lg border border-red-500/50 text-red-400 hover:bg-red-600 hover:text-white font-bold text-sm transition">
+          Delete {t.botRounds} test {t.botRounds === 1 ? 'round' : 'rounds'} (bots only)
+        </button>
+      </form>
+    )}
     <p class="mt-3 text-xs text-gray-500">
       Empty uses the default. At most {t.ceiling.count} tracks and {t.ceiling.mb} MB on this instance. 0 stores nothing: the game server still uploads, the dashboard discards.
       Pinned tracks are never removed by these limits.

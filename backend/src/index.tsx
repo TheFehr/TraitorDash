@@ -217,7 +217,7 @@ const replaysFor = (serverId: string, recent: stats.RecentRound[], signedIn: boo
 /** What a server keeps of position tracks, for the admin's card (RFC 12, 3.4). */
 const trackInfo = (serverId: string) => {
   const cfg = Store.getTrackConfig()
-  return { ...Store.getTrackUsage(serverId), limits: Store.getTrackLimits(serverId), ceiling: { count: cfg.maxCount, mb: cfg.maxMb, pinned: cfg.maxPinned } }
+  return { ...Store.getTrackUsage(serverId), botRounds: Store.countBotRounds(serverId), limits: Store.getTrackLimits(serverId), ceiling: { count: cfg.maxCount, mb: cfg.maxMb, pinned: cfg.maxPinned } }
 }
 
 /** How many position tracks a server keeps (RFC 12, 3.4). Admins only, audited. */
@@ -249,6 +249,35 @@ app.post('/servers/:serverId/rounds/:roundId/pin', async (c) => {
   if (result === 'max') return c.text(`This server already has ${Store.getTrackConfig().maxPinned} pinned tracks; unpin one first.`, 409)
   Store.audit(serverId, steamId, pin ? 'TRACK_PINNED' : 'TRACK_UNPINNED', roundId)
   return c.redirect(safeNext(String(form.next ?? '')) ?? `/servers/${serverId}/stats`)
+})
+
+/**
+ * Deletes a round's replay (`what=replay`: the round stays in the statistics) or the whole round with its
+ * replay (`what=round`). Admins only, audited, and a pinned track goes too: asking for it is the decision.
+ */
+app.post('/servers/:serverId/rounds/:roundId/delete', async (c) => {
+  const steamId = await getAdminId(c)
+  if (!steamId) return c.text('Unauthorized', 401)
+  const serverId = c.req.param('serverId'), roundId = c.req.param('roundId')
+  if (!Store.getServerById(serverId)) return c.text('Not found', 404)
+  const form = await c.req.parseBody()
+  const what = form.what
+  if (what !== 'replay' && what !== 'round') return c.text('what must be replay or round', 400)
+  const done = what === 'replay' ? Store.deleteTrack(serverId, roundId) : Store.deleteRound(serverId, roundId)
+  if (!done) return c.text('Not found', 404)
+  Store.audit(serverId, steamId, what === 'replay' ? 'TRACK_DELETED' : 'ROUND_DELETED', roundId)
+  return c.redirect(`/servers/${serverId}/stats${c.req.query('bots') === '1' ? '?bots=1' : ''}`)
+})
+
+/** Deletes every round only test bots played in, with their replays. Admins only, audited. */
+app.post('/servers/:serverId/rounds/delete-bots', async (c) => {
+  const steamId = await getAdminId(c)
+  if (!steamId) return c.text('Unauthorized', 401)
+  const serverId = c.req.param('serverId')
+  if (!Store.getServerById(serverId)) return c.text('Not found', 404)
+  const n = Store.deleteBotRounds(serverId)
+  Store.audit(serverId, steamId, 'BOT_ROUNDS_DELETED', `${n} rounds`)
+  return c.redirect(`/servers/${serverId}/stats`)
 })
 
 /** The maps the server has and which of them it will play (RFC 10). Public, like the stats. */

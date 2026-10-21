@@ -110,6 +110,18 @@ export const ReplayPage = ({ server, round, hasTrack, src, viewer, admin, pinned
                 <button type="submit" data-pin class={BTN}>{pinned ? 'Unpin this round' : 'Pin this round'}</button>
                 <p class="text-xs text-gray-500">A pinned track is never removed to make room.{pinnedCount ? ` ${pinnedCount.used} of ${pinnedCount.max} pins used.` : ''}</p>
               </form>
+              <div class="mt-4 flex flex-wrap gap-2">
+                {[
+                  { what: 'replay', label: 'Delete replay', ask: 'Delete this replay? The round stays in the statistics.' },
+                  { what: 'round', label: 'Delete round and replay', ask: 'Delete this round with its replay? It leaves the statistics too. This cannot be undone.' },
+                ].map(d => (
+                  <form method="post" action={`/servers/${server.id}/rounds/${encodeURIComponent(round.id)}/delete`} data-delete={d.what}
+                    x-data x-on:submit={`if (!confirm(${JSON.stringify(d.ask)})) $event.preventDefault()`}>
+                    <input type="hidden" name="what" value={d.what} />
+                    <button type="submit" class="px-3 py-1 rounded-md border border-red-500/50 text-red-400 hover:bg-red-600 hover:text-white text-sm transition">{d.label}</button>
+                  </form>
+                ))}
+              </div>
             </section>
           )}
         </aside>

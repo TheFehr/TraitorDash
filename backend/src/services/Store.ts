@@ -1,5 +1,6 @@
 import db from './Database'
 import { HEX6 } from '../teamColours'
+import { BOT_ID_PREFIX } from './validators'
 import type { MapPlan } from './mapplan'
 import { createHash } from 'node:crypto'
 import { hashToken } from './migrations'
@@ -216,15 +217,46 @@ export class Store {
       const old = db.prepare(
         'SELECT round_id FROM rounds WHERE server_id = ? ORDER BY received_at DESC, rowid DESC LIMIT -1 OFFSET ?'
       ).all(serverId, keep) as { round_id: string }[]
-      for (const { round_id } of old) {
-        db.run('DELETE FROM round_tracks WHERE server_id = ? AND round_id = ?', [serverId, round_id])
-        db.run('DELETE FROM deaths WHERE server_id = ? AND round_id = ?', [serverId, round_id])
-        db.run('DELETE FROM round_revives WHERE server_id = ? AND round_id = ?', [serverId, round_id])
-        db.run('DELETE FROM round_players WHERE server_id = ? AND round_id = ?', [serverId, round_id])
-        db.run('DELETE FROM rounds WHERE server_id = ? AND round_id = ?', [serverId, round_id])
-      }
+      for (const { round_id } of old) Store.removeRound(serverId, round_id)
       return true
     })()
+  }
+
+  /** Removes a round and everything stored for it: its players, deaths, revivals and track. Returns whether it existed. */
+  private static removeRound(serverId: string, roundId: string): boolean {
+    db.run('DELETE FROM round_tracks WHERE server_id = ? AND round_id = ?', [serverId, roundId])
+    db.run('DELETE FROM deaths WHERE server_id = ? AND round_id = ?', [serverId, roundId])
+    db.run('DELETE FROM round_revives WHERE server_id = ? AND round_id = ?', [serverId, roundId])
+    db.run('DELETE FROM round_players WHERE server_id = ? AND round_id = ?', [serverId, roundId])
+    return db.run('DELETE FROM rounds WHERE server_id = ? AND round_id = ?', [serverId, roundId]).changes > 0
+  }
+
+  /** Deletes one round with its replay (an admin's choice: pinned ones too). */
+  static deleteRound(serverId: string, roundId: string): boolean {
+    return db.transaction(() => Store.removeRound(serverId, roundId))()
+  }
+
+  /** Deletes only a round's replay (its track); the round stays in the statistics. Returns whether there was one. */
+  static deleteTrack(serverId: string, roundId: string): boolean {
+    return db.run('DELETE FROM round_tracks WHERE server_id = ? AND round_id = ?', [serverId, roundId]).changes > 0
+  }
+
+  /** The rounds only test bots played in: at least one bot and no one else. */
+  private static botRoundIds(serverId: string): string[] {
+    return (db.prepare(`
+      SELECT r.round_id FROM rounds r WHERE r.server_id = ?
+        AND EXISTS (SELECT 1 FROM round_players rp WHERE rp.server_id = r.server_id AND rp.round_id = r.round_id AND rp.steam_id LIKE '${BOT_ID_PREFIX}%')
+        AND NOT EXISTS (SELECT 1 FROM round_players rp WHERE rp.server_id = r.server_id AND rp.round_id = r.round_id AND rp.steam_id NOT LIKE '${BOT_ID_PREFIX}%')
+    `).all(serverId) as { round_id: string }[]).map(r => r.round_id)
+  }
+
+  static countBotRounds(serverId: string): number {
+    return Store.botRoundIds(serverId).length
+  }
+
+  /** Deletes every round only test bots played in, with their replays. Returns how many. */
+  static deleteBotRounds(serverId: string): number {
+    return db.transaction(() => Store.botRoundIds(serverId).filter(id => Store.removeRound(serverId, id)).length)()
   }
 
   // ---- Position tracks (RFC 12, 3.4) ----

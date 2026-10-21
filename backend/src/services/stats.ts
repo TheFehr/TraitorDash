@@ -1,10 +1,11 @@
 import db from './Database'
+import { BOT_ID_PREFIX } from './validators'
 
 // Read-side queries for the round stats the bridge reports (migration v7).
 //
 // Bots only exist when the test scenario runs; they carry synthetic IDs starting with this
 // prefix and are hidden everywhere unless asked for, so a test never pollutes the leaderboard.
-const BOT_PREFIX = '999000'
+const BOT_PREFIX = BOT_ID_PREFIX
 const NOT_BOT = `rp.steam_id NOT LIKE '${BOT_PREFIX}%'`
 
 /** SQLite's `YYYY-MM-DD HH:MM:SS` (UTC) as an ISO instant, which the <Heartbeat> time element understands. */
