@@ -38,6 +38,11 @@ if not okMapscan then print("[TraitorDash] mapscan.lua failed to load; traitorda
 local okMaps, errMaps = pcall(include, "traitordash/maps.lua")
 if not okMaps then print("[TraitorDash] maps.lua failed to load; traitordash_maps is not available: " .. tostring(errMaps)) end
 
+-- `traitordash_roleaddons`: which Workshop addon each role comes from, read from the addons' file
+-- lists (RFC 15). Optional.
+local okRa, errRa = pcall(include, "traitordash/roleaddons.lua")
+if not okRa then print("[TraitorDash] roleaddons.lua failed to load; traitordash_roleaddons is not available: " .. tostring(errRa)) end
+
 CreateConVar("traitordash_url", "http://localhost:3000", {FCVAR_ARCHIVE, FCVAR_PROTECTED}, "The base URL of the TraitorDash backend (server.cfg; data/traitordash/config.json takes precedence).")
 -- No default token: an empty one keeps the bridge idle instead of calling the backend with a
 -- well-known value.
