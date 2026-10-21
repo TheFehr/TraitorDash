@@ -39,8 +39,8 @@ const PRELUDE = `
   function FakeFile(data) local pos = 1 return {
     Read = function(self, n) local s = data:sub(pos, pos + n - 1) pos = pos + #s READS[#READS + 1] = #s return s end,
     Close = function() end } end
-  FILES = {}
-  file.Open = function(p, mode, where) local d = FILES[p] if d then return FakeFile(unhex(d)) end end
+  FILES, OPENS, ONLY = {}, {}, nil
+  file.Open = function(p, mode, where) OPENS[#OPENS + 1] = p .. "|" .. tostring(where) local d = FILES[p] if d and (not ONLY or ONLY == where) then return FakeFile(unhex(d)) end end
   ADDONS = {}
   engine = { GetAddons = function() return ADDONS end }
   function FILE(path, buf) FILES[path] = buf end
@@ -65,7 +65,7 @@ function play(script: string, files: Record<string, Buffer> = {}): any {
         end
         return "null"
       end
-      __OUT = enc({ result = RESULT, printed = PRINTED, written = WRITTEN, reads = READS })
+      __OUT = enc({ opens = OPENS, result = RESULT, printed = PRINTED, written = WRITTEN, reads = READS })
     `)
     lua.lua_getglobal(L, to_luastring('__OUT'))
     return JSON.parse(to_jsstring(lua.lua_tostring(L, -1)))
@@ -101,6 +101,30 @@ describe('reading the file list of a GMA', () => {
     expect(list(gma(['a.lua'], { version: 9 }))).toMatchObject({ why: 'unknown GMA version 9' })
     expect(list(gma(['a.lua', 'b.lua'], { cut: 70 }))).toMatchObject({ why: 'cut short' })
     expect(list(Buffer.alloc(0))).toMatchObject({ why: expect.stringContaining('not a GMA') })
+  })
+})
+
+describe('addon paths as the operating system writes them', () => {
+  const abs = '/home/container/steam_cache/content/4000/777/pack.gma'
+  const files = { 'steam_cache/content/4000/777/pack.gma': gma([`${R}arsonist/shared.lua`], { title: 'Pack' }) }
+  const addons = `ADDONS = { { wsid = "777", title = "Pack", file = "${abs}", mounted = true } } ONLY = "BASE_PATH"`
+  test('the leading folders are dropped until a search root accepts the rest', () => {
+    const o = play(`${addons} RESULT = TraitorDash.FindRoleAddons()`, files)
+    expect(o.result.roles.arsonist).toEqual([{ wsid: '777', title: 'Pack' }])
+    expect(o.result.opened).toEqual({ BASE_PATH: 1 })
+    expect(o.result.unreadable).toEqual([])
+    expect(o.opens[0]).toBe(`${abs}|GAME`) // the plain path is tried first
+  })
+  test('when nothing opens, the addon is reported with the reason and the command still finishes', () => {
+    const o = play(`ADDONS = { { wsid = "777", title = "Pack", file = "${abs}", mounted = true } } CMDS.traitordash_roleaddons(nil)`)
+    expect(o.printed.some((l: string) => l.includes('outside every search path'))).toBe(true)
+    expect(o.printed.some((l: string) => l.includes('0 roles found in 0 addons (1 could not be read)'))).toBe(true)
+  })
+  test('a long list of unreadable addons is cut to five lines and a count', () => {
+    const many = Array.from({ length: 12 }, (_, i) => `{ wsid = "${100 + i}", title = "T${i}", file = "/x/${i}.gma", mounted = true }`).join(',')
+    const o = play(`ADDONS = { ${many} } CMDS.traitordash_roleaddons(nil)`)
+    expect(o.printed.filter((l: string) => l.includes('could not read')).length).toBe(5)
+    expect(o.printed.some((l: string) => l.includes('7 more could not be read'))).toBe(true)
   })
 })
 

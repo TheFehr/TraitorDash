@@ -106,6 +106,28 @@ function TraitorDash.RoleOfPath(path)
     return nil
 end
 
+-- engine.GetAddons() gives the .gma's path as the operating system knows it (on a Pelican server
+-- /home/container/steam_cache/content/4000/<id>/x.gma), which file.Open does not accept: it wants a path
+-- below one of the game's search roots. So the path is tried with its leading folders dropped one at a
+-- time, against the server's base folder and the game folder, until one opens.
+local PATH_IDS = { "BASE_PATH", "GAME", "MOD" }
+
+--- Opens an addon's file. Returns the file and the way it was opened ("path|id"), or nil and why.
+function TraitorDash.OpenAddonFile(path)
+    local direct = file.Open(path, "rb", "GAME")
+    if direct then return direct, path .. "|GAME" end
+    local segments = {}
+    for part in path:gmatch("[^/\\]+") do segments[#segments + 1] = part end
+    for i = 1, math.max(#segments - 1, 0) do
+        local candidate = table.concat(segments, "/", i)
+        for _, id in ipairs(PATH_IDS) do
+            local f = file.Open(candidate, "rb", id)
+            if f then return f, candidate .. "|" .. id end
+        end
+    end
+    return nil, "outside every search path the game offers"
+end
+
 --- Reads every mounted addon's file list. Returns { roles = { name = { {wsid, title}, ... } }, scanned, unreadable = { {wsid, title, why} }, ms }.
 function TraitorDash.FindRoleAddons()
     local started = SysTime()
@@ -113,10 +135,12 @@ function TraitorDash.FindRoleAddons()
     for _, addon in ipairs(engine.GetAddons() or {}) do
         local wsid = tostring(addon.wsid or "")
         if addon.mounted and wsid:match("^%d+$") and #wsid <= 12 and type(addon.file) == "string" and addon.file ~= "" then
-            local f = file.Open(addon.file, "rb", "GAME")
+            local f, how = TraitorDash.OpenAddonFile(addon.file)
             if not f then
-                out.unreadable[#out.unreadable + 1] = { wsid = wsid, title = tostring(addon.title or ""), why = "cannot open " .. addon.file }
+                out.unreadable[#out.unreadable + 1] = { wsid = wsid, title = tostring(addon.title or ""), why = "cannot open " .. addon.file .. " (" .. how .. ")" }
             else
+                out.opened = out.opened or {}
+                out.opened[how:match("|(.+)$") or "?"] = (out.opened[how:match("|(.+)$") or "?"] or 0) + 1
                 local seen = {}
                 local ok, title, err = pcall(TraitorDash.ReadGmaFiles, f, function(name)
                     local role = TraitorDash.RoleOfPath(name)
@@ -153,9 +177,12 @@ concommand.Add("traitordash_roleaddons", function(ply)
         for _, a in ipairs(r.roles[name]) do parts[#parts + 1] = a.title .. " (" .. a.wsid .. ")" end
         TraitorDash.Util.Say(name .. " <- " .. table.concat(parts, ", "))
     end
-    for _, u in ipairs(r.unreadable) do
+    -- on a phone a hundred lines are useless: the first few, then a count
+    for i, u in ipairs(r.unreadable) do
+        if i > 5 then TraitorDash.Util.Say("... and " .. (#r.unreadable - 5) .. " more could not be read (all in data/traitordash/roleaddons.json)") break end
         TraitorDash.Util.Say("could not read " .. u.title .. " (" .. u.wsid .. "): " .. u.why)
     end
+    for id, n in pairs(r.opened or {}) do TraitorDash.Util.Say(n .. " addons opened through " .. id) end
     file.CreateDir("traitordash")
     file.Write("traitordash/roleaddons.json", util.TableToJSON(r))
     TraitorDash.Util.Say(string.format("%d roles found in %d addons (%d could not be read), %d ms. Wrote data/traitordash/roleaddons.json.",
