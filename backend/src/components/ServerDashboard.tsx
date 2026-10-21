@@ -104,7 +104,7 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
     }
 
     if (!acc[teamKey]) acc[teamKey] = []
-    acc[teamKey].push({ name: role.role_name, enabled: role.enabled !== false, metrics: role.metrics })
+    acc[teamKey].push({ name: role.role_name, colour: role.colour, enabled: role.enabled !== false, metrics: role.metrics })
     return acc
   }, {})
 
@@ -252,7 +252,7 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
                 <div class="h-px flex-1 bg-gray-700/50"></div>
               </div>
               <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" x-bind:style="{ display: flat ? 'contents' : '' }">
-                {roleList.map((role: { name: string, enabled: boolean, metrics?: RoleMetrics }) => (
+                {roleList.map((role: { name: string, colour?: string, enabled: boolean, metrics?: RoleMetrics }) => (
                   <a
                     href={`/servers/${server.id}/roles/${role.name}/config`}
                     data-role={role.name}
@@ -261,6 +261,7 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
                     {...metricAttributes(role.metrics)}
                     x-show="visible($el)"
                     x-bind:style="{ order: rank($el) }"
+                    style={role.colour && /^#[0-9a-f]{6}$/.test(role.colour) ? `border-left: 4px solid ${role.colour}` : undefined}
                     class={`bg-gray-800 rounded-xl p-6 border border-gray-700 hover:border-red-500 transition group flex justify-between items-center shadow-lg hover:shadow-red-500/10 ${role.enabled ? '' : 'opacity-60'}`}
                   >
                     <div class="min-w-0">

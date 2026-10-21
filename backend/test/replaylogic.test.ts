@@ -1,5 +1,5 @@
 import { expect, test, describe } from 'bun:test'
-import { decodeTrack, poseAt, lastPoseAt, trailBetween, lerpYaw, levelOf, chooseBackground, versionMismatch, defaultSelection, teamColour, clock, type RawTrack } from '../src/replaylogic'
+import { decodeTrack, poseAt, lastPoseAt, trailBetween, lerpYaw, levelOf, chooseBackground, versionMismatch, defaultSelection, teamColour, playerColour, roleColour, clock, type RawTrack } from '../src/replaylogic'
 
 // RFC 12, 3.5: the logic of the replay that is not drawing.
 
@@ -150,5 +150,22 @@ describe('background and selection', () => {
     expect(clock(0)).toBe('0:00')
     expect(clock(61_900)).toBe('1:01')
     expect(clock(-5)).toBe('0:00')
+  })
+})
+
+describe('role colours', () => {
+  test("a player is drawn in their role's colour, else their team's", () => {
+    const c = { detective: '#1f4dbf', odd: 'red' }
+    expect(playerColour(c, 'detective', 'innocents')).toBe(0x1f4dbf)
+    expect(playerColour(c, 'innocent', 'innocents')).toBe(teamColour('innocents'))
+    expect(playerColour(c, null, 'traitors')).toBe(teamColour('traitors'))
+    expect(playerColour(c, 'odd', 'traitors')).toBe(teamColour('traitors'))
+    expect(playerColour(c, 'toString', 'traitors')).toBe(teamColour('traitors'))
+    expect(playerColour({}, 'x', null)).toBe(teamColour(null))
+  })
+  test('roleColour gives #rrggbb: the own colour when valid, else the team colour', () => {
+    expect(roleColour('#0a141e', 'traitors')).toBe('#0a141e')
+    expect(roleColour(null, 'traitors')).toBe('#dc2626')
+    expect(roleColour('#fff', 'innocents')).toBe('#22c55e')
   })
 })

@@ -7,7 +7,7 @@ import {
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import {
-  decodeTrack, poseAt, lastPoseAt, trailBetween, levelOf, defaultSelection, teamColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose,
+  decodeTrack, poseAt, lastPoseAt, trailBetween, levelOf, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
 } from './replaylogic'
 
@@ -21,6 +21,7 @@ import {
 interface Payload {
   round: { id: string, map: string | null, result: string, duration: number | null, startedAt: string | null }
   players: { id: string, nick: string | null, role: string | null, team: string | null, endRole: string | null, endTeam: string | null, won: boolean, survived: boolean }[]
+  colours?: Record<string, string>
   revives: { victim: string, reviver: string | null, how: string | null, why: string | null, at: number | null }[]
   track: any
   trackInfo: { truncated: boolean, degraded: boolean, fingerprint: string | null, pinned: boolean }
@@ -67,7 +68,7 @@ async function start(root: HTMLElement) {
   // The team a player has at the time shown: the one they started with, then each role change (RFC 14, 4.6).
   const startOf = (id: string) => ({ role: meta.get(id)?.role ?? null, team: meta.get(id)?.team ?? null })
   const stateOf = (id: string, at: number) => stateAt(startOf(id), data.events, id, at)
-  const colourOf = (id: string, at = 0) => teamColour(stateOf(id, at).team)
+  const colourOf = (id: string, at = 0) => { const st = stateOf(id, at); return playerColour(payload.colours ?? {}, st.role, st.team) }
 
   // ---- state
   let ms = 0, playing = false, speed = 1, last = 0
@@ -510,7 +511,7 @@ async function start(root: HTMLElement) {
     const unit = spriteUnit(), top = camera === ortho
     for (const [id, m] of markers) {
       const st = stateOf(id, ms)
-      const colour = teamColour(st.team)
+      const colour = playerColour(payload.colours ?? {}, st.role, st.team)
       if (colour !== m.colour) { // a conversion: the figure, its pin and its name change colour at that moment
         m.colour = colour
         ;(m.body.userData.cloth as MeshStandardMaterial).color.setHex(colour)

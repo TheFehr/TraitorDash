@@ -92,6 +92,19 @@ describe('track.json', () => {
     }
   })
 
+  test("carries each role's own colour (team colour for a role without one), and a new colour changes the validator", async () => {
+    const id = round()
+    Store.saveSchema(serverId, 'traitor', 'traitors', false, -1, [], 'h', null, '#d12b27')
+    Store.saveSchema(serverId, 'innocent', 'innocents', false, -1, [], 'h', null)
+    const first = await data(id)
+    const body = await first.json() as any
+    expect(body.colours).toEqual({ traitor: '#d12b27', innocent: '#22c55e' })
+    Store.saveSchema(serverId, 'traitor', 'traitors', false, -1, [], 'h2', null, '#112233')
+    const second = await data(id)
+    expect(second.headers.get('etag')).not.toBe(first.headers.get('etag'))
+    expect((await second.json() as any).colours.traitor).toBe('#112233')
+  })
+
   test('carries where each player ended and the revivals of the round (RFC 14); a victim outside the round is left out', async () => {
     const id = round()
     db.run('UPDATE round_players SET end_role = ?, end_team = ? WHERE server_id = ? AND round_id = ? AND steam_id = ?', ['zombie', 'zombies', serverId, id, P2])

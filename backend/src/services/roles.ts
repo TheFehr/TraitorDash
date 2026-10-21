@@ -1,4 +1,5 @@
 import { Store, type LiveConVar } from './Store'
+import { roleColour } from '../replaylogic'
 
 /**
  * A role is enabled unless the game server says otherwise: its `ttt_<role>_enabled` ConVar
@@ -65,6 +66,7 @@ export function getRolesWithState(serverId: string) {
   const live = Store.getConVarValues(serverId)
   return Store.getRoles(serverId).map(role => ({
     ...role,
+    colour: roleColour(role.color, role.team ?? null),
     enabled: isRoleEnabled(live, role.role_name),
     metrics: roleMetrics(live, role.role_name),
   }))

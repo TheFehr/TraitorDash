@@ -175,6 +175,16 @@ export function teamColour(team: string | null): number {
   return (f(0) << 16) | (f(8) << 8) | f(4)
 }
 
+/** The role's own colour (ROLE.color, as TTT2 shows it) as `#rrggbb`, else its team's. */
+export const roleColour = (own: unknown, team: string | null): string =>
+  typeof own === 'string' && /^#[0-9a-f]{6}$/.test(own) ? own : '#' + teamColour(team).toString(16).padStart(6, '0')
+
+/** A player's colour (0xRRGGBB): the colour of their role if `colours` (role name to `#rrggbb`) has one, else their team's. */
+export function playerColour(colours: Record<string, string>, role: string | null, team: string | null): number {
+  const own = role !== null && Object.prototype.hasOwnProperty.call(colours, role) ? colours[role] : undefined
+  return typeof own === 'string' && /^#[0-9a-f]{6}$/.test(own) ? parseInt(own.slice(1), 16) : teamColour(team)
+}
+
 /** "m:ss" for a time in ms. */
 export const clock = (ms: number) => {
   const s = Math.max(0, Math.floor(ms / 1000))

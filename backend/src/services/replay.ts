@@ -3,7 +3,7 @@ import { Store } from './Store'
 import { getReplayRound, type StatsOptions } from './stats'
 import { planLevels } from './mapplan'
 import type { LevelRange } from '../replaylogic'
-import { chooseBackground, versionMismatch, type BackgroundKind } from '../replaylogic'
+import { chooseBackground, roleColour, versionMismatch, type BackgroundKind } from '../replaylogic'
 
 /**
  * What the replay page needs about one round, in one JSON document (RFC 12, 3.5): the round's header
@@ -14,6 +14,8 @@ export interface ReplayPayload {
   round: { id: string, map: string | null, result: string, duration: number | null, startedAt: string | null }
   players: { id: string, nick: string | null, role: string | null, team: string | null, endRole: string | null, endTeam: string | null, won: boolean, survived: boolean }[]
   /** The revivals the bridge reported for the round (RFC 14); also known for a round whose track has no events. */
+  /** Each role's colour (`#rrggbb`) as the role sets it; a player whose role is missing here is drawn in their team's. */
+  colours: Record<string, string>
   revives: { victim: string, reviver: string | null, how: string | null, why: string | null, at: number | null }[]
   track: unknown
   trackInfo: { truncated: boolean, degraded: boolean, fingerprint: string | null, pinned: boolean }
@@ -70,9 +72,13 @@ export function buildReplay(serverId: string, roundId: string, o?: StatsOptions)
   if (kind === 'mesh') background.meshUrl = `/servers/${serverId}/maps/${encodeURIComponent(map)}/mesh.glb`
   if (kind === 'plan') background.plan = grid
 
+  const colours: Record<string, string> = {}
+  for (const r of Store.getRoles(serverId)) colours[String(r.role_name)] = roleColour(r.color, r.team ?? null)
+
   const payload: ReplayPayload = {
     round: { id: round.roundId, map: round.map, result: round.result, duration: round.duration, startedAt: round.startedAt },
     players: round.players,
+    colours,
     revives: round.revives,
     track: stored.track,
     trackInfo: { truncated: stored.meta.truncated, degraded: stored.meta.degraded, fingerprint: stored.meta.fingerprint, pinned: stored.meta.pinned },
@@ -80,7 +86,7 @@ export function buildReplay(serverId: string, roundId: string, o?: StatsOptions)
   }
   // A track is immutable; what can change is what is drawn behind it, and the pin.
   const etag = 'W/"' + createHash('sha1').update(JSON.stringify([
-    stored.meta.createdAt, stored.meta.bytes, stored.meta.pinned, !!o?.bots, kind, meshFingerprint, planMeta?.scannedAt ?? null, background.mismatch,
+    stored.meta.createdAt, stored.meta.bytes, stored.meta.pinned, !!o?.bots, kind, meshFingerprint, planMeta?.scannedAt ?? null, background.mismatch, colours,
   ])).digest('hex').slice(0, 20) + '"'
   return { payload, etag }
 }

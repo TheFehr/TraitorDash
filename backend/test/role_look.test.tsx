@@ -54,6 +54,14 @@ describe('colours', () => {
   })
 })
 
+describe('admin overview', () => {
+  test('every role carries its colour for the overview cards', async () => {
+    const roles = (await import('../src/services/roles')).getRolesWithState(serverId)
+    expect(roles.find((r: any) => r.role_name === 'haunter').colour).toBe('#ff00aa')
+    expect(roles.find((r: any) => r.role_name === 'plain').colour).toBe('#22c55e')
+  })
+})
+
 describe('players', () => {
   const list = async (q = '') => (await get(`/servers/${serverId}/roles${q}`)).text()
   test('without a count nothing is put away', async () => {

@@ -1,5 +1,5 @@
 import { Store, type LiveConVar } from './Store'
-import { teamColour } from '../replaylogic'
+import { roleColour } from '../replaylogic'
 import { isRoleEnabled, roleMetrics, METRICS, type MetricKey } from './roles'
 import { cleanLabel, conVarDataText, humanizeKey, kindForConVarData, kindForLive, suffixOf, SUFFIX_TO_KEY, type FieldKind } from '../components/RoleConfigForm'
 
@@ -23,9 +23,7 @@ export interface RoleView {
 /** `min` is the role's minimum player count as a number, null when the server has not reported it. */
 export interface RoleListEntry { name: string, team: string, color: string, enabled: boolean, pct: string, minPlayers: string, min: number | null }
 
-/** The role's own colour (ROLE.color, as TTT2 shows it), else its team's. Always `#rrggbb`. */
-export const roleColour = (own: unknown, team: string): string =>
-  typeof own === 'string' && /^#[0-9a-f]{6}$/.test(own) ? own : '#' + teamColour(team).toString(16).padStart(6, '0')
+export { roleColour }
 
 /** The number of players a page is shown for (`?players=`): a whole number from 1 to 128, else none. */
 export function parsePlayers(raw: string | undefined | null): number | null {
