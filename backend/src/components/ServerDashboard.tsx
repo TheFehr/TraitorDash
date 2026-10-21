@@ -3,6 +3,7 @@ import { isServerOnline } from '../services/ServerUtils'
 import { Heartbeat } from './Heartbeat'
 import { METRICS, type MetricKey, type RoleMetrics } from '../services/roles'
 import { LINK_BTN } from '../ui'
+import { publicRoles } from '../services/roleview'
 
 // Filter, sort and grouping state for the role overview, run by Alpine in the browser.
 // - "Enabled only" is ON by default; unknown enabled state counts as enabled (services/roles.ts).
@@ -133,6 +134,11 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
           <a href={`/servers/${server.id}/maps`} class={`${LINK_BTN} mt-4 ml-2`}>
             🗺 Maps
           </a>
+          {publicRoles() && (
+            <a href={`/servers/${server.id}/roles`} class={`${LINK_BTN} mt-4 ml-2`}>
+              📖 Role guide
+            </a>
+          )}
         </div>
         <div class={`px-4 py-2 rounded-xl border ${isOnline ? 'border-green-500/50 bg-green-500/10 text-green-400' : 'border-gray-700 bg-gray-800 text-gray-500'} flex items-center gap-3 shadow-xl self-start`}>
            <div class={`w-3 h-3 rounded-full ${isOnline ? 'bg-green-500 animate-pulse' : 'bg-gray-700'}`}></div>

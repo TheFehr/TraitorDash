@@ -3,6 +3,7 @@ import { duration, kd, mb, pct } from '../format'
 import { Heartbeat } from './Heartbeat'
 import { SORTS, type SortKey, type LeaderRow, type RecentRound, type WinRow, type PlayerDetail } from '../services/stats'
 import { LINK_BTN, TAB_OFF, TAB_ON } from '../ui'
+import { publicRoles } from '../services/roleview'
 
 
 // Green at or above half, red below, grey with nothing to go on.
@@ -203,6 +204,11 @@ export const StatsDashboard = ({ server, overview, roles, teams, leaders, recent
       <a href={`/servers/${server.id}/maps`} class={`${LINK_BTN} mt-4`}>
         🗺 Maps
       </a>
+      {publicRoles() && (
+        <a href={`/servers/${server.id}/roles`} class={`${LINK_BTN} mt-4 ml-2`}>
+          📖 Roles
+        </a>
+      )}
       {bots && <p class="mt-2 text-xs font-black uppercase tracking-widest text-yellow-400">Including bot test rounds</p>}
     </header>
 

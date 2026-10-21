@@ -199,3 +199,25 @@ describe('numbers in the settings table', () => {
     expect(val(/zzz/)).toBeUndefined()
   })
 })
+
+describe('the way to the role pages', () => {
+  const page = async (path: string, auth = false) => (await app.fetch(new Request(`http://localhost${path}`, auth ? { headers: { Cookie: ADMIN_COOKIE } } : {}))).text()
+  let ADMIN_COOKIE = ''
+  beforeAll(async () => {
+    ADMIN_COOKIE = (await (await import('hono/utils/cookie')).serializeSigned('steam_id', '76561198000000000', 'test-secret-test-secret-test-secret-0')).split(';')[0]!
+  })
+  test('the home page tile, the stats page and the admin page link to the guide', async () => {
+    const link = `href="/servers/${serverId}/roles"`
+    expect(await page('/')).toContain(link)
+    expect(await page(`/servers/${serverId}/stats`)).toContain(link)
+    expect(await page(`/servers/${serverId}`, true)).toContain(link)
+  })
+  test('with PUBLIC_ROLES=0 there is no link to a page that is not there', async () => {
+    process.env.PUBLIC_ROLES = '0'
+    try {
+      const link = `href="/servers/${serverId}/roles"`
+      expect(await page('/')).not.toContain(link)
+      expect(await page(`/servers/${serverId}/stats`)).not.toContain(link)
+    } finally { delete process.env.PUBLIC_ROLES }
+  })
+})

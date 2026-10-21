@@ -1,6 +1,7 @@
 import { isServerOnline } from '../services/ServerUtils'
 import { Heartbeat } from './Heartbeat'
 import { LINK_BTN } from '../ui'
+import { publicRoles } from '../services/roleview'
 
 export const ServerTileView = ({ servers }: { servers: any[] }) => {
   return (
@@ -41,6 +42,11 @@ export const ServerTileView = ({ servers }: { servers: any[] }) => {
               <a href={`/servers/${server.id}/maps`} class={`${LINK_BTN} mt-6 ml-2`}>
                 🗺 Maps
               </a>
+              {publicRoles() && (
+                <a href={`/servers/${server.id}/roles`} class={`${LINK_BTN} mt-6 ml-2`}>
+                  📖 Roles
+                </a>
+              )}
             </div>
           )
         })}
