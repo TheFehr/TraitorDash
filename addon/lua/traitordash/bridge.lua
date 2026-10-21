@@ -11,6 +11,10 @@ TraitorDash.PendingValues = TraitorDash.PendingValues or {}   -- name -> role, w
 
 -- What the bridge will apply on the backend's say-so (see commands.lua). If it cannot be
 -- loaded, every command is refused rather than run unchecked.
+-- Small checks and helpers shared by the files below (and by the client file of the role guide).
+local okUtil, errUtil = pcall(include, "traitordash/util.lua")
+if not okUtil then print("[TraitorDash] util.lua failed to load: " .. tostring(errUtil)) end
+
 local okCommands, errCommands = pcall(include, "traitordash/commands.lua")
 if not okCommands then print("[TraitorDash] commands.lua failed to load; all commands will be refused: " .. tostring(errCommands)) end
 

@@ -7,6 +7,8 @@
 if not CLIENT then return end
 
 TraitorDash = TraitorDash or {}
+if not TraitorDash.Util then include("traitordash/util.lua") end
+local Util = TraitorDash.Util
 local Guide = {}
 TraitorDash.RoleGuideClient = Guide
 
@@ -14,20 +16,6 @@ Guide.base = nil
 Guide.serverId = nil
 Guide.wanted = nil     -- a role name to open on, consumed by the tab when it is built
 Guide.announced = false
-
--- Plain names only: letters, digits, _ . - and starting with a letter or digit (never "." or ".."). Those are
--- all safe in an address as they are, so nothing needs encoding.
-local NAME_PATTERN = "^%w[%w_%.%-]*$"
-
-local function ValidBase(base)
-    if type(base) ~= "string" or #base > 200 then return false end
-    local host, rest = base:match("^https://([%w%.%-]+:?%d*)(.*)$")
-    return host ~= nil and host ~= "" and (rest == "" or rest:match("^/[%w%-_%./]*$") ~= nil)
-end
-
-local function ValidName(name)
-    return type(name) == "string" and #name >= 1 and #name <= 64 and name:match(NAME_PATTERN) ~= nil
-end
 
 --- True when the server has told us where the guide is.
 function Guide.Available()
@@ -39,20 +27,18 @@ function Guide.Url(name)
     if not Guide.Available() then return nil end
     local url = Guide.base .. "/servers/" .. Guide.serverId .. "/roles"
     if name ~= nil and name ~= "" then
-        if not ValidName(name) then return nil end
+        if not Util.ValidName(name) then return nil end
         url = url .. "/" .. name
     end
-    -- The page greys out the roles that need more players than are here now. A whole number from 1 to 128, nothing else.
-    local count = player and player.GetCount and player.GetCount()
-    if type(count) == "number" and count >= 1 and count <= 128 and count == math.floor(count) then
-        return url .. "?embed=1&players=" .. count
-    end
+    -- The page greys out the roles that need more players than are here now.
+    local count = Util.PlayerCount(player and player.GetCount and player.GetCount())
+    if count then return url .. "?embed=1&players=" .. count end
     return url .. "?embed=1"
 end
 
 --- Takes what the server sent. Anything that does not look right switches the guide off.
 function Guide.SetInit(base, serverId)
-    if ValidBase(base) and type(serverId) == "string" and #serverId <= 64 and serverId:match("^[%w%-]+$") then
+    if Util.ValidBase(base) and Util.ValidServerId(serverId) then
         Guide.base, Guide.serverId = base, serverId
     else
         Guide.base, Guide.serverId = nil, nil
@@ -74,7 +60,7 @@ end
 --- Opens the F1 menu on the tab, on a role when `name` is given. Falls back to a hint in chat.
 function Guide.Open(name)
     if not Guide.Available() then return end
-    if name ~= nil and name ~= "" and not ValidName(name) then return end
+    if name ~= nil and name ~= "" and not Util.ValidName(name) then return end
     Guide.wanted = (name ~= "" and name) or nil
     local menu = FindMenu()
     if HELPSCRN and HELPSCRN.ShowMainMenu and HELPSCRN.ShowSubmenu and menu then

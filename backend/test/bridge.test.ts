@@ -1,6 +1,6 @@
 import { expect, test, describe } from 'bun:test'
 import { lauxlib, lua, lualib, to_luastring, to_jsstring } from 'fengari'
-import { COMMANDS, CONFIG, BRIDGE, PRELUDE, addSha256, run, poll, convar } from './helpers/bridge_harness'
+import { UTIL, COMMANDS, CONFIG, BRIDGE, PRELUDE, addSha256, run, poll, convar } from './helpers/bridge_harness'
 
 describe('commands the bridge applies', () => {
   test('a normal ConVar change is applied as ONE console command', () => {
@@ -116,7 +116,7 @@ describe('acknowledging commands', () => {
       if (lauxlib.luaL_dostring(L, to_luastring(c)) !== lua.LUA_OK) throw new Error(to_jsstring(lua.lua_tostring(L, -1)))
     }
     try {
-      go(PRELUDE); go(COMMANDS); go(CONFIG); go(BRIDGE); go(script)
+      go(PRELUDE); go(UTIL); go(COMMANDS); go(CONFIG); go(BRIDGE); go(script)
       go('OUT = table.concat(LAST_PAYLOAD.acked, ",")')
       lua.lua_getglobal(L, to_luastring('OUT'))
       return to_jsstring(lua.lua_tostring(L, -1))

@@ -2,6 +2,7 @@ import { Store, type LiveConVar } from './Store'
 import { roleColour } from '../teamColours'
 import { isRoleEnabled, roleMetrics, METRICS, type MetricKey } from './roles'
 import { cleanLabel, conVarDataText, humanizeKey, kindForConVarData, kindForLive, suffixOf, SUFFIX_TO_KEY, type FieldKind } from '../components/RoleConfigForm'
+import { NAME, SMALL_INT } from './validators'
 
 /**
  * What the public role page shows about one role (RFC 15, 4.2), built from a fixed selection of
@@ -27,7 +28,7 @@ export { roleColour }
 
 /** The number of players a page is shown for (`?players=`): a whole number from 1 to 128, else none. */
 export function parsePlayers(raw: string | undefined | null): number | null {
-  if (!raw || !/^\d{1,3}$/.test(raw)) return null
+  if (!raw || !SMALL_INT.test(raw)) return null
   const n = Number(raw)
   return n >= 1 && n <= 128 ? n : null
 }
@@ -37,7 +38,7 @@ export const publicRoles = () => process.env.PUBLIC_ROLES !== '0'
 export const publicRoleSettings = () => process.env.PUBLIC_ROLE_SETTINGS !== '0'
 
 /** Role names are validated against the server's own list before anything is read. */
-export const KNOWN_ROLE_NAME = /^[A-Za-z0-9_.-]{1,64}$/
+export const KNOWN_ROLE_NAME = NAME
 
 const MAX_DESCRIPTION = 2000
 

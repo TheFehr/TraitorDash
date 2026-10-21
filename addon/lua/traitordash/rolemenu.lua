@@ -14,8 +14,8 @@ TraitorDash = TraitorDash or {}
 local Guide = {}
 TraitorDash.RoleGuide = Guide
 
-local NAME_PATTERN = "^%w[%w_%.%-]*$" -- starts with a letter or digit, so never "." or ".."
-local MAX_NAME = 64
+if not (TraitorDash.Util) then include("traitordash/util.lua") end
+local Util = TraitorDash.Util
 local ASK_EVERY = 2 -- seconds between two requests of one player
 
 Guide.base = nil      -- the public address, cleaned
@@ -41,12 +41,12 @@ end
 function Guide.CleanPublicUrl(raw)
     if type(raw) ~= "string" or raw == "" then return nil, "no public_url is set" end
     local url = raw:gsub("^%s+", ""):gsub("%s+$", ""):gsub("/+$", "")
-    local host, rest = url:match("^https://([%w%.%-]+:?%d*)(.*)$")
-    if not host or host == "" or host:sub(1, 1) == "." or host:sub(1, 1) == "-" then
-        return nil, "public_url must be an https:// address"
+    local ok, why = Util.CheckBase(url)
+    if not ok then
+        return nil, why == "chars" and "public_url has characters that are not allowed"
+            or why == "long" and "public_url is too long"
+            or "public_url must be an https:// address"
     end
-    if rest ~= "" and not rest:match("^/[%w%-_%./]*$") then return nil, "public_url has characters that are not allowed" end
-    if #url > 200 then return nil, "public_url is too long" end
     return url
 end
 
@@ -55,7 +55,7 @@ end
 function Guide.ResolveRoleName(input, known)
     if type(input) ~= "string" then return nil end
     local typed = input:gsub("^%s+", ""):gsub("%s+$", "")
-    if typed == "" or #typed > MAX_NAME or not typed:match(NAME_PATTERN) then return nil end
+    if not Util.ValidName(typed) then return nil end
     local lower = typed:lower()
     for _, name in ipairs(known or {}) do
         if type(name) == "string" and name:lower() == lower then return name end
@@ -161,7 +161,7 @@ function Guide.Start()
         success = function(code, body)
             local parsed = code == 200 and type(body) == "string" and util.JSONToTable(body) or nil
             local id = type(parsed) == "table" and parsed.server_id or nil
-            if type(id) ~= "string" or #id > 64 or not id:match("^[%w%-]+$") then
+            if not Util.ValidServerId(id) then
                 Guide.state = "off"
                 Guide.reason = code == 404 and "the dashboard is too old (no /api/v1/whoami)" or ("whoami answered HTTP " .. tostring(code))
                 SaidOnce("whoami", "Role guide is off: " .. Guide.reason .. ".")

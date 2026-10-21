@@ -16,7 +16,7 @@ local TIMEOUT = 15
 
 local pending = false -- one pairing at a time
 
-local function Say(msg) print("[TraitorDash] " .. msg) end
+local Say = TraitorDash.Util.Say
 
 --- The canonical code, or nil if what was typed cannot be one. Same rules as the backend:
 --- upper case, no dashes or spaces, O -> 0, I and L -> 1; Crockford base32, 10 characters.

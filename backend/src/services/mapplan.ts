@@ -1,8 +1,7 @@
+import { FINGERPRINT, NAME } from './validators'
 // RFC 10, section 4.5: validating a floor-plan upload. The bridge's scan is trusted for nothing:
 // the shape of the grid, every height and the counts are checked or recomputed here.
 
-export const MAP_NAME = /^[A-Za-z0-9_.-]{1,64}$/
-export const FINGERPRINT = /^[0-9a-f]{64}$/
 
 export const MAX_PLAN_BYTES = 2_000_000
 const MAX_CELLS = 250_000 // the scan's own cap
@@ -32,7 +31,7 @@ const count = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v 
 /** Returns the plan to store, or a short reason it was refused. */
 export function validatePlan(body: any): { plan: MapPlan } | { error: string } {
   if (!body || typeof body !== 'object') return { error: 'a JSON object is expected' }
-  if (typeof body.map !== 'string' || !MAP_NAME.test(body.map)) return { error: 'invalid map name' }
+  if (typeof body.map !== 'string' || !NAME.test(body.map)) return { error: 'invalid map name' }
   if (body.fingerprint !== undefined && body.fingerprint !== null && (typeof body.fingerprint !== 'string' || !FINGERPRINT.test(body.fingerprint))) {
     return { error: 'invalid fingerprint' }
   }

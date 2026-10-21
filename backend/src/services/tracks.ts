@@ -1,3 +1,4 @@
+import { FINGERPRINT, NAME, STEAM_ID } from './validators'
 /**
  * Position tracks of rounds (RFC 12): what the bridge uploads, how it is checked, and how much of
  * it an instance and a server keep. Nothing here touches the database; Store does that.
@@ -10,11 +11,7 @@ export const MAX_TRACK_DEATHS = 512
 export const MAX_SEGMENTS_PER_PLAYER = 64
 export const MAX_TRACK_EVENTS = 1024
 
-const STEAM_ID = /^\d{5,20}$/
-const MAP_NAME = /^[A-Za-z0-9_.-]{1,64}$/
 /** A weapon class, a role or team name, a revival reason: letters, digits, underscore, dot and hyphen. */
-export const SOURCE_NAME = /^[A-Za-z0-9_.-]{1,64}$/
-const FINGERPRINT = /^[0-9a-f]{64}$/
 
 /** Positions are whole numbers of 8 units: Source maps reach +-16384 units, so +-2048 here; this leaves room. */
 const POS_MAX = 4096
@@ -86,7 +83,7 @@ export function validateTrack(body: unknown, round: { roundId: string, map: stri
   const b = body as Record<string, unknown> | null
   if (!b || typeof b !== 'object' || Array.isArray(b)) return no('the body must be an object')
   if (b.round_id !== round.roundId) return no('round_id does not match the round')
-  if (typeof b.map !== 'string' || !MAP_NAME.test(b.map)) return no('map is required')
+  if (typeof b.map !== 'string' || !NAME.test(b.map)) return no('map is required')
   if (round.map && b.map !== round.map) return no('map does not match the round')
   if (b.fingerprint !== undefined && b.fingerprint !== null && (typeof b.fingerprint !== 'string' || !FINGERPRINT.test(b.fingerprint))) return no('fingerprint must be 64 hex characters')
   for (const flag of ['truncated', 'degraded'] as const) if (b[flag] !== undefined && typeof b[flag] !== 'boolean') return no(`${flag} must be true or false`)
@@ -138,7 +135,7 @@ export function validateTrack(body: unknown, round: { roundId: string, map: stri
         ax = at('ax'); ay = at('ay'); az = at('az')
         if (ax === null || ay === null || az === null) return no('a death has an invalid attacker position')
       }
-      const weapon = typeof d.weapon === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(d.weapon) ? d.weapon : null
+      const weapon = typeof d.weapon === 'string' && NAME.test(d.weapon) ? d.weapon : null
       deaths.push({ victim: d.victim as string, attacker: hasAttacker ? (d.attacker as string) : null, t: d.t, vx, vy, vz, ax, ay, az, weapon })
     }
   }
@@ -154,7 +151,7 @@ export function validateTrack(body: unknown, round: { roundId: string, map: stri
       if (!isInt(e.t) || e.t < 0 || e.t > TIME_MAX) return no('an event has an invalid time')
       if (e.t < last) return no('events must be in time order')
       last = e.t
-      const named = (v: unknown) => typeof v === 'string' && SOURCE_NAME.test(v)
+      const named = (v: unknown) => typeof v === 'string' && NAME.test(v)
       if (e.k === 'role') {
         if (!named(e.role) || !named(e.team)) return no('a role event needs a role and a team')
         if (e.by !== undefined || e.how !== undefined || e.why !== undefined) return no('a role event cannot carry reviver fields')

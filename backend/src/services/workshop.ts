@@ -5,6 +5,7 @@ import { Store } from './Store'
 import { HEADER_BYTES, bspFingerprint } from './bsp'
 import { mapEntries, readGmaIndex } from './gma'
 import { fileSource, type Fetcher } from './mapgeometry'
+import { WSID } from './validators'
 
 // Fetching a map from the Steam Workshop (RFC 11, 3.2): the helper program DepotDownloader is run as
 // a separate process (it is GPL-2.0; nothing of it is linked into this program), anonymously, for
@@ -25,7 +26,6 @@ export interface WorkshopOptions {
   maxCandidates?: number
 }
 
-const WSID = /^\d{1,12}$/
 
 /**
  * Where the downloads are made: GEOMETRY_TMP, else `.geometry-tmp` in the working directory. Not the

@@ -33,6 +33,7 @@ import { StatsDashboard, PlayerStats } from './components/StatsDashboard'
 import { MapsDashboard, MapPage } from './components/MapsDashboard'
 import { renderPlanSvg, planLevels } from './services/mapplan'
 import * as stats from './services/stats'
+import { SMALL_INT } from './services/validators'
 
 export const app = new Hono<{ Variables: { session: Session } }>()
 
@@ -305,7 +306,7 @@ app.get('/servers/:serverId/maps/:map/plan.svg', async (c) => {
   const asked = c.req.query('level')
   let level: number | undefined
   if (asked !== undefined) {
-    level = /^\d{1,3}$/.test(asked) ? Number(asked) : 0
+    level = SMALL_INT.test(asked) ? Number(asked) : 0
     if (level < 1 || level > planLevels(grid).length) return c.text('Not found', 404)
   }
   const svg = renderPlanSvg(grid, map, level)

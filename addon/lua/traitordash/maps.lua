@@ -12,7 +12,7 @@
 
 TraitorDash = TraitorDash or {}
 
-local function Trim(s) return (tostring(s):gsub("^%s+", ""):gsub("%s+$", "")) end
+local Trim = TraitorDash.Util.Trim
 
 -- One map name per line; blank lines and // comments are skipped.
 local function ParseCycle(text)

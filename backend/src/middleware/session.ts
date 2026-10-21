@@ -1,4 +1,5 @@
 import { getSignedCookie } from 'hono/cookie'
+import { STEAM_ID64 } from '../services/validators'
 
 // The session cookie is signed with this. There is deliberately NO fallback: a default value
 // is public, and with it anyone could sign a cookie for an admin's (public) SteamID64.
@@ -43,8 +44,6 @@ export const openSignin = () => process.env.OPEN_SIGNIN === '1'
 /** Accounts that may not sign in or keep a session (RFC 13, 4.7). An admin on the allow-list cannot be blocked. */
 export const isBlocked = (steamId: string) =>
   (process.env.BLOCKED_STEAM_IDS || '').split(',').map(s => s.trim()).filter(Boolean).includes(steamId)
-
-const STEAM_ID64 = /^\d{17}$/
 
 /** Whether `steamId` may hold a session now: an admin always; anyone else only with open sign-in on, if not blocked. */
 export const maySignIn = (steamId: string) => isAdmin(steamId) || (openSignin() && STEAM_ID64.test(steamId) && !isBlocked(steamId))

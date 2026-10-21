@@ -266,7 +266,7 @@ end
 
 -- ---- the console command --------------------------------------------------------------------
 
-local function Say(msg) print("[TraitorDash] " .. msg) end
+local Say = TraitorDash.Util.Say
 
 local active -- the scan in progress
 

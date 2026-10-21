@@ -8,8 +8,9 @@ import { RateLimiter } from '../services/rateLimit'
 import { clientAddress } from '../services/gates'
 import { validatePlan, MAX_PLAN_BYTES } from '../services/mapplan'
 import { formatCode } from '../services/pairing'
-import { validateTrack, MAX_TRACK_BYTES, SOURCE_NAME } from '../services/tracks'
+import { validateTrack, MAX_TRACK_BYTES } from '../services/tracks'
 import { NONCE, signResponse } from '../services/signing'
+import { FINGERPRINT, NAME, ROUND_ID, STEAM_ID, WSID } from '../services/validators'
 
 type Variables = {
   server: {
@@ -203,7 +204,6 @@ api.post('/ingest', getServer, async (c) => {
 // addon) once per sync; they resolve translation keys during extraction.
 // Real TTT2 language sets are a few hundred KB in all.
 const MAX_LANG_TOTAL = 8_000_000
-const LANG_NAME = /^[A-Za-z0-9_.-]{1,64}$/
 api.post('/v1/lang', getServer, async (c) => {
   const server = c.get('server')
   const body = await c.req.json().catch(() => null)
@@ -222,7 +222,7 @@ api.post('/v1/lang', getServer, async (c) => {
     if (total > MAX_LANG_TOTAL) {
       return c.json({ error: `language files are larger than ${MAX_LANG_TOTAL} bytes in total` }, 413)
     }
-    if (!LANG_NAME.test(name) || typeof content !== 'string' || content.length > 1_000_000) {
+    if (!NAME.test(name) || typeof content !== 'string' || content.length > 1_000_000) {
       return c.json({ error: `Invalid language file: ${name.slice(0, 40)}` }, 400)
     }
   }
@@ -270,8 +270,6 @@ api.post('/v1/values', getServer, async (c) => {
 // The bridge reports one finished round: who played which role, who won, who died.
 // Best effort on the bridge side (no retry), so the body is validated strictly but a
 // duplicate round_id is answered with success rather than an error.
-const STEAM_ID = /^\d{5,20}$/
-const ROUND_ID = /^[A-Za-z0-9-]{8,64}$/
 const label = (v: unknown, max = 64) => (typeof v === 'string' && v.length > 0 ? v.slice(0, max) : null)
 const whole = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.round(v) : null)
 
@@ -337,7 +335,7 @@ api.post('/v1/round', getServer, async (c) => {
   for (const v of body.revives ?? []) {
     if (typeof v?.victim !== 'string' || !STEAM_ID.test(v.victim)) return bad('invalid revive victim')
     if (!inRound.has(v.victim)) { droppedRevives++; continue }
-    const named = (x: unknown) => (typeof x === 'string' && SOURCE_NAME.test(x) ? x : null)
+    const named = (x: unknown) => (typeof x === 'string' && NAME.test(x) ? x : null)
     const reviver = typeof v.reviver === 'string' && STEAM_ID.test(v.reviver) && inRound.has(v.reviver) ? v.reviver : null
     revives.push({ victim: v.victim, reviver, how: named(v.how), why: named(v.why), at: whole(v.at) })
   }
@@ -402,8 +400,6 @@ api.post('/v1/track', getServer, async (c) => {
 // The bridge reports the maps the server has and which it will play (RFC 10), on startup and when
 // the map changes. The latest report replaces the previous one. Flags the bridge could not decide
 // are null; anything that is not a boolean is stored as unknown instead of being trusted.
-const MAP_NAME = /^[A-Za-z0-9_.-]{1,64}$/
-const FINGERPRINT = /^[0-9a-f]{64}$/
 const POOL_BASES = ['prefixes', 'gamemode']
 const CONFIG_SOURCES = ['merged', 'global', 'file', 'none']
 const flag = (v: unknown) => (typeof v === 'boolean' ? v : null)
@@ -431,7 +427,7 @@ api.post('/v1/maps', getServer, async (c) => {
   const seen = new Set<string>()
   const maps: MapRow[] = []
   for (const m of body.maps) {
-    if (typeof m?.name !== 'string' || !MAP_NAME.test(m.name)) return bad(`invalid map name: ${String(m?.name).slice(0, 40)}`)
+    if (typeof m?.name !== 'string' || !NAME.test(m.name)) return bad(`invalid map name: ${String(m?.name).slice(0, 40)}`)
     if (m.size !== null && m.size !== undefined && (typeof m.size !== 'number' || !Number.isFinite(m.size) || m.size < 0)) return bad(`invalid size for ${m.name}`)
     if (m.fingerprint !== null && m.fingerprint !== undefined && (typeof m.fingerprint !== 'string' || !FINGERPRINT.test(m.fingerprint))) return bad(`invalid fingerprint for ${m.name}`)
     if (seen.has(m.name)) continue
@@ -447,7 +443,7 @@ api.post('/v1/maps', getServer, async (c) => {
 
   // Workshop IDs are plain digits; anything else is dropped, and the list is capped.
   const mapAddons = Array.isArray(body.mapAddons)
-    ? [...new Set<string>(body.mapAddons.filter((id: unknown): id is string => typeof id === 'string' && /^\d{1,12}$/.test(id)))].slice(0, 300)
+    ? [...new Set<string>(body.mapAddons.filter((id: unknown): id is string => typeof id === 'string' && WSID.test(id)))].slice(0, 300)
     : []
 
   const vote = body.mapvote && typeof body.mapvote === 'object' ? body.mapvote : {}

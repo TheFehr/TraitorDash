@@ -1,5 +1,8 @@
 -- TraitorDash Loader
 if SERVER then
+    -- The role guide's client file includes this one, so players must be sent it.
+    AddCSLuaFile("traitordash/util.lua")
+
     -- GMod include paths are relative to the 'lua/' folder
     local path = "traitordash/bridge.lua"
     

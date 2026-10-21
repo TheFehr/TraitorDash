@@ -78,7 +78,7 @@ const PRELUDE = `
 
 type Out = { printed: string[], sent: any[], chat: any[], chatText: string[], http: number, opened: string[], helpscrn: string[], out: any }
 
-function play(script: string, files: string[] = ['traitordash/rolemenu.lua', 'autorun/client/traitordash_roles_cl.lua']): Out {
+function play(script: string, files: string[] = ['traitordash/util.lua', 'traitordash/rolemenu.lua', 'autorun/client/traitordash_roles_cl.lua']): Out {
   const L = lauxlib.luaL_newstate()
   lualib.luaL_openlibs(L)
   const run = (code: string) => {
@@ -293,7 +293,7 @@ describe('the TTT2 menu files', () => {
     MENU = loadscope(MENU_SRC, "CLGAMEMODEMENU")
     SUB = loadscope(SUB_SRC, "CLGAMEMODESUBMENU")
   `
-  const files = ['traitordash/rolemenu.lua', 'autorun/client/traitordash_roles_cl.lua']
+  const files = ['traitordash/util.lua', 'traitordash/rolemenu.lua', 'autorun/client/traitordash_roles_cl.lua']
   const run = (script: string) => {
     const src = (p: string) => '[==[' + read(p) + ']==]'
     return play(`${on} SENT = {} MENU_SRC = ${src('terrortown/menus/gamemode/traitordash_roles.lua')} SUB_SRC = ${src('terrortown/menus/gamemode/traitordash_roles/guide.lua')}
