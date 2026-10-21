@@ -1,5 +1,6 @@
 import { FAVICON } from './Layout'
 import type { RoleView, RoleListEntry } from '../services/roleview'
+import { sectionsOf, type Section } from './SectionLinks'
 
 // The public, read-only role pages (RFC 15). One shell for the normal and the embedded layout: no
 // script, an inline stylesheet, nothing from the site's own bundle, so the strict
@@ -27,6 +28,9 @@ h1{font-size:1.7rem;font-weight:800;letter-spacing:.12em;text-transform:uppercas
 h2{font-size:.85rem;font-weight:800;letter-spacing:.16em;text-transform:uppercase;margin:1.3rem 0 .4rem}
 .crumbs{font-size:.85rem;letter-spacing:.08em;text-transform:uppercase;color:#a89f8c;margin-bottom:.3rem}
 .crumbs a{text-decoration:underline}
+.sections{display:flex;flex-wrap:wrap;gap:.5rem;margin:.2rem 0 .9rem}
+.sections a,.sections span{border:1px solid #6b6455;padding:.2rem .7rem;font-size:.85rem;letter-spacing:.06em;text-transform:uppercase;color:#d9d0bd}
+.sections span{background:#e9dfc4;color:#2b2418;border-color:#e9dfc4}
 .muted{color:#a89f8c}
 .bar{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin:.7rem 0 .2rem;font-size:.9rem;letter-spacing:.1em;text-transform:uppercase;color:#b9b2a0}
 .bar b{color:#fff}.bar .sp{flex:1}
@@ -66,6 +70,13 @@ table.set th{font-family:"Barlow Condensed",sans-serif;font-size:.78rem;letter-s
 table.set td{border-top:1px dotted #8a7f65;padding:.22rem .4rem .22rem 0;vertical-align:top;overflow-wrap:anywhere}
 table.set td.v{font-weight:700}table.set td.d{color:#6b6350}
 `
+
+/** The other public pages of the server, so none of them is a dead end. Not shown inside the game. */
+const Sections = ({ serverId, current }: { serverId: string, current?: Section }) => (
+  <nav class="sections" aria-label="Sections">
+    {sectionsOf(serverId).map(s => s.key === current ? <span aria-current="page">{s.label}</span> : <a href={s.href}>{s.label}</a>)}
+  </nav>
+)
 
 const Shell = ({ title, embed, children }: { title: string, embed: boolean, children: any }) => (
   <html lang="en">
@@ -113,6 +124,7 @@ export const RoleListPage = ({ server, roles, query, embed, admin, players = nul
   return (
     <Shell title={`Roles | ${server.name}`} embed={embed}>
       <div class="crumbs">{embed ? server.name : <><a href={`/servers/${server.id}/stats`}>{server.name}</a> / Roles</>}</div>
+      {!embed && <Sections serverId={server.id} current="roles" />}
       <h1>Role files</h1>
       <form class="find" method="get" action={base}>
         {embed && <input type="hidden" name="embed" value="1" />}
@@ -153,6 +165,7 @@ export const RolePage = ({ server, role, embed, admin, players = null }: { serve
   return (
     <Shell title={`${role.name} | ${server.name}`} embed={embed}>
       <div class="crumbs"><a href={`/servers/${server.id}/roles${qs({ embed, players })}`}>All roles</a> / {role.name}</div>
+      {!embed && <Sections serverId={server.id} current="roles" />}
       <article class="f big" style={`--c:${role.color}`}>
         <i class={`stamp ${state === 'off' ? 'off' : ''}`}>{state === 'off' ? 'disabled' : role.team || 'no team'}</i>
         <h1>{role.name}</h1>

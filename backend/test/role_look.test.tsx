@@ -221,3 +221,35 @@ describe('the way to the role pages', () => {
     } finally { delete process.env.PUBLIC_ROLES }
   })
 })
+
+describe('every public page links to the others', () => {
+  const html = async (path: string) => (await app.fetch(new Request(`http://localhost${path}`))).text()
+  const hrefs = (h: string) => new Set([...h.matchAll(/<a [^>]*href="([^"]+)"/g)].map(m => m[1]))
+  test('stats, maps and roles pages each link to the two others, and mark themselves', async () => {
+    const stats = `/servers/${serverId}/stats`, maps = `/servers/${serverId}/maps`, roles = `/servers/${serverId}/roles`
+    const pages: [string, string, string[]][] = [[stats, 'Round stats', [maps, roles]], [maps, 'Maps', [stats, roles]], [roles, 'Roles', [stats, maps]]]
+    for (const [path, label, others] of pages) {
+      const h = await html(path)
+      const links = hrefs(h)
+      for (const o of others) expect(links.has(o), `${path} -> ${o}`).toBe(true)
+      expect(h, path).toContain('aria-current="page"')
+      expect(h, path).toMatch(new RegExp(`aria-current="page"[^>]*>[^<]*${label}`))
+    }
+  })
+  test('a role page links to all three; a map page and a player page too', async () => {
+    const all = [`/servers/${serverId}/stats`, `/servers/${serverId}/maps`, `/servers/${serverId}/roles`]
+    const links = hrefs(await html(`/servers/${serverId}/roles/haunter`))
+    for (const o of all) expect(links.has(o), o).toBe(true)
+  })
+  test('inside the game (embed) the pages carry no section links', async () => {
+    const h = await html(`/servers/${serverId}/roles?embed=1`)
+    expect(h).not.toContain('aria-label="Sections"')
+    expect(await html(`/servers/${serverId}/roles/haunter?embed=1`)).not.toContain('aria-label="Sections"')
+  })
+  test('with PUBLIC_ROLES=0 the sections leave out the role guide', async () => {
+    process.env.PUBLIC_ROLES = '0'
+    try {
+      expect(hrefs(await html(`/servers/${serverId}/maps`)).has(`/servers/${serverId}/roles`)).toBe(false)
+    } finally { delete process.env.PUBLIC_ROLES }
+  })
+})

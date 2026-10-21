@@ -1,5 +1,6 @@
 import { duration } from '../format'
 import { BTN } from '../ui'
+import { SectionLinks } from './SectionLinks'
 
 // The round replay's page (RFC 12, 3.5): the markup the viewer (replay.ts) fills in. Without
 // JavaScript or WebGL the lists the viewer builds are not there, and the page says so.
@@ -36,6 +37,7 @@ export const ReplayPage = ({ server, round, hasTrack, src, viewer, admin, pinned
         {round.map ?? 'unknown map'} · {round.result} · {duration(round.duration)}
         {pinned && <span data-pinned class="ml-2 inline-block text-[10px] font-black uppercase tracking-widest border border-yellow-500/50 text-yellow-400 rounded px-2 py-0.5">Pinned</span>}
       </p>
+      <SectionLinks serverId={server.id} />
     </header>
 
     {!hasTrack ? (

@@ -3,7 +3,7 @@ import { duration, kd, mb, pct } from '../format'
 import { Heartbeat } from './Heartbeat'
 import { SORTS, type SortKey, type LeaderRow, type RecentRound, type WinRow, type PlayerDetail } from '../services/stats'
 import { LINK_BTN, TAB_OFF, TAB_ON } from '../ui'
-import { publicRoles } from '../services/roleview'
+import { SectionLinks } from './SectionLinks'
 
 
 // Green at or above half, red below, grey with nothing to go on.
@@ -201,14 +201,7 @@ export const StatsDashboard = ({ server, overview, roles, teams, leaders, recent
       <h1 class="text-3xl sm:text-5xl font-black mb-2 break-words">Round stats</h1>
       <p class="text-gray-400 text-lg">{server.name}</p>
       {admin && tracks && <div class="mt-6"><TracksCard serverId={server.id} t={tracks} /></div>}
-      <a href={`/servers/${server.id}/maps`} class={`${LINK_BTN} mt-4`}>
-        🗺 Maps
-      </a>
-      {publicRoles() && (
-        <a href={`/servers/${server.id}/roles`} class={`${LINK_BTN} mt-4 ml-2`}>
-          📖 Roles
-        </a>
-      )}
+      <SectionLinks serverId={server.id} current="stats" />
       {bots && <p class="mt-2 text-xs font-black uppercase tracking-widest text-yellow-400">Including bot test rounds</p>}
     </header>
 
@@ -305,6 +298,7 @@ export const PlayerStats = ({ server, player, admin, by = 'end', bots }: { serve
       </nav>
       <h1 class="text-3xl sm:text-5xl font-black mb-2 break-words">{player.nick}</h1>
       <p class="text-gray-500 font-mono text-sm">{player.steamId}</p>
+      <SectionLinks serverId={server.id} />
     </header>
 
     <div class="grid grid-cols-2 lg:grid-cols-5 gap-4">

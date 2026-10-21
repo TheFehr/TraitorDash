@@ -4,6 +4,7 @@ import type { MapRow, MapsState, MapPlanMeta } from '../services/Store'
 import { heightColour, type Level } from '../services/mapplan'
 import { mapSize } from '../format'
 import { BTN, TONES } from '../ui'
+import { SectionLinks } from './SectionLinks'
 
 // RFC 10: what the bridge reported about the server's maps. "Votable" is worked out by the bridge
 // from the vote addon's prefixes (or the gamemode's map pattern), the current map and the cooldown
@@ -118,6 +119,7 @@ export const MapsDashboard = ({ server, state, maps, admin, showAll, plans, mesh
         </nav>
         <h1 class="text-3xl sm:text-5xl font-black mb-2 break-words">Maps</h1>
         <p class="text-gray-400 text-lg">{server.name}</p>
+        <SectionLinks serverId={server.id} current="maps" />
       </header>
 
       {state === null ? (
@@ -221,6 +223,7 @@ export const MapPage = ({ server, map, name, next, plan, geometry, admin = true 
         <span class="text-red-500 break-all">{name}</span>
       </nav>
       <h1 class="text-3xl sm:text-5xl font-black mb-3 break-all">{name}</h1>
+      <SectionLinks serverId={server.id} current="maps" />
       <div class="flex flex-wrap items-center gap-y-2 text-sm text-gray-400">
         {map ? <><StatusBadges m={map} next={next} /><span class="ml-2">{mapSize(map.size)}</span></> : <span>Not in the server's latest map list.</span>}
       </div>
