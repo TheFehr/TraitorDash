@@ -1,8 +1,8 @@
 /// <reference lib="dom" />
 import {
-  WebGLRenderer, Scene, PerspectiveCamera, HemisphereLight, DirectionalLight, Box3, Vector3, Color, Mesh, MeshStandardMaterial,
-  AmbientLight, Plane, type Object3D, type BufferGeometry,
+  Box3, Vector3, Color, Mesh, MeshStandardMaterial, Plane, type Object3D, type BufferGeometry,
 } from 'three'
+import { makeCamera, makeRenderer, makeScene } from './sceneKit'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 
@@ -21,16 +21,9 @@ function start(root: HTMLElement) {
   if (!src || !canvas) return
   const say = (t: string) => { if (status) { status.textContent = t; status.hidden = t === '' } }
 
-  const renderer = new WebGLRenderer({ canvas, antialias: true })
-  renderer.localClippingEnabled = true
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
-  const scene = new Scene()
-  scene.background = new Color(0x111827)
-  scene.add(new HemisphereLight(0xffffff, 0x555566, 1.4), new AmbientLight(0xffffff, 0.9))
-  const sun = new DirectionalLight(0xffffff, 1.6)
-  sun.position.set(-1, 2, 1.2)
-  scene.add(sun)
-  const camera = new PerspectiveCamera(40, 1, 1, 200000)
+  const renderer = makeRenderer(canvas)
+  const scene = makeScene()
+  const camera = makeCamera()
   const controls = new OrbitControls(camera, canvas)
   controls.enableDamping = false
 

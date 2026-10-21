@@ -1,13 +1,15 @@
 /// <reference lib="dom" />
 import {
-  WebGLRenderer, Scene, PerspectiveCamera, OrthographicCamera, HemisphereLight, DirectionalLight, AmbientLight, Box3, Vector3, Color, Group, Mesh,
-  MeshStandardMaterial, MeshBasicMaterial, SphereGeometry, RingGeometry, DoubleSide, ConeGeometry, BoxGeometry, InstancedMesh, Matrix4, Object3D, Plane, Sprite, SpriteMaterial,
-  CanvasTexture, BufferGeometry, Float32BufferAttribute, Line, LineSegments, LineBasicMaterial, type Camera, type MeshStandardMaterial as StdMat,
+  WebGLRenderer, OrthographicCamera, Box3, Vector3, Color, Group, Mesh, MeshStandardMaterial, MeshBasicMaterial,
+  SphereGeometry, RingGeometry, DoubleSide, ConeGeometry, BoxGeometry, InstancedMesh, Matrix4, Object3D, Plane, Sprite,
+  SpriteMaterial, CanvasTexture, BufferGeometry, Float32BufferAttribute, Line, LineSegments, LineBasicMaterial,
+  type Camera, type MeshStandardMaterial as StdMat,
 } from 'three'
 import { hex } from './teamColours'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { BTN } from './ui'
+import { makeCamera, makeRenderer, makeScene } from './sceneKit'
 import {
   decodeTrack, poseAt, lastPoseAt, trailBetween, levelOf, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
@@ -193,23 +195,16 @@ async function start(root: HTMLElement) {
   // ---- WebGL: a browser without it gets the lists above and this message
   let renderer: WebGLRenderer
   try {
-    renderer = new WebGLRenderer({ canvas, antialias: true })
+    renderer = makeRenderer(canvas)
   } catch {
     canvas.hidden = true
     say('This browser cannot draw the replay (WebGL is not available). The list of deaths is below.')
     el(root, '[data-controls]')?.setAttribute('hidden', '')
     return
   }
-  renderer.localClippingEnabled = true
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
-  const scene = new Scene()
-  scene.background = new Color(0x111827)
-  scene.add(new HemisphereLight(0xffffff, 0x555566, 1.4), new AmbientLight(0xffffff, 0.9))
-  const sun = new DirectionalLight(0xffffff, 1.6)
-  sun.position.set(-1, 2, 1.2)
-  scene.add(sun)
+  const scene = makeScene()
 
-  const persp = new PerspectiveCamera(40, 1, 1, 200000)
+  const persp = makeCamera()
   const ortho = new OrthographicCamera(-1, 1, 1, -1, 1, 200000)
   let camera: Camera = persp
   const orbit = new OrbitControls(persp, canvas)
