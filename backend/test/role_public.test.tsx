@@ -266,3 +266,32 @@ describe('GET /api/v1/whoami', () => {
     expect((await get('/api/v1/whoami', ADMIN)).status).toBe(401)
   })
 })
+
+describe('the description is looked for in more places', () => {
+  const lang = (key: string, text: string, l = 'en') => `LANG.AddToLanguage("${l}", "${key}", "${text}")`
+  const role = (extra = '') => `ROLE.defaultTeam = "traitors"\nROLE.abbr = "hnt"\n${extra}`
+  const desc = async (sources: string[], code = role()) => (await Extractor.extractSchema(code, {}, {}, 'haunter', sources)).description
+  test('by the role abbreviation too', async () => {
+    expect(await desc([lang('ttt2_desc_hnt', 'by abbr')])).toBe('by abbr')
+    expect(await desc([lang('ttt2_desc_haunter', 'by name'), lang('ttt2_desc_hnt', 'by abbr')])).toBe('by name')
+  })
+  test('with a suffix, as some addons name it', async () => {
+    expect(await desc([lang('haunter_description', 'suffix')])).toBe('suffix')
+    expect(await desc([lang('hnt_info', 'suffix abbr')])).toBe('suffix abbr')
+  })
+  test('a language the role file itself registers counts', async () => {
+    expect(await desc([], role(lang('ttt2_desc_haunter', 'from the role file'))) ).toBe('from the role file')
+  })
+  test('any English key that names the role and is about it, if it is a sentence', async () => {
+    expect(await desc([lang('role_haunter_explained_long', 'A longer sentence that explains the haunter.')])).toBe('A longer sentence that explains the haunter.')
+    expect(await desc([lang('haunter_help_x', 'Short')])).toBeNull() // not a sentence
+    expect(await desc([lang('label_haunter_other', 'A longer sentence that has nothing to do with it.')])).toBeNull() // not about the role
+  })
+  test('English wins; another language is the last resort', async () => {
+    expect(await desc([lang('ttt2_desc_haunter', 'Geist', 'de')])).toBe('Geist')
+    expect(await desc([lang('ttt2_desc_haunter', 'Geist', 'de'), lang('ttt2_desc_haunter', 'ghost')])).toBe('ghost')
+  })
+  test('a role of another name is never matched', async () => {
+    expect(await desc([lang('ttt2_desc_haunters', 'x'), lang('ttt2_desc_other', 'y')])).toBeNull()
+  })
+})

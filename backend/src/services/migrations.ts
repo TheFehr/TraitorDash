@@ -373,6 +373,12 @@ export const migrations: Array<(db: Database) => void> = [
     if (!db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='roles'").get()) return
     db.run('ALTER TABLE roles ADD COLUMN color TEXT')
     db.run('UPDATE roles SET md5_hash = NULL')
+  },
+  // v18 (RFC 15): descriptions are looked for in more keys and languages; clearing the hashes makes
+  // the bridge send every role again so the roles that had none get another try.
+  (db) => {
+    if (!db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='roles'").get()) return
+    db.run('UPDATE roles SET md5_hash = NULL')
   }
 ]
 

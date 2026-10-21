@@ -62,6 +62,24 @@ describe('admin overview', () => {
   })
 })
 
+describe('a role without a description', () => {
+  test('says so, then what the server knows: the team, and policing', async () => {
+    const html = await (await get(`/servers/${serverId}/roles/plain`)).text()
+    expect(html).toContain('The addon does not describe this role.')
+    expect(html).toContain('Plays for the Innocents team.')
+    expect(rv.factsOf('traitors', true)).toBe('Plays for the Traitors team. It is a policing role.')
+    expect(rv.factsOf('pirates', false)).toBe('Plays for the pirates team.')
+    expect(rv.factsOf('', false)).toBeNull()
+    expect(rv.factsOf('', true)).toBe('It is a policing role.')
+  })
+  test('a described role shows its description and no extra line', async () => {
+    Store.saveSchema(serverId, 'plain', 'innocents', false, -1, [], 'p2', 'Does a thing.')
+    const html = await (await get(`/servers/${serverId}/roles/plain`)).text()
+    expect(html).toContain('Does a thing.')
+    expect(html).not.toContain('Plays for the')
+  })
+})
+
 describe('players', () => {
   const list = async (q = '') => (await get(`/servers/${serverId}/roles${q}`)).text()
   test('without a count nothing is put away', async () => {

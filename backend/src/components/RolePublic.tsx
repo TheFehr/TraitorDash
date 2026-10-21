@@ -161,7 +161,10 @@ export const RolePage = ({ server, role, embed, admin, players = null }: { serve
         <h2>What it does</h2>
         {role.description
           ? <p class="desc">{role.description}</p>
-          : <p class="none">The addon does not describe this role.</p>}
+          : <>
+              <p class="none">The addon does not describe this role.</p>
+              {role.facts && <p class="desc">{role.facts}</p>}
+            </>}
         <h2>How it appears on this server</h2>
         <dl class="ledger">
           {role.numbers.map(n => <div><dt>{n.label}</dt><dd>{n.text === '—' ? 'not reported yet' : n.text}</dd></div>)}

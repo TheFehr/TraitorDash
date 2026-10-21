@@ -273,6 +273,11 @@ export class ExtractorCore {
         end
 
         do
+          local ab = rawget(ROLE, "abbr")
+          if type(ab) == "string" and ab ~= "" then __TD_ABBR = ab end
+        end
+
+        do
           local c = rawget(ROLE, "color")
           local function chan(v) return type(v) == "number" and v >= 0 and v <= 255 and v == math.floor(v) end
           if c ~= __td_color0 and type(c) == "table" and chan(rawget(c, "r")) and chan(rawget(c, "g")) and chan(rawget(c, "b")) then
@@ -401,27 +406,62 @@ export class ExtractorCore {
   }
 
   /**
-   * The role's description from the English language files that were loaded (RFC 15, 4.2): TTT2's own
-   * key first, then the popup text, then the plain names addons use. Untrusted text: returned as is
-   * (a string), cleaned and limited later, rendered as text only.
+   * The role's description from the language files that were loaded (RFC 15, 4.2), looked up by the
+   * role's name and by its abbreviation: the known keys first (TTT2's `ttt2_desc_`, the popup text,
+   * the plain names addons use), then any English key that names the role and talks about it, then
+   * the same known keys in another language. Untrusted text: returned as is (a string), cleaned and
+   * limited later, rendered as text only.
    */
   private static readDescription(L: any, roleName?: string): string | null {
     if (!roleName) return null
-    const keys = [`ttt2_desc_${roleName}`, `info_popup_${roleName}`, `desc_${roleName}`, `description_${roleName}`, `${roleName}_desc`, `${roleName}_description`]
-    lua.lua_getglobal(L, to_luastring('__TD_LANGS'))
-    let found: string | null = null
-    if (lua.lua_type(L, -1) === lua.LUA_TTABLE) {
-      lua.lua_getfield(L, -1, to_luastring('en'))
-      if (lua.lua_type(L, -1) === lua.LUA_TTABLE) {
-        for (const key of keys) {
-          lua.lua_getfield(L, -1, to_luastring(key))
-          const text = lua.lua_type(L, -1) === lua.LUA_TSTRING ? to_jsstring(lua.lua_tostring(L, -1)) : ''
-          lua.lua_pop(L, 1)
-          if (text.trim() !== '') { found = text; break }
-        }
-      }
-      lua.lua_pop(L, 1)
-    }
+    lua.lua_pushstring(L, to_luastring(roleName))
+    lua.lua_setglobal(L, to_luastring('__TD_DESC_NAME'))
+    const script = `
+      local name = string.lower(__TD_DESC_NAME)
+      local abbr = type(__TD_ABBR) == "string" and string.lower(__TD_ABBR) or ""
+      if abbr == "unk" or abbr == name then abbr = "" end
+      local ids = { name }
+      if abbr ~= "" then ids[2] = abbr end
+      local prefixes = { "ttt2_desc_", "info_popup_", "desc_", "description_", "ttt2_role_desc_", "tooltip_" }
+      local suffixes = { "_desc", "_description", "_info", "_help", "_explanation" }
+      local function text(t, key)
+        local v = rawget(t, key)
+        if type(v) == "string" and v:match("%S") then return v end
+      end
+      local function exact(t)
+        for _, id in ipairs(ids) do
+          for _, p in ipairs(prefixes) do local v = text(t, p .. id) if v then return v end end
+          for _, s in ipairs(suffixes) do local v = text(t, id .. s) if v then return v end end
+        end
+      end
+      local langs = type(__TD_LANGS) == "table" and __TD_LANGS or {}
+      local en = type(langs.en) == "table" and langs.en or {}
+      local found = exact(en)
+      if not found then
+        -- any key that names the role and is about it, with a real sentence behind it
+        local keys = {}
+        for k, v in pairs(en) do
+          if type(k) == "string" and type(v) == "string" then
+            local lk = k:lower()
+            local named = lk:find(name, 1, true) or (#abbr >= 3 and lk:find(abbr, 1, true))
+            local about = lk:find("desc", 1, true) or lk:find("info", 1, true) or lk:find("explain", 1, true) or lk:find("help", 1, true)
+            if named and about and #v >= 30 and v:find(" ", 1, true) then keys[#keys + 1] = k end
+          end
+        end
+        table.sort(keys)
+        if keys[1] then found = en[keys[1]] end
+      end
+      if not found then
+        local others = {}
+        for l, t in pairs(langs) do if l ~= "en" and type(l) == "string" and type(t) == "table" then others[#others + 1] = l end end
+        table.sort(others)
+        for _, l in ipairs(others) do found = exact(langs[l]) if found then break end end
+      end
+      __TD_DESC = found
+    `
+    if (lauxlib.luaL_dostring(L, to_luastring(script)) !== lua.LUA_OK) { lua.lua_pop(L, 1); return null }
+    lua.lua_getglobal(L, to_luastring('__TD_DESC'))
+    const found = lua.lua_type(L, -1) === lua.LUA_TSTRING ? to_jsstring(lua.lua_tostring(L, -1)) : null
     lua.lua_pop(L, 1)
     return found
   }

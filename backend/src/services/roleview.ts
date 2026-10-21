@@ -1,5 +1,5 @@
 import { Store, type LiveConVar } from './Store'
-import { roleColour } from '../teamColours'
+import { roleColour, teamLabel } from '../teamColours'
 import { isRoleEnabled, roleMetrics, METRICS, type MetricKey } from './roles'
 import { cleanLabel, conVarDataText, humanizeKey, kindForConVarData, kindForLive, suffixOf, SUFFIX_TO_KEY, type FieldKind } from '../components/RoleConfigForm'
 import { NAME, SMALL_INT } from './validators'
@@ -16,6 +16,8 @@ export interface RoleView {
   min: number | null
   /** The description from the language files, cleaned; null when the addon has none. */
   description: string | null
+  /** What the server itself knows about the role, for a role the addon does not describe: its team, and whether it polices. */
+  facts: string | null
   numbers: { key: MetricKey, label: string, text: string }[]
   /** Null when the operator hides the settings (PUBLIC_ROLE_SETTINGS=0). */
   settings: { label: string, value: string | null, default: string | null }[] | null
@@ -31,6 +33,12 @@ export function parsePlayers(raw: string | undefined | null): number | null {
   if (!raw || !SMALL_INT.test(raw)) return null
   const n = Number(raw)
   return n >= 1 && n <= 128 ? n : null
+}
+
+/** A plain sentence from what is known without a description: the team, and a policing role says so. */
+export function factsOf(team: string, policing: boolean): string | null {
+  if (team === '') return policing ? 'It is a policing role.' : null
+  return `Plays for the ${teamLabel(team)} team.` + (policing ? ' It is a policing role.' : '')
 }
 
 /** Operator switches (RFC 15, 4.2), read at each request. */
@@ -119,6 +127,7 @@ export function buildRoleView(serverId: string, roleName: string): RoleView | nu
     enabled: isRoleEnabled(live, roleName),
     min: metrics.minPlayers.sort,
     description: cleanDescription(Store.getRoleDescription(serverId, roleName)),
+    facts: factsOf(String(role.team ?? ''), !!role.is_policing),
     numbers: (Object.keys(METRICS) as MetricKey[]).map(key => ({ key, label: METRICS[key].label, text: metrics[key].text })),
     settings: publicRoleSettings() ? settingsOf(Store.getSchema(serverId, roleName) ?? [], live, roleName) : null,
   }
