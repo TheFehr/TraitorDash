@@ -1,4 +1,4 @@
-import { clock } from '../replaylogic'
+import { duration } from '../format'
 
 // The round replay's page (RFC 12, 3.5): the markup the viewer (replay.ts) fills in. Without
 // JavaScript or WebGL the lists the viewer builds are not there, and the page says so.
@@ -33,7 +33,7 @@ export const ReplayPage = ({ server, round, hasTrack, src, viewer, admin, pinned
       </nav>
       <h1 class="text-3xl sm:text-5xl font-black mb-2 break-words">Round replay</h1>
       <p class="text-gray-400">
-        {round.map ?? 'unknown map'} · {round.result} · {round.duration === null ? '–' : clock(round.duration * 1000)}
+        {round.map ?? 'unknown map'} · {round.result} · {duration(round.duration)}
         {pinned && <span data-pinned class="ml-2 inline-block text-[10px] font-black uppercase tracking-widest border border-yellow-500/50 text-yellow-400 rounded px-2 py-0.5">Pinned</span>}
       </p>
     </header>

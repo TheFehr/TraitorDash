@@ -163,11 +163,7 @@ export function defaultSelection(playerIds: string[], viewerId: string | null, d
 
 export { teamColour, roleColour, playerColour } from './teamColours'
 
-/** "m:ss" for a time in ms. */
-export const clock = (ms: number) => {
-  const s = Math.max(0, Math.floor(ms / 1000))
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
-}
+export { clock } from './format'
 
 /**
  * A player's role and team at time `ms`: the ones they started with, then each role event up to

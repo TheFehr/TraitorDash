@@ -1,15 +1,13 @@
 import { signinUrl } from '../middleware/session'
+import { duration, kd, mb, pct } from '../format'
 import { Heartbeat } from './Heartbeat'
 import { SORTS, type SortKey, type LeaderRow, type RecentRound, type WinRow, type PlayerDetail } from '../services/stats'
 
-export const pct = (part: number, whole: number) => (whole > 0 ? `${Math.round((part / whole) * 100)}%` : '–')
 
 // Green at or above half, red below, grey with nothing to go on.
 export const rateClass = (part: number, whole: number) =>
   whole === 0 ? 'text-gray-500' : part / whole >= 0.5 ? 'text-green-400' : 'text-red-400'
 
-export const fmtDuration = (s: number | null) =>
-  s === null ? '–' : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 
 const SORT_LABELS: Record<SortKey, string> = {
   rounds: 'Rounds', wins: 'Wins', winrate: 'Win %', kills: 'Kills', kd: 'K/D',
@@ -85,7 +83,7 @@ export const RoundsTable = ({ rounds, serverId, tracks, signedIn, signinOpen, bo
             <td class="p-3 font-bold">{r.result}</td>
             <td class="p-3 text-right">{r.players}</td>
             <td class="p-3 text-right">{r.deaths}</td>
-            <td class="p-3 text-right text-gray-400">{fmtDuration(r.duration)}</td>
+            <td class="p-3 text-right text-gray-400">{duration(r.duration)}</td>
             {tracks && tracks.size > 0 && (
               <td class="p-3 text-right">
                 {tracks.has(r.roundId) && serverId && (() => {
@@ -132,7 +130,6 @@ export interface TracksInfo {
   ceiling: { count: number, mb: number, pinned: number }
 }
 
-const mb = (bytes: number) => (bytes / 1024 / 1024).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)
 
 /** The retention limits of a server's position tracks, how much room is used, and where to change them. */
 export const TracksCard = ({ serverId, t }: { serverId: string, t: TracksInfo }) => (
@@ -190,7 +187,7 @@ export const StatsDashboard = ({ server, overview, roles, teams, leaders, recent
         <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           <Card label="Rounds" value={overview.rounds} />
           <Card label="Players" value={overview.players} />
-          <Card label="Average length" value={fmtDuration(overview.avgDuration)} />
+          <Card label="Average length" value={duration(overview.avgDuration)} />
           <Card label="Last round" value={<Heartbeat lastSeen={overview.lastRound} class="text-base" />} />
         </div>
 
@@ -243,7 +240,7 @@ export const StatsDashboard = ({ server, overview, roles, teams, leaders, recent
                     <td class={`p-3 text-right font-bold ${rateClass(p.wins, p.rounds)}`}>{pct(p.wins, p.rounds)}</td>
                     <td class="p-3 text-right">{p.kills}</td>
                     <td class="p-3 text-right">{p.deaths}</td>
-                    <td class="p-3 text-right text-gray-400">{(p.kills / Math.max(p.deaths, 1)).toFixed(2)}</td>
+                    <td class="p-3 text-right text-gray-400">{kd(p.kills, p.deaths)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -281,7 +278,7 @@ export const PlayerStats = ({ server, player, admin, by = 'end', bots }: { serve
       <Card label="Win rate" value={pct(player.wins, player.rounds)} sub={`${player.wins} wins`} />
       <Card label="Survived" value={pct(player.survived, player.rounds)} />
       <Card label="Kills" value={player.kills} />
-      <Card label="K/D" value={(player.kills / Math.max(player.deaths, 1)).toFixed(2)} sub={`${player.deaths} deaths`} />
+      <Card label="K/D" value={kd(player.kills, player.deaths)} sub={`${player.deaths} deaths`} />
     </div>
 
     {(player.revived > 0 || player.revivals > 0) && (
