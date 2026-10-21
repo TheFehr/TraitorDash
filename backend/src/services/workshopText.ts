@@ -106,6 +106,9 @@ export async function fetchDetails(ids: string[]): Promise<Map<string, { title: 
   } finally { clearTimeout(timer) }
 }
 
+/** The pages of every addon any server reported that are missing or old: at start, and once a day, so a role does not wait for the next sync. */
+export const refreshAllWorkshopText = () => refreshWorkshopText(Store.getAllRoleAddonIds())
+
 /** Reads the pages that are missing or old, one batch at a time. Never throws: a failure is stored and retried later. */
 export async function refreshWorkshopText(ids: string[], now = Date.now()): Promise<number> {
   const due = [...new Set(ids)].filter(id => WSID.test(id)).filter(id => {

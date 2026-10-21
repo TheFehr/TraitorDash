@@ -33,7 +33,7 @@ beforeEach(async () => {
   serverId = added.id; token = added.token
   ;(await import('../src/routes/api')).roleAddonsLimiter.reset()
   mod.resetRolePages()
-  db.run('DELETE FROM workshop_text')
+  db.run('DELETE FROM workshop_text'); db.run('DELETE FROM role_addons')
   calls = []
   steam({})
   Store.saveSchema(serverId, 'arsonist', 'traitors', false, -1, [], 'h', null)
@@ -168,6 +168,20 @@ describe('reading the pages', () => {
     steam({}, true)
     await wt.refreshWorkshopText(['8'], Date.now() + 8 * 24 * 3600_000)
     expect(Store.getWorkshopText('8')).toMatchObject({ status: 'ok', description: 'kept' })
+  })
+})
+
+describe('reading every reported page', () => {
+  test('covers the addons of every server, once each, and skips pages that are fresh', async () => {
+    const other = (Store.addServer('Other') as any).id
+    Store.setRoleAddons(serverId, [{ role: 'arsonist', wsid: '111', title: 'a' }, { role: 'pyro', wsid: '222', title: 'b' }])
+    Store.setRoleAddons(other, [{ role: 'x', wsid: '222', title: 'b' }, { role: 'y', wsid: '333', title: 'c' }])
+    steam({ '111': { title: 'A', description: 'one' }, '222': { title: 'B', description: 'two' }, '333': { title: 'C', description: 'three' } })
+    await wt.refreshAllWorkshopText()
+    expect(calls.length).toBe(1)
+    expect([...calls[0]!].sort()).toEqual(['111', '222', '333'])
+    await wt.refreshAllWorkshopText()
+    expect(calls.length).toBe(1)
   })
 })
 

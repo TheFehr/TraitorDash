@@ -7,6 +7,7 @@ import api from './routes/api'
 import auth from './routes/auth'
 import { Store, viewLogDays } from './services/Store'
 import { buildReplay } from './services/replay'
+import { refreshAllWorkshopText } from './services/workshopText'
 import { ReplayPage } from './components/ReplayPage'
 import { gzipSync } from 'node:zlib'
 import { getRolesWithState } from './services/roles'
@@ -575,6 +576,9 @@ if (import.meta.main) {
   // Views of gated content are kept for VIEW_LOG_DAYS (RFC 13, 6.3): cleaned now and once a day.
   Store.cleanupViewLog()
   setInterval(() => Store.cleanupViewLog(), 24 * 3600 * 1000).unref()
+  // The Workshop pages of the roles' addons (RFC 15): read soon after start, then daily; never in the way of the start.
+  setTimeout(() => { void refreshAllWorkshopText() }, 5000).unref()
+  setInterval(() => { void refreshAllWorkshopText() }, 24 * 3600 * 1000).unref()
 }
 
 export default {

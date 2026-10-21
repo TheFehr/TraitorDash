@@ -576,6 +576,11 @@ export class Store {
     }))
   }
 
+  /** Every Workshop id any server's roles come from. */
+  static getAllRoleAddonIds(): string[] {
+    return (db.prepare('SELECT DISTINCT wsid FROM role_addons').all() as { wsid: string }[]).map(r => r.wsid)
+  }
+
   /** Every Workshop id the server's roles come from. */
   static getRoleAddonIds(serverId: string): string[] {
     return (db.prepare('SELECT DISTINCT wsid FROM role_addons WHERE server_id = ?').all(serverId) as { wsid: string }[]).map(r => r.wsid)
