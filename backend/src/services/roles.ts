@@ -1,5 +1,5 @@
 import { Store, type LiveConVar } from './Store'
-import { roleColour } from '../replaylogic'
+import { roleColour } from '../teamColours'
 
 /**
  * A role is enabled unless the game server says otherwise: its `ttt_<role>_enabled` ConVar

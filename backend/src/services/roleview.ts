@@ -1,5 +1,5 @@
 import { Store, type LiveConVar } from './Store'
-import { roleColour } from '../replaylogic'
+import { roleColour } from '../teamColours'
 import { isRoleEnabled, roleMetrics, METRICS, type MetricKey } from './roles'
 import { cleanLabel, conVarDataText, humanizeKey, kindForConVarData, kindForLive, suffixOf, SUFFIX_TO_KEY, type FieldKind } from '../components/RoleConfigForm'
 

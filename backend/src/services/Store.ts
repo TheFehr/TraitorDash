@@ -1,4 +1,5 @@
 import db from './Database'
+import { HEX6 } from '../teamColours'
 import type { MapPlan } from './mapplan'
 import { createHash } from 'node:crypto'
 import { hashToken } from './migrations'
@@ -549,7 +550,7 @@ export class Store {
         color = excluded.color
     `)
     const now = new Date().toISOString()
-    upsert.run(serverId, roleName, team, isPolicing ? 1 : 0, baserole, JSON.stringify(schema), md5Hash || null, now, description, /^#[0-9a-f]{6}$/.test(color ?? '') ? color : null)
+    upsert.run(serverId, roleName, team, isPolicing ? 1 : 0, baserole, JSON.stringify(schema), md5Hash || null, now, description, HEX6.test(color ?? '') ? color : null)
   }
 
   static getRoles(serverId: string): any[] {

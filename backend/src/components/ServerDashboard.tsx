@@ -1,3 +1,4 @@
+import { HEX6, TEAMS, hex, teamColour, teamLabel } from '../teamColours'
 import { isServerOnline } from '../services/ServerUtils'
 import { Heartbeat } from './Heartbeat'
 import { METRICS, type MetricKey, type RoleMetrics } from '../services/roles'
@@ -108,30 +109,8 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
     return acc
   }, {})
 
-  const teamColors: any = {
-    traitors: 'border-red-500/30 text-red-500',
-    innocents: 'border-green-500/30 text-green-500',
-    detectives: 'border-blue-500/30 text-blue-500',
-    necromancers: 'border-purple-500/30 text-purple-500',
-    jackals: 'border-orange-500/30 text-orange-500',
-    infecteds: 'border-teal-500/30 text-teal-500',
-    nones: 'border-gray-500/30 text-gray-500',
-    unknown: 'border-gray-500/30 text-gray-500'
-  }
-
-  const teamLabels: any = {
-    traitors: 'Traitors',
-    innocents: 'Innocents',
-    detectives: 'Detectives',
-    necromancers: 'Necromancers',
-    jackals: 'Jackals',
-    infecteds: 'Infected',
-    nones: 'Neutral / Other',
-    unknown: 'Uncategorized'
-  }
-
   // Define sort order
-  const order = ['innocents', 'traitors', 'detectives', 'necromancers', 'jackals', 'infecteds', 'nones', 'unknown']
+  const order = Object.keys(TEAMS)
   const sortedGroups = Object.entries(groups).sort((a, b) => {
     return order.indexOf(a[0]) - order.indexOf(b[0])
   })
@@ -184,7 +163,7 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
             >
               <option value="all">All teams</option>
               {sortedGroups.map(([team]) => (
-                <option value={team}>{teamLabels[team] || team}</option>
+                <option value={team}>{teamLabel(team)}</option>
               ))}
             </select>
 
@@ -246,8 +225,8 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
           {sortedGroups.map(([team, roleList]: [string, any]) => (
             <section class="space-y-6" x-show="sectionVisible($el)" x-bind:class="flat ? 'contents' : ''">
               <div class="flex items-center gap-4" x-show="!flat">
-                <h2 class={`text-2xl font-black uppercase tracking-tighter px-4 py-1 rounded-lg border bg-gray-800/50 ${teamColors[team] || teamColors.unknown}`}>
-                  {teamLabels[team] || team}
+                <h2 class="text-2xl font-black uppercase tracking-tighter px-4 py-1 rounded-lg border bg-gray-800/50" style={`color:${hex(teamColour(team))};border-color:${hex(teamColour(team))}4d`}>
+                  {teamLabel(team)}
                 </h2>
                 <div class="h-px flex-1 bg-gray-700/50"></div>
               </div>
@@ -261,7 +240,7 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
                     {...metricAttributes(role.metrics)}
                     x-show="visible($el)"
                     x-bind:style="{ order: rank($el) }"
-                    style={role.colour && /^#[0-9a-f]{6}$/.test(role.colour) ? `border-left: 4px solid ${role.colour}` : undefined}
+                    style={role.colour && HEX6.test(role.colour) ? `border-left: 4px solid ${role.colour}` : undefined}
                     class={`bg-gray-800 rounded-xl p-6 border border-gray-700 hover:border-red-500 transition group flex justify-between items-center shadow-lg hover:shadow-red-500/10 ${role.enabled ? '' : 'opacity-60'}`}
                   >
                     <div class="min-w-0">

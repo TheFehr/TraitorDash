@@ -3,7 +3,8 @@ import { Store } from './Store'
 import { getReplayRound, type StatsOptions } from './stats'
 import { planLevels } from './mapplan'
 import type { LevelRange } from '../replaylogic'
-import { chooseBackground, roleColour, versionMismatch, type BackgroundKind } from '../replaylogic'
+import { roleColour } from '../teamColours'
+import { chooseBackground, versionMismatch, type BackgroundKind } from '../replaylogic'
 
 /**
  * What the replay page needs about one round, in one JSON document (RFC 12, 3.5): the round's header

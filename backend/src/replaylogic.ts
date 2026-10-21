@@ -161,29 +161,7 @@ export function defaultSelection(playerIds: string[], viewerId: string | null, d
   return playerIds[0] ?? null
 }
 
-/** A colour (0xRRGGBB) for a team: the two TTT teams are fixed, others get a stable hue from their name. */
-export function teamColour(team: string | null): number {
-  const t = (team ?? '').toLowerCase()
-  if (t === 'traitors' || t === 'traitor') return 0xdc2626
-  if (t === 'innocents' || t === 'innocent') return 0x22c55e
-  if (t === '') return 0x9ca3af
-  let h = 0
-  for (const ch of t) h = (h * 31 + ch.charCodeAt(0)) % 360
-  // hsl(h, 65%, 55%) as RGB
-  const s = 0.65, l = 0.55, k = (n: number) => (n + h / 30) % 12, a = s * Math.min(l, 1 - l)
-  const f = (n: number) => Math.round(255 * (l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)))))
-  return (f(0) << 16) | (f(8) << 8) | f(4)
-}
-
-/** The role's own colour (ROLE.color, as TTT2 shows it) as `#rrggbb`, else its team's. */
-export const roleColour = (own: unknown, team: string | null): string =>
-  typeof own === 'string' && /^#[0-9a-f]{6}$/.test(own) ? own : '#' + teamColour(team).toString(16).padStart(6, '0')
-
-/** A player's colour (0xRRGGBB): the colour of their role if `colours` (role name to `#rrggbb`) has one, else their team's. */
-export function playerColour(colours: Record<string, string>, role: string | null, team: string | null): number {
-  const own = role !== null && Object.prototype.hasOwnProperty.call(colours, role) ? colours[role] : undefined
-  return typeof own === 'string' && /^#[0-9a-f]{6}$/.test(own) ? parseInt(own.slice(1), 16) : teamColour(team)
-}
+export { teamColour, roleColour, playerColour } from './teamColours'
 
 /** "m:ss" for a time in ms. */
 export const clock = (ms: number) => {

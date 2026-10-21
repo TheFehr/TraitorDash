@@ -4,6 +4,7 @@ import {
   MeshStandardMaterial, MeshBasicMaterial, SphereGeometry, RingGeometry, DoubleSide, ConeGeometry, BoxGeometry, InstancedMesh, Matrix4, Object3D, Plane, Sprite, SpriteMaterial,
   CanvasTexture, BufferGeometry, Float32BufferAttribute, Line, LineSegments, LineBasicMaterial, type Camera, type MeshStandardMaterial as StdMat,
 } from 'three'
+import { hex } from './teamColours'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import {
@@ -39,7 +40,6 @@ const SPEEDS = [1, 2, 4, 8]
 
 const el = <T extends HTMLElement>(root: HTMLElement, sel: string) => root.querySelector<T>(sel)
 const text = (s: string, tag = 'span', cls = '') => { const e = document.createElement(tag); e.textContent = s; if (cls) e.className = cls; return e }
-const hex = (c: number) => '#' + c.toString(16).padStart(6, '0')
 
 async function start(root: HTMLElement) {
   const src = root.dataset.src, viewer = root.dataset.viewer || null
