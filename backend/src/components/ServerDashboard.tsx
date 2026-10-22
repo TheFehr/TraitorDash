@@ -2,8 +2,8 @@ import { HEX6, TEAMS, hex, teamColour, teamLabel } from '../teamColours'
 import { isServerOnline } from '../services/ServerUtils'
 import { Heartbeat } from './Heartbeat'
 import { METRICS, type MetricKey, type RoleMetrics } from '../services/roles'
-import { LINK_BTN } from '../ui'
-import { publicRoles } from '../services/roleview'
+import { Sections } from './CaseFile'
+import { Crumbs } from './kit'
 
 // Filter, sort and grouping state for the role overview, run by Alpine in the browser.
 // - "Enabled only" is ON by default; unknown enabled state counts as enabled (services/roles.ts).
@@ -118,75 +118,43 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
   })
 
   return (
-    <div class="container mx-auto p-4 sm:p-8">
-      <header class="mb-8 sm:mb-12 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <>
+      <Crumbs><a href="/">Dashboard</a> / {server.name}</Crumbs>
+      <div class="head">
         <div>
-          <nav class="text-xs font-black text-gray-500 uppercase tracking-widest mb-4 flex gap-2">
-            <a href="/" class="hover:text-white transition">Dashboard</a>
-            <span>/</span>
-            <span class="text-red-500">{server.name}</span>
-          </nav>
-          <h1 class="text-3xl sm:text-5xl font-black mb-2 break-words">{server.name}</h1>
-          <p class="text-gray-400 text-lg">Server Role Registry</p>
-          <a href={`/servers/${server.id}/stats`} class={`${LINK_BTN} mt-4`}>
-            📊 Round stats
-          </a>
-          <a href={`/servers/${server.id}/maps`} class={`${LINK_BTN} mt-4 ml-2`}>
-            🗺 Maps
-          </a>
-          {publicRoles() && (
-            <a href={`/servers/${server.id}/roles`} class={`${LINK_BTN} mt-4 ml-2`}>
-              📖 Role guide
-            </a>
-          )}
+          <h1>{server.name}</h1>
+          <p class="muted" style="margin:0 0 .6rem">Server role registry</p>
+          <Sections serverId={server.id} />
         </div>
-        <div class={`px-4 py-2 rounded-xl border ${isOnline ? 'border-green-500/50 bg-green-500/10 text-green-400' : 'border-gray-700 bg-gray-800 text-gray-500'} flex items-center gap-3 shadow-xl self-start`}>
-           <div class={`w-3 h-3 rounded-full ${isOnline ? 'bg-green-500 animate-pulse' : 'bg-gray-700'}`}></div>
-           <div>
-             <span class="block font-black uppercase text-sm tracking-tighter">{isOnline ? 'System Online' : 'System Dead'}</span>
-             <span class="block text-xs opacity-80">Last heartbeat: <Heartbeat lastSeen={server.last_seen} /></span>
-           </div>
+        <div class={`status ${isOnline ? 'on' : ''}`}>
+          <i></i>
+          <div>
+            {isOnline ? 'System online' : 'System dead'}
+            <small>Last heartbeat: <Heartbeat lastSeen={server.last_seen} /></small>
+          </div>
         </div>
-      </header>
+      </div>
 
-      <div class="space-y-12" x-data={filterState}>
+      <div class="stack" style="margin-top:1.2rem" x-data={filterState}>
         {sortedGroups.length > 0 && (
-          <div class="flex flex-wrap items-center gap-x-6 gap-y-3 p-4 bg-gray-800/60 border border-gray-700 rounded-xl">
-            <label class="flex items-center gap-3 cursor-pointer select-none">
-              <span class="relative inline-block w-12 h-6">
-                <input
-                  type="checkbox"
-                  x-model="enabledOnly"
-                  class="peer absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer transition-transform duration-200 ease-in-out checked:translate-x-6"
-                />
-                <span class="block overflow-hidden h-6 rounded-full bg-gray-600 peer-checked:bg-green-500 transition"></span>
-              </span>
-              <span class="text-sm font-bold text-gray-200">Enabled only</span>
+          <div class="toolbar">
+            <label>
+              <input type="checkbox" class="switch" x-model="enabledOnly" />
+              <span>Enabled only</span>
             </label>
 
-            <select
-              x-model="team"
-              class="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-red-500"
-            >
+            <select x-model="team" aria-label="Team">
               <option value="all">All teams</option>
               {sortedGroups.map(([team]) => (
                 <option value={team}>{teamLabel(team)}</option>
               ))}
             </select>
 
-            <input
-              type="search"
-              x-model="q"
-              placeholder="Filter roles..."
-              class="flex-1 min-w-[10rem] bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-red-500"
-            />
+            <input type="search" x-model="q" placeholder="Filter roles..." aria-label="Filter roles" />
 
-            <label class="flex items-center gap-2 text-sm text-gray-300">
+            <label>
               <span>Sort by</span>
-              <select
-                x-model="sortBy"
-                class="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-red-500"
-              >
+              <select x-model="sortBy">
                 <option value="name">Name</option>
                 {(Object.entries(METRICS) as [MetricKey, { label: string }][]).map(([key, m]) => (
                   <option value={key}>{m.label}</option>
@@ -195,49 +163,41 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
               <button
                 type="button"
                 x-on:click="desc = !desc"
-                class="px-3 py-2 rounded-lg bg-gray-700 border border-gray-600 text-sm font-bold hover:bg-gray-600 transition"
+                class="ab"
                 title="Reverse the order"
                 x-text="desc ? '\u2193 high to low' : '\u2191 low to high'"
               ></button>
             </label>
 
-            <label class="flex items-center gap-2 cursor-pointer select-none text-sm text-gray-300">
-              <input type="checkbox" x-model="flat" class="accent-red-500" />
+            <label>
+              <input type="checkbox" x-model="flat" />
               <span>One list (ignore teams)</span>
             </label>
 
-            <span class="text-xs text-gray-500 font-mono" x-text="`Showing ${shown()} of ${total()}`"></span>
+            <span class="count" x-text="`Showing ${shown()} of ${total()}`"></span>
           </div>
         )}
 
-        <p
-          x-show="shown() === 0"
-          x-cloak="true"
-          class="p-8 text-center text-gray-500 bg-gray-800/20 rounded-xl border-2 border-dashed border-gray-700"
-        >
+        <p x-show="shown() === 0" x-cloak="true" class="muted" style="text-align:center;padding:2rem;border:2px dashed #3a342a;margin:0">
           No roles match these filters.
         </p>
 
         {sortedGroups.length === 0 ? (
-          <div class="p-20 bg-gray-800/20 rounded-3xl border-2 border-dashed border-gray-700 text-center shadow-inner">
-             <div class="text-6xl mb-6 opacity-20 italic font-black">Empty</div>
-             <h3 class="text-xl font-bold text-gray-500">No roles detected for this node.</h3>
-             <p class="text-gray-600 mt-2">Ensure the TraitorLink bridge is running on the game server.</p>
+          <div class="pn" style="--c:#6b6455">
+            <h2 class="ft">No roles detected for this server</h2>
+            <p class="muted">Make sure the TraitorLink bridge is running on the game server.</p>
           </div>
         ) : (
           <div
-            class="space-y-12"
-            x-bind:style="{ display: flat ? 'grid' : '', gridTemplateColumns: flat ? 'repeat(auto-fill, minmax(18rem, 1fr))' : '', gap: flat ? '1.5rem' : '' }"
+            class="stack"
+            x-bind:style="{ display: flat ? 'grid' : '', gridTemplateColumns: flat ? 'repeat(auto-fill, minmax(17rem, 1fr))' : '', gap: flat ? '1.5rem 1rem' : '' }"
           >
           {sortedGroups.map(([team, roleList]: [string, any]) => (
-            <section class="space-y-6" x-show="sectionVisible($el)" x-bind:class="flat ? 'contents' : ''">
-              <div class="flex items-center gap-4" x-show="!flat">
-                <h2 class="text-2xl font-black uppercase tracking-tighter px-4 py-1 rounded-lg border bg-gray-800/50" style={`color:${hex(teamColour(team))};border-color:${hex(teamColour(team))}4d`}>
-                  {teamLabel(team)}
-                </h2>
-                <div class="h-px flex-1 bg-gray-700/50"></div>
-              </div>
-              <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" x-bind:style="{ display: flat ? 'contents' : '' }">
+            <section x-show="sectionVisible($el)" x-bind:class="flat ? 'contents' : ''">
+              <h2 class="team" x-show="!flat" style={`color:${hex(teamColour(team))};border-color:${hex(teamColour(team))}`}>
+                {teamLabel(team)}
+              </h2>
+              <div class="tiles" x-bind:style="{ display: flat ? 'contents' : '' }">
                 {roleList.map((role: { name: string, colour?: string, enabled: boolean, metrics?: RoleMetrics }) => (
                   <a
                     href={`/servers/${server.id}/roles/${role.name}/config`}
@@ -247,24 +207,22 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
                     {...metricAttributes(role.metrics)}
                     x-show="visible($el)"
                     x-bind:style="{ order: rank($el) }"
-                    style={role.colour && HEX6.test(role.colour) ? `border-left: 4px solid ${role.colour}` : undefined}
-                    class={`bg-gray-800 rounded-xl p-6 border border-gray-700 hover:border-red-500 transition group flex justify-between items-center shadow-lg hover:shadow-red-500/10 ${role.enabled ? '' : 'opacity-60'}`}
+                    style={role.colour && HEX6.test(role.colour) ? `--c:${role.colour}` : undefined}
+                    class={`pn tile${role.enabled ? '' : ' off'}`}
                   >
-                    <div class="min-w-0">
-                      <span class="text-xl font-bold group-hover:text-red-400 transition">
+                    <div style="min-width:0">
+                      <strong class="ft" style="font-size:1.1rem;margin:0;border:0">
                         {role.name}
-                        {!role.enabled && (
-                          <span class="ml-2 align-middle text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-gray-700 text-gray-400">disabled</span>
-                        )}
-                      </span>
+                        {!role.enabled && <span class="pill mute" style="margin-left:.5rem">disabled</span>}
+                      </strong>
                       <span
-                        class="block mt-1 text-sm font-mono text-blue-300"
+                        class="val"
                         x-show="sortBy !== 'name'"
                         x-cloak="true"
                         x-text="valueText($el.closest('[data-role]'))"
                       ></span>
                     </div>
-                    <span class="text-red-500 opacity-0 group-hover:opacity-100 transition font-black uppercase text-xs">Configure →</span>
+                    <span class="go">Configure →</span>
                   </a>
                 ))}
               </div>
@@ -273,6 +231,6 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
           </div>
         )}
       </div>
-    </div>
+    </>
   )
 }

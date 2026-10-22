@@ -13,7 +13,7 @@ describe('settings-menu elements', () => {
       { type: 'error', args: { label: 'Could not read the menu' } },
     ])
     expect(h).toContain('Explains Things')
-    expect(h).toContain('Extraction Hint:')
+    expect(h).toContain('Extraction hint:')
     expect(h).toContain('Could Not Read The Menu')
     expect(h).not.toContain('<input')
     expect(h).not.toContain('<select')

@@ -1,4 +1,5 @@
-import { FAVICON } from './Layout'
+import { FAVICON, LOGO_EMOJI } from './brand'
+import { ADMIN_CSS } from './AdminCss'
 import { sectionsOf, type Section } from './SectionLinks'
 
 // The shell of the public, read-only pages with the case-file look (RFC 15, RFC 16). One shell for the normal and the embedded layout: no
@@ -83,10 +84,10 @@ export const Sections = ({ serverId, current }: { serverId: string, current?: Se
 /** Who is looking, for the header of a page on the website. */
 export interface Viewer { steamId: string, admin: boolean }
 
-const SiteHeader = ({ viewer }: { viewer?: Viewer | null }) => (
+const SiteHeader = ({ viewer, wide }: { viewer?: Viewer | null, wide?: boolean }) => (
   <header class="top">
-    <div class="w topbar">
-      <a href="/" class="brand">TraitorDash</a>
+    <div class={`w topbar${wide ? ' wide' : ''}`}>
+      <a href="/" class="brand"><span>{LOGO_EMOJI}</span> TraitorDash</a>
       <div class="acct">
         {viewer?.admin && <a href="/servers">Servers</a>}
         {viewer?.admin && <span data-admin-mark class="mark adm">admin</span>}
@@ -105,7 +106,7 @@ const SiteHeader = ({ viewer }: { viewer?: Viewer | null }) => (
  * links (`embed` takes it away, for the game's window). `scripts` are files of this site (`/public/...`);
  * a page that lists none has none.
  */
-export const Shell = ({ title, embed, children, viewer, scripts = [] }: { title: string, embed: boolean, children: any, viewer?: Viewer | null, scripts?: string[] }) => (
+export const Shell = ({ title, embed, children, viewer, scripts = [], admin = false }: { title: string, embed: boolean, children: any, viewer?: Viewer | null, scripts?: string[], admin?: boolean }) => (
   <html lang="en">
     <head>
       <meta charset="UTF-8" />
@@ -115,11 +116,13 @@ export const Shell = ({ title, embed, children, viewer, scripts = [] }: { title:
       <title>{title}</title>
       <link rel="icon" href={FAVICON} />
       {/* CSS is a constant of this file, never user text: inserted as is, because escaping would turn its quotes into &quot; */}
-      <style dangerouslySetInnerHTML={{ __html: BASE_CSS + EXTRA_CSS }} />
+      <style dangerouslySetInnerHTML={{ __html: BASE_CSS + EXTRA_CSS + (admin ? ADMIN_CSS : '') }} />
     </head>
     <body>
-      {!embed && <SiteHeader viewer={viewer} />}
-      <main class="w">{children}</main>
+      {!embed && <SiteHeader viewer={viewer} wide={admin} />}
+      <main class={admin ? 'w wide' : 'w'}>{children}</main>
+      {/* htmx and Alpine come from our own bundle (frontend.ts, versions locked by bun.lock), not a CDN: a third-party script on an admin page can do anything the admin can. */}
+      {admin && <script defer src="/public/frontend.js"></script>}
       {scripts.map(src => <script defer src={src}></script>)}
     </body>
   </html>

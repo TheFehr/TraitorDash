@@ -335,9 +335,9 @@ describe('GET /servers/:id (through the real app)', () => {
     const html = await res.text()
     const rows: string[] = String(html).split('<a ').slice(1)
     const row = (role: string) => rows.find(r => r.includes(`/roles/${role}/config"`)) ?? ''
-    expect(row('zombie')).toContain('opacity-50')
+    expect(row('zombie')).toContain('ritem off')
     expect(row('zombie')).toContain('Disabled on this server')
-    expect(row('traitor')).not.toContain('opacity-50')
-    expect(row('newrole')).not.toContain('opacity-50')
+    expect(row('traitor')).not.toContain('off"')
+    expect(row('newrole')).not.toContain('off"')
   })
 })

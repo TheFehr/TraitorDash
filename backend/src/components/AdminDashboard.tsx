@@ -1,46 +1,29 @@
 import { isServerOnline } from '../services/ServerUtils'
 import { Heartbeat } from './Heartbeat'
 
-export const AdminDashboard = ({ servers }: { servers: any[] }) => {
-  return (
-    <div class="container mx-auto p-4 sm:p-8">
-      <header class="mb-8 sm:mb-12">
-        <h1 class="text-3xl sm:text-5xl font-black mb-4 italic tracking-tighter">Admin Dashboard</h1>
-        <p class="text-gray-400 text-base sm:text-xl">Select a node to manage its roles and configurations.</p>
-      </header>
-
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-8">
-        {servers.map(server => {
-          const isOnline = isServerOnline(server.last_seen)
-          return (
-            <a href={`/servers/${server.id}`} class="bg-gray-800 rounded-2xl p-5 sm:p-8 border border-gray-700 hover:border-red-500 transition group flex flex-col justify-between shadow-2xl">
-              <div>
-                <div class="flex justify-between items-center mb-4">
-                  <span class={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${isOnline ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-500'}`}>
-                    {isOnline ? '● Live' : '○ Dead'}
-                  </span>
-                  <span class="text-xl opacity-50 group-hover:opacity-100 transition">⚙️</span>
-                </div>
-                <h3 class="text-2xl font-bold group-hover:text-red-400 transition mb-1">{server.name}</h3>
-                <p class="text-gray-500 text-xs font-mono mb-4">{server.id}</p>
-                <p class="text-xs text-gray-500 uppercase font-bold mb-1">Last heartbeat</p>
-                <p class="text-sm text-gray-300 mb-4"><Heartbeat lastSeen={server.last_seen} /></p>
-              </div>
-              <div class="pt-4 border-t border-gray-700 flex justify-between items-center text-sm font-bold text-gray-400 uppercase tracking-tighter">
-                 <span>Manage Node</span>
-                 <span class="text-red-500">→</span>
-              </div>
-            </a>
-          )
-        })}
-        
-        {servers.length === 0 && (
-          <a href="/servers" class="bg-gray-800/30 rounded-2xl p-8 border-2 border-dashed border-gray-700 flex flex-col items-center justify-center text-center hover:bg-gray-800/50 transition">
-            <div class="text-3xl mb-2">➕</div>
-            <p class="text-gray-500 font-bold uppercase text-xs tracking-widest">Connect First Server</p>
+export const AdminDashboard = ({ servers }: { servers: any[] }) => (
+  <>
+    <h1>Admin dashboard</h1>
+    <p class="muted">Select a server to manage its roles and settings.</p>
+    <div class="tiles">
+      {servers.map(server => {
+        const isOnline = isServerOnline(server.last_seen)
+        return (
+          <a href={`/servers/${server.id}`} class="pn" style={`--c:${isOnline ? '#4ade80' : '#6b6455'}`}>
+            <h2 class="ft">{server.name}</h2>
+            <p><span class={`pill ${isOnline ? 'ok' : 'mute'}`}>{isOnline ? '● Live' : '○ Dead'}</span></p>
+            <p class="cv">{server.id}</p>
+            <p class="muted">Last heartbeat: <Heartbeat lastSeen={server.last_seen} /></p>
+            <p class="go">Manage server →</p>
           </a>
-        )}
-      </div>
+        )
+      })}
+      {servers.length === 0 && (
+        <a href="/servers" class="pn" style="--c:#6b6455">
+          <h2 class="ft">Connect a server</h2>
+          <p class="muted">No server is connected yet. Add one and pair it from here.</p>
+        </a>
+      )}
     </div>
-  )
-}
+  </>
+)

@@ -139,71 +139,46 @@ export const RoleConfigForm = ({ serverId, role, schema, live = {} }: { serverId
   }`
 
   return (
-    <div class="space-y-6" x-data={xData}>
-      <div class="bg-gray-800 rounded-lg p-6 shadow-2xl border border-gray-700">
-        <h2 class="text-3xl font-bold mb-2 text-red-400 border-b border-gray-700 pb-2">
-          Configuring Role: <span class="text-white">{role}</span>
-        </h2>
-        <p class="text-xs text-gray-500 mb-6">
-          <span class="text-green-400 font-bold">live</span> values were reported by the game server;{' '}
-          <span class="text-gray-400 font-bold">default</span> ones have not been reported yet and show the role's default.
+    <div class="cfg" x-data={xData}>
+      <section class="pn" style="--c:#e9b44c">
+        <h1>
+          Configuring Role: <span style="color:#e9b44c">{role}</span>
+        </h1>
+        <p class="muted">
+          <span class="src live" style="margin:0">live</span> values were reported by the game server;{' '}
+          <span class="src default" style="margin:0">default</span> ones have not been reported yet and show the role's default.
           Only the settings you change are sent.
         </p>
 
-        <form id="config-form" class="space-y-6" {...{ 'x-on:submit.prevent': 'save()' }}>
+        <form id="config-form" {...{ 'x-on:submit.prevent': 'save()' }}>
           {Array.isArray(schema) ? schema.map((item) => renderElement(item, live)) : (
-            <div class="p-4 bg-red-500/10 border border-red-500/50 rounded-xl text-red-400">
-               Warning: No configuration options were extracted for this role.
+            <div class="fld bad">
+              Warning: No configuration options were extracted for this role.
             </div>
           )}
           {extras.length > 0 && (
-            <div class="pt-6 mt-2 border-t border-gray-700 space-y-4">
-              <h3 class="text-sm font-black uppercase tracking-widest text-gray-500">Other settings found on the server</h3>
+            <>
+              <h3>Other settings found on the server</h3>
               {extras.map(f => renderExtra(f, live[f.convar]!))}
-            </div>
+            </>
           )}
         </form>
 
-        <p class="mt-4 text-sm" x-show="message" x-text="message" x-bind:class="ok ? 'text-green-400' : 'text-red-400'" x-cloak="true"></p>
-      </div>
+        <p x-show="message" x-text="message" x-bind:class="ok ? 'ok-t' : 'bad-t'" x-cloak="true" role="status"></p>
+      </section>
 
-      {/* Floating Save Banner */}
-      <div 
-        x-show="isDirty()" 
-        x-cloak
-        x-transition:enter="transition ease-out duration-300"
-        x-transition:enter-start="translate-y-full opacity-0"
-        x-transition:enter-end="translate-y-0 opacity-100"
-        x-transition:leave="transition ease-in duration-300"
-        x-transition:leave-start="translate-y-0 opacity-100"
-        x-transition:leave-end="translate-y-full opacity-0"
-        class="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] w-full max-w-2xl px-4"
-      >
-        <div class="bg-red-600 text-white p-4 rounded-2xl shadow-2xl flex items-center justify-between border-2 border-red-400 backdrop-blur-lg bg-opacity-90">
-          <div class="flex items-center gap-4">
-            <span class="text-2xl">⚠️</span>
-            <div>
-              <p class="font-black leading-tight">Unsaved Changes</p>
-              <p class="text-xs text-red-100 opacity-80 uppercase tracking-widest font-bold">Modifications detected</p>
-            </div>
-          </div>
-          <div class="flex gap-3">
-             <button 
-               type="button"
-               x-on:click="current = Object.assign({}, initial)"
-               class="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg font-bold text-sm transition"
-             >
-               Reset
-             </button>
-             <button 
-               form="config-form"
-               type="submit" 
-               class="px-6 py-2 bg-white text-red-600 hover:bg-red-50 rounded-lg font-black shadow-lg transition active:scale-95"
-             >
-               <span x-show="!saving">Apply Changes</span>
-               <span x-show="saving" x-cloak="true">Saving…</span>
-             </button>
-          </div>
+      {/* Floating save banner */}
+      <div x-show="isDirty()" x-cloak {...{ "x-transition.opacity": "" }} class="savebar" role="alert">
+        <div>
+          <strong>⚠ Unsaved changes</strong>
+          <span class="sub">Modifications detected</span>
+        </div>
+        <div>
+          <button type="button" x-on:click="current = Object.assign({}, initial)" class="ab">Reset</button>{' '}
+          <button form="config-form" type="submit" class="ab main">
+            <span x-show="!saving">Apply changes</span>
+            <span x-show="saving" x-cloak="true">Saving…</span>
+          </button>
         </div>
       </div>
     </div>
@@ -259,9 +234,9 @@ export const conVarDataText = (key: string) => {
 }
 
 const SOURCE_TAG: Record<Source, { text: string, cls: string, title: string }> = {
-  live: { text: 'live', cls: 'text-green-400', title: 'Value reported by the game server' },
-  default: { text: 'default', cls: 'text-gray-500', title: "Not reported by the server yet: showing the role's default" },
-  missing: { text: 'not on server', cls: 'text-red-400', title: 'The server has no ConVar with this name, so saving it would be refused' },
+  live: { text: 'live', cls: 'live', title: 'Value reported by the game server' },
+  default: { text: 'default', cls: 'default', title: "Not reported by the server yet: showing the role's default" },
+  missing: { text: 'not on server', cls: 'missing', title: 'The server has no ConVar with this name, so saving it would be refused' },
 }
 
 /** Label line, a live/default tag, the real ConVar name and an optional hint. */
@@ -269,17 +244,22 @@ const FieldLabel = ({ label, hint, convar, forId, source }: { label: string, hin
   const tag = SOURCE_TAG[source]
   return (
     <div>
-      <label class="block font-medium text-gray-200 cursor-pointer" for={forId}>
-        {label} <span class={`ml-1 text-[10px] font-black uppercase tracking-wider ${tag.cls}`} title={tag.title}>{tag.text}</span>
+      <label class="fl" for={forId}>
+        {label} <span class={`src ${tag.cls}`} title={tag.title}>{tag.text}</span>
       </label>
-      <span class="block text-xs font-mono text-gray-500">{convar}</span>
-      {hint && <span class="block text-xs text-gray-400 mt-0.5">{hint}</span>}
+      <span class="cv">{convar}</span>
+      {hint && <span class="hint">{hint}</span>}
     </div>
   )
 }
 
 const sourceOf = (lv: LiveConVar | undefined): Source =>
   lv && !lv.present ? 'missing' : lv && lv.value !== null ? 'live' : 'default'
+
+/** The on/off switch every toggle uses; it is a checkbox, so the keyboard and the label work. */
+const Switch = ({ id, model }: { id?: string, model: string }) => (
+  <input type="checkbox" class="switch" id={id} x-model={model} />
+)
 
 /** One editable ConVar: toggle, number (bounded by what the server reports) or text. */
 const ConVarControl = (props: { convar: string, kind: FieldKind, label: string, hint?: string, lv?: LiveConVar, isPct?: boolean, fractional?: boolean }) => {
@@ -289,17 +269,9 @@ const ConVarControl = (props: { convar: string, kind: FieldKind, label: string, 
 
   if (kind === 'toggle') {
     return (
-      <div class="flex items-center justify-between p-4 bg-gray-700/30 rounded-lg border border-gray-600/50 hover:bg-gray-700/50 transition">
+      <div class="fld row">
         {field}
-        <div class="relative inline-block w-12 h-6 transition duration-200 ease-in">
-          <input
-            type="checkbox"
-            id={convar}
-            x-model={`current['${convar}']`}
-            class="peer absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer transition-transform duration-200 ease-in-out checked:translate-x-6"
-          />
-          <label for={convar} class="block overflow-hidden h-6 rounded-full bg-gray-600 cursor-pointer peer-checked:bg-green-500 transition"></label>
-        </div>
+        <Switch id={convar} model={`current['${convar}']`} />
       </div>
     )
   }
@@ -310,7 +282,7 @@ const ConVarControl = (props: { convar: string, kind: FieldKind, label: string, 
     const max = lv?.max ?? (isPct ? 1 : undefined)
     const frac = Boolean(isPct || fractional || lv?.default?.includes('.') || lv?.value?.includes('.'))
     return (
-      <div class="p-4 bg-gray-700/30 rounded-lg border border-gray-600/50 space-y-2 hover:bg-gray-700/50 transition">
+      <div class="fld">
         {field}
         <input
           type="number"
@@ -319,21 +291,15 @@ const ConVarControl = (props: { convar: string, kind: FieldKind, label: string, 
           max={max}
           step={frac ? 0.01 : 1}
           {...{ 'x-model.number': `current['${convar}']` }}
-          class="w-full bg-gray-600 border border-gray-500 text-white rounded-lg p-2 font-mono focus:ring-2 focus:ring-blue-500 outline-none"
         />
       </div>
     )
   }
 
   return (
-    <div class="p-4 bg-gray-700/30 rounded-lg border border-gray-600/50 space-y-2 hover:bg-gray-700/50 transition">
+    <div class="fld">
       {field}
-      <input
-        type="text"
-        id={convar}
-        x-model={`current['${convar}']`}
-        class="w-full bg-gray-600 border border-gray-500 text-white rounded-lg p-2 font-mono focus:ring-2 focus:ring-blue-500 outline-none"
-      />
+      <input type="text" class="dk" id={convar} x-model={`current['${convar}']`} />
     </div>
   )
 }
@@ -353,16 +319,15 @@ const renderElement = (item: any, live: Live) => {
   switch (String(type || '').toLowerCase()) {
     case 'makehelp':
       return (
-        <div class="p-4 bg-blue-500/10 border border-blue-500/30 rounded-lg text-blue-300 text-sm flex gap-3 italic">
-          <span class="font-black not-italic opacity-50">ℹ</span>
-          {label}
+        <div class="fld info">
+          <span><span aria-hidden="true">ℹ </span>{label}</span>
         </div>
       )
 
     case 'error':
       return (
-        <div class="p-4 bg-yellow-500/10 border border-yellow-500/50 rounded-lg text-yellow-400 text-sm">
-          <span class="font-bold mr-2">Extraction Hint:</span> {label}
+        <div class="fld hintbox">
+          <span><strong>Extraction hint:</strong> {label}</span>
         </div>
       )
 
@@ -383,49 +348,35 @@ const renderElement = (item: any, live: Live) => {
 
     case 'makecheckbox':
       return (
-        <div class="flex items-center justify-between p-4 bg-gray-700/50 rounded-lg hover:bg-gray-700 transition">
-          <label class="font-medium text-gray-200 cursor-pointer" for={convar}>{label}</label>
-          <div class="relative inline-block w-12 h-6 transition duration-200 ease-in">
-            <input 
-              type="checkbox" 
-              id={convar}
-              x-model={`current['${convar}']`}
-              class="peer absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer transition-transform duration-200 ease-in-out checked:translate-x-6"
-            />
-            <label 
-              for={convar} 
-              class="block overflow-hidden h-6 rounded-full bg-gray-600 cursor-pointer peer-checked:bg-green-500 transition"
-            ></label>
-          </div>
+        <div class="fld row">
+          <label class="fl" for={convar}>{label}</label>
+          <Switch id={convar} model={`current['${convar}']`} />
         </div>
       )
 
     case 'makeslider':
       return (
-        <div class="p-4 bg-gray-700/50 rounded-lg space-y-2 hover:bg-gray-700 transition">
-          <div class="flex justify-between items-center">
-            <label class="font-medium text-gray-200">{label}</label>
-            <span class="text-red-400 font-mono text-sm" x-text={`current['${convar}']`}></span>
+        <div class="fld">
+          <div style="display:flex;justify-content:space-between">
+            <label class="fl" for={convar}>{label}</label>
+            <span class="val" x-text={`current['${convar}']`}></span>
           </div>
-          <input 
-            type="range" 
-            min={args.min} 
-            max={args.max} 
+          <input
+            type="range"
+            id={convar}
+            min={args.min}
+            max={args.max}
             step={args.decimal === 0 ? 1 : 0.1}
             x-model={`current['${convar}']`}
-            class="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-red-500"
           />
         </div>
       )
 
     case 'makecombobox':
       return (
-        <div class="p-4 bg-gray-700/50 rounded-lg space-y-2 hover:bg-gray-700 transition">
-          <label class="block font-medium text-gray-200">{label}</label>
-          <select 
-            x-model={`current['${convar}']`}
-            class="w-full bg-gray-600 border border-gray-500 text-white rounded-lg p-2 focus:ring-2 focus:ring-red-500 outline-none"
-          >
+        <div class="fld">
+          <label class="fl" for={convar}>{label}</label>
+          <select id={convar} x-model={`current['${convar}']`}>
             {args.choices?.map((choice: string) => (
               <option value={choice}>{choice}</option>
             ))}
@@ -435,20 +386,15 @@ const renderElement = (item: any, live: Live) => {
 
     case 'maketextentry':
       return (
-        <div class="p-4 bg-gray-700/50 rounded-lg space-y-2 hover:bg-gray-700 transition">
-          <label class="block font-medium text-gray-200">{label}</label>
-          <input 
-            type="text" 
-            x-model={`current['${convar}']`}
-            placeholder="..."
-            class="w-full bg-gray-600 border border-gray-500 text-white rounded-lg p-2 focus:ring-2 focus:ring-red-500 outline-none"
-          />
+        <div class="fld">
+          <label class="fl" for={convar}>{label}</label>
+          <input type="text" class="dk" id={convar} x-model={`current['${convar}']`} placeholder="..." />
         </div>
       )
 
     default:
       return (
-        <div class="p-2 text-sm text-gray-500 italic">
+        <div class="fld muted">
           Unsupported element type: {type}
         </div>
       )

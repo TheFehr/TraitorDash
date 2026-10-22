@@ -24,12 +24,8 @@ import { helperAvailable, workshopFetcher } from './services/workshop'
 import { sameOrigin } from './middleware/csrf'
 
 // Components
-import { Layout } from './components/Layout'
-import { AdminDashboard } from './components/AdminDashboard'
-import { ServerDashboard } from './components/ServerDashboard'
-import { RoleConfigForm } from './components/RoleConfigForm'
-import { ServerManager } from './components/ServerManager'
-import { Sidebar, RoleListPartial } from './components/Sidebar'
+import { AdminHomePage, ServersPage, ServerPage, RoleConfigPage } from './components/AdminPages'
+import { RoleListPartial } from './components/Sidebar'
 import { checkHealth, sourceHash } from './services/version'
 import { StatsPage, RoundPage, PlayerPage } from './components/StatsPages'
 import { NotFound } from './components/CaseFile'
@@ -120,11 +116,7 @@ app.get('/', async (c) => {
     return respond(c, ctx, <HomePage ctx={ctx} servers={servers} />)
   }
 
-  return c.html(
-    <Layout steamId={steamId as string} path="/">
-      <AdminDashboard servers={servers} />
-    </Layout>
-  )
+  return c.html(<AdminHomePage steamId={steamId as string} servers={servers} />)
 })
 
 /**
@@ -136,13 +128,7 @@ app.get('/servers', async (c) => {
   
   const servers = Store.getServers()
   
-  return c.html(
-    <Layout steamId={steamId as string} path="/servers">
-      <div class="container mx-auto p-4 sm:p-8">
-        <ServerManager servers={servers} />
-      </div>
-    </Layout>
-  )
+  return c.html(<ServersPage steamId={steamId as string} servers={servers} />)
 })
 
 /**
@@ -158,16 +144,7 @@ app.get('/servers/:serverId', async (c) => {
 
   const roles = getRolesWithState(serverId)
 
-  return c.html(
-    <Layout steamId={steamId as string} path="/">
-       <div class="flex flex-col md:flex-row">
-          <Sidebar serverId={serverId} roles={roles} />
-          <div class="flex-1 min-w-0 min-h-[calc(100vh-65px)] bg-gray-900/50">
-            <ServerDashboard server={server} roles={roles} />
-          </div>
-       </div>
-    </Layout>
-  )
+  return c.html(<ServerPage steamId={steamId as string} server={server} roles={roles} />)
 })
 
 /** Role name to `#rrggbb`, for the dots and bars. */
@@ -593,24 +570,7 @@ app.get('/servers/:serverId/roles/:roleName/config', async (c) => {
   
   if (!server || !schema) return c.redirect('/')
   
-  return c.html(
-    <Layout steamId={steamId as string} path="/">
-       <div class="flex flex-col md:flex-row">
-          <Sidebar serverId={serverId} roles={roles} />
-          <div class="flex-1 min-w-0 p-4 sm:p-8 min-h-[calc(100vh-65px)] bg-gray-900/50">
-            <nav class="text-xs font-black text-gray-500 uppercase tracking-widest mb-8 flex gap-2">
-                <a href="/" class="hover:text-white transition">Dashboard</a>
-                <span>/</span>
-                <a href={`/servers/${serverId}`} class="hover:text-white transition">{server.name}</a>
-                <span>/</span>
-                <span class="text-red-500">{roleName}</span>
-                <a href={`/servers/${serverId}/roles/${encodeURIComponent(roleName)}`} class="ml-auto hover:text-white transition">Public page</a>
-            </nav>
-            <RoleConfigForm serverId={serverId} role={roleName} schema={schema} live={Store.getConVarValues(serverId)} />
-          </div>
-       </div>
-    </Layout>
-  )
+  return c.html(<RoleConfigPage steamId={steamId as string} server={server} roleName={roleName} roles={roles} schema={schema} live={Store.getConVarValues(serverId)} />)
 })
 
 // Pelican hands the allocated port over as SERVER_PORT.
