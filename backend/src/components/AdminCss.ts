@@ -38,6 +38,7 @@ a.pn:hover{border-color:#e9b44c}
 .toolbar .count{margin-left:auto;font-family:"Courier Prime","Courier New",monospace;font-weight:400;font-size:.85rem;color:#a89f8c}
 select,input[type=number],input[type=text].dk,.dk{background:#14110e;color:#f1ece0;border:1px solid #8a7f65;padding:.3rem .6rem;font:inherit;font-weight:600}
 input[type=number],input[type=text].dk{font-family:"Courier Prime","Courier New",monospace;font-weight:400;width:100%}
+.fld input:invalid{border-color:#f87171;background:#2a1414}
 .fld input[type=text],.fld input[type=number]{width:100%}
 .toolbar input[type=search]{flex:1;min-width:10rem}
 input.switch{-webkit-appearance:none;appearance:none;position:relative;flex:none;width:2.7rem;height:1.45rem;margin:0;border-radius:1rem;background:#4a4334;border:1px solid #8a7f65;cursor:pointer}
@@ -82,6 +83,8 @@ form.add input{flex:1;min-width:14rem}
 .fld.info{color:#93c5fd;border-color:#1e3a5f;background:#14202e;font-style:italic}
 .fld.hintbox{color:#fbbf24;border-color:#6b4a06;background:#2a2008}
 .fld.bad{color:#fca5a5;border-color:#7f1d1d}
+.toast{position:fixed;bottom:6.2rem;left:50%;transform:translateX(-50%);z-index:101;width:min(40rem,calc(100% - 2rem));margin:0;padding:.6rem 1rem;background:#14110e;border:2px solid;font-weight:700}
+.toast.ok{border-color:#4ade80;color:#4ade80}.toast.bad{border-color:#f87171;color:#fca5a5}
 .savebar{position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);z-index:100;width:min(40rem,calc(100% - 2rem));display:flex;flex-wrap:wrap;gap:.8rem;align-items:center;justify-content:space-between;padding:.8rem 1.1rem;background:#991b1b;color:#fff;border:2px solid #f87171;border-radius:.4rem;box-shadow:0 8px 24px rgba(0,0,0,.6)}
 .savebar strong{display:block;font-size:1.1rem;letter-spacing:.04em}
 .savebar span.sub{font-size:.8rem;letter-spacing:.1em;text-transform:uppercase;color:#fecaca}

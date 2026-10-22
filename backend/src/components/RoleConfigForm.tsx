@@ -116,6 +116,17 @@ export const RoleConfigForm = ({ serverId, role, schema, live = {} }: { serverId
     async save() {
       const keys = this.dirtyKeys();
       if (keys.length === 0 || this.saving) return;
+      // The browser's own check would stop the submit without a word on a phone: say which setting is wrong.
+      const wrong = document.querySelector('#config-form :invalid');
+      if (wrong) {
+        const lab = document.querySelector('label[for="' + wrong.id + '"]');
+        const name = (lab && lab.firstChild && lab.firstChild.textContent) || wrong.id;
+        this.ok = false;
+        this.message = name.trim() + ': ' + wrong.validationMessage;
+        wrong.scrollIntoView({ block: 'center' });
+        wrong.focus();
+        return;
+      }
       const body = new URLSearchParams();
       for (const k of keys) {
         const v = this.current[k];
@@ -129,6 +140,7 @@ export const RoleConfigForm = ({ serverId, role, schema, live = {} }: { serverId
         this.initial = Object.assign({}, this.current);
         this.ok = true;
         this.message = data.commands_staged + ' change(s) queued for the server';
+        setTimeout(() => { this.message = ''; }, 6000);
       } catch (e) {
         this.ok = false;
         this.message = 'Save failed: ' + e.message;
@@ -150,7 +162,7 @@ export const RoleConfigForm = ({ serverId, role, schema, live = {} }: { serverId
           Only the settings you change are sent.
         </p>
 
-        <form id="config-form" {...{ 'x-on:submit.prevent': 'save()' }}>
+        <form id="config-form" novalidate {...{ 'x-on:submit.prevent': 'save()' }}>
           {Array.isArray(schema) ? schema.map((item) => renderElement(item, live)) : (
             <div class="fld bad">
               Warning: No configuration options were extracted for this role.
@@ -164,8 +176,10 @@ export const RoleConfigForm = ({ serverId, role, schema, live = {} }: { serverId
           )}
         </form>
 
-        <p x-show="message" x-text="message" x-bind:class="ok ? 'ok-t' : 'bad-t'" x-cloak="true" role="status"></p>
       </section>
+
+      {/* The result of a save, where the button is: the card is usually scrolled out of sight by then */}
+      <p class="toast" x-show="message" x-text="message" x-bind:class="ok ? 'ok' : 'bad'" x-cloak="true" role="status"></p>
 
       {/* Floating save banner */}
       <div x-show="isDirty()" x-cloak {...{ "x-transition.opacity": "" }} class="savebar" role="alert">
