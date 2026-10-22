@@ -291,9 +291,10 @@ const ConVarControl = (props: { convar: string, kind: FieldKind, label: string, 
   }
 
   if (kind === 'number') {
-    // Bounds are the server's own when it reported them; a fraction (pct) is otherwise 0..1.
+    // Bounds are the server's own when it reported them; TTT2 reports none for most, and none is invented.
+    // A fraction takes any value (0.148 is as valid as 0.15), so the step never makes a saved value invalid.
     const min = lv?.min ?? 0
-    const max = lv?.max ?? (isPct ? 1 : undefined)
+    const max = lv?.max ?? undefined
     const frac = Boolean(isPct || fractional || lv?.default?.includes('.') || lv?.value?.includes('.'))
     return (
       <div class="fld">
@@ -303,7 +304,7 @@ const ConVarControl = (props: { convar: string, kind: FieldKind, label: string, 
           id={convar}
           min={min}
           max={max}
-          step={frac ? 0.01 : 1}
+          step={frac ? 'any' : 1}
           {...{ 'x-model.number': `current['${convar}']` }}
         />
       </div>

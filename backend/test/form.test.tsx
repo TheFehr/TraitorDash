@@ -28,10 +28,10 @@ describe('RoleConfigForm controls', () => {
     expect(html).not.toContain('type="range"')
   })
 
-  test('pct is bounded to 0..1 with a fine step', () => {
+  test('pct has no bound of our own and takes any fraction', () => {
     const pct = input('ttt_survivalist_pct')
-    expect(pct).toContain('max="1"')
-    expect(pct).toContain('step="0.01"')
+    expect(pct).not.toContain('max=')
+    expect(pct).toContain('step="any"')
   })
 
   test('on/off settings are toggles, including the 0/1 "…Enable" ones', () => {
@@ -149,9 +149,9 @@ describe('live ConVars without bounds (what TTT2 actually reports)', () => {
     expect(field('ttt_survivalist_traitor_button')).toContain('type="checkbox"')
   })
 
-  test('other numbers stay numbers, and pct stays limited to 0..1 with a finer step', () => {
+  test('other numbers stay numbers, and pct has no invented limit and takes any fraction', () => {
     expect(field('ttt_survivalist_random')).toContain('type="number"')
-    expect(field('ttt_survivalist_pct')).toContain('max="1"')
-    expect(field('ttt_survivalist_pct')).toContain('step="0.01"')
+    expect(field('ttt_survivalist_pct')).not.toContain('max=')
+    expect(field('ttt_survivalist_pct')).toContain('step="any"')
   })
 })
