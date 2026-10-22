@@ -194,6 +194,30 @@ describe('what a game session may do', () => {
   })
 })
 
+describe('every game page says who it takes the visitor for', () => {
+  test('"Not signed in." without a session, "Signed in as <id>." with a game session, on all four pages', async () => {
+    process.env.OPEN_SIGNIN = '1'
+    const id = round()
+    Store.setMaps(serverId, { current: 'ttt_a', next: null, gamemode: 'terrortown', pattern: null, poolBasis: 'gamemode', configSource: 'none', voteAddon: false, maps: [{ name: 'ttt_a', size: 1, fingerprint: null, matchesGamemode: true, inCycle: true, onCooldown: false, isCurrent: true, inVotePool: true, votable: false }] })
+    const c = cookieOf(await get(`/auth/game?k=${encodeURIComponent(gk.makeGameKey(P1))}&to=%2Fservers%2Fx`))!
+    for (const path of [`/servers/${serverId}/stats?embed=1&view=rounds`, `/servers/${serverId}/rounds/${id}?embed=1`, `/servers/${serverId}/maps?embed=1`, `/servers/${serverId}/maps/ttt_a/rounds?embed=1`]) {
+      expect(await (await get(path)).text(), path).toContain('Not signed in.')
+      expect(await (await get(path, { Cookie: c })).text(), path).toContain(`Signed in as ${P1}.`)
+    }
+  })
+  test('the 3D button says that opening it is logged with the SteamID64, while logging is on', async () => {
+    process.env.OPEN_SIGNIN = '1'; process.env.MAP_GEOMETRY = '1'
+    Store.setMaps(serverId, { current: 'ttt_a', next: null, gamemode: 'terrortown', pattern: null, poolBasis: 'gamemode', configSource: 'none', voteAddon: false, maps: [{ name: 'ttt_a', size: 1, fingerprint: 'f', matchesGamemode: true, inCycle: true, onCooldown: false, isCurrent: true, inVotePool: true, votable: false }] })
+    const orig = Store.getGeometryStates
+    Store.getGeometryStates = () => new Map([['ttt_a', { status: 'parsed' }]])
+    try {
+      const c = cookieOf(await get(`/auth/game?k=${encodeURIComponent(gk.makeGameKey(P1))}&to=%2Fservers%2Fx`))!
+      const html = await (await get(`/servers/${serverId}/maps/ttt_a/rounds?embed=1`, { Cookie: c })).text()
+      expect(html).toMatch(/logged with your SteamID64 for \d+ days/)
+    } finally { Store.getGeometryStates = orig; delete process.env.MAP_GEOMETRY }
+  })
+})
+
 describe('the full pages inside the game window', () => {
   test('the replay without the site header and without the Steam login, with the way back inside the window', async () => {
     process.env.OPEN_SIGNIN = '1'

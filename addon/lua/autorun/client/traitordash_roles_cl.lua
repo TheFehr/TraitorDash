@@ -52,7 +52,12 @@ end
 
 --- Takes the key the game server sent for this player. Anything that does not look like one is dropped.
 function Guide.SetKey(key)
-    if type(key) == "string" and #key <= 100 and key:match("^%d+%.%d+%.[%w_%-]+$") then Guide.key = key else Guide.key = nil end
+    if type(key) == "string" and #key <= 100 and key:match("^%d+%.%d+%.[%w_%-]+$") then
+        if not Guide.key then print("[TraitorDash] The game server vouched for you: round stats and maps can open replays and 3D views.") end
+        Guide.key = key
+    else
+        Guide.key = nil
+    end
 end
 
 --- The page of a section of the guide: "stats" (round stats) or "maps". Nil when unavailable or the name is another.

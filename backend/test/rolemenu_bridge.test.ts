@@ -213,6 +213,10 @@ describe('rolemenu.lua: the game vouches for its players (RFC 16, 4)', () => {
     expect(joined.out).toEqual({ before: 0, after: 1, n: 2 })
     expect(keySends(joined).length).toBe(2)
   })
+  test('the console says once how many keys the dashboard gave', () => {
+    const o = keyed(`TraitorDash.RoleGuide.IssueKeys(PLAYERS) TraitorDash.RoleGuide.IssueKeys(PLAYERS)`)
+    expect(o.printed.filter(p => p.includes('Got 2 key(s)')).length).toBe(1)
+  })
   test('the keys are renewed every ten minutes, for everybody in the game', () => {
     const o = keyed(`local t = TIMERS_NAMED.TraitorDash_RoleGuideKeys RESULT = { delay = t.delay, reps = t.reps } t.fn()`)
     expect(o.out).toEqual({ delay: 600, reps: 0 })
@@ -242,6 +246,10 @@ describe('traitordash_roles_cl.lua: the key', () => {
     expect(o.s).toBe('https://d.example.org/servers/abc-1/stats?embed=1')
     const roles = url(`TraitorDash.RoleGuideClient.SetKey("${KEY}") player = nil RESULT = { r = TraitorDash.RoleGuideClient.Url("sheriff") }`)
     expect(roles.r).toBe('https://d.example.org/servers/abc-1/roles/sheriff?embed=1')
+  })
+  test('the first key is announced once in the console, so a missing key is visible', () => {
+    const o = client(`TraitorDash.RoleGuideClient.SetKey("${KEY}") TraitorDash.RoleGuideClient.SetKey("${KEY}")`)
+    expect(o.printed.filter(p => p.includes('vouched for you')).length).toBe(1)
   })
   test('the message from the server sets the key', () => {
     const o = client(`TraitorDash.RoleGuideClient.SetInit("https://d.example.org", "abc-1") READ = { "${KEY}" } RECV.TraitorDash_RolesKey() RESULT = { key = TraitorDash.RoleGuideClient.key }`)

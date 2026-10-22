@@ -20,6 +20,11 @@ const Result = ({ result }: { result: string }) => <i class="res" style={`--c:${
 
 const Crumbs = ({ children }: { children: any }) => <div class="crumbs">{children}</div>
 
+/** Who the page takes the visitor for: said on every page, so a missing session is visible. */
+const Who = ({ viewer }: { viewer?: string | null }) => (
+  <p class="foot" data-viewer>{viewer ? `Signed in as ${viewer}.` : 'Not signed in.'}</p>
+)
+
 type View = 'overview' | 'leaders' | 'rounds'
 const VIEWS: { key: View, label: string }[] = [
   { key: 'overview', label: 'Overview' }, { key: 'leaders', label: 'Leaderboard' }, { key: 'rounds', label: 'Rounds' },
@@ -60,6 +65,7 @@ export interface GameStatsProps {
   canReplay: boolean
   /** Role name to `#rrggbb`. */
   colours: Record<string, string>
+  viewer?: string | null
   now?: number
 }
 
@@ -146,6 +152,7 @@ export const GameStatsPage = (p: GameStatsProps) => {
           <p class="foot">The latest {p.rounds.length} rounds. Open a round to see who played what.</p>
         </>
       )}
+      <Who viewer={p.viewer} />
     </Shell>
   )
 }
@@ -158,6 +165,8 @@ export interface GameRoundProps {
   hasReplay: boolean
   canReplay: boolean
   colours: Record<string, string>
+  viewer?: string | null
+  /** How many days a 3D view is logged (RFC 13); said next to the replay. */
   now?: number
 }
 
@@ -176,7 +185,7 @@ const bloodText = (b: FirstBlood) => {
   return b.killer && b.killer !== b.victim ? `${when}${b.killer} → ${b.victim}` : `${when}${b.victim}`
 }
 
-export const GameRoundPage = ({ server, round, deaths, firstBlood, hasReplay, canReplay, colours, now }: GameRoundProps) => {
+export const GameRoundPage = ({ server, round, deaths, firstBlood, hasReplay, canReplay, colours, viewer, now }: GameRoundProps) => {
   const id = server.id
   return (
     <Shell title={`${round.map ?? 'Round'} | ${server.name}`} embed={true}>
@@ -205,6 +214,7 @@ export const GameRoundPage = ({ server, round, deaths, firstBlood, hasReplay, ca
           </p>
         )}
       </div>
+      <Who viewer={viewer} />
     </Shell>
   )
 }
@@ -214,6 +224,7 @@ export interface GameMapsProps {
   state: MapsState | null
   maps: MapRow[]
   activity: Map<string, MapActivity>
+  viewer?: string | null
   now?: number
 }
 
@@ -241,7 +252,7 @@ const Split = ({ results, rounds }: { results: { name: string, n: number }[], ro
   </div>
 )
 
-export const GameMapsPage = ({ server, state, maps, activity, now }: GameMapsProps) => {
+export const GameMapsPage = ({ server, state, maps, activity, viewer, now }: GameMapsProps) => {
   const id = server.id
   const next = nextOf(state)
   const listed = listedMaps(maps)
@@ -268,6 +279,7 @@ export const GameMapsPage = ({ server, state, maps, activity, now }: GameMapsPro
           </div>
         )}
       <p class="foot">The maps the vote can offer.</p>
+      <Who viewer={viewer} />
     </Shell>
   )
 }
@@ -281,10 +293,13 @@ export interface GameMapProps {
   /** The map has a 3D view, and whether this visitor may open it. */
   has3d: boolean
   signedIn: boolean
+  viewer?: string | null
+  /** How many days a 3D view is logged with the viewer's SteamID64 (RFC 13); 0 means it is not. */
+  viewLogDays?: number
   now?: number
 }
 
-export const GameMapPage = ({ server, name, map, state, activity, has3d, signedIn, now }: GameMapProps) => {
+export const GameMapPage = ({ server, name, map, state, activity, has3d, signedIn, viewer, viewLogDays = 0, now }: GameMapProps) => {
   const id = server.id
   const next = nextOf(state)
   return (
@@ -308,12 +323,13 @@ export const GameMapPage = ({ server, name, map, state, activity, has3d, signedI
         {has3d && (
           <p style="margin:1rem 0 0">
             {signedIn
-              ? <a class="btn" href={`${here(id)}/maps/${encodeURIComponent(name)}${emb()}`}>View in 3D</a>
+              ? <><a class="btn" href={`${here(id)}/maps/${encodeURIComponent(name)}${emb()}`}>View in 3D</a>{viewLogDays > 0 && <span class="dim" style="margin-left:.6rem">Opening it is logged with your SteamID64 for {viewLogDays} days.</span>}</>
               : <span class="dim">This map has a 3D view. It opens for signed-in visitors.</span>}
           </p>
         )}
         <p class="foot" style="color:#6b6350">The floor plan is on the website, for admins.</p>
       </div>
+      <Who viewer={viewer} />
     </Shell>
   )
 }

@@ -180,14 +180,17 @@ function Guide.IssueKeys(players)
                 SaidOnce("keys" .. tostring(code), "Could not get keys for the players (HTTP " .. tostring(code) .. "); the in-game pages stay public only.")
                 return
             end
+            local sent = 0
             for id, key in pairs(keys) do
                 local ply = byId[id]
                 if IsValid(ply) and type(key) == "string" and #key <= MAX_KEY and key:match(KEY_SHAPE) then
                     net.Start("TraitorDash_RolesKey")
                     net.WriteString(key)
                     net.Send(ply)
+                    sent = sent + 1
                 end
             end
+            SaidOnce("keysok", "Got " .. sent .. " key(s) for the players from the dashboard (more are sent quietly from now on).")
         end,
         failed = function(err) SaidOnce("keysfail", "Could not get keys for the players: " .. tostring(err)) end,
     })
