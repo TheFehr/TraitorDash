@@ -1,6 +1,9 @@
 import { Hono } from 'hono'
 import { setSignedCookie, setCookie, getCookie, deleteCookie } from 'hono/cookie'
-import { SESSION_SECRET, SESSION_COOKIE, SESSION_COOKIE_SECURE, isAdmin, openSignin, isBlocked, safeNext } from '../middleware/session'
+import { SESSION_SECRET, SESSION_COOKIE, GAME_COOKIE, SESSION_COOKIE_SECURE, isAdmin, openSignin, isBlocked, safeNext, maySignIn } from '../middleware/session'
+import { readGameKey, GAME_SESSION_SECONDS } from '../services/gameKey'
+import { clientAddress } from '../services/gates'
+import { RateLimiter } from '../services/rateLimit'
 
 const auth = new Hono()
 
@@ -129,9 +132,40 @@ auth.get('/steam/callback', async (c) => {
   }
 })
 
+// A game vouches for a player (RFC 16, 4). The key in the link says which player the game server
+// had in front of it a moment ago; it gives a game session: a plain user, never an admin, in a cookie
+// of its own, under the same switches as a sign-in. It then goes on to a page of the same site.
+export const gameLimiter = new RateLimiter(30, 60_000)
+
+auth.get('/game', async (c) => {
+  const address = clientAddress(c)
+  const wait = address ? gameLimiter.hit(address) : 0
+  if (wait > 0) {
+    c.header('Retry-After', String(wait))
+    return c.text('Too many requests; slow down', 429)
+  }
+  const to = safeNext(c.req.query('to'))
+  const target = to && to.startsWith('/servers/') ? to : '/'
+  const steamId = readGameKey(c.req.query('k'))
+  // A bad or old key is not an error page: the player lands on the same page without a session.
+  if (steamId && maySignIn(steamId)) {
+    await setSignedCookie(c, GAME_COOKIE, steamId, SESSION_SECRET, {
+      path: '/',
+      httpOnly: true,
+      secure: SESSION_COOKIE_SECURE || process.env.NODE_ENV === 'production',
+      maxAge: GAME_SESSION_SECONDS,
+      sameSite: 'Lax',
+    })
+  }
+  c.header('Referrer-Policy', 'no-referrer')
+  c.header('Cache-Control', 'no-store')
+  return c.redirect(target)
+})
+
 // POST only: a GET could be triggered by any page (an image tag) and log the admin out.
 auth.post('/logout', (c) => {
   deleteCookie(c, SESSION_COOKIE, { path: '/', secure: SESSION_COOKIE_SECURE })
+  deleteCookie(c, GAME_COOKIE, { path: '/', secure: SESSION_COOKIE_SECURE })
   return c.redirect('/')
 })
 

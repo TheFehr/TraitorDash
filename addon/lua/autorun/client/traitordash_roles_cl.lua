@@ -16,6 +16,7 @@ Guide.base = nil
 Guide.serverId = nil
 Guide.wanted = nil     -- a role name to open on, consumed by the tab when it is built
 Guide.announced = false
+Guide.key = nil        -- what the game server sent to vouch for this player (RFC 16, 4)
 
 --- True when the server has told us where the guide is.
 function Guide.Available()
@@ -45,11 +46,24 @@ function Guide.SetInit(base, serverId)
     end
 end
 
+local function Encode(text)
+    return (text:gsub("[^%w%-_%.~]", function(c) return string.format("%%%02X", c:byte()) end))
+end
+
+--- Takes the key the game server sent for this player. Anything that does not look like one is dropped.
+function Guide.SetKey(key)
+    if type(key) == "string" and #key <= 100 and key:match("^%d+%.%d+%.[%w_%-]+$") then Guide.key = key else Guide.key = nil end
+end
+
 --- The page of a section of the guide: "stats" (round stats) or "maps". Nil when unavailable or the name is another.
+-- With a key the address goes through the dashboard's game sign-in, which sets a session for this player
+-- (a plain user) and then goes on to the page; without one it is the page itself, which is public.
 function Guide.SectionUrl(section)
     if not Guide.Available() then return nil end
     if section ~= "stats" and section ~= "maps" then return nil end
-    return Guide.base .. "/servers/" .. Guide.serverId .. "/" .. section .. "?embed=1"
+    local path = "/servers/" .. Guide.serverId .. "/" .. section .. "?embed=1"
+    if Guide.key then return Guide.base .. "/auth/game?k=" .. Guide.key .. "&to=" .. Encode(path) end
+    return Guide.base .. path
 end
 
 --- A browser panel on `url`, as tall as the visible area of the menu page it sits in.
@@ -110,6 +124,10 @@ end
 
 net.Receive("TraitorDash_RolesInit", function()
     Guide.SetInit(net.ReadString(), net.ReadString())
+end)
+
+net.Receive("TraitorDash_RolesKey", function()
+    Guide.SetKey(net.ReadString())
 end)
 
 net.Receive("TraitorDash_RolesOpen", function()

@@ -383,22 +383,25 @@ app.get('/servers/:serverId/maps/:map', async (c) => {
   if (!found) return c.redirect('/')
   const { serverId, server } = found
   const name = c.req.param('map')
-  if (!session) return c.redirect(signinOr(`/servers/${serverId}/maps/${encodeURIComponent(name)}`, `/servers/${serverId}/maps`))
+  const embed = isEmbed(c)
+  // In the game nobody is sent to the Steam login: without a session the map's rounds page is the answer.
+  const back = embed ? `/servers/${serverId}/maps/${encodeURIComponent(name)}/rounds?embed=1` : `/servers/${serverId}/maps`
+  if (!session) return c.redirect(embed ? back : signinOr(`/servers/${serverId}/maps/${encodeURIComponent(name)}`, `/servers/${serverId}/maps`))
 
   const { state, maps } = Store.getMaps(serverId)
   const map = maps.find(m => m.name === name) ?? null
   const grid = Store.getMapPlan(serverId, name)
-  if (!map && !grid) return c.redirect(`/servers/${serverId}/maps`)
+  if (!map && !grid) return c.redirect(embed ? `/servers/${serverId}/maps?embed=1` : `/servers/${serverId}/maps`)
 
   const g = Store.getGeometryStates(serverId).get(name)
-  if (!session.admin && (!geometryEnabled() || g?.status !== 'parsed')) return c.redirect(`/servers/${serverId}/maps`) // nothing for a plain user to see
+  if (!session.admin && (!geometryEnabled() || g?.status !== 'parsed')) return c.redirect(back) // nothing for a plain user to see
 
   const meta = session.admin ? Store.getMapPlans(serverId).find(p => p.map === name) : undefined
   const plan = meta && grid ? { ...meta, levels: planLevels(JSON.parse(grid)) } : null
   const next = state && state.next && state.next !== state.current ? state.next : null
   return c.html(
-    <Layout {...identity(session)} path="/">
-      <MapPage server={server} map={map} name={name} next={next} plan={plan} admin={session.admin}
+    <Layout {...identity(session)} path="/" embed={embed}>
+      <MapPage server={server} map={map} name={name} next={next} plan={plan} admin={session.admin} embed={embed}
         geometry={geometryEnabled() && map ? geometryProp(serverId, name) : undefined} />
     </Layout>
   )
@@ -417,7 +420,8 @@ app.get('/servers/:serverId/maps/:map/rounds', async (c) => {
   const map = maps.find(m => m.name === name) ?? null
   const activity = stats.getMapActivity(serverId).get(name) ?? null
   if (!map && !activity) return gameResponse(c, <GameNotFound what="map" />, 404)
-  return gameResponse(c, <GameMapPage server={server} name={name} map={map} state={state} activity={activity} />)
+  const has3d = geometryEnabled() && Store.getGeometryStates(serverId).get(name)?.status === 'parsed'
+  return gameResponse(c, <GameMapPage server={server} name={name} map={map} state={state} activity={activity} has3d={has3d} signedIn={!!(await getSession(c))} />)
 })
 
 /** A stored floor plan drawn as a picture (RFC 10, 4.5). Admins only; nothing in it can run or load anything. */
@@ -540,14 +544,16 @@ app.get('/servers/:serverId/rounds/:roundId/replay', async (c) => {
   const query = bots ? '?bots=1' : ''
   const here = `/servers/${serverId}/rounds/${encodeURIComponent(roundId)}/replay${query}`
   const session = await getSession(c)
-  if (!session) return c.redirect(signinOr(here, `/servers/${serverId}/stats`))
+  const embed = isEmbed(c)
+  const toStats = embed ? `/servers/${serverId}/stats?embed=1&view=rounds` : `/servers/${serverId}/stats`
+  if (!session) return c.redirect(embed ? `/servers/${serverId}/rounds/${encodeURIComponent(roundId)}?embed=1` : signinOr(here, toStats))
 
   const round = stats.getReplayRound(serverId, roundId, { bots })
-  if (!round) return c.redirect(`/servers/${serverId}/stats`)
+  if (!round) return c.redirect(toStats)
   const track = Store.getTrack(serverId, roundId)
   return c.html(
-    <Layout {...identity(session)} path="/">
-      <ReplayPage server={server} round={{ id: round.roundId, map: round.map, result: round.result, duration: round.duration }}
+    <Layout {...identity(session)} path="/" embed={embed}>
+      <ReplayPage embed={embed} server={server} round={{ id: round.roundId, map: round.map, result: round.result, duration: round.duration }}
         hasTrack={!!track} src={`/servers/${serverId}/rounds/${encodeURIComponent(roundId)}/track.json${query}`}
         viewer={session.steamId} admin={session.admin} pinned={!!track?.meta.pinned} here={here}
         pinnedCount={session.admin ? { used: Store.getTrackUsage(serverId).pinned, max: Store.getTrackConfig().maxPinned } : undefined} />

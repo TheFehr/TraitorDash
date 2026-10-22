@@ -11,7 +11,8 @@ import { formatCode } from '../services/pairing'
 import { validateTrack, MAX_TRACK_BYTES } from '../services/tracks'
 import { refreshWorkshopText } from '../services/workshopText'
 import { NONCE, signResponse } from '../services/signing'
-import { FINGERPRINT, NAME, ROUND_ID, STEAM_ID, WSID } from '../services/validators'
+import { FINGERPRINT, NAME, ROUND_ID, STEAM_ID, STEAM_ID64, WSID } from '../services/validators'
+import { makeGameKey, KEY_TTL_SECONDS } from '../services/gameKey'
 
 type Variables = {
   server: {
@@ -542,6 +543,27 @@ api.post('/v1/roledescriptions', getServer, async (c) => {
   Store.updateHeartbeat(server.id)
   console.log(`[RoleNotes] Report from ${server.name}: ${rows.length} descriptions`)
   return c.json({ success: true, roles: rows.length })
+})
+
+// A game vouches for its players (RFC 16, 4): the bridge sends the SteamID64s of the players in the
+// game and gets one short-lived key for each, which the client puts into the link it opens. The
+// key can be made only with the server's token, so a player cannot make one for somebody else.
+export const ingameKeysLimiter = new RateLimiter(6, 60_000)
+const MAX_KEY_PLAYERS = 128
+
+api.post('/v1/ingame-keys', getServer, async (c) => {
+  const server = c.get('server')
+  const wait = ingameKeysLimiter.hit(server.id)
+  if (wait > 0) return tooMany(c, wait, 'Too many key requests; slow down')
+  const read = await readJson(c, 64 * 1024)
+  if (read.tooLarge) return c.json({ error: 'the request is too large' }, 413)
+  const players = read.body?.players
+  if (!Array.isArray(players) || players.length > MAX_KEY_PLAYERS) return c.json({ error: `players must be a list of at most ${MAX_KEY_PLAYERS} SteamID64s` }, 400)
+  if (!players.every((p: unknown) => typeof p === 'string' && STEAM_ID64.test(p))) return c.json({ error: 'players must be SteamID64s' }, 400)
+  const now = Date.now()
+  const keys: Record<string, string> = {}
+  for (const id of new Set(players as string[])) keys[id] = makeGameKey(id, now)
+  return c.json({ success: true, keys, ttl: KEY_TTL_SECONDS })
 })
 
 // The bridge uploads a finished floor-plan scan (RFC 10, 4.5). The latest plan per map is kept.

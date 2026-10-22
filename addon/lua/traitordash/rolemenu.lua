@@ -28,6 +28,7 @@ local lastAsk = {}    -- steam id -> SysTime of the last accepted request
 if SERVER then
     util.AddNetworkString("TraitorDash_RolesInit")
     util.AddNetworkString("TraitorDash_RolesOpen")
+    util.AddNetworkString("TraitorDash_RolesKey")
 end
 
 local function SaidOnce(key, text)
@@ -138,6 +139,79 @@ function Guide.OnChat(ply, text)
     return nil
 end
 
+-- The game vouches for its players (RFC 16, 4). The dashboard makes a short-lived key for each
+-- player we name, and only for the server's token; the client puts it into the link it opens, and
+-- the dashboard turns it into a session of a plain user. The key is a value the dashboard made: it is
+-- checked for its shape here and sent only to the player it was made for.
+local KEY_SHAPE = "^%d+%.%d+%.[%w_%-]+$"
+local MAX_KEY = 100
+local KEY_EVERY = 600       -- seconds between two rounds of keys (a key lives 15 minutes)
+local KEY_BATCH_WAIT = 3    -- seconds to collect players who join together
+local pendingKeys = {}      -- steam id 64 -> true
+
+--- Asks for a key for each of `players` (Player objects) and sends each its own. Returns how many were asked for.
+function Guide.IssueKeys(players)
+    if Guide.state ~= "on" then return 0 end
+    local cfg = TraitorDash.GetConfig and TraitorDash.GetConfig()
+    if not cfg or not cfg.url or cfg.token == "" then return 0 end
+    local ids, byId = {}, {}
+    for _, ply in ipairs(players) do
+        if IsValid(ply) and not (ply.IsBot and ply:IsBot()) then
+            local id = ply:SteamID64()
+            if type(id) == "string" and id:match("^%d+$") and #id == 17 and not byId[id] and #ids < Util.MAX_PLAYERS then
+                ids[#ids + 1] = id
+                byId[id] = ply
+            end
+        end
+    end
+    if #ids == 0 then return 0 end
+    local payload = util.TableToJSON({ players = ids })
+    if not payload or payload == "" then return 0 end
+    HTTP({
+        url = cfg.url .. "/api/v1/ingame-keys",
+        method = "POST",
+        headers = { ["Content-Type"] = "application/json", ["Authorization"] = "Bearer " .. cfg.token },
+        body = payload,
+        timeout = 15,
+        success = function(code, body)
+            local parsed = code == 200 and type(body) == "string" and util.JSONToTable(body) or nil
+            local keys = type(parsed) == "table" and parsed.keys or nil
+            if type(keys) ~= "table" then
+                SaidOnce("keys" .. tostring(code), "Could not get keys for the players (HTTP " .. tostring(code) .. "); the in-game pages stay public only.")
+                return
+            end
+            for id, key in pairs(keys) do
+                local ply = byId[id]
+                if IsValid(ply) and type(key) == "string" and #key <= MAX_KEY and key:match(KEY_SHAPE) then
+                    net.Start("TraitorDash_RolesKey")
+                    net.WriteString(key)
+                    net.Send(ply)
+                end
+            end
+        end,
+        failed = function(err) SaidOnce("keysfail", "Could not get keys for the players: " .. tostring(err)) end,
+    })
+    return #ids
+end
+
+--- Collects joining players and asks for their keys in one request.
+local function QueueKey(ply)
+    if not IsValid(ply) then return end
+    local id = ply:SteamID64()
+    if type(id) ~= "string" then return end
+    local first = next(pendingKeys) == nil
+    pendingKeys[id] = true
+    if not first then return end
+    timer.Simple(KEY_BATCH_WAIT, function()
+        local list = {}
+        for _, p in ipairs(player.GetAll()) do
+            if pendingKeys[p:SteamID64() or ""] then list[#list + 1] = p end
+        end
+        pendingKeys = {}
+        Guide.IssueKeys(list)
+    end)
+end
+
 --- Works out the base and asks the dashboard for the server's id. Safe to call again.
 function Guide.Start()
     local cfg = TraitorDash.GetConfig and TraitorDash.GetConfig()
@@ -170,6 +244,7 @@ function Guide.Start()
             Guide.serverId, Guide.state, Guide.reason = id, "on", "on"
             print("[TraitorDash] Role guide is on (" .. base .. ").")
             Guide.SendInit(nil)
+            Guide.IssueKeys(player.GetAll())
         end,
         failed = function(err)
             Guide.state, Guide.reason = "off", "whoami failed: " .. tostring(err)
@@ -181,8 +256,13 @@ end
 hook.Add("PlayerSay", "TraitorDash_RoleGuide", function(ply, text) return Guide.OnChat(ply, text) end)
 hook.Add("PlayerInitialSpawn", "TraitorDash_RoleGuide", function(ply)
     -- the client is not ready for a net message at the moment it spawns
-    timer.Simple(5, function() if IsValid(ply) then Guide.SendInit(ply) end end)
+    timer.Simple(5, function()
+        if not IsValid(ply) then return end
+        Guide.SendInit(ply)
+        QueueKey(ply)
+    end)
 end)
+timer.Create("TraitorDash_RoleGuideKeys", KEY_EVERY, 0, function() Guide.IssueKeys(player.GetAll()) end)
 
 concommand.Add("traitordash_role", function(ply, _, args)
     if not IsValid(ply) then print("[TraitorDash] Role guide: " .. Guide.state .. " (" .. tostring(Guide.reason) .. ")"); return end

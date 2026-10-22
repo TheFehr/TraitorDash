@@ -6,8 +6,8 @@ import type { MapRow, MapsState } from '../services/Store'
 
 // The Round stats and Maps pages as the game shows them (RFC 16): the case-file look of the role
 // guide, no site header, no admin controls, no script. Every link keeps `embed=1`, so the player
-// never leaves the panel. What is only for signed-in visitors on the website (replays, floor plans,
-// the 3D view) is not offered here, and the page says so where it would have been.
+// never leaves the panel. What is only for signed-in visitors (replays, the 3D view) is offered to a visitor with a session, which
+// the game can vouch for (RFC 16, 4); floor plans stay admin-only and are on the website.
 
 const here = (serverId: string) => `/servers/${serverId}`
 const emb = (extra = '') => `?embed=1${extra}`
@@ -134,7 +134,7 @@ export const GameStatsPage = (p: GameStatsProps) => {
                     <td class="r">
                       {p.tracked.has(r.roundId)
                         ? p.canReplay
-                          ? <a class="tape" href={`${here(id)}/rounds/${encodeURIComponent(r.roundId)}/replay`}>▶ Replay</a>
+                          ? <a class="tape" href={`${here(id)}/rounds/${encodeURIComponent(r.roundId)}/replay${emb()}`}>▶ Replay</a>
                           : <i class="tape off">Replay</i>
                         : <span class="dim">–</span>}
                     </td>
@@ -200,8 +200,8 @@ export const GameRoundPage = ({ server, round, deaths, firstBlood, hasReplay, ca
         {hasReplay && (
           <p style="margin:1rem 0 0">
             {canReplay
-              ? <a class="btn" href={`${here(id)}/rounds/${encodeURIComponent(round.roundId)}/replay`}>▶ Watch the replay</a>
-              : <span class="dim">This round has a replay. It opens on the website for signed-in visitors.</span>}
+              ? <a class="btn" href={`${here(id)}/rounds/${encodeURIComponent(round.roundId)}/replay${emb()}`}>▶ Watch the replay</a>
+              : <span class="dim">This round has a replay. It opens for signed-in visitors.</span>}
           </p>
         )}
       </div>
@@ -267,7 +267,7 @@ export const GameMapsPage = ({ server, state, maps, activity, now }: GameMapsPro
             })}
           </div>
         )}
-      <p class="foot">The maps the vote can offer. Floor plans and the 3D view are on the website.</p>
+      <p class="foot">The maps the vote can offer.</p>
     </Shell>
   )
 }
@@ -278,10 +278,13 @@ export interface GameMapProps {
   map: MapRow | null
   state: MapsState | null
   activity: MapActivity | null
+  /** The map has a 3D view, and whether this visitor may open it. */
+  has3d: boolean
+  signedIn: boolean
   now?: number
 }
 
-export const GameMapPage = ({ server, name, map, state, activity, now }: GameMapProps) => {
+export const GameMapPage = ({ server, name, map, state, activity, has3d, signedIn, now }: GameMapProps) => {
   const id = server.id
   const next = nextOf(state)
   return (
@@ -302,7 +305,14 @@ export const GameMapPage = ({ server, name, map, state, activity, now }: GameMap
             {activity.results.slice(0, 5).map(r => <Bar label={teamLabel(r.name)} part={r.n} whole={activity.rounds} colour={teamHex(r.name)} />)}
           </>
         ) : <p class="none">No round has been played on this map yet.</p>}
-        <p class="foot" style="color:#6b6350">The floor plan and the 3D view are on the website.</p>
+        {has3d && (
+          <p style="margin:1rem 0 0">
+            {signedIn
+              ? <a class="btn" href={`${here(id)}/maps/${encodeURIComponent(name)}${emb()}`}>View in 3D</a>
+              : <span class="dim">This map has a 3D view. It opens for signed-in visitors.</span>}
+          </p>
+        )}
+        <p class="foot" style="color:#6b6350">The floor plan is on the website, for admins.</p>
       </div>
     </Shell>
   )

@@ -19,6 +19,7 @@ const PRELUDE = `
   print = function(...) local o = {} for i = 1, select("#", ...) do o[i] = tostring((select(i, ...))) end PRINTED[#PRINTED + 1] = table.concat(o, " ") end
 
   util = { AddNetworkString = function() end,
+    TableToJSON = function(t) LAST_JSON = t return "{json}" end,
     JSONToTable = function(s) local t = {} for k, v in s:gmatch('"([%w_]+)"%s*:%s*"([^"]*)"') do t[k] = v end return t end }
 
   -- the fake net: strings only, like the messages in question
@@ -36,7 +37,11 @@ const PRELUDE = `
   HOOKS = {}
   hook = { Add = function(ev, id, fn) HOOKS[ev] = HOOKS[ev] or {} HOOKS[ev][id] = fn end }
   TIMERS = {}
-  timer = { Simple = function(d, fn) TIMERS[#TIMERS + 1] = fn end }
+  TIMERS_NAMED = {}
+  timer = { Simple = function(d, fn) TIMERS[#TIMERS + 1] = fn end, Create = function(n, d, r, fn) TIMERS_NAMED[n] = { delay = d, reps = r, fn = fn } end }
+  PLAYERS = {}
+  player = { GetAll = function() return PLAYERS end }
+  IsValid = function(o) return o ~= nil end
   function RunTimers() local t = TIMERS TIMERS = {} for _, fn in ipairs(t) do fn() end end
   CMDS = {}
   concommand = { Add = function(n, fn) CMDS[n] = fn end }
@@ -57,7 +62,7 @@ const PRELUDE = `
 
   CHAT = {}
   function Player(id, role)
-    return { id = id, role = role, SteamID64 = function(s) return s.id end,
+    return { id = id, role = role, SteamID64 = function(s) return s.id end, IsBot = function() return false end,
       ChatPrint = function(s, t) CHAT[#CHAT + 1] = { s.id, t } end,
       GetSubRoleData = function(s) return { name = s.role } end }
   end
@@ -145,6 +150,102 @@ describe('rolemenu.lua: turning on', () => {
     expect(on1.sent).toEqual([{ name: 'TraitorDash_RolesInit', vals: ['https://dash.example.org', 'srv-1'], to: expect.anything() }])
     const off = play(`PUBLIC = "" ${on} HOOKS.PlayerInitialSpawn.TraitorDash_RoleGuide(ALICE) RunTimers()`)
     expect(off.sent).toEqual([])
+  })
+})
+
+describe('rolemenu.lua: the game vouches for its players (RFC 16, 4)', () => {
+  const A = '76561198000000011', B = '76561198000000012'
+  const KEY_A = A + '.1900000000.abcDEF123_-', KEY_B = B + '.1900000000.zzzDEF123_-'
+  // after the guide is on: two players, and a dashboard that answers the key request with KEYS
+  const keyed = (script: string, keys = `{ ["${A}"] = "${KEY_A}", ["${B}"] = "${KEY_B}" }`) => play(`${on}
+    PLAYERS = { Player("${A}", "traitor"), Player("${B}", "innocent") } PA, PB = PLAYERS[1], PLAYERS[2]
+    KEYS = ${keys} util.JSONToTable = function() return { keys = KEYS } end
+    HTTPREPLY = { code = 200, body = "{}" } SENT = {} HTTPCALLS = {}
+    ${script}`)
+  const client = (script: string) => play(`${on} SENT = {} ${script}`)
+  const keySends = (o: Out) => o.sent.filter(m => m.name === 'TraitorDash_RolesKey')
+
+  test('asks for a key per player with the server token and sends each one its own, and only its own', () => {
+    const o = keyed(`RESULT = { n = TraitorDash.RoleGuide.IssueKeys(PLAYERS), body = LAST_JSON.players, url = HTTPCALLS[1].url, auth = HTTPCALLS[1].headers.Authorization }`)
+    expect(o.out).toEqual({ n: 2, body: ['76561198000000011', '76561198000000012'], url: 'http://10.0.0.5:3000/api/v1/ingame-keys', auth: 'Bearer tok' })
+    const sends = keySends(o)
+    expect(sends.map(m => m.vals)).toEqual([[KEY_A], [KEY_B]])
+    expect(sends[0].to.id).toBe(A)
+    expect(sends[1].to.id).toBe(B)
+  })
+  test('bots, ids that are not SteamID64s and a player counted twice are left out', () => {
+    const o = keyed(`local bot = Player("${B}", "x") bot.IsBot = function() return true end
+      local odd = Player("1", "x")
+      RESULT = { n = TraitorDash.RoleGuide.IssueKeys({ PA, PA, bot, odd }), body = LAST_JSON.players }`)
+    expect(o.out).toEqual({ n: 1, body: [A] })
+  })
+  test('a key that does not look like one, one for somebody who is not asked for, or for a player who left is not sent', () => {
+    const o = keyed(`TraitorDash.RoleGuide.IssueKeys(PLAYERS)`, `{ ["${A}"] = "<script>", ["${B}"] = "${KEY_B}", ["76561198000000099"] = "${KEY_A}" }`)
+    expect(keySends(o).map(m => m.vals)).toEqual([[KEY_B]])
+    const left = keyed(`HTTP = function(req) HTTPCALLS[#HTTPCALLS + 1] = req SAVED = req end TraitorDash.RoleGuide.IssueKeys(PLAYERS) IsValid = function(p) return p ~= PB end SAVED.success(200, "{}")`)
+    expect(keySends(left).map(m => m.vals)).toEqual([[KEY_A]])
+  })
+  test('a key longer than 100 characters is not sent', () => {
+    const o = keyed(`TraitorDash.RoleGuide.IssueKeys(PLAYERS)`, `{ ["${A}"] = "${A}.1900000000.${'x'.repeat(100)}" }`)
+    expect(keySends(o)).toEqual([])
+  })
+  test('nothing is asked while the guide is off, or without a configuration, or with nobody there', () => {
+    const off = play(`PUBLIC = "" ${on} PLAYERS = { Player("${A}", "x") } HTTPCALLS = {} RESULT = { n = TraitorDash.RoleGuide.IssueKeys(PLAYERS), http = #HTTPCALLS }`)
+    expect(off.out).toEqual({ n: 0, http: 0 })
+    const none = keyed(`TraitorDash.GetConfig = function() return { url = nil, token = "" } end RESULT = { n = TraitorDash.RoleGuide.IssueKeys(PLAYERS), http = #HTTPCALLS }`)
+    expect(none.out).toEqual({ n: 0, http: 0 })
+    expect(keyed(`RESULT = { n = TraitorDash.RoleGuide.IssueKeys({}), http = #HTTPCALLS }`).out).toEqual({ n: 0, http: 0 })
+  })
+  test('a failing or refusing dashboard sends nothing and says so once', () => {
+    for (const reply of ['{ code = 500, body = "" }', '{ fail = "timeout" }', '{ code = 429, body = "x" }']) {
+      const o = keyed(`HTTPREPLY = ${reply} util.JSONToTable = function() return nil end TraitorDash.RoleGuide.IssueKeys(PLAYERS) TraitorDash.RoleGuide.IssueKeys(PLAYERS)`)
+      expect(keySends(o), reply).toEqual([])
+      expect(o.printed.filter(p => p.includes('Could not get keys')).length, reply).toBe(1)
+    }
+  })
+  test('when the guide comes on everybody there gets a key; a player who joins gets one after five seconds, together with others who join at once', () => {
+    const start = play(`PLAYERS = { Player("${A}", "x") } KEYS = { ["${A}"] = "${KEY_A}" } util.JSONToTable = function() return { server_id = "srv-1", keys = KEYS } end
+      HTTPREPLY = { code = 200, body = "ok" } ${on}`)
+    expect(play(`${on}`).http).toBe(1) // whoami only: nobody in the game
+    expect(start.http).toBe(2)         // whoami, then the keys
+    const joined = keyed(`SENT = {} HTTPCALLS = {} local hook = HOOKS.PlayerInitialSpawn.TraitorDash_RoleGuide
+      hook(PA) hook(PB) RunTimers() RESULT = { before = #HTTPCALLS } RunTimers() RESULT.after = #HTTPCALLS RESULT.n = #LAST_JSON.players`)
+    expect(joined.out).toEqual({ before: 0, after: 1, n: 2 })
+    expect(keySends(joined).length).toBe(2)
+  })
+  test('the keys are renewed every ten minutes, for everybody in the game', () => {
+    const o = keyed(`local t = TIMERS_NAMED.TraitorDash_RoleGuideKeys RESULT = { delay = t.delay, reps = t.reps } t.fn()`)
+    expect(o.out).toEqual({ delay: 600, reps: 0 })
+    expect(keySends(o).length).toBe(2)
+  })
+})
+
+describe('traitordash_roles_cl.lua: the key', () => {
+  const client = (script: string) => play(`${on} SENT = {} ${script}`)
+  const KEY = '76561198000000011.1900000000.abcDEF123_-'
+  const url = (script: string) => client(`TraitorDash.RoleGuideClient.SetInit("https://d.example.org", "abc-1") ${script}`).out
+  test('with a key the page address goes through the game sign-in, which carries the page to open, encoded', () => {
+    const o = url(`TraitorDash.RoleGuideClient.SetKey("${KEY}") RESULT = { s = TraitorDash.RoleGuideClient.SectionUrl("stats"), m = TraitorDash.RoleGuideClient.SectionUrl("maps") }`)
+    expect(o.s).toBe(`https://d.example.org/auth/game?k=${KEY}&to=%2Fservers%2Fabc-1%2Fstats%3Fembed%3D1`)
+    expect(o.m).toBe(`https://d.example.org/auth/game?k=${KEY}&to=%2Fservers%2Fabc-1%2Fmaps%3Fembed%3D1`)
+  })
+  test('without a key, or with one that does not look like one, it is the page itself', () => {
+    expect(url(`RESULT = { s = TraitorDash.RoleGuideClient.SectionUrl("stats") }`).s).toBe('https://d.example.org/servers/abc-1/stats?embed=1')
+    for (const bad of ['', 'x', 'a&b.1.c', '1.2.<s>', '1.2.' + 'x'.repeat(120), '../../x']) {
+      expect(url(`TraitorDash.RoleGuideClient.SetKey("${bad}") RESULT = { s = TraitorDash.RoleGuideClient.SectionUrl("maps") }`).s, bad).toBe('https://d.example.org/servers/abc-1/maps?embed=1')
+    }
+    expect(url(`TraitorDash.RoleGuideClient.SetKey(nil) RESULT = { s = TraitorDash.RoleGuideClient.SectionUrl("maps") }`).s).toBe('https://d.example.org/servers/abc-1/maps?embed=1')
+  })
+  test('a later bad key removes the earlier one; the role guide never uses the key', () => {
+    const o = url(`TraitorDash.RoleGuideClient.SetKey("${KEY}") TraitorDash.RoleGuideClient.SetKey("junk")
+      RESULT = { s = TraitorDash.RoleGuideClient.SectionUrl("stats") }`)
+    expect(o.s).toBe('https://d.example.org/servers/abc-1/stats?embed=1')
+    const roles = url(`TraitorDash.RoleGuideClient.SetKey("${KEY}") player = nil RESULT = { r = TraitorDash.RoleGuideClient.Url("sheriff") }`)
+    expect(roles.r).toBe('https://d.example.org/servers/abc-1/roles/sheriff?embed=1')
+  })
+  test('the message from the server sets the key', () => {
+    const o = client(`TraitorDash.RoleGuideClient.SetInit("https://d.example.org", "abc-1") READ = { "${KEY}" } RECV.TraitorDash_RolesKey() RESULT = { key = TraitorDash.RoleGuideClient.key }`)
+    expect(o.out.key).toBe(KEY)
   })
 })
 

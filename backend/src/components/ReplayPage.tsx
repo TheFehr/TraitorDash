@@ -20,30 +20,36 @@ export interface ReplayPageProps {
   /** Where to come back to after pinning. */
   here: string
   pinnedCount?: { used: number, max: number }
+  /** In the game's window (RFC 16): no site links, and the way back stays in the window. */
+  embed?: boolean
 }
 
-export const ReplayPage = ({ server, round, hasTrack, src, viewer, admin, pinned, here, pinnedCount }: ReplayPageProps) => (
+export const ReplayPage = ({ server, round, hasTrack, src, viewer, admin, pinned, here, pinnedCount, embed }: ReplayPageProps) => (
   <div class="p-4 sm:p-8 space-y-6">
     <header>
-      <nav class="text-xs font-black text-gray-500 uppercase tracking-widest mb-4 flex flex-wrap gap-x-2">
-        <a href="/" class="hover:text-white transition">Dashboard</a>
-        <span>/</span>
-        <a href={`/servers/${server.id}/stats`} class="hover:text-white transition">{server.name}</a>
-        <span>/</span>
-        <span class="text-red-500">Replay</span>
-      </nav>
+      {embed
+        ? <nav class="text-xs font-black text-gray-500 uppercase tracking-widest mb-4"><a href={`/servers/${server.id}/stats?embed=1&view=rounds`} class="hover:text-white transition">← Rounds</a></nav>
+        : (
+          <nav class="text-xs font-black text-gray-500 uppercase tracking-widest mb-4 flex flex-wrap gap-x-2">
+            <a href="/" class="hover:text-white transition">Dashboard</a>
+            <span>/</span>
+            <a href={`/servers/${server.id}/stats`} class="hover:text-white transition">{server.name}</a>
+            <span>/</span>
+            <span class="text-red-500">Replay</span>
+          </nav>
+        )}
       <h1 class="text-3xl sm:text-5xl font-black mb-2 break-words">Round replay</h1>
       <p class="text-gray-400">
         {round.map ?? 'unknown map'} · {round.result} · {duration(round.duration)}
         {pinned && <span data-pinned class="ml-2 inline-block text-[10px] font-black uppercase tracking-widest border border-yellow-500/50 text-yellow-400 rounded px-2 py-0.5">Pinned</span>}
       </p>
-      <SectionLinks serverId={server.id} />
+      {!embed && <SectionLinks serverId={server.id} />}
     </header>
 
     {!hasTrack ? (
       <div data-no-track class="bg-gray-800 border border-gray-700 rounded-xl p-6 text-gray-300">
         There is no recorded track for this round. Tracks are recorded only when the game server has position tracking on, and older ones are removed to keep room.
-        <p class="mt-3"><a class="underline hover:text-white" href={`/servers/${server.id}/stats`}>Back to the round stats</a></p>
+        <p class="mt-3"><a class="underline hover:text-white" href={`/servers/${server.id}/stats${embed ? '?embed=1&view=rounds' : ''}`}>Back to the round stats</a></p>
       </div>
     ) : (
       <div data-replay data-src={src} data-viewer={viewer} class="grid lg:grid-cols-[minmax(0,1fr)_20rem] gap-4">

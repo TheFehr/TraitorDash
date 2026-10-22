@@ -23,6 +23,8 @@ export const SESSION_SECRET = loadSessionSecret()
 // or overwrite it. Plain http (local development) keeps the unprefixed name.
 export const SESSION_COOKIE_SECURE = /^https:\/\//i.test((process.env.BASE_URL || '').trim())
 export const SESSION_COOKIE = SESSION_COOKIE_SECURE ? '__Host-steam_id' : 'steam_id'
+/** The session a game vouches for (RFC 16, 4): a separate cookie, so it can never be taken for a sign-in, and never an admin's. */
+export const GAME_COOKIE = SESSION_COOKIE_SECURE ? '__Host-td_game' : 'td_game'
 
 // Comma-separated SteamID64s allowed to administer. Empty list = nobody (fail closed).
 const ADMIN_STEAM_IDS = new Set(
@@ -58,8 +60,12 @@ export interface Session { steamId: string, admin: boolean }
  */
 export const getSession = async (c: any): Promise<Session | null> => {
   const steamId = await getSignedCookie(c, SESSION_SECRET, SESSION_COOKIE)
-  if (!steamId || !maySignIn(steamId)) return null
-  return { steamId, admin: isAdmin(steamId) }
+  if (steamId && maySignIn(steamId)) return { steamId, admin: isAdmin(steamId) }
+  // Failing that, a session the game vouched for (RFC 16, 4). It is a plain user whoever it is for,
+  // an admin included, and it follows the same switches: open sign-in, the block list.
+  const vouched = await getSignedCookie(c, SESSION_SECRET, GAME_COOKIE)
+  if (vouched && maySignIn(vouched)) return { steamId: vouched, admin: false }
+  return null
 }
 
 /** Returns the SteamID64 of the logged-in admin, or null. Re-checks the allowlist on every call. */

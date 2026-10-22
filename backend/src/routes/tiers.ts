@@ -56,11 +56,13 @@ export const TIERS: Record<string, Tier> = {
   'POST /api/v1/mapplan': 'bridge',
   'POST /api/v1/roleaddons': 'bridge',
   'POST /api/v1/roledescriptions': 'bridge',
+  'POST /api/v1/ingame-keys': 'bridge',
   'GET /api/v1/whoami': 'bridge',
   'POST /api/v1/poll': 'bridge',
   'POST /api/v1/pair': 'credential',
 
   'GET /auth/steam': 'login',
+  'GET /auth/game': 'login',
   'GET /auth/steam/callback': 'login',
   'POST /auth/logout': 'login',
 }

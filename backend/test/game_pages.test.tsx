@@ -65,7 +65,7 @@ describe('the shell of every game page', () => {
     const id = round({ track: true })
     Store.setMaps(serverId, { current: 'ttt_a', next: null, gamemode: 'terrortown', pattern: null, poolBasis: 'gamemode', configSource: 'none', voteAddon: false, maps: [{ name: 'ttt_a', size: 1, fingerprint: null, matchesGamemode: true, inCycle: true, onCooldown: false, isCurrent: true, inVotePool: true, votable: false }] })
     for (const path of [`/servers/${serverId}/stats?embed=1`, `/servers/${serverId}/stats?embed=1&view=rounds`, `/servers/${serverId}/stats?embed=1&view=leaders`, `/servers/${serverId}/maps?embed=1`, `/servers/${serverId}/rounds/${id}?embed=1`, `/servers/${serverId}/maps/ttt_a/rounds?embed=1`]) {
-      const hrefs = [...(await text(path)).matchAll(/<a [^>]*href="([^"]+)"/g)].map(m => m[1]!.replace(/&amp;/g, '&')).filter(h => !h.endsWith('/replay'))
+      const hrefs = [...(await text(path)).matchAll(/<a [^>]*href="([^"]+)"/g)].map(m => m[1]!.replace(/&amp;/g, '&'))
       expect(hrefs.length, path).toBeGreaterThan(0)
       for (const h of hrefs) expect(h, `${path} -> ${h}`).toContain('embed=1')
     }
@@ -145,7 +145,7 @@ describe('One round', () => {
     expect(await text(`/servers/${serverId}/rounds/${id}?embed=1`, true)).toContain('Watch the replay')
     const anon = await text(`/servers/${serverId}/rounds/${id}?embed=1`)
     expect(anon).not.toContain('Watch the replay')
-    expect(anon).toContain('opens on the website')
+    expect(anon).toContain('opens for signed-in visitors')
     expect(await text(`/servers/${serverId}/rounds/${plain}?embed=1`, true)).not.toMatch(/replay/i)
   })
   test('an unknown round or a bad id is a 404; without embed it goes to the stats; a bot-only round is not shown', async () => {
@@ -196,7 +196,7 @@ describe('Maps', () => {
     expect(html).toMatch(/Played<\/dt><dd>2/)
     expect(html).toContain('3:20') // average of 300 and 100
     expect(html).toContain('Who wins here')
-    expect(html).toContain('on the website')
+    expect(html).toContain('floor plan is on the website')
     expect(html).not.toContain('<svg')
     expect(html).not.toContain('mesh.glb')
   })

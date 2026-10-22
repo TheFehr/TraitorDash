@@ -200,6 +200,8 @@ export interface MapPageProps {
   geometry?: { requested: boolean, status?: string, detail?: string | null, info?: { vertices: number, triangles: number, levels: number } | null }
   /** An admin sees the floor plan and the geometry switch; a signed-in user (RFC 13) only the 3D view. Default: admin. */
   admin?: boolean
+  /** In the game's window (RFC 16): no site links, and the way back stays in the window. */
+  embed?: boolean
 }
 
 
@@ -210,20 +212,24 @@ const GeometryBadge = ({ status }: { status: string }) => {
 }
 
 /** One map: its status, and its floor plan, a picture per level (RFC 10, 4.5). Admins only. */
-export const MapPage = ({ server, map, name, next, plan, geometry, admin = true }: MapPageProps) => (
+export const MapPage = ({ server, map, name, next, plan, geometry, admin = true, embed }: MapPageProps) => (
   <div class="p-4 sm:p-8 space-y-8 sm:space-y-10">
     <header>
-      <nav class="text-xs font-black text-gray-500 uppercase tracking-widest mb-4 flex flex-wrap gap-x-2">
-        <a href="/" class="hover:text-white transition">Dashboard</a>
-        <span>/</span>
-        {admin ? <a href={`/servers/${server.id}`} class="hover:text-white transition">{server.name}</a> : <span>{server.name}</span>}
-        <span>/</span>
-        <a href={`/servers/${server.id}/maps`} class="hover:text-white transition">Maps</a>
-        <span>/</span>
-        <span class="text-red-500 break-all">{name}</span>
-      </nav>
+      {embed
+        ? <nav class="text-xs font-black text-gray-500 uppercase tracking-widest mb-4"><a href={`/servers/${server.id}/maps/${encodeURIComponent(name)}/rounds?embed=1`} class="hover:text-white transition">← {name}</a></nav>
+        : (
+          <nav class="text-xs font-black text-gray-500 uppercase tracking-widest mb-4 flex flex-wrap gap-x-2">
+            <a href="/" class="hover:text-white transition">Dashboard</a>
+            <span>/</span>
+            {admin ? <a href={`/servers/${server.id}`} class="hover:text-white transition">{server.name}</a> : <span>{server.name}</span>}
+            <span>/</span>
+            <a href={`/servers/${server.id}/maps`} class="hover:text-white transition">Maps</a>
+            <span>/</span>
+            <span class="text-red-500 break-all">{name}</span>
+          </nav>
+        )}
       <h1 class="text-3xl sm:text-5xl font-black mb-3 break-all">{name}</h1>
-      <SectionLinks serverId={server.id} current="maps" />
+      {!embed && <SectionLinks serverId={server.id} current="maps" />}
       <div class="flex flex-wrap items-center gap-y-2 text-sm text-gray-400">
         {map ? <><StatusBadges m={map} next={next} /><span class="ml-2">{mapSize(map.size)}</span></> : <span>Not in the server's latest map list.</span>}
       </div>
