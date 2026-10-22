@@ -25,3 +25,15 @@ test('sizes: one decimal under 10 MB, whole above; map sizes are whole megabytes
   expect(mapSize(23 * 1024 * 1024)).toBe('23 MB')
   expect(mapSize(null)).toBe('–')
 })
+
+import { ago } from '../src/format'
+test('ago: just now, minutes, hours, days; a time in the future is just now; nothing known is a dash', () => {
+  const now = Date.parse('2026-10-22T12:00:00Z')
+  expect(ago('2026-10-22T11:59:30Z', now)).toBe('just now')
+  expect(ago('2026-10-22T11:55:00Z', now)).toBe('5 min ago')
+  expect(ago('2026-10-22T10:00:00Z', now)).toBe('2 h ago')
+  expect(ago('2026-10-19T12:00:00Z', now)).toBe('3 d ago')
+  expect(ago('2026-10-22T12:05:00Z', now)).toBe('just now')
+  expect(ago(null, now)).toBe('–')
+  expect(ago('not a date', now)).toBe('–')
+})

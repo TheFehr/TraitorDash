@@ -292,11 +292,13 @@ describe('the TTT2 menu files', () => {
     end
     MENU = loadscope(MENU_SRC, "CLGAMEMODEMENU")
     SUB = loadscope(SUB_SRC, "CLGAMEMODESUBMENU")
+    STATS = loadscope(STATS_SRC, "CLGAMEMODESUBMENU")
+    MAPS = loadscope(MAPS_SRC, "CLGAMEMODESUBMENU")
   `
   const files = ['traitordash/util.lua', 'traitordash/rolemenu.lua', 'autorun/client/traitordash_roles_cl.lua']
   const run = (script: string) => {
     const src = (p: string) => '[==[' + read(p) + ']==]'
-    return play(`${on} SENT = {} MENU_SRC = ${src('terrortown/menus/gamemode/traitordash_roles.lua')} SUB_SRC = ${src('terrortown/menus/gamemode/traitordash_roles/guide.lua')}
+    return play(`${on} SENT = {} MENU_SRC = ${src('terrortown/menus/gamemode/traitordash_roles.lua')} SUB_SRC = ${src('terrortown/menus/gamemode/traitordash_roles/guide.lua')} STATS_SRC = ${src('terrortown/menus/gamemode/traitordash_roles/stats.lua')} MAPS_SRC = ${src('terrortown/menus/gamemode/traitordash_roles/maps.lua')}
       ${menuScript}
       MENU.HasVisibleSubmenus = function() return true end
       ${script}`, files)
@@ -304,6 +306,20 @@ describe('the TTT2 menu files', () => {
   test('the tab is for everybody (not an admin menu), has TTT2\'s roles icon, and a page', () => {
     const o = run(`RESULT = { admin = MENU.IsAdminMenu and MENU:IsAdminMenu() or false, icon = MENU.icon, base = MENU.base, title = MENU.title, subBase = SUB.base, hasPopulate = type(SUB.Populate) == "function" }`)
     expect(o.out).toMatchObject({ admin: false, icon: 'vgui/ttt/vskin/helpscreen/roles', base: 'base_gamemodemenu', subBase: 'base_gamemodesubmenu', hasPopulate: true })
+  })
+  test('the tab is called Server info, and holds three pages: the role guide, the round stats and the maps', () => {
+    const o = run(`RESULT = { title = MENU.title, roles = SUB.title, stats = STATS.title, maps = MAPS.title, order = { SUB.priority, STATS.priority, MAPS.priority }, bases = { STATS.base, MAPS.base } }`)
+    expect(o.out).toEqual({ title: 'Server info', roles: 'Server roles', stats: 'Round stats', maps: 'Maps', order: [50, 40, 30], bases: ['base_gamemodesubmenu', 'base_gamemodesubmenu'] })
+  })
+  test('the stats and maps pages open exactly their built address (embedded), and nothing when the guide is unavailable', () => {
+    const on1 = run(`TraitorDash.RoleGuide.SendInit(nil) Deliver(1) STATS:Populate({}) MAPS:Populate({})`)
+    expect(on1.opened).toEqual(['https://dash.example.org/servers/srv-1/stats?embed=1', 'https://dash.example.org/servers/srv-1/maps?embed=1'])
+    expect(run(`STATS:Populate({}) MAPS:Populate({})`).opened).toEqual([])
+  })
+  test('SectionUrl knows only the two sections; any other name builds nothing', () => {
+    const o = run(`TraitorDash.RoleGuide.SendInit(nil) Deliver(1) local g = TraitorDash.RoleGuideClient
+      RESULT = { a = g.SectionUrl("stats"), b = g.SectionUrl("maps"), c = g.SectionUrl("../x") or "nil", d = g.SectionUrl("roles") or "nil", e = g.SectionUrl(nil) or "nil" }`)
+    expect(o.out).toEqual({ a: 'https://dash.example.org/servers/srv-1/stats?embed=1', b: 'https://dash.example.org/servers/srv-1/maps?embed=1', c: 'nil', d: 'nil', e: 'nil' })
   })
   test('ShouldShow is false until the server has said where the guide is, and true after', () => {
     const o = run(`local before = MENU:ShouldShow() TraitorDash.RoleGuide.SendInit(nil) Deliver(1) RESULT = { before = before, after = MENU:ShouldShow() }`)

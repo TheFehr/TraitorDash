@@ -45,6 +45,32 @@ function Guide.SetInit(base, serverId)
     end
 end
 
+--- The page of a section of the guide: "stats" (round stats) or "maps". Nil when unavailable or the name is another.
+function Guide.SectionUrl(section)
+    if not Guide.Available() then return nil end
+    if section ~= "stats" and section ~= "maps" then return nil end
+    return Guide.base .. "/servers/" .. Guide.serverId .. "/" .. section .. "?embed=1"
+end
+
+--- A browser panel on `url`, as tall as the visible area of the menu page it sits in.
+-- TTT2 puts a page into a scrolling area that grows to fit its content, so a panel docked to FILL
+-- collapses to a thin strip; this one is given the height of the area instead.
+function Guide.Browser(parent, url)
+    local html = vgui.Create("DHTML", parent)
+    html:Dock(TOP)
+    html:OpenURL(url)
+    if html.SetTall then
+        html.Think = function(self)
+            local area = parent
+            while area and not area.GetCanvas and area.GetParent do area = area:GetParent() end
+            local tall = (area and area.GetTall and area:GetTall()) or 0
+            if tall < 300 then tall = 300 end
+            if self:GetTall() ~= tall then self:SetTall(tall) end
+        end
+    end
+    return html
+end
+
 local function Say(text)
     if chat and chat.AddText then chat.AddText(Color(255, 255, 255), "[Roles] ", Color(200, 200, 200), text) end
 end

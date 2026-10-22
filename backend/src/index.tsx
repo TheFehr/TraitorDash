@@ -15,8 +15,9 @@ import { getAdminId, getSession, openSignin, signinUrl, safeNext, type Session }
 import { gated, clientAddress } from './services/gates'
 import { RateLimiter } from './services/rateLimit'
 import { createHash } from 'node:crypto'
-import { buildRoleView, listRoles, parsePlayers, publicRoles, publicRoleSettings, KNOWN_ROLE_NAME } from './services/roleview'
+import { buildRoleView, listRoles, parsePlayers, publicRoles, publicRoleSettings, roleColour, KNOWN_ROLE_NAME } from './services/roleview'
 import { RoleListPage, RolePage, RoleNotFound } from './components/RolePublic'
+import { GameStatsPage, GameRoundPage, GameMapsPage, GameMapPage, GameNotFound } from './components/GamePages'
 import { geometryEnabled, kickGeometryQueue, setGeometryFetcher } from './services/mapgeometry'
 import { helperAvailable, workshopFetcher } from './services/workshop'
 import { sameOrigin } from './middleware/csrf'
@@ -171,6 +172,41 @@ app.get('/servers/:serverId', async (c) => {
 })
 
 /**
+ * The pages the game shows (RFC 16): the stats and maps pages with `?embed=1`. Script-free with the
+ * same strict policy as the role guide, rate limited by address, and never cached by a shared cache,
+ * because whether a replay is offered depends on who asks.
+ */
+const isEmbed = (c: any) => ['1', 'true'].includes(c.req.query('embed') ?? '')
+
+const gameResponse = (c: any, page: { toString(): string }, status: 200 | 404 = 200) => {
+  const headers: Record<string, string> = { ...ROLE_PAGE_HEADERS, 'X-Robots-Tag': 'noindex' }
+  if (status !== 200) {
+    headers['Cache-Control'] = 'no-store'
+    return c.html('<!DOCTYPE html>' + page.toString(), status, headers)
+  }
+  const html = '<!DOCTYPE html>' + page.toString()
+  const etag = 'W/"' + createHash('sha1').update(html).digest('hex').slice(0, 20) + '"'
+  headers['Cache-Control'] = 'private, max-age=30'
+  headers.ETag = etag
+  const given = c.req.header('If-None-Match')
+  if (given && given.split(',').map((x: string) => x.trim()).includes(etag)) return c.body(null, 304, headers)
+  return c.html(html, 200, headers)
+}
+
+/** Over the limit for this address: the answer to send, else null. */
+const gameLimited = (c: any) => {
+  const address = clientAddress(c)
+  const wait = address ? roleLimiter.hit(address) : 0
+  if (wait <= 0) return null
+  c.header('Retry-After', String(wait))
+  return c.text('Too many requests; slow down', 429, ROLE_PAGE_HEADERS)
+}
+
+/** Role name to `#rrggbb`, for the dots and bars. */
+const colourMap = (serverId: string): Record<string, string> =>
+  Object.fromEntries(Store.getRoles(serverId).map(r => [String(r.role_name), roleColour(r.color, String(r.team ?? ''))]))
+
+/**
  * Round stats: overview, leaderboard, recent rounds. PUBLIC, like the server tiles: it is
  * only what happened in rounds (names and SteamID64s are public on Steam). The rule settings
  * stay admin-only.
@@ -188,6 +224,14 @@ app.get('/servers/:serverId/stats', async (c) => {
   const opts = { bots: c.req.query('bots') === '1', by: stats.parseBy(c.req.query('by')) }
 
   const recent = stats.getRecentRounds(serverId, opts)
+  if (isEmbed(c)) {
+    const limited = gameLimited(c)
+    if (limited) return limited
+    const view = ['leaders', 'rounds'].includes(c.req.query('view') ?? '') ? c.req.query('view') as 'leaders' | 'rounds' : 'overview'
+    return gameResponse(c, <GameStatsPage server={server} view={view} sort={sort} overview={stats.getOverview(serverId, opts)} roles={stats.getRoleStats(serverId, opts)}
+      leaders={stats.getLeaderboard(serverId, sort, opts)} rounds={recent} tracked={Store.getTrackedRounds(serverId, recent.map(r => r.roundId))}
+      canReplay={!!(steamId || await userOf(c))} colours={colourMap(serverId)} />)
+  }
   return c.html(
     <Layout steamId={steamId || undefined} user={await userOf(c)} path="/">
       <StatsDashboard
@@ -305,6 +349,11 @@ app.get('/servers/:serverId/maps', async (c) => {
   const { serverId, server } = found
 
   const { state, maps } = Store.getMaps(serverId)
+  if (isEmbed(c)) {
+    const limited = gameLimited(c)
+    if (limited) return limited
+    return gameResponse(c, <GameMapsPage server={server} state={state} maps={maps} activity={stats.getMapActivity(serverId)} />)
+  }
   const user = await userOf(c)
   // The 3D view is for signed-in users (RFC 13); an anonymous visitor is offered it only when sign-in is open.
   const meshes = geometryEnabled() && (steamId || user || openSignin())
@@ -353,6 +402,22 @@ app.get('/servers/:serverId/maps/:map', async (c) => {
         geometry={geometryEnabled() && map ? geometryProp(serverId, name) : undefined} />
     </Layout>
   )
+})
+
+/** The rounds played on one map, for the game (RFC 16). Only with `?embed=1`; public like the stats it is made of. */
+app.get('/servers/:serverId/maps/:map/rounds', async (c) => {
+  const found = serverOf(c)
+  if (!found) return c.redirect('/')
+  const { serverId, server } = found
+  if (!isEmbed(c)) return c.redirect(`/servers/${serverId}/maps`)
+  const limited = gameLimited(c)
+  if (limited) return limited
+  const name = c.req.param('map')
+  const { state, maps } = Store.getMaps(serverId)
+  const map = maps.find(m => m.name === name) ?? null
+  const activity = stats.getMapActivity(serverId).get(name) ?? null
+  if (!map && !activity) return gameResponse(c, <GameNotFound what="map" />, 404)
+  return gameResponse(c, <GameMapPage server={server} name={name} map={map} state={state} activity={activity} />)
 })
 
 /** A stored floor plan drawn as a picture (RFC 10, 4.5). Admins only; nothing in it can run or load anything. */
@@ -450,6 +515,22 @@ app.get('/servers/:serverId/rounds/:roundId/track.json', gated('track'), async (
 })
 
 /** One round's replay page (RFC 12, 3.5). For signed-in users; an anonymous visitor is sent to sign-in and back (RFC 13). */
+/** One round as a file, for the game (RFC 16). Only with `?embed=1`; the website has the replay page. */
+app.get('/servers/:serverId/rounds/:roundId', async (c) => {
+  const found = serverOf(c)
+  if (!found) return c.redirect('/')
+  const { serverId, server } = found
+  if (!isEmbed(c)) return c.redirect(`/servers/${serverId}/stats`)
+  const limited = gameLimited(c)
+  if (limited) return limited
+  const roundId = c.req.param('roundId')
+  const round = ROUND_ID.test(roundId) ? stats.getReplayRound(serverId, roundId) : null
+  if (!round) return gameResponse(c, <GameNotFound what="round" />, 404)
+  const signedIn = !!((await getAdminId(c)) || (await userOf(c)))
+  return gameResponse(c, <GameRoundPage server={server} round={round} deaths={stats.getDeathCount(serverId, roundId)} firstBlood={stats.getFirstBlood(serverId, roundId)}
+    hasReplay={Store.getTrackedRounds(serverId, [roundId]).has(roundId)} canReplay={signedIn} colours={colourMap(serverId)} />)
+})
+
 app.get('/servers/:serverId/rounds/:roundId/replay', async (c) => {
   const roundId = c.req.param('roundId')
   const found = serverOf(c)

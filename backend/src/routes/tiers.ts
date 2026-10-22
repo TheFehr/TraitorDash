@@ -18,6 +18,8 @@ export const TIERS: Record<string, Tier> = {
   'GET /servers/:serverId/stats': 'public',
   'GET /servers/:serverId/maps': 'public',
   'GET /servers/:serverId/players/:playerId': 'public',
+  'GET /servers/:serverId/maps/:map/rounds': 'public',
+  'GET /servers/:serverId/rounds/:roundId': 'public',
   'GET /servers/:serverId/roles': 'public',
   'GET /servers/:serverId/roles/:roleName': 'public',
 

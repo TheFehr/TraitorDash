@@ -205,3 +205,46 @@ export interface RoundRevive { victim: string, reviver: string | null, how: stri
 /** The revivals of one round, in the order they were reported (RFC 14, 4.4). */
 export const getRevives = (serverId: string, roundId: string): RoundRevive[] =>
   db.prepare('SELECT victim, reviver, how, why, at_seconds AS at FROM round_revives WHERE server_id = ? AND round_id = ? ORDER BY id ASC').all(serverId, roundId) as RoundRevive[]
+
+export interface FirstBlood { at: number | null, victim: string, killer: string | null }
+
+/** The first death of a round: the earliest by time into the round, else the first reported. Names are the players' nicks. */
+export function getFirstBlood(serverId: string, roundId: string): FirstBlood | null {
+  const d = db.prepare(`
+    SELECT at_seconds AS at, victim_steam_id AS victim, attacker_steam_id AS killer FROM deaths
+    WHERE server_id = ? AND round_id = ? ORDER BY at_seconds IS NULL, at_seconds ASC, id ASC LIMIT 1
+  `).get(serverId, roundId) as { at: number | null, victim: string, killer: string | null } | null
+  if (!d) return null
+  const nick = (id: string | null) => {
+    if (!id) return null
+    const row = db.prepare('SELECT nick FROM round_players WHERE server_id = ? AND round_id = ? AND steam_id = ?').get(serverId, roundId, id) as { nick: string | null } | null
+    return row?.nick ?? id
+  }
+  return { at: d.at, victim: nick(d.victim)!, killer: nick(d.killer) }
+}
+
+export interface MapActivity { rounds: number, avgDuration: number | null, lastRound: string | null, results: { name: string, n: number }[] }
+
+/** What the rounds say about each map: how many were played, how long they take, when the last one was, who won. */
+export function getMapActivity(serverId: string, o?: StatsOptions): Map<string, MapActivity> {
+  const rows = db.prepare(`
+    SELECT r.map AS map, r.result AS result, COUNT(*) AS n, SUM(r.duration) AS secs, COUNT(r.duration) AS timed, MAX(r.received_at) AS last
+    FROM rounds r WHERE r.server_id = ? AND r.map IS NOT NULL AND ${roundHasPlayers(o)} GROUP BY r.map, r.result
+  `).all(serverId) as { map: string, result: string, n: number, secs: number | null, timed: number, last: string | null }[]
+  const out = new Map<string, MapActivity & { secs: number, timed: number }>()
+  for (const r of rows) {
+    const m = out.get(r.map) ?? { rounds: 0, avgDuration: null, lastRound: null, results: [], secs: 0, timed: 0 }
+    m.rounds += r.n; m.secs += r.secs ?? 0; m.timed += r.timed
+    if (r.last && (!m.lastRound || r.last > m.lastRound)) m.lastRound = r.last
+    m.results.push({ name: r.result, n: r.n })
+    out.set(r.map, m)
+  }
+  const done = new Map<string, MapActivity>()
+  for (const [k, m] of out) {
+    done.set(k, { rounds: m.rounds, avgDuration: m.timed ? Math.round(m.secs / m.timed) : null, lastRound: sqliteToIso(m.lastRound), results: m.results.sort((a, b) => b.n - a.n || a.name.localeCompare(b.name)) })
+  }
+  return done
+}
+
+export const getDeathCount = (serverId: string, roundId: string): number =>
+  (db.prepare('SELECT COUNT(*) AS n FROM deaths WHERE server_id = ? AND round_id = ?').get(serverId, roundId) as { n: number }).n
