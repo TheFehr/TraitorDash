@@ -10,7 +10,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { makeCamera, makeRenderer, makeScene } from './sceneKit'
 import {
-  decodeTrack, poseAt, lastPoseAt, trailBetween, levelOf, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose,
+  decodeTrack, poseAt, lastPoseAt, trailBetween, levelOf, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose, fitLabel,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
 } from './replaylogic'
 
@@ -360,9 +360,11 @@ async function start(root: HTMLElement) {
     }
   })
   const labelTexture = (name: string, colour: number) => canvasTexture(256, 64, g => {
-    g.font = 'bold 30px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'
-    g.lineWidth = 6; g.strokeStyle = 'rgba(0,0,0,0.85)'; g.strokeText(name, 128, 32)
-    g.fillStyle = hex(colour); g.fillText(name, 128, 32)
+    // a long nickname shrinks and then ends in an ellipsis: the texture is 256 pixels wide and would cut it off on both sides
+    const fit = fitLabel(name, (s, px) => { g.font = `bold ${px}px sans-serif`; return g.measureText(s).width })
+    g.font = `bold ${fit.px}px sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'
+    g.lineWidth = 6; g.strokeStyle = 'rgba(0,0,0,0.85)'; g.strokeText(fit.text, 128, 32)
+    g.fillStyle = hex(colour); g.fillText(fit.text, 128, 32)
   })
 
   interface Look { plain: CanvasTexture, pointer: CanvasTexture, cross: CanvasTexture, label: CanvasTexture }

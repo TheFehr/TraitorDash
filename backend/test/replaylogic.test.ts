@@ -169,3 +169,29 @@ describe('role colours', () => {
     expect(roleColour('#fff', 'innocents')).toBe('#22c55e')
   })
 })
+
+import { fitLabel } from '../src/replaylogic'
+describe('fitLabel', () => {
+  // a fake font: every character is 0.6 of the font size wide
+  const width = (s: string, px: number) => s.length * px * 0.6
+  test('a short name keeps the full size', () => {
+    expect(fitLabel('Fehr', width)).toEqual({ text: 'Fehr', px: 30 })
+  })
+  test('a longer name takes the largest size that fits', () => {
+    const r = fitLabel('A_rather_long_name_', width)   // 19 characters: 30 px = 342 wide, 20 px = 228 wide
+    expect(r.text).toBe('A_rather_long_name_')
+    expect(r.px).toBe(20)
+    expect(width(r.text, r.px)).toBeLessThanOrEqual(236)
+  })
+  test('a name too long for the smallest size ends in an ellipsis and fits', () => {
+    const r = fitLabel('Longname_with_a_very_long_nickname_x', width)
+    expect(r.px).toBe(18)
+    expect(r.text.endsWith('…')).toBe(true)
+    expect(width(r.text, r.px)).toBeLessThanOrEqual(236)
+    expect(r.text.length).toBeGreaterThan(5)
+  })
+  test('nothing and one character are handled', () => {
+    expect(fitLabel('', width)).toEqual({ text: '', px: 30 })
+    expect(fitLabel('W', () => 999)).toEqual({ text: 'W…', px: 18 })
+  })
+})

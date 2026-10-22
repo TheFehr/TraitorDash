@@ -78,14 +78,14 @@ export const ReplayPage = ({ ctx, server, round, hasTrack, src, pinned, here, pi
             </p>
           </div>
           <aside>
-            <section class="f" style="--c:#22c55e"><b>Players</b><div data-players class="list"></div></section>
+            <section class="f" style="--c:#22c55e"><h2 class="ft">Players</h2><div data-players class="list"></div></section>
             <section class="f" style="--c:#a78bfa">
-              <b>Selected player</b>
+              <h2 class="ft">Selected player</h2>
               <p data-selected-role style="margin:.2rem 0"></p>
               <ol data-player-events class="list"></ol>
             </section>
-            <section data-revives-wrap hidden class="f" style="--c:#34d399"><b>Revivals</b><ol data-revives class="list"></ol></section>
-            <section class="f" style="--c:#dc2626"><b>Deaths</b><ol data-deaths class="list"></ol></section>
+            <section data-revives-wrap hidden class="f" style="--c:#34d399"><h2 class="ft">Revivals</h2><ol data-revives class="list"></ol></section>
+            <section class="f" style="--c:#dc2626"><h2 class="ft">Deaths</h2><ol data-deaths class="list"></ol></section>
             {admin && (
               <section class="f" style="--c:#9ca3af">
                 <form method="post" action={`/servers/${id}/rounds/${encodeURIComponent(round.id)}/pin`}>

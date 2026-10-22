@@ -53,7 +53,7 @@ export interface TracksInfo {
 /** The retention limits of a server's position tracks, how much room is used, and where to change them (RFC 12, 3.4). Admins only. */
 export const TracksCard = ({ serverId, t }: { serverId: string, t: TracksInfo }) => (
   <section data-tracks class="f" style="--c:#9ca3af;margin-top:1rem">
-    <b>Position tracks</b>
+    <h2 class="ft">Position tracks</h2>
     <p data-tracks-usage style="margin:.3rem 0">
       {t.count} {t.count === 1 ? 'track' : 'tracks'}, {mb(t.bytes)} MB used of {t.limits.count} tracks / {t.limits.mb} MB
       {t.pinned > 0 && <span class="dim"> ({t.pinned} pinned, kept regardless; at most {t.ceiling.pinned})</span>}
@@ -124,7 +124,7 @@ export const StatsPage = (p: StatsPageProps) => {
       {p.bots && <p class="foot" style="color:#e9b44c">Including bot test rounds</p>}
       <Tabs label="Round stats" current={p.view} items={VIEWS.map(v => ({ key: v.key, label: v.label, href: tab(v.key) }))} />
 
-      {p.overview.rounds === 0 && <div class="f"><b>No rounds yet</b><span>Stats appear here after the first full round is played on this server.</span></div>}
+      {p.overview.rounds === 0 && <div class="f"><h2 class="ft">No rounds yet</h2><span>Stats appear here after the first full round is played on this server.</span></div>}
       {/* the card of the tracks is where the rounds are, and where there are no rounds yet to open it from (test rounds by bots only) */}
       {admin && p.tracks && (p.view === 'rounds' || p.overview.rounds === 0) && <TracksCard serverId={id} t={p.tracks} />}
 
@@ -138,11 +138,11 @@ export const StatsPage = (p: StatsPageProps) => {
           </div>
           <div class="pair">
             <div class="f" style="--c:#22c55e">
-              <b>Who wins</b>
+              <h2 class="ft">Who wins</h2>
               {p.overview.results.slice(0, 8).map(r => <Bar label={teamLabel(r.name)} part={r.n} whole={p.overview.rounds} colour={teamHex(r.name)} title={`${r.n} of ${p.overview.rounds} rounds`} />)}
             </div>
             <div class="f" style="--c:#dc2626">
-              <b>Best roles</b>
+              <h2 class="ft">Best roles</h2>
               {bestRoles(p.roles).length === 0
                 ? <span>Not enough rounds yet.</span>
                 : bestRoles(p.roles).map(r => <Bar label={r.name} part={r.wins} whole={r.played} colour={p.colours[r.name] ?? '#9ca3af'} />)}
@@ -336,7 +336,7 @@ export const PlayerPage = ({ ctx, server, player, by = 'end', bots }: PlayerPage
       <ByToggle ctx={ctx} path={path} by={by} params={{ bots }} />
       <div class="pair"><WinTable title="By role" rows={player.roles} empty="No role data." /></div>
       <div class="f" style="--c:#dc2626;margin-top:1.2rem">
-        <b>Recent rounds</b>
+        <h2 class="ft">Recent rounds</h2>
         <div class="scrollx">
           <table class="log">
             <tr><th>When</th><th>Map</th><th>Role</th><th>Result</th><th class="r">Kills</th><th class="r">Outcome</th></tr>

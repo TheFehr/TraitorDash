@@ -317,7 +317,7 @@ describe('floor plans: the Maps page links, the map\'s own page shows (admins on
 
   test('the legend\'s scale runs from the picture\'s blue (left) to its red (right), and shows the faint crouch-only mark', async () => {
     const html = await mapPage('ttt_a')
-    const legend = html.split('data-legend="plans"')[1]!.split('How to read these pictures</b>')[1]!.split('North is up')[0]!
+    const legend = html.split('data-legend="plans"')[1]!.split('How to read these pictures</h2>')[1]!.split('North is up')[0]!
     expect(legend).toMatch(/linear-gradient\(to right, hsl\(240 70% 50%\),.*hsl\(0 70% 50%\)\)/)
     expect(legend).toContain('opacity:.4') // the crouch-only mark is drawn faint, as in the pictures
     expect(legend).toContain('class="wd"') // ... with its white dot

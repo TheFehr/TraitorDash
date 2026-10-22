@@ -87,7 +87,7 @@ export const MapsPage = ({ ctx, server, state, maps, activity, showAll, plans, m
       <h1>Map files</h1>
       {!ctx.embed && <Sections serverId={id} current="maps" />}
       {state === null || maps.length === 0
-        ? <div class="f"><b>No maps yet</b><span>The server sends its maps when the bridge starts; this page fills in within a minute of that.</span></div>
+        ? <div class="f"><h2 class="ft">No maps yet</h2><span>The server sends its maps when the bridge starts; this page fills in within a minute of that.</span></div>
         : (
           <>
             <div class="nums">
@@ -102,7 +102,7 @@ export const MapsPage = ({ ctx, server, state, maps, activity, showAll, plans, m
                 const plan = plans?.find(p => p.map === m.name)
                 return (
                   <div class="f" style={`--c:${tabColour(m)}`}>
-                    <b><a href={link(ctx, `${mapPath(id, m.name)}/rounds`)}>{prettyMap(m.name)}</a></b>
+                    <h2 class="ft"><a href={link(ctx, `${mapPath(id, m.name)}/rounds`)}>{prettyMap(m.name)}</a></h2>
                     <span class="file">{m.name}</span>
                     <span><Pills m={m} next={next} />{admin && <i class="pill mute">{mapSize(m.size)}</i>}</span>
                     {a
@@ -207,12 +207,12 @@ export const SCALE = `linear-gradient(to right, ${[0, 1, 2, 3, 4, 5, 6].map(i =>
 /** What the colours and marks in the floor-plan pictures mean. */
 export const PlanLegend = ({ cells }: { cells: number[] }) => (
   <div class="f" style="--c:#9ca3af" data-legend="plans">
-    <b>How to read these pictures</b>
+    <h2 class="ft">How to read these pictures</h2>
     <div class="scale" style={`background:${SCALE}`}></div>
     <div class="ends"><span>lowest floor of the level</span><span>highest floor of the level</span></div>
     <p>Each picture is one level and has its own scale, drawn at the bottom of the picture. Stairs and ramps show as a gradient.</p>
-    <p><i class="sw" style={`background:${heightColour(0.5)};opacity:.4`}><b class="wd"></b></i><b>Crouch-only</b>: a floor you can only reach by crouching or crawling (vents, crawl spaces).</p>
-    <p><i class="sw" style="background:#111;border:1px solid #444"></i> <b>No floor a player can reach</b> from a spawn point on this level: walls, voids, other levels, or never scanned.</p>
+    <p><i class="sw" style={`background:${heightColour(0.5)};opacity:.4`}><i class="wd"></i></i><strong>Crouch-only</strong>: a floor you can only reach by crouching or crawling (vents, crawl spaces).</p>
+    <p><i class="sw" style="background:#111;border:1px solid #444"></i> <strong>No floor a player can reach</strong> from a spawn point on this level: walls, voids, other levels, or never scanned.</p>
     <p class="dim">North is up. One square is one grid cell of {cells.join(' / ')} units. A spot with floors on several levels shows in each of them.</p>
   </div>
 )
@@ -247,7 +247,7 @@ export const MapViewPage = ({ ctx, server, map, name, next, plan, geometry }: Ma
 
       {admin && geometry && (
         <div class="f" style="--c:#9ca3af;margin-top:1.2rem">
-          <b>Exact geometry</b>
+          <h2 class="ft">Exact geometry</h2>
           {!geometry.requested
             ? <p>Off. Turning it on makes the backend fetch this map's file from the Steam Workshop once and keep a simplified 3D mesh of its floors and walls. The file itself is deleted afterwards.</p>
             : (
@@ -268,7 +268,7 @@ export const MapViewPage = ({ ctx, server, map, name, next, plan, geometry }: Ma
 
       {hasView && geometry?.info && (
         <div class="f" style="--c:#22c55e;margin-top:1.2rem">
-          <b>3D view</b>
+          <h2 class="ft">3D view</h2>
           <div data-mapview data-src={`${mapPath(id, name)}/mesh.glb`}>
             <div class="view">
               <canvas aria-label={`3D view of ${name}`}></canvas>

@@ -233,3 +233,16 @@ describe('the limiter', () => {
     mod.resetRolePages()
   })
 })
+
+describe('headings', () => {
+  test('a page has one h1, its cards are titled with h2, and nothing is made a heading with <b>', async () => {
+    round({ track: true })
+    for (const path of [`/servers/${serverId}/stats`, `/servers/${serverId}/stats?view=leaders`, `/servers/${serverId}/maps`, `/servers/${serverId}/roles`]) {
+      const html = await text(path, true)
+      expect((html.match(/<h1[ >]/g) ?? []).length, path).toBe(1)
+      expect(html, path).not.toMatch(/<b[ >]/)
+    }
+    const overview = await text(`/servers/${serverId}/stats`)
+    expect(overview).toContain('<h2 class="ft">Who wins</h2>')
+  })
+})

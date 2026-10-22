@@ -225,3 +225,15 @@ export function revivePose(segments: Segment[], t: number): Pose | null {
   }
   return null
 }
+
+/**
+ * A name that fits a label of `maxW` pixels: the text at the largest font size from `startPx` down to
+ * `minPx` that fits, and at the smallest size shortened with an ellipsis if it still does not. `width`
+ * measures a text at a font size (the canvas's `measureText`).
+ */
+export function fitLabel(text: string, width: (s: string, px: number) => number, maxW = 236, startPx = 30, minPx = 18): { text: string, px: number } {
+  for (let px = startPx; px >= minPx; px -= 2) if (width(text, px) <= maxW) return { text, px }
+  let cut = text
+  while (cut.length > 1 && width(cut + '…', minPx) > maxW) cut = cut.slice(0, -1)
+  return { text: cut + '…', px: minPx }
+}

@@ -92,7 +92,7 @@ describe('players', () => {
     expect(card(html, 'haunter')![1]!).toContain('few')
     expect(card(html, 'haunter')![0]).toContain('needs 8+')
     expect(card(html, 'haunter')![0]).toContain('2 more players needed')
-    expect(html).toContain('Round of <b>6 players</b>')
+    expect(html).toContain('Round of <strong>6 players</strong>')
   })
   test('one player short reads in the singular; enough players makes the role active', async () => {
     expect(card(await list('?players=7'), 'haunter')![0]).toContain('1 more player needed')

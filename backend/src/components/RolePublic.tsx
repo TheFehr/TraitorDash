@@ -35,7 +35,7 @@ export const RoleListPage = ({ server, roles, query, embed, admin, players = nul
       </form>
       <div class="bar">
         {players !== null
-          ? <><span>Round of <b>{players} players</b></span><span>·</span><span><b>{open}</b> can appear</span><span>·</span><span>{roles.length - open} put away</span></>
+          ? <><span>Round of <strong>{players} players</strong></span><span>·</span><span><strong>{open}</strong> can appear</span><span>·</span><span>{roles.length - open} put away</span></>
           : <span>Players in the round</span>}
         <span class="sp"></span>
         {PICKS.map(n => <a class={n === players ? 'on' : ''} href={base + qs({ embed, players: n, q: query })}>{n}</a>)}
@@ -48,7 +48,7 @@ export const RoleListPage = ({ server, roles, query, embed, admin, players = nul
             return (
               <a class={`f ${state === 'ok' ? '' : state}`} style={`--c:${r.color}`} href={`${base}/${encodeURIComponent(r.name)}${qs({ embed, players })}`}>
                 <i class="stamp">{state === 'off' ? 'disabled' : state === 'few' ? `needs ${r.min}+` : r.team || 'no team'}</i>
-                <b>{r.name}</b>
+                <h2 class="ft">{r.name}</h2>
                 <span>Chance: {r.pct}</span>
                 {state === 'few' ? <span class="need">{more(r.min! - players!)}</span> : <span>Needs: {r.min === null ? 'not reported' : `${r.min}+ players`}</span>}
               </a>
