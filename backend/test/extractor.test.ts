@@ -50,7 +50,7 @@ describe("Extractor Schema Extraction", () => {
     expect(schema).toBeArray();
     expect(schema[0].type).toBe("MakeCheckbox");
     expect(schema[0].args.label).toBe("Test Checkbox");
-    expect(team).toBe("innocents");
+    expect(team).toBe("unknown");
   });
 
   test("should resolve translation keys using captured LANG:AddToLanguage calls", async () => {

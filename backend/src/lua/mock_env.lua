@@ -43,7 +43,7 @@ setmetatable(_G, {
                 name = k:lower(),
                 abbr = k:lower():sub(1, 4),
                 color = Color(255, 255, 255),
-                defaultTeam = "innocents"
+                defaultTeam = "unknown"
             }
             -- Make the dummy role behave like a proxy too
             setmetatable(role, {
@@ -329,7 +329,7 @@ ROLE = {
     index = 0,
     abbr = "unk",
     color = Color(255, 255, 255),
-    defaultTeam = "innocents",
+    defaultTeam = "unknown",
     score = CreateProxy("score")
 }
 setmetatable(ROLE, {
