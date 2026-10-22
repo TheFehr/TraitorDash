@@ -119,6 +119,15 @@ describe('poll / command queue', () => {
     expect((await post(A.token)).cached).toBe(true)
     expect((await post(B.token)).cached).toBe(false)
   })
+  test('/ingest: the team the game reports wins over the replayed role file, also when the file is unchanged; junk is ignored', async () => {
+    const code = 'ROLE.defaultTeam = TEAM_INNOCENT'
+    const post = (b: any) => req('/api/ingest', { method: 'POST', headers: bearer(A.token), body: JSON.stringify({ role_name: 'tm', role_code: code, md5_hash: 'ht', ...b }) }).then((r: Response) => r.json())
+    expect((await post({})).team).toBe('innocents')
+    expect((await post({ team: 'jackals' })).cached).toBe(true)
+    expect((db.query('SELECT team FROM roles WHERE server_id = ? AND role_name = ?').get(A.id, 'tm') as any).team).toBe('jackals')
+    expect((await post({ team: 'Bad Team!', force: true })).team).toBe('innocents')
+    expect((await post({ team: 'jackals', force: true })).team).toBe('jackals')
+  })
   test('broken role code -> 500 with success:false, and nothing is stored', async () => {
     const r = await req('/api/ingest', { method: 'POST', headers: bearer(A.token), body: JSON.stringify({ role_name: 'broken', role_code: 'function (((' }) })
     expect(r.status).toBe(500); expect(Store.getSchema(A.id, 'broken')).toBeNull()

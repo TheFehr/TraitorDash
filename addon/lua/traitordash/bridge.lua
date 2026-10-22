@@ -527,6 +527,8 @@ function TraitorDash.IngestRole(roleName, roleCode, hash, force, callback)
         force = force or false,
         convar_state = convar_state,
         data_state = data_state,
+        -- The team the game itself gives the role; the backend's replay of the role file can miss it.
+        team = TraitorDash.RoleMeta[roleName] and TraitorDash.RoleMeta[roleName].team or nil,
         active_admins = TraitorDash.GetActiveAdmins()
     })
     
@@ -634,7 +636,7 @@ local function LoadRole(v)
 
     -- Cache the code for dynamic re-ingestion
     TraitorDash.RoleCodeCache[name] = content
-    TraitorDash.RoleMeta[name] = { abbr = v.abbr }
+    TraitorDash.RoleMeta[name] = { abbr = v.abbr, team = v.defaultTeam }
 
     return { name = name, code = content, hash = util.MD5(content) }
 end

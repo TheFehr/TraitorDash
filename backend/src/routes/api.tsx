@@ -27,6 +27,7 @@ const api = new Hono<{ Variables: Variables }>()
 // Names from a game server end up in URLs, HTML, SQL parameters and console commands, so
 // they are restricted to a plain identifier character set at the door.
 const ROLE_NAME = /^[A-Za-z0-9_]{1,64}$/
+const TEAM_ID = /^[a-z0-9_]{1,32}$/
 const CONVAR_NAME = /^[A-Za-z0-9_]{1,80}$/
 const MAX_ROLE_CODE_BYTES = 256 * 1024
 
@@ -138,6 +139,8 @@ api.post('/ingest', getServer, async (c) => {
       return c.json({ error: 'Body must be a JSON object' }, 400)
     }
     const { role_code, role_name, convar_state, data_state, active_admins, md5_hash, force } = body
+    // The game's own word for the role's team, when the bridge has it.
+    const liveTeam = typeof body.team === 'string' && TEAM_ID.test(body.team) ? body.team : null
 
     if (!role_code || typeof role_code !== 'string') {
       return c.json({ error: 'Missing role_code' }, 400)
@@ -162,6 +165,7 @@ api.post('/ingest', getServer, async (c) => {
       const existingHash = Store.getRoleHash(server.id, name)
       if (existingHash === md5_hash) {
         console.log(`[API] Ingest: ${name} for ${server.name} unchanged (MD5: ${md5_hash}). Skipping extraction.`)
+        if (liveTeam) Store.setRoleTeam(server.id, name, liveTeam)
         // Schema included so the bridge can still work out which ConVars to report.
         return c.json({
           success: true,
@@ -174,7 +178,8 @@ api.post('/ingest', getServer, async (c) => {
 
     console.log(`[API] Ingesting role: ${name} for server ${server.name} (Size: ${role_code.length} bytes, Force: ${!!force})`)
     const extracted = await Extractor.extractSchema(role_code, convar_state, data_state, name, Store.getLangSources(server.id))
-    const { team, isPolicingRole, baserole } = extracted
+    const { isPolicingRole, baserole } = extracted
+    const team = liveTeam ?? extracted.team
     const { schema, dropped } = dropUnsafeConVars(extracted.schema)
     if (dropped.length > 0) {
       console.warn(`[API] SECURITY ALERT: ${name} on ${server.name} declared ConVar names that are not plain identifiers; dropped: ${JSON.stringify(dropped)}`)

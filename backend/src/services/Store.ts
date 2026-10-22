@@ -571,6 +571,10 @@ export class Store {
     return row ? row.md5_hash : null
   }
 
+  static setRoleTeam(serverId: string, roleName: string, team: string) {
+    db.prepare('UPDATE roles SET team = ? WHERE server_id = ? AND role_name = ? AND team != ?').run(team, serverId, roleName, team)
+  }
+
   static saveSchema(serverId: string, roleName: string, team: string, isPolicing: boolean, baserole: number, schema: any[], md5Hash?: string, description: string | null = null, color: string | null = null) {
     this.updateHeartbeat(serverId)
     const upsert = db.prepare(`
