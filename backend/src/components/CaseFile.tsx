@@ -202,6 +202,9 @@ h2+.f,h2+.plans,h2+p+.f{margin-top:1.1rem}
 .tools label{display:inline-flex;align-items:center;gap:.4rem;color:#d9d0bd}
 .tools .cap{color:#a89f8c}
 .tools input[type=checkbox]{accent-color:#e9dfc4}
+.f .tools label,.f .tools .cap{color:#4a4334}
+.f .tools input[type=checkbox]{accent-color:#2a2418}
+.f .tog[aria-pressed=true]{background:#fff8e6;color:#2a2418;border:2px solid #2a2418;padding:calc(.05rem - 1px) calc(.7rem - 1px)}
 .tog{background:#2a2620;border:1px solid #4a4334;color:#d9d0bd;padding:.05rem .7rem;margin-right:.25rem;font-family:"Barlow Condensed",sans-serif;font-weight:800;font-size:.9rem;letter-spacing:.06em;text-transform:uppercase;cursor:pointer}
 .tog[aria-pressed=true]{background:#e9dfc4;color:#2a2418;border-color:#e9dfc4}
 .scale{height:.6rem;margin:.5rem 0 .2rem}
