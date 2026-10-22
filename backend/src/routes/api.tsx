@@ -561,8 +561,9 @@ api.post('/v1/ingame-keys', getServer, async (c) => {
   if (!Array.isArray(players) || players.length > MAX_KEY_PLAYERS) return c.json({ error: `players must be a list of at most ${MAX_KEY_PLAYERS} SteamID64s` }, 400)
   if (!players.every((p: unknown) => typeof p === 'string' && STEAM_ID64.test(p))) return c.json({ error: 'players must be SteamID64s' }, 400)
   const now = Date.now()
-  const keys: Record<string, string> = {}
-  for (const id of new Set(players as string[])) keys[id] = makeGameKey(id, now)
+  // A list, not an object keyed by SteamID64: GMod's util.JSONToTable turns keys that look like numbers into
+  // numbers, and a SteamID64 does not fit in one exactly.
+  const keys = [...new Set(players as string[])].map(id => ({ steam_id: id, key: makeGameKey(id, now) }))
   return c.json({ success: true, keys, ttl: KEY_TTL_SECONDS })
 })
 

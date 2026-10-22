@@ -181,8 +181,11 @@ function Guide.IssueKeys(players)
                 return
             end
             local sent = 0
-            for id, key in pairs(keys) do
-                local ply = byId[id]
+            -- a list of { steam_id, key }: GMod's JSONToTable would turn an object keyed by SteamID64 into
+            -- numbers that no longer match
+            for _, entry in ipairs(keys) do
+                local id, key = type(entry) == "table" and entry.steam_id or nil, type(entry) == "table" and entry.key or nil
+                local ply = type(id) == "string" and byId[id] or nil
                 if IsValid(ply) and type(key) == "string" and #key <= MAX_KEY and key:match(KEY_SHAPE) then
                     net.Start("TraitorDash_RolesKey")
                     net.WriteString(key)

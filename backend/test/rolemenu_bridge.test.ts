@@ -157,7 +157,7 @@ describe('rolemenu.lua: the game vouches for its players (RFC 16, 4)', () => {
   const A = '76561198000000011', B = '76561198000000012'
   const KEY_A = A + '.1900000000.abcDEF123_-', KEY_B = B + '.1900000000.zzzDEF123_-'
   // after the guide is on: two players, and a dashboard that answers the key request with KEYS
-  const keyed = (script: string, keys = `{ ["${A}"] = "${KEY_A}", ["${B}"] = "${KEY_B}" }`) => play(`${on}
+  const keyed = (script: string, keys = `{ { steam_id = "${A}", key = "${KEY_A}" }, { steam_id = "${B}", key = "${KEY_B}" } }`) => play(`${on}
     PLAYERS = { Player("${A}", "traitor"), Player("${B}", "innocent") } PA, PB = PLAYERS[1], PLAYERS[2]
     KEYS = ${keys} util.JSONToTable = function() return { keys = KEYS } end
     HTTPREPLY = { code = 200, body = "{}" } SENT = {} HTTPCALLS = {}
@@ -180,13 +180,17 @@ describe('rolemenu.lua: the game vouches for its players (RFC 16, 4)', () => {
     expect(o.out).toEqual({ n: 1, body: [A] })
   })
   test('a key that does not look like one, one for somebody who is not asked for, or for a player who left is not sent', () => {
-    const o = keyed(`TraitorDash.RoleGuide.IssueKeys(PLAYERS)`, `{ ["${A}"] = "<script>", ["${B}"] = "${KEY_B}", ["76561198000000099"] = "${KEY_A}" }`)
+    const o = keyed(`TraitorDash.RoleGuide.IssueKeys(PLAYERS)`, `{ { steam_id = "${A}", key = "<script>" }, { steam_id = "${B}", key = "${KEY_B}" }, { steam_id = "76561198000000099", key = "${KEY_A}" } }`)
     expect(keySends(o).map(m => m.vals)).toEqual([[KEY_B]])
     const left = keyed(`HTTP = function(req) HTTPCALLS[#HTTPCALLS + 1] = req SAVED = req end TraitorDash.RoleGuide.IssueKeys(PLAYERS) IsValid = function(p) return p ~= PB end SAVED.success(200, "{}")`)
     expect(keySends(left).map(m => m.vals)).toEqual([[KEY_A]])
   })
+  test('entries that are not { steam_id, key } pairs, or whose id is a number, are skipped without an error', () => {
+    const o = keyed(`TraitorDash.RoleGuide.IssueKeys(PLAYERS)`, `{ "x", 5, {}, { steam_id = 7.6561198e16, key = "${KEY_A}" }, { steam_id = "${B}", key = "${KEY_B}" } }`)
+    expect(keySends(o).map(m => m.vals)).toEqual([[KEY_B]])
+  })
   test('a key longer than 100 characters is not sent', () => {
-    const o = keyed(`TraitorDash.RoleGuide.IssueKeys(PLAYERS)`, `{ ["${A}"] = "${A}.1900000000.${'x'.repeat(100)}" }`)
+    const o = keyed(`TraitorDash.RoleGuide.IssueKeys(PLAYERS)`, `{ { steam_id = "${A}", key = "${A}.1900000000.${'x'.repeat(100)}" } }`)
     expect(keySends(o)).toEqual([])
   })
   test('nothing is asked while the guide is off, or without a configuration, or with nobody there', () => {
@@ -204,7 +208,7 @@ describe('rolemenu.lua: the game vouches for its players (RFC 16, 4)', () => {
     }
   })
   test('when the guide comes on everybody there gets a key; a player who joins gets one after five seconds, together with others who join at once', () => {
-    const start = play(`PLAYERS = { Player("${A}", "x") } KEYS = { ["${A}"] = "${KEY_A}" } util.JSONToTable = function() return { server_id = "srv-1", keys = KEYS } end
+    const start = play(`PLAYERS = { Player("${A}", "x") } KEYS = { { steam_id = "${A}", key = "${KEY_A}" } } util.JSONToTable = function() return { server_id = "srv-1", keys = KEYS } end
       HTTPREPLY = { code = 200, body = "ok" } ${on}`)
     expect(play(`${on}`).http).toBe(1) // whoami only: nobody in the game
     expect(start.http).toBe(2)         // whoami, then the keys

@@ -76,9 +76,9 @@ describe('POST /api/v1/ingame-keys', () => {
     const r = await keys({ players: [P1, P2, P1] })
     expect(r.status).toBe(200)
     const body = await r.json()
-    expect(Object.keys(body.keys).sort()).toEqual([P1, P2])
-    expect(gk.readGameKey(body.keys[P1])).toBe(P1)
-    expect(gk.readGameKey(body.keys[P2])).toBe(P2)
+    expect(Array.isArray(body.keys)).toBe(true)           // a list: JSONToTable would mangle SteamID64 object keys
+    expect(body.keys.map((k: any) => k.steam_id)).toEqual([P1, P2])
+    for (const k of body.keys) expect(gk.readGameKey(k.key)).toBe(k.steam_id)
     expect(body.ttl).toBe(900)
   })
   test('needs the server token; checks the list', async () => {
