@@ -608,6 +608,21 @@ export class Store {
     })()
   }
 
+  /** Replaces the server's own role descriptions. `rows` are already checked. */
+  static setRoleNotes(serverId: string, rows: { role: string, text: string }[]) {
+    db.transaction(() => {
+      db.run('DELETE FROM role_notes WHERE server_id = ?', [serverId])
+      const insert = db.prepare('INSERT OR REPLACE INTO role_notes (server_id, role_name, text, updated_at) VALUES (?, ?, ?, ?)')
+      const now = new Date().toISOString()
+      for (const r of rows) insert.run(serverId, r.role, r.text, now)
+    })()
+  }
+
+  static getRoleNote(serverId: string, roleName: string): string | null {
+    const row = db.prepare('SELECT text FROM role_notes WHERE server_id = ? AND role_name = ?').get(serverId, roleName) as { text: string } | null
+    return row?.text ?? null
+  }
+
   /** The addons a role comes from, each with the number of roles that addon holds on this server and the others it holds. */
   static getRoleAddons(serverId: string, roleName: string): { wsid: string, title: string, roles: string[] }[] {
     const own = db.prepare('SELECT wsid, title FROM role_addons WHERE server_id = ? AND role_name = ? ORDER BY wsid').all(serverId, roleName) as { wsid: string, title: string }[]
@@ -651,6 +666,7 @@ export class Store {
       one('SELECT COUNT(*) AS n, MAX(updated_at) AS u FROM roles WHERE server_id = ?'),
       one('SELECT COUNT(*) AS n, MAX(updated_at) AS u FROM convar_values WHERE server_id = ?'),
       one('SELECT COUNT(*) AS n, MAX(updated_at) AS u FROM lang_files WHERE server_id = ?'),
+      one('SELECT COUNT(*) AS n, MAX(updated_at) AS u FROM role_notes WHERE server_id = ?'),
     ].join('|')
   }
 

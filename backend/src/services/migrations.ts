@@ -397,6 +397,14 @@ export const migrations: Array<(db: Database) => void> = [
   // by v19 were already cleaned (and had lost their headings), so they are read again.
   (db) => {
     db.run('DELETE FROM workshop_text')
+  },
+  // v21 (RFC 15): descriptions the server's own admins wrote (a role-description addon keeps them in a
+  // data file; the bridge reads it and sends the texts). They are shown before every other source.
+  (db) => {
+    db.run(`CREATE TABLE IF NOT EXISTS role_notes (
+      server_id TEXT NOT NULL, role_name TEXT NOT NULL, text TEXT NOT NULL, updated_at TEXT NOT NULL,
+      PRIMARY KEY (server_id, role_name)
+    )`)
   }
 ]
 

@@ -516,6 +516,34 @@ api.post('/v1/roleaddons', getServer, async (c) => {
   return c.json({ success: true, roles: names.length })
 })
 
+// The descriptions the server's admins wrote for their roles (RFC 15), read by the bridge from the data
+// file of a role-description addon. Replaces the server's list. Shown before every other description.
+export const roleNotesLimiter = new RateLimiter(6, 60_000)
+const MAX_NOTE_CHARS = 4000
+
+api.post('/v1/roledescriptions', getServer, async (c) => {
+  const server = c.get('server')
+  const wait = roleNotesLimiter.hit(server.id)
+  if (wait > 0) return tooMany(c, wait, 'Too many description reports; slow down')
+  const read = await readJson(c, 512 * 1024)
+  if (read.tooLarge) return c.json({ error: 'the report is too large' }, 413)
+  const roles = read.body?.roles
+  if (!roles || typeof roles !== 'object' || Array.isArray(roles)) return c.json({ error: 'roles must be an object' }, 400)
+  const names = Object.keys(roles)
+  if (names.length > MAX_ROLE_ADDON_ROLES) return c.json({ error: `at most ${MAX_ROLE_ADDON_ROLES} roles` }, 400)
+  const rows: { role: string, text: string }[] = []
+  for (const role of names) {
+    if (!NAME.test(role)) return c.json({ error: `invalid role name: ${role.slice(0, 40)}` }, 400)
+    if (typeof roles[role] !== 'string') return c.json({ error: `invalid text for ${role}` }, 400)
+    const text = roles[role].replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').trim().slice(0, MAX_NOTE_CHARS)
+    if (text) rows.push({ role, text })
+  }
+  Store.setRoleNotes(server.id, rows)
+  Store.updateHeartbeat(server.id)
+  console.log(`[RoleNotes] Report from ${server.name}: ${rows.length} descriptions`)
+  return c.json({ success: true, roles: rows.length })
+})
+
 // The bridge uploads a finished floor-plan scan (RFC 10, 4.5). The latest plan per map is kept.
 // A real plan is tens of KB; this only stops a runaway client.
 export const mapPlanLimiter = new RateLimiter(3, 60_000)

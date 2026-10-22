@@ -279,7 +279,7 @@ describe('Sync', () => {
       ["terrortown/entities/roles/abstractone.lua"] = "ABSTRACT",
       ["terrortown/lang/en.lua"] = "CORE",
     }
-    file = { Read = function(p) return FILES[p] end, Find = function() return {}, {} end }
+    file = { Read = function(p) return FILES[p] end, Find = function() return {}, {} end, Exists = function() return false end }
   `
   const sync = (script: string, force = '') => run(`${script}`, WORLD + 'JSON_NEXT = nil').result
   const flow = `

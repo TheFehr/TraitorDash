@@ -15,7 +15,7 @@ export interface RoleView {
   color: string
   enabled: boolean
   min: number | null
-  /** The description from the language files, cleaned; null when the addon has none. */
+  /** The description the server's admins wrote, else the one from the language files, cleaned; null when the addon has none. */
   description: string | null
   /** What the server itself knows about the role, for a role the addon does not describe: its team, and whether it polices. */
   facts: string | null
@@ -146,7 +146,7 @@ export function buildRoleView(serverId: string, roleName: string): RoleView | nu
     color: roleColour(role.color, String(role.team ?? '')),
     enabled: isRoleEnabled(live, roleName),
     min: metrics.minPlayers.sort,
-    description: cleanDescription(Store.getRoleDescription(serverId, roleName)),
+    description: cleanDescription(Store.getRoleNote(serverId, roleName) ?? Store.getRoleDescription(serverId, roleName)),
     facts: factsOf(String(role.team ?? ''), !!role.is_policing),
     workshop: workshopOf(serverId, roleName),
     numbers: (Object.keys(METRICS) as MetricKey[]).map(key => ({ key, label: METRICS[key].label, text: metrics[key].text })),

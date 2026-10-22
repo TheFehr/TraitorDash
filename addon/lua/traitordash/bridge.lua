@@ -412,6 +412,59 @@ function TraitorDash.PushRoleAddons()
     })
 end
 
+-- The descriptions the server's admins wrote in a role-description addon (RFC 15). That addon keeps
+-- them in data/role_descriptions_v3.json as { role = { description = "..." } }; roles with no text
+-- are left out. Idle when the file is not there.
+local NOTES_FILE = "role_descriptions_v3.json"
+
+function TraitorDash.PushRoleNotes()
+    local baseUrl, token = GetApi()
+    if not baseUrl or not file.Exists(NOTES_FILE, "DATA") then return end
+
+    local ok, parsed = pcall(function() return util.JSONToTable(file.Read(NOTES_FILE, "DATA") or "") end)
+    if not ok or type(parsed) ~= "table" then
+        print("[TraitorDash] Could not read " .. NOTES_FILE)
+        return
+    end
+
+    local roles, count = {}, 0
+    for name, entry in pairs(parsed) do
+        local text = type(entry) == "table" and entry.description
+        if count < MAX_ROLE_ADDON_ROLES and type(name) == "string" and type(text) == "string" and text:match("%S") then
+            count = count + 1
+            roles[name] = text
+        end
+    end
+    if count == 0 then return end
+
+    local payload = util.TableToJSON({ roles = roles })
+    if not payload or payload == "" then
+        print("[TraitorDash] Could not encode the role descriptions")
+        return
+    end
+
+    HTTP({
+        url = baseUrl .. "/api/v1/roledescriptions",
+        method = "POST",
+        headers = {
+            ["Content-Type"] = "application/json",
+            ["Authorization"] = "Bearer " .. token
+        },
+        body = payload,
+        timeout = 30,
+        success = function(code, body)
+            if code == 200 then
+                print("[TraitorDash] Role descriptions OK (" .. count .. " roles)")
+            else
+                print("[TraitorDash] Role descriptions rejected (HTTP " .. code .. "): " .. tostring(body))
+            end
+        end,
+        failed = function(err)
+            print("[TraitorDash] Role descriptions failed: " .. tostring(err))
+        end
+    })
+end
+
 -- A finished floor-plan scan (mapscan.lua) goes to /api/v1/mapplan (RFC 10, 4.5). Only the grid and
 -- the scan's own statistics are sent; the backend counts floors itself. The fingerprint says which
 -- version of the map was scanned. Idle without a configuration.
@@ -668,6 +721,7 @@ function TraitorDash.Sync(force)
         if #queue == 0 then
             print("[TraitorDash] Sync complete! " .. count .. " roles processed.")
             TraitorDash.PushRoleAddons()
+            TraitorDash.PushRoleNotes()
             -- Restore hibernation setting
             RunConsoleCommand("sv_hibernate_think", tostring(oldHibernate))
             return
