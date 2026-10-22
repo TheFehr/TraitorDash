@@ -315,4 +315,17 @@ describe('the TTT2 menu files', () => {
     const off = run(`SUB:Populate({})`)
     expect(off.opened).toEqual([])
   })
+  test('the browser panel is as tall as the scrolling area it sits in, never a thin strip', () => {
+    const o = run(`TraitorDash.RoleGuide.SendInit(nil) Deliver(1)
+      local scroll = { GetCanvas = function() end, GetTall = function() return 480 end }
+      local inner = { GetParent = function() return scroll end }
+      local made
+      local real = vgui.Create
+      vgui.Create = function(c, p) made = real(c, p) made.tall = 0 made.SetTall = function(s, t) s.tall = t end made.GetTall = function(s) return s.tall end return made end
+      SUB:Populate(inner) made:Think()
+      local first = made.tall
+      scroll.GetTall = function() return 100 end made:Think()
+      RESULT = { first = first, small = made.tall }`)
+    expect(o.out).toEqual({ first: 480, small: 300 })
+  })
 })
