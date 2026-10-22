@@ -43,6 +43,9 @@ button{background:#e9dfc4;color:#2a2418;border:0;padding:.35rem .9rem;font:inher
 a.f:hover{transform:translateY(-3px)}
 .f b{display:block;font-size:1.1rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;border-bottom:2px solid #2a2418;padding-bottom:.25rem;overflow-wrap:anywhere}
 .f>span{display:block;font-size:.8rem;margin-top:.3rem}
+.file,.f>span.file{font-family:"Courier Prime","Courier New",monospace;font-weight:400;font-size:.72rem;color:#6b6350;overflow-wrap:anywhere;letter-spacing:0;text-transform:none}
+.f{min-width:0}
+.f .num{overflow-wrap:anywhere}
 .stamp{display:table;margin:0 0 .4rem auto;border:2px solid var(--c);color:var(--c);color:color-mix(in srgb,var(--c) 62%,#000);padding:0 .35rem;font-family:"Barlow Condensed",sans-serif;font-size:.8rem;font-weight:800;text-transform:uppercase;letter-spacing:.12em;transform:rotate(-6deg)}
 .f.few,.f.off{background:#2a2620;color:#a89f8c;box-shadow:none}
 .f.few{border:1px dashed #5a523f}.f.few:before,.f.off:before{background:#4a4334}.f.few b,.f.off b{border-color:#5a523f}

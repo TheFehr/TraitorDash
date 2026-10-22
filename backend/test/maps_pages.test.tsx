@@ -45,7 +45,7 @@ const page = async (id = serverId) => (await get(`/servers/${id}/maps`)).text()
 const adminPage = async (id = serverId, all = false) => (await get(`/servers/${id}/maps${all ? '?all=1' : ''}`, true)).text()
 // a map is a card of its own: everything from its opening tag to the next card
 const rowsOf = (html: string) => html.split('<div class="f"').slice(1)
-const rowFor = (html: string, name: string) => rowsOf(html).find((r: string) => r.includes(`>${name}</a>`))
+const rowFor = (html: string, name: string) => rowsOf(html).find((r: string) => r.includes(`>${name}</span>`))
 /** The number shown under a caption of the figures at the top of the page. */
 const figure = (html: string, label: string) => new RegExp(`<div class="num">([^<]*)</div><div class="cap">${label}</div>`).exec(html)?.[1]
 
@@ -124,7 +124,7 @@ describe('the Maps page', () => {
 
   test('votable maps come before the others', async () => {
     const html = await adminPage(serverId, true)
-    const at = (name: string) => html.indexOf(`>${name}</a>`) // the cards: the figures at the top name a map too
+    const at = (name: string) => html.indexOf(`>${name}</span>`) // the cards: the figures at the top name a map too
     expect(at('ttt_cycled')).toBeLessThan(at('ttt_next'))
     expect(at('ttt_next')).toBeLessThan(at('ttt_current'))
     expect(at('ttt_current')).toBeLessThan(at('gm_construct'))
@@ -148,7 +148,7 @@ describe('the Maps page', () => {
 
   test('each badge sits on the right map\'s row', async () => {
     const rows = rowsOf(await adminPage(serverId, true))
-    const row = (name: string) => rows.find((r: string) => r.includes(`>${name}</a>`))!
+    const row = (name: string) => rows.find((r: string) => r.includes(`>${name}</span>`))!
     expect(row('ttt_next')).toContain('Next')
     expect(row('ttt_next')).toContain('Votable')
     expect(row('ttt_current')).not.toContain('Next')

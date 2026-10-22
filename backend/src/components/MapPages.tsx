@@ -3,6 +3,7 @@ import { Bar, Crumbs, ServerName, Num, When, Who, adminOf, link, teamHex, type C
 import { signinUrl } from '../middleware/session'
 import { duration, mapSize } from '../format'
 import { teamLabel } from '../teamColours'
+import { prettyMap } from '../mapName'
 import { heightColour, type Level } from '../services/mapplan'
 import type { MapActivity } from '../services/stats'
 import type { MapPlanMeta, MapRow, MapsState } from '../services/Store'
@@ -93,7 +94,7 @@ export const MapsPage = ({ ctx, server, state, maps, activity, showAll, plans, m
               {admin && <Num label="Maps on disk" value={maps.length} />}
               <Num label="In the vote pool" value={known ? maps.filter(m => m.inVotePool === true).length : '–'} />
               <Num label="Votable now" value={known ? maps.filter(m => m.votable === true).length : '–'} />
-              <Num label="Running map" value={state.current ?? '–'} />
+              <Num label="Running map" value={state.current ? prettyMap(state.current) : '–'} />
             </div>
             <div class="g">
               {listed.map(m => {
@@ -101,7 +102,8 @@ export const MapsPage = ({ ctx, server, state, maps, activity, showAll, plans, m
                 const plan = plans?.find(p => p.map === m.name)
                 return (
                   <div class="f" style={`--c:${tabColour(m)}`}>
-                    <b><a href={link(ctx, `${mapPath(id, m.name)}/rounds`)}>{m.name}</a></b>
+                    <b><a href={link(ctx, `${mapPath(id, m.name)}/rounds`)}>{prettyMap(m.name)}</a></b>
+                    <span class="file">{m.name}</span>
                     <span><Pills m={m} next={next} />{admin && <i class="pill mute">{mapSize(m.size)}</i>}</span>
                     {a
                       ? <><Split results={a.results} rounds={a.rounds} /><span>{a.rounds} {a.rounds === 1 ? 'round' : 'rounds'} · last <When iso={a.lastRound} now={ctx.now} /></span></>
@@ -161,10 +163,11 @@ export const MapFilePage = ({ ctx, server, name, map, state, activity, has3d, ha
   const view = link(ctx, mapPath(id, name))
   return (
     <Shell title={`${name} | ${server.name}`} embed={ctx.embed} viewer={ctx.viewer}>
-      <Crumbs><a href={link(ctx, `${here(id)}/maps`)}>All maps</a> / {name}</Crumbs>
+      <Crumbs><a href={link(ctx, `${here(id)}/maps`)}>All maps</a> / {prettyMap(name)}</Crumbs>
       {!ctx.embed && <Sections serverId={id} current="maps" />}
       <div class="f big" style={`--c:${tabColour(map)}`}>
-        <h1>{name}</h1>
+        <h1>{prettyMap(name)}</h1>
+        <p class="file" style="margin:.2rem 0 0">{name}</p>
         {map && <p style="margin:.5rem 0 0"><Pills m={map} next={next} />{admin && <i class="pill mute">{mapSize(map.size)}</i>}</p>}
         {!map && <p class="none">Not in the server's latest map list.</p>}
         {activity ? (
@@ -234,9 +237,10 @@ export const MapViewPage = ({ ctx, server, map, name, next, plan, geometry }: Ma
   const hasView = geometry?.status === 'parsed' && !!geometry.info
   return (
     <Shell title={`${name} | ${server.name}`} embed={ctx.embed} viewer={ctx.viewer} scripts={hasView ? ['/public/mapview.js'] : []}>
-      <Crumbs><a href={link(ctx, `${here(id)}/maps`)}>All maps</a> / <a href={link(ctx, `${mapPath(id, name)}/rounds`)}>{name}</a></Crumbs>
+      <Crumbs><a href={link(ctx, `${here(id)}/maps`)}>All maps</a> / <a href={link(ctx, `${mapPath(id, name)}/rounds`)}>{prettyMap(name)}</a></Crumbs>
       {!ctx.embed && <Sections serverId={id} current="maps" />}
-      <h1>{name}</h1>
+      <h1>{prettyMap(name)}</h1>
+      <p class="file" style="margin:.1rem 0 .3rem">{name}</p>
       <p style="margin:.2rem 0 0">
         {map ? <><Pills m={map} next={next} /><span class="muted">{admin ? mapSize(map.size) : ''}</span></> : <span class="muted">Not in the server's latest map list.</span>}
       </p>

@@ -176,7 +176,7 @@ describe('Maps', () => {
 
   test('cards for the maps the vote can offer, the votable first; maps outside the pool stay out; no size', async () => {
     const html = await text(`/servers/${serverId}/maps?embed=1`)
-    expect(html.indexOf('>ttt_b</a>')).toBeLessThan(html.indexOf('>ttt_a</a>'))
+    expect(html.indexOf('>ttt_b</span>')).toBeLessThan(html.indexOf('>ttt_a</span>'))
     expect(html).not.toContain('ttt_c')
     expect(html).toContain('Current')
     expect(html).toContain('Votable')

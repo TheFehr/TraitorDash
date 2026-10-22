@@ -3,6 +3,7 @@ import { Bar, Crumbs, Num, ServerName, Pills, Result, Tabs, When, WinTable, Who,
 import { signinUrl } from '../middleware/session'
 import { clock, duration, kd, mb, pct } from '../format'
 import { teamLabel } from '../teamColours'
+import { prettyMap } from '../mapName'
 import { SORTS, type FirstBlood, type LeaderRow, type PlayerDetail, type RecentRound, type ReplayRound, type SortKey, type WinRow } from '../services/stats'
 
 // Round stats, one round and one player (RFC 16, RFC 17): the same pages on the website and in the
@@ -203,7 +204,7 @@ export const RoundsTable = ({ ctx, serverId, rounds, tracked, bots }: { ctx: Ctx
             <tr>
               {pick && <td><input type="checkbox" name="round" value={r.roundId} aria-label={`Select the round of ${r.receivedAt}`} /></td>}
               <td><a href={link(ctx, `${here(serverId)}/rounds/${encodeURIComponent(r.roundId)}`, { bots })}><When iso={r.receivedAt} now={ctx.now} /></a></td>
-              <td>{r.map ?? '–'}</td>
+              <td title={r.map ?? undefined}>{r.map ? prettyMap(r.map) : '–'}</td>
               <td><Result result={r.result} /></td>
               <td class="r">{r.players}</td>
               <td class="r">{r.deaths}</td>
@@ -266,7 +267,8 @@ export const RoundPage = ({ ctx, server, round, deaths, firstBlood, hasReplay, c
       {!ctx.embed && <Sections serverId={id} />}
       <div class="f big" style={`--c:${teamHex(round.result)}`}>
         <div class="stamp" style={`--c:${teamHex(round.result)}`}>{teamLabel(round.result)}</div>
-        <h1>{round.map ?? 'Unknown map'}</h1>
+        <h1>{round.map ? prettyMap(round.map) : 'Unknown map'}</h1>
+        {round.map && <p class="file" style="margin:.2rem 0 0">{round.map}</p>}
         <h2>The round</h2>
         <dl class="ledger">
           <div><dt>Length</dt><dd>{duration(round.duration)}</dd></div>
@@ -341,7 +343,7 @@ export const PlayerPage = ({ ctx, server, player, by = 'end', bots }: PlayerPage
             {player.recent.map(r => (
               <tr>
                 <td><a href={link(ctx, `${here(id)}/rounds/${encodeURIComponent(r.roundId)}`, { bots })}><When iso={r.receivedAt} now={ctx.now} /></a></td>
-                <td>{r.map ?? '–'}</td>
+                <td title={r.map ?? undefined}>{r.map ? prettyMap(r.map) : '–'}</td>
                 <td>{r.endRole && r.endRole !== r.role ? r.endRole : (r.role ?? '–')}{r.endRole && r.role && r.endRole !== r.role && <span class="dim"> (was {r.role})</span>}</td>
                 <td>{r.result}</td>
                 <td class="r">{r.kills}</td>

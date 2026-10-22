@@ -2,6 +2,7 @@ import { Sections, Shell } from './CaseFile'
 import { Crumbs, Who, adminOf, link, type Ctx } from './kit'
 import { duration } from '../format'
 import { teamLabel } from '../teamColours'
+import { prettyMap } from '../mapName'
 
 // One round's replay (RFC 12, 3.5; RFC 17): the markup the browser code (replay.ts) finds its parts in,
 // in the same look as the other pages. Everything it draws is in the canvas; the lists and the controls
@@ -27,11 +28,11 @@ export const ReplayPage = ({ ctx, server, round, hasTrack, src, pinned, here, pi
   const back = link(ctx, `/servers/${id}/rounds/${encodeURIComponent(round.id)}`, { bots })
   return (
     <Shell title={`Replay | ${server.name}`} embed={ctx.embed} viewer={ctx.viewer} scripts={hasTrack ? ['/public/replay.js', ...(admin ? ['/public/confirm.js'] : [])] : []}>
-      <Crumbs><a href={link(ctx, `/servers/${id}/stats`, { view: 'rounds', bots })}>Rounds</a> / <a href={back}>{round.map ?? 'Round'}</a> / Replay</Crumbs>
+      <Crumbs><a href={link(ctx, `/servers/${id}/stats`, { view: 'rounds', bots })}>Rounds</a> / <a href={back}>{round.map ? prettyMap(round.map) : 'Round'}</a> / Replay</Crumbs>
       {!ctx.embed && <Sections serverId={id} />}
       <h1>Round replay</h1>
       <p class="muted" style="margin:.1rem 0 .8rem">
-        {round.map ?? 'unknown map'} · {teamLabel(round.result)} · {duration(round.duration)}
+        {round.map ? prettyMap(round.map) : 'unknown map'} · {teamLabel(round.result)} · {duration(round.duration)}
         {pinned && <span data-pinned class="pill ok" style="margin-left:.6rem">Pinned</span>}
       </p>
 
