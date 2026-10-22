@@ -12,5 +12,5 @@ function CLGAMEMODESUBMENU:Populate(parent)
     local url = guide and guide.SectionUrl("stats")
     if not url then return end
 
-    guide.Browser(parent, url)
+    guide.Browser(parent, url, "stats")
 end

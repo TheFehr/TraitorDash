@@ -17,6 +17,7 @@ Guide.serverId = nil
 Guide.wanted = nil     -- a role name to open on, consumed by the tab when it is built
 Guide.announced = false
 Guide.key = nil        -- what the game server sent to vouch for this player (RFC 16, 4)
+Guide.panels = {}      -- the browser panels built for a section: { html = panel, section = "stats" | "maps" }
 
 --- True when the server has told us where the guide is.
 function Guide.Available()
@@ -53,10 +54,28 @@ end
 --- Takes the key the game server sent for this player. Anything that does not look like one is dropped.
 function Guide.SetKey(key)
     if type(key) == "string" and #key <= 100 and key:match("^%d+%.%d+%.[%w_%-]+$") then
-        if not Guide.key then print("[TraitorDash] The game server vouched for you: round stats and maps can open replays and 3D views.") end
+        local first = Guide.key == nil
         Guide.key = key
+        if first then
+            print("[TraitorDash] The game server vouched for you: round stats and maps can open replays and 3D views.")
+            Guide.ReloadPanels()
+        end
     else
         Guide.key = nil
+    end
+end
+
+--- Opens again the pages that were built before the key came: TTT2 builds a menu page once, when it is
+-- first opened, so a page built in the first seconds after joining would keep an address without the key.
+function Guide.ReloadPanels()
+    for i = #Guide.panels, 1, -1 do
+        local p = Guide.panels[i]
+        if not IsValid(p.html) then
+            table.remove(Guide.panels, i)
+        else
+            local url = Guide.SectionUrl(p.section)
+            if url then p.html:OpenURL(url) end
+        end
     end
 end
 
@@ -74,10 +93,11 @@ end
 --- A browser panel on `url`, as tall as the visible area of the menu page it sits in.
 -- TTT2 puts a page into a scrolling area that grows to fit its content, so a panel docked to FILL
 -- collapses to a thin strip; this one is given the height of the area instead.
-function Guide.Browser(parent, url)
+function Guide.Browser(parent, url, section)
     local html = vgui.Create("DHTML", parent)
     html:Dock(TOP)
     html:OpenURL(url)
+    if section then Guide.panels[#Guide.panels + 1] = { html = html, section = section } end
     if html.SetTall then
         html.Think = function(self)
             local area = parent

@@ -425,6 +425,25 @@ describe('the TTT2 menu files', () => {
     expect(on1.opened).toEqual(['https://dash.example.org/servers/srv-1/stats?embed=1', 'https://dash.example.org/servers/srv-1/maps?embed=1'])
     expect(run(`STATS:Populate({}) MAPS:Populate({})`).opened).toEqual([])
   })
+  test('a page built before the first key came is opened again with it, once; later keys do not reset the page', () => {
+    const o = run(`TraitorDash.RoleGuide.SendInit(nil) Deliver(1) local KEY = "76561198000000011.1900000000.abcDEF123_-" STATS:Populate({}) MAPS:Populate({}) OPENED = {}
+      TraitorDash.RoleGuideClient.SetKey("" .. KEY .. "")
+      local after = #OPENED
+      TraitorDash.RoleGuideClient.SetKey("76561198000000011.1900000000.xyzDEF123_-")
+      RESULT = { urls = OPENED, again = #OPENED - after }`)
+    expect(o.out.urls.length).toBe(2)
+    for (const u of o.out.urls) expect(u).toContain('/auth/game?k=76561198000000011.1900000000.abcDEF123_-')
+    expect(o.out.urls.some((u: string) => u.includes('stats'))).toBe(true)
+    expect(o.out.urls.some((u: string) => u.includes('maps'))).toBe(true)
+    expect(o.out.again).toBe(0)
+  })
+  test('a page that is gone is dropped and not opened again, and the role guide page is never one of those reloaded', () => {
+    const o = run(`TraitorDash.RoleGuide.SendInit(nil) Deliver(1) local KEY = "76561198000000011.1900000000.abcDEF123_-" STATS:Populate({}) SUB:Populate({}) OPENED = {}
+      IsValid = function() return false end
+      TraitorDash.RoleGuideClient.SetKey("" .. KEY .. "")
+      RESULT = { n = #OPENED, left = #TraitorDash.RoleGuideClient.panels }`)
+    expect(o.out).toEqual({ n: 0, left: 0 })
+  })
   test('SectionUrl knows only the two sections; any other name builds nothing', () => {
     const o = run(`TraitorDash.RoleGuide.SendInit(nil) Deliver(1) local g = TraitorDash.RoleGuideClient
       RESULT = { a = g.SectionUrl("stats"), b = g.SectionUrl("maps"), c = g.SectionUrl("../x") or "nil", d = g.SectionUrl("roles") or "nil", e = g.SectionUrl(nil) or "nil" }`)
