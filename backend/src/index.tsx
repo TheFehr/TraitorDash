@@ -17,7 +17,7 @@ import { RateLimiter } from './services/rateLimit'
 import { createHash } from 'node:crypto'
 import { buildRoleView, listRoles, parsePlayers, publicRoles, publicRoleSettings, roleColour, KNOWN_ROLE_NAME } from './services/roleview'
 import { RoleListPage, RolePage, RoleNotFound } from './components/RolePublic'
-import { GameStatsPage, GameRoundPage, GameMapsPage, GameMapPage, GameNotFound } from './components/GamePages'
+import { browserOf, GameStatsPage, GameRoundPage, GameMapsPage, GameMapPage, GameNotFound } from './components/GamePages'
 import { geometryEnabled, kickGeometryQueue, setGeometryFetcher } from './services/mapgeometry'
 import { helperAvailable, workshopFetcher } from './services/workshop'
 import { sameOrigin } from './middleware/csrf'
@@ -230,7 +230,7 @@ app.get('/servers/:serverId/stats', async (c) => {
     const view = ['leaders', 'rounds'].includes(c.req.query('view') ?? '') ? c.req.query('view') as 'leaders' | 'rounds' : 'overview'
     return gameResponse(c, <GameStatsPage server={server} view={view} sort={sort} overview={stats.getOverview(serverId, opts)} roles={stats.getRoleStats(serverId, opts)}
       leaders={stats.getLeaderboard(serverId, sort, opts)} rounds={recent} tracked={Store.getTrackedRounds(serverId, recent.map(r => r.roundId))}
-      canReplay={!!(steamId || await userOf(c))} colours={colourMap(serverId)} viewer={(await getSession(c))?.steamId ?? null} />)
+      canReplay={!!(steamId || await userOf(c))} colours={colourMap(serverId)} viewer={(await getSession(c))?.steamId ?? null} browser={browserOf(c.req.header('User-Agent'))} />)
   }
   return c.html(
     <Layout steamId={steamId || undefined} user={await userOf(c)} path="/">
@@ -352,7 +352,7 @@ app.get('/servers/:serverId/maps', async (c) => {
   if (isEmbed(c)) {
     const limited = gameLimited(c)
     if (limited) return limited
-    return gameResponse(c, <GameMapsPage server={server} state={state} maps={maps} activity={stats.getMapActivity(serverId)} viewer={(await getSession(c))?.steamId ?? null} />)
+    return gameResponse(c, <GameMapsPage server={server} state={state} maps={maps} activity={stats.getMapActivity(serverId)} viewer={(await getSession(c))?.steamId ?? null} browser={browserOf(c.req.header('User-Agent'))} />)
   }
   const user = await userOf(c)
   // The 3D view is for signed-in users (RFC 13); an anonymous visitor is offered it only when sign-in is open.
@@ -421,7 +421,7 @@ app.get('/servers/:serverId/maps/:map/rounds', async (c) => {
   const activity = stats.getMapActivity(serverId).get(name) ?? null
   if (!map && !activity) return gameResponse(c, <GameNotFound what="map" />, 404)
   const has3d = geometryEnabled() && Store.getGeometryStates(serverId).get(name)?.status === 'parsed'
-  return gameResponse(c, <GameMapPage server={server} name={name} map={map} state={state} activity={activity} has3d={has3d} signedIn={!!(await getSession(c))} viewer={(await getSession(c))?.steamId ?? null} viewLogDays={viewLogDays()} />)
+  return gameResponse(c, <GameMapPage server={server} name={name} map={map} state={state} activity={activity} has3d={has3d} signedIn={!!(await getSession(c))} viewer={(await getSession(c))?.steamId ?? null} browser={browserOf(c.req.header('User-Agent'))} viewLogDays={viewLogDays()} />)
 })
 
 /** A stored floor plan drawn as a picture (RFC 10, 4.5). Admins only; nothing in it can run or load anything. */
@@ -532,7 +532,7 @@ app.get('/servers/:serverId/rounds/:roundId', async (c) => {
   if (!round) return gameResponse(c, <GameNotFound what="round" />, 404)
   const signedIn = !!((await getAdminId(c)) || (await userOf(c)))
   return gameResponse(c, <GameRoundPage server={server} round={round} deaths={stats.getDeathCount(serverId, roundId)} firstBlood={stats.getFirstBlood(serverId, roundId)}
-    hasReplay={Store.getTrackedRounds(serverId, [roundId]).has(roundId)} canReplay={signedIn} colours={colourMap(serverId)} viewer={(await getSession(c))?.steamId ?? null} />)
+    hasReplay={Store.getTrackedRounds(serverId, [roundId]).has(roundId)} canReplay={signedIn} colours={colourMap(serverId)} viewer={(await getSession(c))?.steamId ?? null} browser={browserOf(c.req.header('User-Agent'))} />)
 })
 
 app.get('/servers/:serverId/rounds/:roundId/replay', async (c) => {

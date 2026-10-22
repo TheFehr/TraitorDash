@@ -21,9 +21,15 @@ const Result = ({ result }: { result: string }) => <i class="res" style={`--c:${
 const Crumbs = ({ children }: { children: any }) => <div class="crumbs">{children}</div>
 
 /** Who the page takes the visitor for: said on every page, so a missing session is visible. */
-const Who = ({ viewer }: { viewer?: string | null }) => (
-  <p class="foot" data-viewer>{viewer ? `Signed in as ${viewer}.` : 'Not signed in.'}</p>
+const Who = ({ viewer, browser }: { viewer?: string | null, browser?: string | null }) => (
+  <p class="foot" data-viewer>{viewer ? `Signed in as ${viewer}.` : 'Not signed in.'}{browser ? ` Browser: ${browser}.` : ''}</p>
 )
+
+/** "Chrome 76" from a User-Agent header: what the game's built-in browser is, which decides what its pages may use. */
+export const browserOf = (userAgent: string | null | undefined): string | null => {
+  const m = /Chrome\/(\d{1,3})/.exec(userAgent ?? '')
+  return m ? `Chrome ${m[1]}` : null
+}
 
 type View = 'overview' | 'leaders' | 'rounds'
 const VIEWS: { key: View, label: string }[] = [
@@ -66,6 +72,7 @@ export interface GameStatsProps {
   /** Role name to `#rrggbb`. */
   colours: Record<string, string>
   viewer?: string | null
+  browser?: string | null
   now?: number
 }
 
@@ -152,7 +159,7 @@ export const GameStatsPage = (p: GameStatsProps) => {
           <p class="foot">The latest {p.rounds.length} rounds. Open a round to see who played what.</p>
         </>
       )}
-      <Who viewer={p.viewer} />
+      <Who viewer={p.viewer} browser={p.browser} />
     </Shell>
   )
 }
@@ -166,7 +173,7 @@ export interface GameRoundProps {
   canReplay: boolean
   colours: Record<string, string>
   viewer?: string | null
-  /** How many days a 3D view is logged (RFC 13); said next to the replay. */
+  browser?: string | null
   now?: number
 }
 
@@ -185,7 +192,7 @@ const bloodText = (b: FirstBlood) => {
   return b.killer && b.killer !== b.victim ? `${when}${b.killer} → ${b.victim}` : `${when}${b.victim}`
 }
 
-export const GameRoundPage = ({ server, round, deaths, firstBlood, hasReplay, canReplay, colours, viewer, now }: GameRoundProps) => {
+export const GameRoundPage = ({ server, round, deaths, firstBlood, hasReplay, canReplay, colours, viewer, browser, now }: GameRoundProps) => {
   const id = server.id
   return (
     <Shell title={`${round.map ?? 'Round'} | ${server.name}`} embed={true}>
@@ -214,7 +221,7 @@ export const GameRoundPage = ({ server, round, deaths, firstBlood, hasReplay, ca
           </p>
         )}
       </div>
-      <Who viewer={viewer} />
+      <Who viewer={viewer} browser={browser} />
     </Shell>
   )
 }
@@ -225,6 +232,7 @@ export interface GameMapsProps {
   maps: MapRow[]
   activity: Map<string, MapActivity>
   viewer?: string | null
+  browser?: string | null
   now?: number
 }
 
@@ -252,7 +260,7 @@ const Split = ({ results, rounds }: { results: { name: string, n: number }[], ro
   </div>
 )
 
-export const GameMapsPage = ({ server, state, maps, activity, viewer, now }: GameMapsProps) => {
+export const GameMapsPage = ({ server, state, maps, activity, viewer, browser, now }: GameMapsProps) => {
   const id = server.id
   const next = nextOf(state)
   const listed = listedMaps(maps)
@@ -279,7 +287,7 @@ export const GameMapsPage = ({ server, state, maps, activity, viewer, now }: Gam
           </div>
         )}
       <p class="foot">The maps the vote can offer.</p>
-      <Who viewer={viewer} />
+      <Who viewer={viewer} browser={browser} />
     </Shell>
   )
 }
@@ -294,12 +302,13 @@ export interface GameMapProps {
   has3d: boolean
   signedIn: boolean
   viewer?: string | null
+  browser?: string | null
   /** How many days a 3D view is logged with the viewer's SteamID64 (RFC 13); 0 means it is not. */
   viewLogDays?: number
   now?: number
 }
 
-export const GameMapPage = ({ server, name, map, state, activity, has3d, signedIn, viewer, viewLogDays = 0, now }: GameMapProps) => {
+export const GameMapPage = ({ server, name, map, state, activity, has3d, signedIn, viewer, browser, viewLogDays = 0, now }: GameMapProps) => {
   const id = server.id
   const next = nextOf(state)
   return (
@@ -329,7 +338,7 @@ export const GameMapPage = ({ server, name, map, state, activity, has3d, signedI
         )}
         <p class="foot" style="color:#6b6350">The floor plan is on the website, for admins.</p>
       </div>
-      <Who viewer={viewer} />
+      <Who viewer={viewer} browser={browser} />
     </Shell>
   )
 }

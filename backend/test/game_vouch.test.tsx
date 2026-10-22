@@ -218,6 +218,24 @@ describe('every game page says who it takes the visitor for', () => {
   })
 })
 
+describe('the browser is named, because it decides what the pages may use', () => {
+  test('browserOf reads the Chrome version from the User-Agent; anything else is nothing', async () => {
+    const { browserOf } = await import('../src/components/GamePages')
+    expect(browserOf('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/76.0.3809.100 Safari/537.36')).toBe('Chrome 76')
+    expect(browserOf('Mozilla/5.0 Gecko/20100101 Firefox/120.0')).toBeNull()
+    expect(browserOf(null)).toBeNull()
+    expect(browserOf(undefined)).toBeNull()
+  })
+  test('every game page shows it at the bottom, and nothing when there is no User-Agent', async () => {
+    const id = round()
+    const ua = { 'User-Agent': 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko) Chrome/76.0.3809.100 Safari/537.36' }
+    for (const path of [`/servers/${serverId}/stats?embed=1`, `/servers/${serverId}/rounds/${id}?embed=1`, `/servers/${serverId}/maps?embed=1`]) {
+      expect(await (await get(path, ua)).text(), path).toContain('Browser: Chrome 76.')
+      expect(await (await get(path)).text(), path).not.toContain('Browser:')
+    }
+  })
+})
+
 describe('the full pages inside the game window', () => {
   test('the replay without the site header and without the Steam login, with the way back inside the window', async () => {
     process.env.OPEN_SIGNIN = '1'
