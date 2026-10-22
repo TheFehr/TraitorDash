@@ -27,6 +27,10 @@ describe('last heartbeat', () => {
     expect(String(<ServerManager servers={[server]} />)).toContain('datetime="2026-10-16T15:39:44.000Z"')
   })
 
+  test('the front page does not show a server\'s internal id', () => {
+    expect(String(<HomePage ctx={{ embed: false, viewer: null }} servers={[server]} />)).not.toContain('>s1<')
+  })
+
   test('still shown for guests, and a never-seen server reads Never everywhere', () => {
     expect(String(<HomePage ctx={{ embed: false, viewer: null }} servers={[server]} />)).toContain('datetime="2026-10-16T15:39:44.000Z"')
     expect(String(<AdminDashboard servers={[never]} />)).toContain('Never')
