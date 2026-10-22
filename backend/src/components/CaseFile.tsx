@@ -163,6 +163,7 @@ table.log a{text-decoration:underline}
 .f.off .pill,.f.few .pill{color:#d6cdb8}
 .good{color:#2f7d3a;font-weight:700}.bad{color:#991b1b;font-weight:700}
 .scrollx{overflow-x:auto}
+h2+.f,h2+.plans,h2+p+.f{margin-top:1.1rem}
 .f .sections{margin:.6rem 0 0}
 .f .sections a,.f .sections span{color:#2a2418;border-color:#8a7f65}
 .f .sections span{background:#2a2418;color:#e9dfc4;border-color:#2a2418}
