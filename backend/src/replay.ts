@@ -8,7 +8,6 @@ import {
 import { hex } from './teamColours'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { BTN } from './ui'
 import { makeCamera, makeRenderer, makeScene } from './sceneKit'
 import {
   decodeTrack, poseAt, lastPoseAt, trailBetween, levelOf, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose,
@@ -82,7 +81,7 @@ async function start(root: HTMLElement) {
 
   // ---- the page's own parts that do not need WebGL: the round's deaths, the player list, the notes
   const notes = el(root, '[data-notes]')
-  const note = (t: string) => { if (notes) notes.append(text(t, 'p', 'text-xs text-yellow-300')) }
+  const note = (t: string) => { if (notes) notes.append(text(t, 'p', 'warn')) }
   if (payload.background.mismatch) note('The map in the background is another version than the one this round was played on; it may not match.')
   if (payload.trackInfo.truncated) note('This track was cut short (it reached a size or length limit), so the end of the round may be missing.')
   if (payload.trackInfo.degraded) note('The game server was too busy to keep recording, so the track ends early.')
@@ -112,7 +111,7 @@ async function start(root: HTMLElement) {
       const li = document.createElement('li')
       const b = document.createElement('button')
       b.type = 'button'
-      b.className = 'text-left hover:text-white'
+      b.className = 'lnk'
       const fact = killerFact(e)
       b.textContent = `${clock(e.t)}  ${eventText(e)}${fact ? ' — ' + fact : ''}`
       b.addEventListener('click', () => { selected = e.p; seek(e.t - 3000) })
@@ -132,13 +131,13 @@ async function start(root: HTMLElement) {
     for (const e of mine) {
       const li = document.createElement('li')
       const b = document.createElement('button')
-      b.type = 'button'; b.className = 'text-left hover:text-white'
+      b.type = 'button'; b.className = 'lnk'
       b.textContent = `${clock(e.t)}  ${e.k === 'role' ? 'became ' + e.role + ' (' + e.team + ')' : 'revived' + (e.by ? ' by ' + nick(e.by) : '') + ' (' + reviveSource(e.how) + ')'}`
       b.addEventListener('click', () => seek(e.t - 1000))
       li.append(b)
       eventsEl.append(li)
     }
-    if (mine.length === 0) eventsEl.append(text(data.events.length === 0 && !payload.track.events ? 'No role changes or revivals recorded for this track.' : 'No role changes or revivals.', 'li', 'text-gray-500'))
+    if (mine.length === 0) eventsEl.append(text(data.events.length === 0 && !payload.track.events ? 'No role changes or revivals recorded for this track.' : 'No role changes or revivals.', 'li', 'dim'))
   }
 
   const deathsEl = el(root, '[data-deaths]')
@@ -148,13 +147,13 @@ async function start(root: HTMLElement) {
     const li = document.createElement('li')
     const b = document.createElement('button')
     b.type = 'button'
-    b.className = 'text-left hover:text-white'
+    b.className = 'lnk'
     b.textContent = `${clock(d.t)}  ${nick(d.victim)}${d.attacker ? ' ← ' + nick(d.attacker) : ''}${d.weapon ? ' (' + d.weapon + ')' : ''}`
     b.addEventListener('click', () => { selected = d.victim; seek(d.t - 3000) })
     li.append(b)
     deathsEl.append(li)
   }
-  if (deathsEl && data.deaths.length === 0) deathsEl.append(text('No deaths in this round.', 'li', 'text-gray-500'))
+  if (deathsEl && data.deaths.length === 0) deathsEl.append(text('No deaths in this round.', 'li', 'dim'))
 
   const listEl = el(root, '[data-players]')
   const rows = new Map<string, HTMLElement>()
@@ -163,11 +162,11 @@ async function start(root: HTMLElement) {
     if (!listEl) break
     const b = document.createElement('button')
     b.type = 'button'
-    b.className = 'flex items-center gap-2 w-full text-left px-2 py-1 rounded hover:bg-gray-700'
-    const dot = text('', 'span', 'inline-block w-3 h-3 rounded-full shrink-0')
+    b.className = 'prow'
+    const dot = text('', 'span', 'pdot')
     dot.style.background = hex(colourOf(id))
-    const roleEl = text(meta.get(id)?.role ?? '', 'span', 'ml-auto text-xs text-gray-400')
-    b.append(dot, text(nick(id), 'span', 'truncate'), roleEl)
+    const roleEl = text(meta.get(id)?.role ?? '', 'span', 'prole')
+    b.append(dot, text(nick(id), 'span', 'pname'), roleEl)
     b.addEventListener('click', () => { selected = id; changed() })
     listEl.append(b)
     rows.set(id, b)
@@ -177,14 +176,14 @@ async function start(root: HTMLElement) {
   scrub.max = String(data.length); scrub.value = '0'
   const ticks = el(root, '[data-ticks]')
   if (ticks) for (const d of data.deaths) {
-    const t = text('', 'span', 'absolute top-0 bottom-0 w-0.5 bg-red-500 pointer-events-none')
+    const t = text('', 'span', 'tick')
     t.style.left = `${data.length ? (d.t / data.length) * 100 : 0}%`
     t.title = `${clock(d.t)} ${nick(d.victim)} died`
     ticks.append(t)
   }
   // revivals (green) and role changes (violet) beside the deaths
   if (ticks) for (const e of data.events) {
-    const t = text('', 'span', `absolute top-0 bottom-0 w-0.5 pointer-events-none ${e.k === 'revive' ? 'bg-emerald-400' : 'bg-violet-400'}`)
+    const t = text('', 'span', `tick ${e.k === 'revive' ? 'tick-revive' : 'tick-role'}`)
     t.style.left = `${data.length ? (e.t / data.length) * 100 : 0}%`
     t.dataset.mark = e.k
     t.title = `${clock(e.t)} ${eventText(e)}`
@@ -479,12 +478,12 @@ async function start(root: HTMLElement) {
   const levelBar = el(root, '[data-levels]')
   if (levelBar && levels.length > 0 && bg.kind !== 'none') {
     for (const l of levels) {
-      const b = text(String(l.index), 'button', BTN) as HTMLButtonElement
+      const b = text(String(l.index), 'button', 'tog') as HTMLButtonElement
       b.type = 'button'; b.dataset.level = String(l.index)
       b.addEventListener('click', () => { upTo = l.index; followLevel = false; syncFollowBox(); showLevels(); render() })
       levelBar.append(b)
     }
-    const all = text('All', 'button', BTN) as HTMLButtonElement
+    const all = text('All', 'button', 'tog') as HTMLButtonElement
     all.type = 'button'; all.dataset.level = 'all'
     all.addEventListener('click', () => { upTo = 'all'; followLevel = false; syncFollowBox(); showLevels(); render() })
     levelBar.append(all)
@@ -556,9 +555,8 @@ async function start(root: HTMLElement) {
       m.trail.visible = pts.length > 0 && !death
       const row = rows.get(id)
       if (row) {
-        row.classList.toggle('bg-gray-700', isSel)
-        row.classList.toggle('opacity-50', !!death)
-        row.classList.toggle('line-through', !!death)
+        row.classList.toggle('sel', isSel)
+        row.classList.toggle('dead', !!death)
       }
     }
     for (const v of reviveMarks) {

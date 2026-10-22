@@ -400,12 +400,12 @@ describe('pages and the header', () => {
 
   test('the header: anonymous sees the sign-in button; a user sees the ID, no Servers link and a logout; an admin also the mark and the link', async () => {
     const anon = (await html('/')).text
-    expect(anon).toContain('Login with Steam')
+    expect(anon).toContain('Sign in with Steam')
     expect(anon).not.toContain('data-user')
     const user = (await html('/', USER)).text
     expect(user).toContain(USER)
     expect(user).toContain('data-user')
-    expect(user).not.toContain('Login with Steam')
+    expect(user).not.toContain('Sign in with Steam')
     expect(user).not.toContain('href="/servers"')
     expect(user).not.toContain('data-admin-mark')
     expect(user).toMatch(/<form method="post" action="\/auth\/logout"/)
@@ -424,7 +424,7 @@ describe('pages and the header', () => {
   test('with sign-in closed a user cookie is anonymous on the public pages', async () => {
     delete process.env.OPEN_SIGNIN
     const t = (await html('/', USER)).text
-    expect(t).toContain('Login with Steam')
+    expect(t).toContain('Sign in with Steam')
   })
 
   test('the maps list offers a map with a 3D view: a user the link, an anonymous visitor a sign-in link when sign-in is open, nobody else anything', async () => {

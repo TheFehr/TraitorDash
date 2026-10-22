@@ -43,11 +43,11 @@ const audit = (action: string) => db.query('SELECT steam_id, details FROM audit_
 describe('the limits card', () => {
   test('an admin sees the usage and the limits on the stats page; a guest sees none of it', async () => {
     await tracked()
-    const html = await (await req(`/servers/${serverId}/stats`)).text()
+    const html = await (await req(`/servers/${serverId}/stats?view=rounds`)).text()
     expect(html).toContain('data-tracks')
     expect(html).toMatch(/1 track, 0\.0 MB used of 200 tracks \/ 200 MB/)
     expect(html).toContain('At most 300 tracks and 300 MB')
-    const guest = await (await req(`/servers/${serverId}/stats`, {}, false)).text()
+    const guest = await (await req(`/servers/${serverId}/stats?view=rounds`, {}, false)).text()
     expect(guest).not.toContain('data-tracks')
     expect(guest).not.toContain('Position tracks')
   })
@@ -100,7 +100,7 @@ describe('pinning', () => {
   test('the card counts the pins', async () => {
     const id = await tracked()
     await form(`/servers/${serverId}/rounds/${id}/pin`, 'pin=1')
-    expect(await (await req(`/servers/${serverId}/stats`)).text()).toMatch(/1 pinned, kept regardless; at most 2/)
+    expect(await (await req(`/servers/${serverId}/stats?view=rounds`)).text()).toMatch(/1 pinned, kept regardless; at most 2/)
   })
 
   test('at the maximum a pin is refused with a message; a round without a track is 404', async () => {

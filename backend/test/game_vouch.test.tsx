@@ -67,7 +67,7 @@ describe('a key', () => {
     expect(gk.readGameKey(decodeURIComponent(cookie))).toBeNull()
     const r = await get('/servers/' + serverId + '/stats', { Cookie: `steam_id=${encodeURIComponent(gk.makeGameKey(ADMIN))}` })
     expect(r.status).toBe(200)
-    expect(await r.text()).not.toContain('admin')
+    expect(await r.text()).not.toContain('<span data-admin-mark')
   })
 })
 
@@ -162,7 +162,7 @@ describe('what a game session may do', () => {
     }
     const stats = await (await get(`/servers/${serverId}/stats`, { Cookie: c })).text()
     expect(stats).not.toContain('Delete selected')
-    expect(stats).not.toContain('data-admin-mark')
+    expect(stats).not.toContain('<span data-admin-mark')
   })
   test('it stops with open sign-in (for non-admins) and for a blocked account', async () => {
     process.env.OPEN_SIGNIN = '1'
@@ -179,7 +179,7 @@ describe('what a game session may do', () => {
     const game = await via(P1)
     const real = (await serializeSigned('steam_id', ADMIN, SECRET)).split(';')[0]!
     const r = await get(`/servers/${serverId}/stats`, { Cookie: `${real}; ${game}` })
-    expect(await r.text()).toContain('data-admin-mark')
+    expect(await r.text()).toContain('<span data-admin-mark')
     const out = await app.fetch(new Request('http://localhost/auth/logout', { method: 'POST', headers: { Cookie: `${real}; ${game}` } }))
     expect(out.headers.get('set-cookie')).toMatch(/td_game=;/)
   })
@@ -220,7 +220,7 @@ describe('every game page says who it takes the visitor for', () => {
 
 describe('the browser is named, because it decides what the pages may use', () => {
   test('browserOf reads the Chrome version from the User-Agent; anything else is nothing', async () => {
-    const { browserOf } = await import('../src/components/GamePages')
+    const { browserOf } = await import('../src/components/kit')
     expect(browserOf('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/76.0.3809.100 Safari/537.36')).toBe('Chrome 76')
     expect(browserOf('Mozilla/5.0 Gecko/20100101 Firefox/120.0')).toBeNull()
     expect(browserOf(null)).toBeNull()
@@ -246,7 +246,7 @@ describe('the full pages inside the game window', () => {
     expect(html).not.toContain('Logout')
     expect(html).toContain(`/stats?embed=1&amp;view=rounds`)
     const plain = await (await get(`/servers/${serverId}/rounds/${id}/replay`, { Cookie: c })).text()
-    expect(plain).toContain('Dashboard')
+    expect(plain).toContain('<header class="top"')
   })
   test('without a session in the game nobody is sent to the Steam login: the replay and the 3D page go back to the game pages', async () => {
     const id = round()

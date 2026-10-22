@@ -1,7 +1,7 @@
 import { expect, test, describe } from 'bun:test'
 import { Heartbeat } from '../src/components/Heartbeat'
 import { AdminDashboard } from '../src/components/AdminDashboard'
-import { ServerTileView } from '../src/components/ServerTileView'
+import { HomePage } from '../src/components/HomePage'
 import { ServerDashboard } from '../src/components/ServerDashboard'
 import { ServerManager } from '../src/components/ServerManager'
 
@@ -28,7 +28,7 @@ describe('last heartbeat', () => {
   })
 
   test('still shown for guests, and a never-seen server reads Never everywhere', () => {
-    expect(String(<ServerTileView servers={[server]} />)).toContain('datetime="2026-10-16T15:39:44.000Z"')
+    expect(String(<HomePage ctx={{ embed: false, viewer: null }} servers={[server]} />)).toContain('datetime="2026-10-16T15:39:44.000Z"')
     expect(String(<AdminDashboard servers={[never]} />)).toContain('Never')
   })
 })

@@ -72,8 +72,10 @@ describe('the shell of every game page', () => {
   })
   test('pages that are not embedded are unchanged: the website still has its header and the admin controls', async () => {
     round()
-    const html = await text(`/servers/${serverId}/stats`, true)
+    const html = await text(`/servers/${serverId}/stats?view=rounds`, true)
     expect(html).toContain('Delete selected rounds')
+    expect(html).toContain('<header class="top"')
+    expect(html).toContain('data-admin-mark')
   })
   test('a page is not cached by a shared cache, and a repeat with its ETag is a 304', async () => {
     round()
@@ -130,8 +132,9 @@ describe('One round', () => {
     expect(html).toMatch(/Deaths<\/dt><dd>2/)
     // the death at 48 s came second in the report but first in the round
     expect(html).toContain('0:48 · Ann → Bob')
+    for (const who of ['Ann', 'Bob', 'Cy &lt;b&gt;x&lt;/b&gt;']) expect(html).toContain(who)
     expect(html).toContain('traitor')
-    expect(html).toContain('innocent ×2')
+    expect(html.match(/>innocent</g)?.length).toBe(2)
   })
   test('first blood without a time shows no clock; a death with no killer shows the victim only; no deaths shows no line', async () => {
     const a = round({ deaths: [{ victim: P2, attacker: null, at: null }] })
@@ -146,15 +149,17 @@ describe('One round', () => {
     const anon = await text(`/servers/${serverId}/rounds/${id}?embed=1`)
     expect(anon).not.toContain('Watch the replay')
     expect(anon).toContain('opens for signed-in visitors')
-    expect(await text(`/servers/${serverId}/rounds/${plain}?embed=1`, true)).not.toMatch(/replay/i)
+    const none = await text(`/servers/${serverId}/rounds/${plain}?embed=1`, true)
+    expect(none).not.toContain('Watch the replay')
+    expect(none).not.toContain('has a replay')
   })
-  test('an unknown round or a bad id is a 404; without embed it goes to the stats; a bot-only round is not shown', async () => {
+  test('an unknown round or a bad id is a 404; the website shows the same page with its header; a bot-only round is not shown', async () => {
     expect((await get(`/servers/${serverId}/rounds/round-999999?embed=1`)).status).toBe(404)
     expect((await get(`/servers/${serverId}/rounds/..%2Fx?embed=1`)).status).toBe(404)
     const id = round()
-    const r = await get(`/servers/${serverId}/rounds/${id}`)
-    expect(r.status).toBe(302)
-    expect(r.headers.get('Location')).toBe(`/servers/${serverId}/stats`)
+    const site = await get(`/servers/${serverId}/rounds/${id}`)
+    expect(site.status).toBe(200)
+    expect(await site.text()).toContain('<header class="top"')
     const botId = `round-${String(++n).padStart(6, '0')}`
     Store.recordRound(serverId, { roundId: botId, map: 'ttt_a', startedAt: null, duration: 5, result: 'traitors', players: [{ steamId: '999000000001', nick: 'bot', role: 'traitor', team: 'traitors', survived: true, won: true }], deaths: [] })
     expect((await get(`/servers/${serverId}/rounds/${botId}?embed=1`)).status).toBe(404)
@@ -171,7 +176,7 @@ describe('Maps', () => {
 
   test('cards for the maps the vote can offer, the votable first; maps outside the pool stay out; no size', async () => {
     const html = await text(`/servers/${serverId}/maps?embed=1`)
-    expect(html.indexOf('ttt_b')).toBeLessThan(html.indexOf('ttt_a'))
+    expect(html.indexOf('>ttt_b</a>')).toBeLessThan(html.indexOf('>ttt_a</a>'))
     expect(html).not.toContain('ttt_c')
     expect(html).toContain('Current')
     expect(html).toContain('Votable')
@@ -200,9 +205,9 @@ describe('Maps', () => {
     expect(html).not.toContain('<svg')
     expect(html).not.toContain('mesh.glb')
   })
-  test('an unknown map is a 404, without embed it goes to the list, a map outside the pool still opens by its address', async () => {
+  test('an unknown map is a 404, the website shows the same page, a map outside the pool still opens by its address', async () => {
     expect((await get(`/servers/${serverId}/maps/nope/rounds?embed=1`)).status).toBe(404)
-    expect((await get(`/servers/${serverId}/maps/ttt_a/rounds`)).headers.get('Location')).toBe(`/servers/${serverId}/maps`)
+    expect((await get(`/servers/${serverId}/maps/ttt_a/rounds`)).status).toBe(200)
     expect((await get(`/servers/${serverId}/maps/ttt_c/rounds?embed=1`)).status).toBe(200)
   })
   test('a map name that is markup is escaped', async () => {

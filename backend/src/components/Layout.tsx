@@ -11,7 +11,7 @@ export const FAVICON = `data:image/svg+xml,${encodeURIComponent(
  * `steamId` is an admin's (as before: it shows the Servers link). `user` is a signed-in visitor who
  * is not an admin (RFC 13, 4.5): their SteamID64, a logout, and no admin links.
  */
-export const Layout = ({ children, steamId, user, path, embed }: { children: any, steamId?: string, user?: string, path?: string, embed?: boolean }) => (
+export const Layout = ({ children, steamId, user, path }: { children: any, steamId?: string, user?: string, path?: string }) => (
   <html lang="en">
     <head>
       <meta charset="UTF-8" />
@@ -24,7 +24,7 @@ export const Layout = ({ children, steamId, user, path, embed }: { children: any
       <link href="/public/style.css" rel="stylesheet" />
     </head>
     <body class="bg-gray-900 text-white font-sans min-h-screen selection:bg-red-500/30">
-      {!embed && <nav class="bg-gray-800 border-b border-gray-700 px-4 py-3 sm:p-4 sticky top-0 z-50 backdrop-blur-md bg-opacity-80">
+      <nav class="bg-gray-800 border-b border-gray-700 px-4 py-3 sm:p-4 sticky top-0 z-50 backdrop-blur-md bg-opacity-80">
         <div class="container mx-auto flex flex-wrap justify-between items-center gap-x-4 gap-y-2">
           <a href="/" class="text-xl sm:text-2xl font-black text-red-500 hover:text-red-400 transition flex items-center gap-2">
             <span>{LOGO_EMOJI}</span> TraitorDash
@@ -59,7 +59,7 @@ export const Layout = ({ children, steamId, user, path, embed }: { children: any
             )}
           </div>
         </div>
-      </nav>}
+      </nav>
       <main>
         {children}
       </main>

@@ -43,8 +43,11 @@ const get = (path: string, withCookie = false) =>
 const page = async (id = serverId) => (await get(`/servers/${id}/maps`)).text()
 /** The page as a signed-in admin sees it; `all` is the opt-in for maps outside the vote pool. */
 const adminPage = async (id = serverId, all = false) => (await get(`/servers/${id}/maps${all ? '?all=1' : ''}`, true)).text()
-const rowsOf = (html: string) => html.split('<tbody')[1]!.split('<tr').slice(1)
-const rowFor = (html: string, name: string) => rowsOf(html).find((r: string) => r.includes(`>${name}<`))
+// a map is a card of its own: everything from its opening tag to the next card
+const rowsOf = (html: string) => html.split('<div class="f"').slice(1)
+const rowFor = (html: string, name: string) => rowsOf(html).find((r: string) => r.includes(`>${name}</a>`))
+/** The number shown under a caption of the figures at the top of the page. */
+const figure = (html: string, label: string) => new RegExp(`<div class="num">([^<]*)</div><div class="cap">${label}</div>`).exec(html)?.[1]
 
 describe('the Maps page', () => {
   test('is public, and a guest gets no link into the rule settings', async () => {
@@ -75,7 +78,6 @@ describe('the Maps page', () => {
     for (const path of [`/servers/${serverId}/maps`, `/servers/${serverId}/maps?all=1`]) {
       const html = await (await get(path)).text()
       expect(html).not.toContain(' MB')
-      expect(html).not.toContain('>Size<')
       expect(html).not.toContain('gm_construct')
     }
   })
@@ -83,16 +85,15 @@ describe('the Maps page', () => {
   test('a guest sees the counts that matter to players, not how many maps are on disk', async () => {
     const html = await page()
     expect(html).not.toContain('Maps on disk')
-    expect(html).toMatch(/In the vote pool<\/div>\s*<div[^>]*>4</)
-    expect(html).toMatch(/Votable now<\/div>\s*<div[^>]*>2</)
+    expect(figure(html, 'In the vote pool')).toBe('4')
+    expect(figure(html, 'Votable now')).toBe('2')
   })
 
   test('an admin sees the sizes, and the on-disk count', async () => {
     const html = await adminPage()
-    expect(html).toContain('>Size<')
-    expect(html).toContain('232 MB') // 243 312 804 bytes
-    expect(html).toContain('21 MB')
-    expect(html).toMatch(/Maps on disk<\/div>\s*<div[^>]*>5</)
+    expect(rowFor(html, 'ttt_resting')).toContain('232 MB') // 243 312 804 bytes
+    expect(rowFor(html, 'ttt_next')).toContain('21 MB')
+    expect(figure(html, 'Maps on disk')).toBe('5')
   })
 
   test('an admin does not see the maps outside the pool until they ask', async () => {
@@ -122,8 +123,8 @@ describe('the Maps page', () => {
   })
 
   test('votable maps come before the others', async () => {
-    const html = (await adminPage(serverId, true)).split('<tbody')[1]! // the table only: the summary cards name maps too
-    const at = (name: string) => html.indexOf(name)
+    const html = await adminPage(serverId, true)
+    const at = (name: string) => html.indexOf(`>${name}</a>`) // the cards: the figures at the top name a map too
     expect(at('ttt_cycled')).toBeLessThan(at('ttt_next'))
     expect(at('ttt_next')).toBeLessThan(at('ttt_current'))
     expect(at('ttt_current')).toBeLessThan(at('gm_construct'))
@@ -141,13 +142,13 @@ describe('the Maps page', () => {
     Store.setMaps(unknown, R({ poolBasis: null, pattern: null, configSource: null, voteAddon: false, maps: [M('ttt_a', { inVotePool: null, votable: null, matchesGamemode: null })] }))
     const unknownHtml = await page(unknown)
     expect(unknownHtml).toContain('unknown')
-    expect(unknownHtml).toMatch(/Votable now<\/div>\s*<div[^>]*>–</)
-    expect(unknownHtml).toMatch(/In the vote pool<\/div>\s*<div[^>]*>–</)
+    expect(figure(unknownHtml, 'Votable now')).toBe('–')
+    expect(figure(unknownHtml, 'In the vote pool')).toBe('–')
   })
 
   test('each badge sits on the right map\'s row', async () => {
     const rows = rowsOf(await adminPage(serverId, true))
-    const row = (name: string) => rows.find((r: string) => r.includes(`>${name}<`))!
+    const row = (name: string) => rows.find((r: string) => r.includes(`>${name}</a>`))!
     expect(row('ttt_next')).toContain('Next')
     expect(row('ttt_next')).toContain('Votable')
     expect(row('ttt_current')).not.toContain('Next')
@@ -164,8 +165,8 @@ describe('the Maps page', () => {
     const mixed = Store.addServer('Mixed').id
     Store.setMaps(mixed, R({ maps: [M('ttt_yes'), M('ttt_unsure', { votable: null, inVotePool: null })] }))
     const html = await page(mixed)
-    expect(html).toMatch(/In the vote pool<\/div>\s*<div[^>]*>1</)
-    expect(html).toMatch(/Votable now<\/div>\s*<div[^>]*>1</)
+    expect(figure(html, 'In the vote pool')).toBe('1')
+    expect(figure(html, 'Votable now')).toBe('1')
   })
 
   test('does not call the running map the next one (an empty map cycle reports it that way)', async () => {
@@ -178,7 +179,8 @@ describe('the Maps page', () => {
 
   test('shows the next map when it differs', async () => {
     const html = await page()
-    expect(html).toContain('Next: ttt_next')
+    expect(rowFor(html, 'ttt_next')).toContain('Next')
+    expect(rowFor(html, 'ttt_current')).not.toContain('Next')
   })
 
   test('says it is derived, so nobody takes it for what the vote addon reports', async () => {
@@ -203,8 +205,8 @@ describe('the Maps page', () => {
 
   test('a server that has not reported yet says so', async () => {
     const html = await page(emptyId)
-    expect(html).toContain('No map report yet')
-    expect(html).not.toContain('<table')
+    expect(html).toContain('No maps yet')
+    expect(html).not.toContain('class="g"')
   })
 })
 

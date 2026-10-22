@@ -259,7 +259,7 @@ describe('the replay page', () => {
     expect(r.text).toContain('data-cam="top"')
     expect(r.text).toContain('not what they could see') // the fixed line: it is not a line-of-sight source
     expect(r.text).not.toContain('data-pin')
-    expect(r.text).toContain('traitors')
+    expect(r.text).toContain('Traitors')
     expect(r.text).toContain('2:00')
   })
 
@@ -298,13 +298,13 @@ describe('the replay page', () => {
     const id = round()
     for (const next of ['https://evil.example', '//evil.example', '/\\evil.example', '/%2F/evil.example']) {
       const r = await req(`/servers/${serverId}/rounds/${id}/pin`, ADMIN, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: `pin=0&next=${encodeURIComponent(next)}` })
-      expect(r.headers.get('location'), next).toBe(`/servers/${serverId}/stats`)
+      expect(r.headers.get('location'), next).toBe(`/servers/${serverId}/stats?view=rounds`)
     }
   })
 })
 
 describe('the round list', () => {
-  const stats = async (as: string | null) => (await req(`/servers/${serverId}/stats`, as)).text()
+  const stats = async (as: string | null) => (await req(`/servers/${serverId}/stats?view=rounds`, as)).text()
 
   test('a round with a track has a replay link: to a signed-in visitor the page, to an anonymous one a sign-in link when sign-in is open', async () => {
     const id = round(); round({ track: false })

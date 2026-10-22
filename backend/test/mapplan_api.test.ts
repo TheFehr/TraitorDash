@@ -177,12 +177,18 @@ describe('floor plans: the Maps page links, the map\'s own page shows (admins on
 
   test('the Maps page marks the maps that have a plan, and links every map to its page, for admins', async () => {
     const html = await (await get(`/servers/${serverId}/maps`, true)).text()
-    const rows = html.split('<tbody')[1]!.split('<tr').slice(1)
-    const row = (n: string) => rows.find((r: string) => r.includes(`>${n}<`) || r.includes(`>${n}</a>`))!
+    const rows = html.split('<div class="f"').slice(1)
+    const row = (n: string) => rows.find((r: string) => r.includes(`>${n}</a>`))!
+    // every map is a card that opens the map's file; a map with a plan also links straight to its own page
+    expect(row('ttt_a')).toContain(`href="/servers/${serverId}/maps/ttt_a/rounds"`)
+    expect(row('ttt_b')).toContain(`href="/servers/${serverId}/maps/ttt_b/rounds"`)
     expect(row('ttt_a')).toContain(`href="/servers/${serverId}/maps/ttt_a"`)
-    expect(row('ttt_b')).toContain(`href="/servers/${serverId}/maps/ttt_b"`)
+    expect(row('ttt_b')).not.toContain(`href="/servers/${serverId}/maps/ttt_b"`)
     expect(row('ttt_a')).toContain('Floor plan')
     expect(row('ttt_b')).not.toContain('Floor plan')
+    // and the file of a map leads an admin to its own page
+    const file = await (await get(`/servers/${serverId}/maps/ttt_b/rounds`, true)).text()
+    expect(file).toContain(`href="/servers/${serverId}/maps/ttt_b"`)
   })
 
   test('the Maps page itself carries no pictures, no legend and no list of plans', async () => {
@@ -311,10 +317,10 @@ describe('floor plans: the Maps page links, the map\'s own page shows (admins on
 
   test('the legend\'s scale runs from the picture\'s blue (left) to its red (right), and shows the faint crouch-only mark', async () => {
     const html = await mapPage('ttt_a')
-    const legend = html.split('data-legend="plans"')[1]!.split('How to read')[0]! + html.split('data-legend="plans"')[1]!.split('</ul>')[0]!
+    const legend = html.split('data-legend="plans"')[1]!.split('How to read these pictures</b>')[1]!.split('North is up')[0]!
     expect(legend).toMatch(/linear-gradient\(to right, hsl\(240 70% 50%\),.*hsl\(0 70% 50%\)\)/)
     expect(legend).toContain('opacity:.4') // the crouch-only mark is drawn faint, as in the pictures
-    expect(legend).toContain('bg-white') // ... with its white dot
+    expect(legend).toContain('class="wd"') // ... with its white dot
   })
 
   test('each picture\'s caption gives its level, its own heights and its floor cells (the scale itself is in the picture)', async () => {

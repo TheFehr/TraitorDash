@@ -42,7 +42,7 @@ button{background:#e9dfc4;color:#2a2418;border:0;padding:.35rem .9rem;font:inher
 .f:before{content:"";position:absolute;left:0;top:-.7rem;width:42%;height:.7rem;background:var(--c);border-radius:.3rem .3rem 0 0}
 a.f:hover{transform:translateY(-3px)}
 .f b{display:block;font-size:1.1rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;border-bottom:2px solid #2a2418;padding-bottom:.25rem;overflow-wrap:anywhere}
-.f span{display:block;font-size:.8rem;margin-top:.3rem}
+.f>span{display:block;font-size:.8rem;margin-top:.3rem}
 .stamp{display:table;margin:0 0 .4rem auto;border:2px solid var(--c);color:var(--c);color:color-mix(in srgb,var(--c) 62%,#000);padding:0 .35rem;font-family:"Barlow Condensed",sans-serif;font-size:.8rem;font-weight:800;text-transform:uppercase;letter-spacing:.12em;transform:rotate(-6deg)}
 .f.few,.f.off{background:#2a2620;color:#a89f8c;box-shadow:none}
 .f.few{border:1px dashed #5a523f}.f.few:before,.f.off:before{background:#4a4334}.f.few b,.f.off b{border-color:#5a523f}
@@ -77,7 +77,32 @@ export const Sections = ({ serverId, current }: { serverId: string, current?: Se
   </nav>
 )
 
-export const Shell = ({ title, embed, children }: { title: string, embed: boolean, children: any }) => (
+/** Who is looking, for the header of a page on the website. */
+export interface Viewer { steamId: string, admin: boolean }
+
+const SiteHeader = ({ viewer }: { viewer?: Viewer | null }) => (
+  <header class="top">
+    <div class="w topbar">
+      <a href="/" class="brand">TraitorDash</a>
+      <div class="acct">
+        {viewer?.admin && <a href="/servers">Servers</a>}
+        {viewer?.admin && <span data-admin-mark class="mark adm">admin</span>}
+        {viewer && !viewer.admin && <span data-user class="mark">{viewer.steamId}</span>}
+        {viewer?.admin && <span class="muted">{viewer.steamId}</span>}
+        {viewer
+          ? <form method="post" action="/auth/logout"><button type="submit" class="lnkbtn">Logout</button></form>
+          : <a href="/auth/steam">Sign in with Steam</a>}
+      </div>
+    </div>
+  </header>
+)
+
+/**
+ * The page around everything: the head, the stylesheet, and on the website the header with the account
+ * links (`embed` takes it away, for the game's window). `scripts` are files of this site (`/public/...`);
+ * a page that lists none has none.
+ */
+export const Shell = ({ title, embed, children, viewer, scripts = [] }: { title: string, embed: boolean, children: any, viewer?: Viewer | null, scripts?: string[] }) => (
   <html lang="en">
     <head>
       <meta charset="UTF-8" />
@@ -90,10 +115,9 @@ export const Shell = ({ title, embed, children }: { title: string, embed: boolea
       <style dangerouslySetInnerHTML={{ __html: BASE_CSS + EXTRA_CSS }} />
     </head>
     <body>
-      {!embed && (
-        <header class="top"><div class="w"><a href="/">TraitorDash</a></div></header>
-      )}
+      {!embed && <SiteHeader viewer={viewer} />}
       <main class="w">{children}</main>
+      {scripts.map(src => <script defer src={src}></script>)}
     </body>
   </html>
 )
@@ -103,6 +127,13 @@ export const Shell = ({ title, embed, children }: { title: string, embed: boolea
 // What the stats and maps pages add to the shell (RFC 16): numbers, win bars, the log of rounds, a
 // result tag, the replay tape and the team split of a map.
 const EXTRA_CSS = `
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap}
+.acct{display:flex;align-items:center;gap:.9rem;flex-wrap:wrap;font-size:.9rem;letter-spacing:.08em;text-transform:uppercase}
+.acct form{margin:0}
+.acct a{text-decoration:underline}
+.mark{border:1px solid #6b6455;padding:0 .4rem;font-size:.78rem;color:#e9dfc4}
+.acct .mark.adm{border-color:#b91c1c;color:#f87171}
+.lnkbtn{background:none;border:0;padding:0;color:#e9b44c;font:inherit;font-weight:800;letter-spacing:.08em;text-transform:uppercase;text-decoration:underline;cursor:pointer}
 .nums{display:grid;grid-template-columns:repeat(auto-fit,minmax(7.5rem,1fr));gap:1.1rem .8rem;padding-top:.9rem}
 .f .num{font-size:1.5rem;font-weight:700;line-height:1;border:0;padding:0;margin:0;letter-spacing:0;text-transform:none}
 .f .cap{font-family:"Barlow Condensed",sans-serif;font-size:.78rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#4a4334;margin-top:.25rem}
@@ -130,6 +161,68 @@ table.log a{text-decoration:underline}
 .pill{display:inline-block;font-family:"Barlow Condensed",sans-serif;font-size:.75rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase;border:1.5px solid currentColor;padding:0 .3rem;margin-right:.3rem;transform:rotate(-3deg)}
 .pill.ok{color:#2f7d3a}.pill.wait{color:#a16207}.pill.mute{color:#6b6350}
 .f.off .pill,.f.few .pill{color:#d6cdb8}
+.good{color:#2f7d3a;font-weight:700}.bad{color:#991b1b;font-weight:700}
+.scrollx{overflow-x:auto}
+.f .sections{margin:.6rem 0 0}
+.f .sections a,.f .sections span{color:#2a2418;border-color:#8a7f65}
+.f .sections span{background:#2a2418;color:#e9dfc4;border-color:#2a2418}
+.replay{display:grid;grid-template-columns:minmax(0,1fr) 17rem;gap:1.2rem}
+@media (max-width:760px){.replay{grid-template-columns:minmax(0,1fr)}}
+.replay .main{min-width:0}
+.replay aside{display:flex;flex-direction:column;gap:1.3rem;min-width:0}
+.scrub{position:relative;margin-top:.6rem}
+.scrub input{width:100%;margin:0}
+.ticks{position:absolute;left:0;right:0;top:0;height:1.2rem;pointer-events:none}
+.tick{position:absolute;top:0;bottom:0;width:2px;background:#dc2626;pointer-events:none}
+.tick-revive{background:#34d399}.tick-role{background:#a78bfa}
+.time{font-family:"Courier Prime","Courier New",monospace;font-weight:400}
+.tog.play{min-width:4.5rem}
+.list{max-height:14rem;overflow-y:auto;margin:.2rem 0 0;padding:0;list-style:none}
+.lnk{background:none;border:0;padding:0;margin:0;color:inherit;font:inherit;text-align:left;cursor:pointer;text-decoration:underline;letter-spacing:0;text-transform:none}
+.prow{display:flex;align-items:center;gap:.5rem;width:100%;background:none;border:0;padding:.15rem .3rem;margin:0;color:inherit;font:inherit;text-align:left;cursor:pointer;letter-spacing:0;text-transform:none}
+.prow.sel{background:#d8cba8}
+.prow.dead{opacity:.5;text-decoration:line-through}
+.pdot{display:inline-block;width:.7rem;height:.7rem;border-radius:50%;flex:none}
+.pname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prole{margin-left:auto;font-size:.8rem;color:#6b6350}
+.warn{margin:.3rem 0 0;font-size:.85rem;color:#e9b44c}
+.actions{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.8rem}
+.actions form{margin:0}
+.view{position:relative;margin-top:.5rem}
+.view canvas{display:block;width:100%;height:min(60vh,28rem);background:#14110e;touch-action:none}
+.view [data-status]{position:absolute;left:0;right:0;top:0;bottom:0;margin:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:0 1rem;pointer-events:none;color:#a89f8c}
+.view [data-status][hidden]{display:none}
+.tools{display:flex;flex-wrap:wrap;gap:.5rem 1.4rem;align-items:center;margin:.6rem 0}
+.tools .cap{display:inline-block;margin:0 .5rem 0 0}
+.tools label{display:inline-flex;align-items:center;gap:.4rem;color:#d9d0bd}
+.tools .cap{color:#a89f8c}
+.tools input[type=checkbox]{accent-color:#e9dfc4}
+.tog{background:#2a2620;border:1px solid #4a4334;color:#d9d0bd;padding:.05rem .7rem;margin-right:.25rem;font-family:"Barlow Condensed",sans-serif;font-weight:800;font-size:.9rem;letter-spacing:.06em;text-transform:uppercase;cursor:pointer}
+.tog[aria-pressed=true]{background:#e9dfc4;color:#2a2418;border-color:#e9dfc4}
+.scale{height:.6rem;margin:.5rem 0 .2rem}
+.ends{display:flex;justify-content:space-between;font-size:.8rem}
+.sw{display:inline-block;position:relative;width:1rem;height:1rem;vertical-align:-.2rem;margin-right:.4rem}
+.sw .wd{position:absolute;left:2px;top:2px;width:4px;height:4px;background:#fff}
+.plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(16rem,1fr));gap:1rem;margin-top:1rem}
+.plans figure{margin:0}
+.plans img{display:block;width:100%;max-height:60vh;object-fit:contain;background:#14110e}
+.plans figcaption{font-size:.85rem;color:#a89f8c;margin-top:.2rem}
+code{font-family:"Courier Prime","Courier New",monospace}
 .foot{margin:.9rem 0 0;font-size:.85rem;color:#a89f8c}
+.foot.dark{color:#6b6350}
+form.inline{display:flex;flex-wrap:wrap;gap:.6rem 1rem;align-items:flex-end;margin-top:.7rem}
+label{font-family:"Barlow Condensed",sans-serif;font-size:.8rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#4a4334}
+label input{display:block;margin-top:.2rem;font-family:"Courier Prime","Courier New",monospace;font-weight:400;letter-spacing:0;text-transform:none}
+.f input:not([type]),.f input[type=text],.f input[inputmode]{background:#fff8e6;border:1px solid #8a7f65;color:#2a2418;padding:.25rem .5rem;font-size:.9rem;width:11rem}
+input[type=checkbox]{accent-color:#2a2418}
+button.btn{border:0;cursor:pointer}
+.btn.danger{background:#7f1d1d;color:#fee2e2}
 .foot a{text-decoration:underline}
 `
+
+export const NotFound = ({ what, embed, viewer }: { what: string, embed: boolean, viewer?: Viewer | null }) => (
+  <Shell title="Not found" embed={embed} viewer={viewer}>
+    <h1>Not found</h1>
+    <p class="muted">There is no such {what}.</p>
+  </Shell>
+)

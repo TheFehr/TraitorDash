@@ -106,13 +106,16 @@ describe('stats pages', () => {
   })
 
   test('the overview renders totals, the leaderboard and recent rounds, and no bots', async () => {
-    const html = await (await get(`/servers/${serverId}/stats`)).text()
-    expect(html).toContain('Round stats')
-    expect(html).toContain('Alice (renamed)')
-    expect(html).toContain(`/servers/${serverId}/players/${ALICE}`)
-    expect(html).toContain('timelimit')
-    expect(html).not.toContain('Bot04')
-    expect(html).toContain('datetime=') // the viewer's-timezone element
+    const overview = await (await get(`/servers/${serverId}/stats`)).text()
+    const leaders = await (await get(`/servers/${serverId}/stats?view=leaders`)).text()
+    const rounds = await (await get(`/servers/${serverId}/stats?view=rounds`)).text()
+    expect(overview).toContain('Round stats')
+    expect(overview).toContain('timelimit')
+    expect(leaders).toContain('Alice (renamed)')
+    expect(leaders).toContain(`/servers/${serverId}/players/${ALICE}`)
+    expect(rounds).toContain('ttt_a')
+    for (const html of [overview, leaders, rounds]) expect(html).not.toContain('Bot04')
+    expect(rounds).toContain('datetime=') // the exact time, on hover
   })
 
   test('sorting links work and an unknown sort does not break the page', async () => {
@@ -121,10 +124,11 @@ describe('stats pages', () => {
   })
 
   test('?bots=1 includes bot rounds, keeps the switch in the links, and says so', async () => {
-    const html = await (await get(`/servers/${serverId}/stats?bots=1`)).text()
+    const html = await (await get(`/servers/${serverId}/stats?bots=1&view=leaders`)).text()
     expect(html).toContain('Bot04')
     expect(html).toContain('Including bot test rounds')
-    expect(html).toContain('sort=wins&amp;bots=1')
+    expect(html).toMatch(/href="[^"]*sort=wins[^"]*"/)
+    for (const link of html.match(/href="[^"]*sort=wins[^"]*"/g)!) expect(link).toContain('bots=1')
     expect((await get(`/servers/${serverId}/players/${BOT}?bots=1`)).status).toBe(200)
   })
 
@@ -139,7 +143,7 @@ describe('stats pages', () => {
   test('a server with no rounds says so', async () => {
     const empty = Store.addServer('Empty').id
     const html = await (await get(`/servers/${empty}/stats`)).text()
-    expect(html).toContain('No rounds recorded yet')
+    expect(html).toContain('No rounds yet')
   })
 
   test('the server page links to the stats', async () => {

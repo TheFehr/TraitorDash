@@ -1,140 +1,115 @@
+import { Sections, Shell } from './CaseFile'
+import { Crumbs, Who, adminOf, link, type Ctx } from './kit'
 import { duration } from '../format'
-import { BTN } from '../ui'
-import { SectionLinks } from './SectionLinks'
+import { teamLabel } from '../teamColours'
 
-// The round replay's page (RFC 12, 3.5): the markup the viewer (replay.ts) fills in. Without
-// JavaScript or WebGL the lists the viewer builds are not there, and the page says so.
-
+// One round's replay (RFC 12, 3.5; RFC 17): the markup the browser code (replay.ts) finds its parts in,
+// in the same look as the other pages. Everything it draws is in the canvas; the lists and the controls
+// are filled in by that code, so a browser without WebGL still gets the lists.
 
 export interface ReplayPageProps {
+  ctx: Ctx
   server: { id: string, name: string }
   round: { id: string, map: string | null, result: string, duration: number | null }
-  /** Whether the round has a stored track. */
   hasTrack: boolean
   /** The data URL, with the same `bots` choice as the page. */
   src: string
-  /** The signed-in visitor, so the viewer can open on their own player. */
-  viewer: string
-  admin: boolean
   pinned: boolean
   /** Where to come back to after pinning. */
   here: string
   pinnedCount?: { used: number, max: number }
-  /** In the game's window (RFC 16): no site links, and the way back stays in the window. */
-  embed?: boolean
+  bots?: boolean
 }
 
-export const ReplayPage = ({ server, round, hasTrack, src, viewer, admin, pinned, here, pinnedCount, embed }: ReplayPageProps) => (
-  <div class="p-4 sm:p-8 space-y-6">
-    <header>
-      {embed
-        ? <nav class="text-xs font-black text-gray-500 uppercase tracking-widest mb-4"><a href={`/servers/${server.id}/stats?embed=1&view=rounds`} class="hover:text-white transition">← Rounds</a></nav>
-        : (
-          <nav class="text-xs font-black text-gray-500 uppercase tracking-widest mb-4 flex flex-wrap gap-x-2">
-            <a href="/" class="hover:text-white transition">Dashboard</a>
-            <span>/</span>
-            <a href={`/servers/${server.id}/stats`} class="hover:text-white transition">{server.name}</a>
-            <span>/</span>
-            <span class="text-red-500">Replay</span>
-          </nav>
-        )}
-      <h1 class="text-3xl sm:text-5xl font-black mb-2 break-words">Round replay</h1>
-      <p class="text-gray-400">
-        {round.map ?? 'unknown map'} · {round.result} · {duration(round.duration)}
-        {pinned && <span data-pinned class="ml-2 inline-block text-[10px] font-black uppercase tracking-widest border border-yellow-500/50 text-yellow-400 rounded px-2 py-0.5">Pinned</span>}
+export const ReplayPage = ({ ctx, server, round, hasTrack, src, pinned, here, pinnedCount, bots }: ReplayPageProps) => {
+  const id = server.id
+  const admin = adminOf(ctx)
+  const back = link(ctx, `/servers/${id}/rounds/${encodeURIComponent(round.id)}`, { bots })
+  return (
+    <Shell title={`Replay | ${server.name}`} embed={ctx.embed} viewer={ctx.viewer} scripts={hasTrack ? ['/public/replay.js', ...(admin ? ['/public/confirm.js'] : [])] : []}>
+      <Crumbs><a href={link(ctx, `/servers/${id}/stats`, { view: 'rounds', bots })}>Rounds</a> / <a href={back}>{round.map ?? 'Round'}</a> / Replay</Crumbs>
+      {!ctx.embed && <Sections serverId={id} />}
+      <h1>Round replay</h1>
+      <p class="muted" style="margin:.1rem 0 .8rem">
+        {round.map ?? 'unknown map'} · {teamLabel(round.result)} · {duration(round.duration)}
+        {pinned && <span data-pinned class="pill ok" style="margin-left:.6rem">Pinned</span>}
       </p>
-      {!embed && <SectionLinks serverId={server.id} />}
-    </header>
 
-    {!hasTrack ? (
-      <div data-no-track class="bg-gray-800 border border-gray-700 rounded-xl p-6 text-gray-300">
-        There is no recorded track for this round. Tracks are recorded only when the game server has position tracking on, and older ones are removed to keep room.
-        <p class="mt-3"><a class="underline hover:text-white" href={`/servers/${server.id}/stats${embed ? '?embed=1&view=rounds' : ''}`}>Back to the round stats</a></p>
-      </div>
-    ) : (
-      <div data-replay data-src={src} data-viewer={viewer} class="grid lg:grid-cols-[minmax(0,1fr)_20rem] gap-4">
-        <div class="space-y-3 min-w-0">
-          <div class="relative">
-            <canvas data-canvas class="block w-full h-[55vh] rounded-xl bg-gray-900 touch-none" aria-label="3D replay of the round"></canvas>
-            <p data-status class="absolute inset-0 grid place-items-center text-center px-4 text-sm text-gray-400 pointer-events-none">This view needs JavaScript.</p>
-          </div>
-          <div data-controls class="space-y-3 text-sm">
-            <div class="relative">
-              <input data-scrub type="range" min="0" max="0" step="1" value="0" class="w-full" aria-label="Time in the round" />
-              <div data-ticks class="absolute inset-x-0 top-0 h-5 pointer-events-none" aria-hidden="true"></div>
-            </div>
-            <div class="flex flex-wrap items-center gap-x-6 gap-y-2">
-              <button data-play type="button" class={BTN + ' min-w-20'}>Play</button>
-              <span data-time class="font-mono text-gray-300">0:00 / 0:00</span>
-              <div class="flex items-center gap-1" role="group" aria-label="Speed">
-                {[1, 2, 4, 8].map(s => <button type="button" data-speed={s} aria-pressed="false" class={BTN}>{s}x</button>)}
-              </div>
-              <div class="flex items-center gap-1" role="group" aria-label="Camera">
-                <button type="button" data-cam="orbit" aria-pressed="true" class={BTN}>3D</button>
-                <button type="button" data-cam="top" aria-pressed="false" class={BTN}>From above</button>
-                <button type="button" data-cam="follow" aria-pressed="false" class={BTN}>Follow</button>
-              </div>
-            </div>
-            <div data-levels-wrap class="flex flex-wrap items-center gap-x-6 gap-y-2">
-              <div class="flex flex-wrap items-center gap-1" role="group" aria-label="Levels shown">
-                <span class="text-xs font-black uppercase tracking-widest text-gray-500 mr-2">Up to level</span>
-                <span data-levels class="contents"></span>
-              </div>
-              <label class="flex items-center gap-2 text-gray-300"><input type="checkbox" data-follow-level checked /> Follow the selected player's level</label>
-              <label class="flex items-center gap-2 text-gray-300"><input type="checkbox" data-walls checked /> Walls</label>
-            </div>
-          </div>
-          <p data-background class="text-xs text-gray-400"></p>
-          <div data-notes class="space-y-1"></div>
-          <p data-disclaimer class="text-xs text-gray-500">
-            Simplified map: this shows where players were and when, not what they could see. Doors, glass, props and ceilings are not in it, so it cannot tell who could see whom.
-          </p>
+      {!hasTrack ? (
+        <div data-no-track class="f" style="--c:#9ca3af">
+          There is no recorded track for this round. Tracks are recorded only when the game server has position tracking on, and older ones are removed to keep room.
+          <p style="margin:.6rem 0 0"><a href={link(ctx, `/servers/${id}/stats`, { view: 'rounds', bots })} style="text-decoration:underline">Back to the round stats</a></p>
         </div>
-        <aside class="space-y-5 min-w-0">
-          <section>
-            <h2 class="text-sm font-black uppercase tracking-widest text-gray-400 mb-2">Players</h2>
-            <div data-players class="bg-gray-800 border border-gray-700 rounded-xl p-1 text-sm max-h-80 overflow-y-auto"></div>
-          </section>
-          <section>
-            <h2 class="text-sm font-black uppercase tracking-widest text-gray-400 mb-2">Selected player</h2>
-            <div class="bg-gray-800 border border-gray-700 rounded-xl p-3 text-sm text-gray-300 space-y-2">
-              <p data-selected-role class="font-bold"></p>
-              <ol data-player-events class="space-y-1 max-h-40 overflow-y-auto"></ol>
+      ) : (
+        <div data-replay data-src={src} data-viewer={ctx.viewer?.steamId ?? ''} class="replay">
+          <div class="main">
+            <div class="view">
+              <canvas data-canvas aria-label="3D replay of the round"></canvas>
+              <p data-status>This view needs JavaScript.</p>
             </div>
-          </section>
-          <section data-revives-wrap hidden>
-            <h2 class="text-sm font-black uppercase tracking-widest text-gray-400 mb-2">Revivals</h2>
-            <ol data-revives class="bg-gray-800 border border-gray-700 rounded-xl p-3 text-sm text-gray-300 space-y-1 max-h-64 overflow-y-auto"></ol>
-          </section>
-          <section>
-            <h2 class="text-sm font-black uppercase tracking-widest text-gray-400 mb-2">Deaths</h2>
-            <ol data-deaths class="bg-gray-800 border border-gray-700 rounded-xl p-3 text-sm text-gray-300 space-y-1 max-h-64 overflow-y-auto"></ol>
-          </section>
-          {admin && (
-            <section>
-              <form method="post" action={`/servers/${server.id}/rounds/${encodeURIComponent(round.id)}/pin`} class="space-y-1">
-                <input type="hidden" name="pin" value={pinned ? '0' : '1'} />
-                <input type="hidden" name="next" value={here} />
-                <button type="submit" data-pin class={BTN}>{pinned ? 'Unpin this round' : 'Pin this round'}</button>
-                <p class="text-xs text-gray-500">A pinned track is never removed to make room.{pinnedCount ? ` ${pinnedCount.used} of ${pinnedCount.max} pins used.` : ''}</p>
-              </form>
-              <div class="mt-4 flex flex-wrap gap-2">
-                {[
-                  { what: 'replay', label: 'Delete replay', ask: 'Delete this replay? The round stays in the statistics.' },
-                  { what: 'round', label: 'Delete round and replay', ask: 'Delete this round with its replay? It leaves the statistics too. This cannot be undone.' },
-                ].map(d => (
-                  <form method="post" action={`/servers/${server.id}/rounds/${encodeURIComponent(round.id)}/delete`} data-delete={d.what}
-                    x-data x-on:submit={`if (!confirm(${JSON.stringify(d.ask)})) $event.preventDefault()`}>
-                    <input type="hidden" name="what" value={d.what} />
-                    <button type="submit" class="px-3 py-1 rounded-md border border-red-500/50 text-red-400 hover:bg-red-600 hover:text-white text-sm transition">{d.label}</button>
-                  </form>
-                ))}
+            <div data-controls>
+              <div class="scrub">
+                <input data-scrub type="range" min="0" max="0" step="1" value="0" aria-label="Time in the round" />
+                <div data-ticks class="ticks" aria-hidden="true"></div>
               </div>
+              <div class="tools">
+                <button data-play type="button" class="tog play">Play</button>
+                <span data-time class="time">0:00 / 0:00</span>
+                <span role="group" aria-label="Speed">
+                  {[1, 2, 4, 8].map(s => <button type="button" data-speed={s} aria-pressed="false" class="tog">{s}x</button>)}
+                </span>
+                <span role="group" aria-label="Camera">
+                  <button type="button" data-cam="orbit" aria-pressed="true" class="tog">3D</button>
+                  <button type="button" data-cam="top" aria-pressed="false" class="tog">From above</button>
+                  <button type="button" data-cam="follow" aria-pressed="false" class="tog">Follow</button>
+                </span>
+              </div>
+              <div data-levels-wrap class="tools">
+                <span role="group" aria-label="Levels shown"><span class="cap">Up to level</span><span data-levels></span></span>
+                <label><input type="checkbox" data-follow-level checked /> Follow the selected player's level</label>
+                <label><input type="checkbox" data-walls checked /> Walls</label>
+              </div>
+            </div>
+            <p data-background class="foot"></p>
+            <div data-notes></div>
+            <p data-disclaimer class="foot dark">
+              Simplified map: this shows where players were and when, not what they could see. Doors, glass, props and ceilings are not in it, so it cannot tell who could see whom.
+            </p>
+          </div>
+          <aside>
+            <section class="f" style="--c:#22c55e"><b>Players</b><div data-players class="list"></div></section>
+            <section class="f" style="--c:#a78bfa">
+              <b>Selected player</b>
+              <p data-selected-role style="margin:.2rem 0"></p>
+              <ol data-player-events class="list"></ol>
             </section>
-          )}
-        </aside>
-      </div>
-    )}
-    <script defer src="/public/replay.js"></script>
-  </div>
-)
+            <section data-revives-wrap hidden class="f" style="--c:#34d399"><b>Revivals</b><ol data-revives class="list"></ol></section>
+            <section class="f" style="--c:#dc2626"><b>Deaths</b><ol data-deaths class="list"></ol></section>
+            {admin && (
+              <section class="f" style="--c:#9ca3af">
+                <form method="post" action={`/servers/${id}/rounds/${encodeURIComponent(round.id)}/pin`}>
+                  <input type="hidden" name="pin" value={pinned ? '0' : '1'} />
+                  <input type="hidden" name="next" value={here} />
+                  <button type="submit" data-pin class="btn">{pinned ? 'Unpin this round' : 'Pin this round'}</button>
+                  <p class="foot dark">A pinned track is never removed to make room.{pinnedCount ? ` ${pinnedCount.used} of ${pinnedCount.max} pins used.` : ''}</p>
+                </form>
+                <div class="actions">
+                  {[
+                    { what: 'replay', label: 'Delete replay', ask: 'Delete this replay? The round stays in the statistics.' },
+                    { what: 'round', label: 'Delete round and replay', ask: 'Delete this round with its replay? It leaves the statistics too. This cannot be undone.' },
+                  ].map(d => (
+                    <form method="post" action={`/servers/${id}/rounds/${encodeURIComponent(round.id)}/delete`} data-delete={d.what} data-confirm={d.ask}>
+                      <input type="hidden" name="what" value={d.what} />
+                      <button type="submit" class="btn danger">{d.label}</button>
+                    </form>
+                  ))}
+                </div>
+              </section>
+            )}
+          </aside>
+        </div>
+      )}
+      <Who ctx={ctx} />
+    </Shell>
+  )
+}
