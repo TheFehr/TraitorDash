@@ -103,7 +103,9 @@ export function lastPoseAt(segments: Segment[], ms: number): Pose | null {
   let best: Pose | null = null
   for (const s of segments) {
     if (s.t[0]! > ms) break
-    const i = s.t[s.t.length - 1]! <= ms ? s.t.length - 1 : s.t.findLastIndex(t => t <= ms)
+    // (not findLastIndex: the game's browser, Chrome 86, does not have it; the first sample is at or before ms, so this ends)
+    let i = s.t.length - 1
+    while (s.t[i]! > ms) i--
     best = { x: s.x[i]!, y: s.y[i]!, z: s.z[i]!, yaw: s.a[i]! }
   }
   return best

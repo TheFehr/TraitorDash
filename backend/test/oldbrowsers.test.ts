@@ -1,5 +1,5 @@
 import { expect, test, describe } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { lowerStaticBlocks, problems } from '../scripts/oldbrowsers'
@@ -44,4 +44,16 @@ describe('the real bundles', () => {
       }
     } finally { rmSync(dir, { recursive: true, force: true }) }
   }, 30_000)
+})
+
+describe('our browser code only calls what Chrome 86 has', () => {
+  // Found by running the pages in a real Chrome 86: findLastIndex (Chrome 97) stopped the replay. The syntax check above
+  // cannot see a missing method, so the code we wrote ourselves is searched for the usual newer ones.
+  const NEWER = /\.(findLast|findLastIndex|replaceAll|toSorted|toReversed|toSpliced)\(|\bObject\.hasOwn\(|\bstructuredClone\(|\bAbortSignal\.timeout\(|\.at\(-?\d/
+  test('replay, map view, scene kit, replay logic and the confirmation', () => {
+    for (const f of ['replay', 'replaylogic', 'mapview', 'sceneKit', 'confirm']) {
+      const text = readFileSync(join(import.meta.dir, `../src/${f}.ts`), 'utf8')
+      expect(NEWER.exec(text)?.[0] ?? null, f).toBeNull()
+    }
+  })
 })
