@@ -14,6 +14,8 @@ export interface RoleView {
   team: string
   color: string
   enabled: boolean
+  /** True for a role that is made during a round (a conversion: Sidekick, Zombie, Defector...) and is not dealt at its start, so it has no distribution, limit or chance. */
+  made: boolean
   min: number | null
   /** The description the server's admins wrote, else the one from the language files, cleaned; null when the addon has none. */
   description: string | null
@@ -28,7 +30,7 @@ export interface RoleView {
 }
 
 /** `min` is the role's minimum player count as a number, null when the server has not reported it. */
-export interface RoleListEntry { name: string, team: string, color: string, enabled: boolean, pct: string, minPlayers: string, min: number | null }
+export interface RoleListEntry { name: string, team: string, color: string, enabled: boolean, made: boolean, pct: string, minPlayers: string, min: number | null }
 
 export { roleColour }
 
@@ -61,6 +63,15 @@ export function factsOf(team: string, policing: boolean): string | null {
 }
 
 /** Operator switches (RFC 15, 4.2), read at each request. */
+/**
+ * A role the server has told us settings of, but none of the ones that deal it (`ttt_<role>_pct`, `_max`, `_min_players`,
+ * `_random`), is not dealt at the start of a round: TTT2 makes it by a conversion (the Zombie from a Necromancer's revival, the
+ * Defector from a Jihad, ...). With nothing reported for it yet we cannot tell, and it counts as dealt.
+ */
+export const isMadeInRound = (live: Record<string, LiveConVar>, roleName: string): boolean =>
+  Object.values(live).some(lv => lv.role === roleName && lv.present)
+  && !['pct', 'max', 'min_players', 'random'].some(k => live[`ttt_${roleName}_${k}`]?.present === true)
+
 export const publicRoles = () => process.env.PUBLIC_ROLES !== '0'
 export const publicRoleSettings = () => process.env.PUBLIC_ROLE_SETTINGS !== '0'
 
@@ -149,6 +160,7 @@ export function buildRoleView(serverId: string, roleName: string): RoleView | nu
     team: String(role.team ?? ''),
     color: roleColour(role.color, String(role.team ?? '')),
     enabled: isRoleEnabled(live, roleName),
+    made: isMadeInRound(live, roleName),
     min: metrics.minPlayers.sort,
     description: cleanDescription(Store.getRoleNote(serverId, roleName) ?? Store.getRoleDescription(serverId, roleName)),
     facts: factsOf(String(role.team ?? ''), !!role.is_policing),
@@ -167,6 +179,6 @@ export function listRoles(serverId: string, query = ''): RoleListEntry[] {
     .map(r => {
       const m = roleMetrics(live, r.role_name)
       const team = String(r.team ?? '')
-      return { name: String(r.role_name), team, color: roleColour(r.color, team), enabled: isRoleEnabled(live, r.role_name), pct: m.pct.text, minPlayers: m.minPlayers.text, min: m.minPlayers.sort }
+      return { name: String(r.role_name), team, color: roleColour(r.color, team), enabled: isRoleEnabled(live, r.role_name), made: isMadeInRound(live, r.role_name), pct: m.pct.text, minPlayers: m.minPlayers.text, min: m.minPlayers.sort }
     })
 }

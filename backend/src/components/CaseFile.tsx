@@ -55,6 +55,7 @@ a.f:hover{transform:translateY(-3px)}
 .f.card h2 a:after{content:"";position:absolute;top:0;left:0;right:0;bottom:0}
 .f.card a.pill{position:relative;z-index:1}
 .f.card:focus-within{outline:2px solid #e9b44c;outline-offset:2px}
+.f .via{color:#4a4334;font-style:italic}
 .f.few,.f.off{background:#2a2620;color:#a89f8c;box-shadow:none}
 .f.few{border:1px dashed #7a7058}.f.few:before,.f.off:before{background:#4a4334}.f.few .ft,.f.off .ft{border-color:#5a523f}
 .f.few .stamp{border-color:#a89f8c;color:#d6cdb8;background:#1a1612}

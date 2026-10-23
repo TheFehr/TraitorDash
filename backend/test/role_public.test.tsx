@@ -124,6 +124,20 @@ describe('content', () => {
     // a role nothing was reported for is still just "not reported yet"
     expect(await (await get(`/servers/${serverId}/roles/plain`)).text()).toContain('not reported yet')
   })
+  test('a role made during a round is its own group on the list, says so, and is not counted as one that can appear', async () => {
+    Store.saveSchema(serverId, 'converted', 'traitors', false, -1, [], 'c1', null)
+    Store.setConVarValues(serverId, [live('ttt_conv_credits_starting', '0', '0', 'converted')])
+    const list = await (await get(`/servers/${serverId}/roles?players=10`)).text()
+    expect(list).toContain('Made during the round, not dealt')
+    expect(list).toContain('1 made in the round')
+    const names = [...list.matchAll(/class="f ([a-z ]*)" style="--c:#[0-9a-f]{6}" href="[^"]*\/roles\/([^?"]+)/g)].map(m => `${m[2]}:${m[1].trim()}`)
+    expect(names).toContain('converted:made')
+    expect(names).toContain('haunter:')
+    expect(names.indexOf('converted:made')).toBeGreaterThan(names.indexOf('haunter:'))
+    const page = await (await get(`/servers/${serverId}/roles/converted`)).text()
+    expect(page).toContain('Made during a round, not dealt at its start')
+    expect(await (await get(`/servers/${serverId}/roles/haunter`)).text()).not.toContain('not dealt at its start')
+  })
   test('a disabled role says so and keeps its numbers', async () => {
     Store.setConVarValues(serverId, [live('ttt_haunter_enabled', '0', '1')])
     const html = await page()
