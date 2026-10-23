@@ -138,6 +138,41 @@ describe('content', () => {
     expect(page).toContain('Made during a round, not dealt at its start')
     expect(await (await get(`/servers/${serverId}/roles/haunter`)).text()).not.toContain('not dealt at its start')
   })
+  describe('who makes a made role', () => {
+    beforeEach(() => {
+      Store.saveSchema(serverId, 'necromancer', 'necromancers', false, -1, [], 'n1', 'Raises the dead.')
+      Store.saveSchema(serverId, 'zombie', 'necromancers', false, -1, [], 'z1', 'A zombie is created when a Necromancer revives a corpse.')
+      Store.saveSchema(serverId, 'thrall', 'traitors', false, -1, [], 't1', 'Made by a vampire bite.')
+      Store.setConVarValues(serverId, [
+        live('ttt_necromancer_pct', '0.1', '0.1', 'necromancer'), live('ttt_necromancer_min_players', '6', '6', 'necromancer'),
+        live('ttt_zombie_credits_starting', '0', '0', 'zombie'), live('ttt_thrall_credits_starting', '0', '0', 'thrall'),
+      ])
+    })
+    const card = (html: string, name: string) => html.split('<a class="f ').slice(1).find(c => c.includes(`/roles/${name}`)) ?? ''
+    test('a made role is put away while its maker is, and says why; it is in play once the maker is', async () => {
+      const few = card(await (await get(`/servers/${serverId}/roles?players=4`)).text(), 'zombie')
+      expect(few).toMatch(/^few"/)
+      expect(few).toContain('needs necromancer')
+      expect(few).toContain('made by necromancer, who needs 6+ players')
+      const ok = card(await (await get(`/servers/${serverId}/roles?players=8`)).text(), 'zombie')
+      expect(ok).toMatch(/^made"/)
+      expect(ok).toContain('Made by necromancer')
+      expect(card(await (await get(`/servers/${serverId}/roles`)).text(), 'zombie')).toMatch(/^made"/)
+    })
+    test('the role page names the probable maker and says it is a guess; a disabled maker is said so', async () => {
+      const page = await (await get(`/servers/${serverId}/roles/zombie?players=4`)).text()
+      expect(page).toContain('Probably made by <strong>necromancer</strong>')
+      expect(page).toContain('the game does not say')
+      expect(page).toContain('Not in play in this round: made by necromancer, who needs 6+ players')
+      Store.setConVarValues(serverId, [live('ttt_necromancer_enabled', '0', '1', 'necromancer')])
+      expect(await (await get(`/servers/${serverId}/roles/zombie?players=8`)).text()).toContain('made by necromancer, which is disabled')
+    })
+    test('a made role with nothing to tie it to just says it is made during the round', async () => {
+      const html = await (await get(`/servers/${serverId}/roles?players=2`)).text()
+      expect(card(html, 'thrall')).toMatch(/^made"/)
+      expect(card(html, 'thrall')).toContain('Made during the round, not dealt')
+    })
+  })
   test('a disabled role says so and keeps its numbers', async () => {
     Store.setConVarValues(serverId, [live('ttt_haunter_enabled', '0', '1')])
     const html = await page()

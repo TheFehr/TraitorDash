@@ -1,4 +1,4 @@
-import type { RoleView, RoleListEntry } from '../services/roleview'
+import type { RoleView, RoleListEntry, Maker } from '../services/roleview'
 import { Sections, Shell } from './CaseFile'
 
 const qs = (o: { embed?: boolean, players?: number | null, q?: string }) => {
@@ -9,20 +9,32 @@ const qs = (o: { embed?: boolean, players?: number | null, q?: string }) => {
   return parts.length ? '?' + parts.join('&') : ''
 }
 
-type State = 'ok' | 'made' | 'few' | 'off'
+type State = 'ok' | 'made' | 'wait' | 'few' | 'off'
+const inPlay = (m: Maker, players: number | null) => m.enabled && (players === null || m.min === null || m.min <= players)
 /**
- * A disabled role stays disabled whatever the count; a role made during the round (a conversion) is not dealt, so the count does
- * not decide it; otherwise a role is put away while the round has fewer players than it needs.
+ * A disabled role stays disabled whatever the count. A role made during the round (a conversion) is not dealt, so its own count
+ * does not decide it; it waits while everything that makes it is out of play (disabled, or needing more players than the round
+ * has). Otherwise a role is put away while the round has fewer players than it needs.
  */
-const stateOf = (r: { enabled: boolean, made: boolean, min: number | null }, players: number | null): State =>
-  !r.enabled ? 'off' : r.made ? 'made' : players !== null && r.min !== null && r.min > players ? 'few' : 'ok'
+const stateOf = (r: { enabled: boolean, made: boolean, makers: Maker[], min: number | null }, players: number | null): State =>
+  !r.enabled ? 'off'
+    : r.made ? (r.makers.length > 0 && !r.makers.some(m => inPlay(m, players)) ? 'wait' : 'made')
+      : players !== null && r.min !== null && r.min > players ? 'few' : 'ok'
+const names = (ms: Maker[]) => ms.map(m => m.name).join(', ')
+/** Why a made role is not in play: its makers are disabled, or need more players than the round has. */
+const waitNote = (ms: Maker[], players: number | null) => {
+  const needs = ms.filter(m => m.enabled && m.min !== null).map(m => m.min!)
+  return needs.length > 0 && players !== null
+    ? `made by ${names(ms)}, who needs ${Math.min(...needs)}+ players`
+    : `made by ${names(ms)}, which is disabled`
+}
 const more = (n: number) => `${n} more player${n === 1 ? '' : 's'} needed`
 const PICKS = [6, 8, 10, 12]
 
 export const RoleListPage = ({ server, roles, query, embed, admin, players = null }: { server: { id: string, name: string }, roles: RoleListEntry[], query: string, embed: boolean, admin: boolean, players?: number | null }) => {
   const base = `/servers/${server.id}/roles`
   // Roles that can be dealt first, then the ones made during a round, then the ones put away for lack of players, then the disabled ones; each group keeps its order.
-  const rank = { ok: 0, made: 1, few: 2, off: 3 }
+  const rank = { ok: 0, made: 1, wait: 2, few: 2, off: 3 }
   roles = roles.map((r, i) => ({ r, i, k: rank[stateOf(r, players)] })).sort((a, b) => a.k - b.k || a.i - b.i).map(x => x.r)
   const open = roles.filter(r => stateOf(r, players) === 'ok').length
   const made = roles.filter(r => stateOf(r, players) === 'made').length
@@ -50,13 +62,13 @@ export const RoleListPage = ({ server, roles, query, embed, admin, players = nul
           {roles.map(r => {
             const state = stateOf(r, players)
             return (
-              <a class={`f ${state === 'ok' ? '' : state}`} style={`--c:${r.color}`} href={`${base}/${encodeURIComponent(r.name)}${qs({ embed, players })}`}>
-                <i class="stamp">{state === 'off' ? 'disabled' : state === 'few' ? `needs ${r.min}+` : r.team || 'no team'}</i>
+              <a class={`f ${state === 'ok' ? '' : state === 'wait' ? 'few' : state}`} style={`--c:${r.color}`} href={`${base}/${encodeURIComponent(r.name)}${qs({ embed, players })}`}>
+                <i class="stamp">{state === 'off' ? 'disabled' : state === 'few' ? `needs ${r.min}+` : state === 'wait' ? `needs ${r.makers[0]!.name}` : r.team || 'no team'}</i>
                 <h2 class="ft">{r.name}</h2>
-                {state === 'made'
-                  ? <span class="via">Made during the round, not dealt</span>
+                {state === 'made' || state === 'wait'
+                  ? <span class={state === 'wait' ? 'need' : 'via'}>{state === 'wait' ? `Not in play: ${waitNote(r.makers, players)}` : r.makers.length > 0 ? `Made by ${names(r.makers)}` : 'Made during the round, not dealt'}</span>
                   : <span>Chance: {r.pct}</span>}
-                {state === 'made' ? null : state === 'few' ? <span class="need">{more(r.min! - players!)}</span> : <span>Needs: {r.min === null ? 'not reported' : `${r.min}+ players`}</span>}
+                {state === 'made' || state === 'wait' ? null : state === 'few' ? <span class="need">{more(r.min! - players!)}</span> : <span>Needs: {r.min === null ? 'not reported' : `${r.min}+ players`}</span>}
               </a>
             )
           })}
@@ -77,7 +89,13 @@ export const RolePage = ({ server, role, embed, admin, players = null }: { serve
         <i class={`stamp ${state === 'off' ? 'off' : ''}`}>{state === 'off' ? 'disabled' : role.team || 'no team'}</i>
         <h1>{role.name}</h1>
         {state === 'off' && <p class="note dead">Disabled on this server.</p>}
-        {state === 'made' && <p class="note">Made during a round, not dealt at its start: another role turns a player into it (a conversion), so it has no chance or player limit of its own.</p>}
+        {(state === 'made' || state === 'wait') && (
+          <p class={`note${state === 'wait' ? ' need' : ''}`}>
+            Made during a round, not dealt at its start: another role turns a player into it (a conversion), so it has no chance or player limit of its own.
+            {role.makers.length > 0 && <> Probably made by <strong>{names(role.makers)}</strong> (worked out from its team and description; the game does not say).</>}
+            {state === 'wait' && <> Not in play in this round: {waitNote(role.makers, players)}.</>}
+          </p>
+        )}
         {state === 'few' && <p class="note need">Not in play yet: it needs {role.min}+ players, and this round has {players}. {more(role.min! - players!)}.</p>}
         <h2>What it does</h2>
         {role.description
