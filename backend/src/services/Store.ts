@@ -3,6 +3,7 @@ import { HEX6 } from '../teamColours'
 import { BOT_ID_PREFIX } from './validators'
 import type { MapPlan } from './mapplan'
 import { MESH_VERSION } from '../maps/meshVersion'
+import type { GeometryInfo } from './mapgeometry'
 import { createHash } from 'node:crypto'
 import { hashToken } from './migrations'
 import { CODE_TTL_MS, generateCode, hashCode } from './pairing'
@@ -31,7 +32,7 @@ export interface GeometryState {
   /** queued | fetching | parsed | failed | unknown (the map has no fingerprint) */
   status: string
   detail: string | null
-  info: { vertices: number, triangles: number, levels: number, water?: number } | null
+  info: GeometryInfo | null
 }
 
 export interface MapPlanMeta {

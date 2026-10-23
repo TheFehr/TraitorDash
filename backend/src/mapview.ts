@@ -3,7 +3,7 @@ import {
   Box3, Vector3, Mesh, MeshStandardMaterial, Plane, type Object3D, type BufferGeometry,
 } from 'three'
 import {
-  applyColouring, COLOURINGS, explainNoWebGL, heightColours, makeCamera, makeRenderer, makeScene, prepareWater, saveColouring, savedColouring,
+  applyColouring, COLOURINGS, explainNoWebGL, heightColours, makeCamera, makeRenderer, makeScene, prepareProps, prepareWater, saveColouring, savedColouring,
   type Colouring, type Painted,
 } from './sceneKit'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
@@ -35,6 +35,7 @@ function start(root: HTMLElement) {
   const walls: Mesh[] = []
   const painted: Painted[] = []
   let water: Object3D | null = null
+  let propMeshes: { solid: Mesh[], foliage: Mesh[] } = { solid: [], foliage: [] }
   const draw = () => renderer.render(scene, camera)
   controls.addEventListener('change', draw)
 
@@ -83,6 +84,14 @@ function start(root: HTMLElement) {
     for (const m of walls) m.visible = (e.target as HTMLInputElement).checked
     draw()
   })
+  root.querySelector<HTMLInputElement>('[data-props]')?.addEventListener('change', e => {
+    for (const m of propMeshes.solid) m.visible = (e.target as HTMLInputElement).checked
+    draw()
+  })
+  root.querySelector<HTMLInputElement>('[data-foliage]')?.addEventListener('change', e => {
+    for (const m of propMeshes.foliage) m.visible = (e.target as HTMLInputElement).checked
+    draw()
+  })
   root.querySelector<HTMLInputElement>('[data-water]')?.addEventListener('change', e => {
     if (water) water.visible = (e.target as HTMLInputElement).checked
     draw()
@@ -118,6 +127,7 @@ function start(root: HTMLElement) {
         })
       }
       water = prepareWater(model, cut)
+      propMeshes = prepareProps(model, cut)
       heightColours(painted)
       colour(savedColouring())
       root.querySelectorAll<HTMLElement>('[data-colour]').forEach(b => b.addEventListener('click', () => {

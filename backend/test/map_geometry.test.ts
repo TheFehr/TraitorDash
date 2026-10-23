@@ -4,6 +4,7 @@ import { mkdtempSync, writeFileSync, existsSync, readdirSync, rmSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildBsp, flatQuad, flatQuads, SURF } from './helpers/bsp_builder'
+import { buildModel, buildZip } from './helpers/model_builder'
 import * as bsp from '../src/maps/bsp'
 import { MESH_VERSION } from '../src/maps/meshVersion'
 
@@ -372,5 +373,51 @@ describe('water in the mesh (RFC 18, 4.1)', () => {
     const r = await geo.buildGeometry(bsp.memorySource(far), 'ttt_far', fpOf(far))
     if (r.ok) expect(r.info.water).toBe(0)
     else throw new Error(r.error)
+  })
+})
+
+describe('props in the mesh (RFC 18, 4.3)', () => {
+  const V: [number, number, number][] = [[0, 0, 0], [10, 0, 0], [0, 10, 0]]
+  const model = buildModel({ textures: ['wall', 'glass'], meshes: [{ material: 0, vertices: V, tris: [0, 1, 2] }, { material: 1, vertices: V, tris: [0, 1, 2] }] })
+  const withProps = (vmt: string | null) => buildBsp({
+    ...flatQuad(0, 0, 0, 1000),
+    pak: buildZip({
+      'models/test/house.mdl': model.mdl, 'models/test/house.vvd': model.vvd, 'models/test/house.dx90.vtx': model.vtx,
+      ...(vmt ? { 'materials/models/test/glass.vmt': vmt } : {}),
+    }),
+    staticProps: { models: ['models/test/house.mdl', 'models/props_c17/crate.mdl'], props: [{ model: 0, x: 100, y: 100, z: 0 }, { model: 0, x: 200, y: 100, z: 0 }, { model: 1, x: 300, y: 100, z: 0 }] },
+  })
+  const page = async () => (await req(`/servers/${serverId}/maps/ttt_a`)).text()
+  const parse = async (b: Buffer) => { report(serverId, [M('ttt_a', fpOf(b))]); await toggle(serverId, 'ttt_a', true); await geo.runGeometryQueue(writer(b)) }
+
+  test('the props the map carries are drawn, the models it does not carry are counted, and the numbers are stored', async () => {
+    const b = withProps('"VertexLitGeneric" { $alphatest 1 }')
+    const r = await geo.buildGeometry(bsp.memorySource(b), 'ttt_a', fpOf(b))
+    if (!r.ok) throw new Error(r.error)
+    expect(r.info.props).toEqual({ placed: 2, models: 1, foliage: 1, unavailable: 1, unreadable: 0, dropped: 0 })
+  })
+
+  test('the map page says how many props, how many models are the game\'s own, and has the Props and the Glass and leaves switches', async () => {
+    await parse(withProps('"VertexLitGeneric" { $alphatest 1 }'))
+    const html = await page()
+    expect(html).toContain(', 2 props')
+    expect(html).toContain('1 model belongs to the game, not the map, and is not drawn.')
+    expect(html).toMatch(/<input type="checkbox" data-props="true" checked=""\/> Props/)
+    expect(html).toMatch(/<input type="checkbox" data-foliage="true" checked=""\/> Glass and leaves/)
+  })
+
+  test('a map whose props have no foliage has no switch for it', async () => {
+    await parse(withProps(null))
+    const html = await page()
+    expect(html).toContain('data-props')
+    expect(html).not.toContain('data-foliage')
+  })
+
+  test('a map without props has neither switch and no note', async () => {
+    await toggle(serverId, 'ttt_a', true)
+    await geo.runGeometryQueue(writer(file))
+    const html = await page()
+    expect(html).not.toContain('data-props')
+    expect(html).not.toContain('belongs to the game')
   })
 })

@@ -7,6 +7,7 @@ import { prettyMap } from '../mapName'
 import { heightColour, type Level } from '../services/mapplan'
 import type { MapActivity } from '../services/stats'
 import type { MapPlanMeta, MapRow, MapsState } from '../services/Store'
+import type { GeometryInfo } from '../services/mapgeometry'
 
 // Maps (RFC 10, 11, 16, 17): the list of the maps the server can play, one map with what its rounds
 // say, and a map's own view: the 3D view for a signed-in visitor, the floor plan for an admin. The same
@@ -230,7 +231,7 @@ export interface MapViewProps {
   next: string | null
   plan: (MapPlanMeta & { levels: Level[] }) | null
   /** Exact geometry (RFC 11); undefined when the operator has not switched the feature on. */
-  geometry?: { requested: boolean, status?: string, detail?: string | null, info?: { vertices: number, triangles: number, levels: number, water?: number } | null }
+  geometry?: { requested: boolean, status?: string, detail?: string | null, info?: GeometryInfo | null }
 }
 
 const GEOMETRY_LABEL: Record<string, string> = { queued: 'Queued', fetching: 'Fetching', parsed: 'Parsed', failed: 'Failed', unknown: 'Unknown' }
@@ -258,7 +259,8 @@ export const MapViewPage = ({ ctx, server, map, name, next, plan, geometry }: Ma
             : (
               <p>
                 <i class={`pill ${geometry.status === 'parsed' ? 'ok' : geometry.status === 'failed' ? 'wait' : 'mute'}`}>{GEOMETRY_LABEL[geometry.status ?? 'queued'] ?? 'Unknown'}</i>
-                {geometry.status === 'parsed' && geometry.info && <span>{geometry.info.triangles} triangles, {geometry.info.levels} {geometry.info.levels === 1 ? 'level' : 'levels'}{geometry.info.water ? ', water' : ''}</span>}
+                {geometry.status === 'parsed' && geometry.info && <span>{geometry.info.triangles} triangles, {geometry.info.levels} {geometry.info.levels === 1 ? 'level' : 'levels'}{geometry.info.water ? ', water' : ''}{geometry.info.props?.placed ? `, ${geometry.info.props.placed} props` : ''}</span>}
+                {geometry.status === 'parsed' && geometry.info?.props?.unavailable ? <span class="dim"> {geometry.info.props.unavailable} {geometry.info.props.unavailable === 1 ? 'model belongs' : 'models belong'} to the game, not the map, and {geometry.info.props.unavailable === 1 ? 'is' : 'are'} not drawn.</span> : null}
                 {geometry.status === 'parsed' && geometry.detail && <span class="dim"> {geometry.detail}</span>}
                 {geometry.status === 'failed' && geometry.detail && <span class="dim"> {geometry.detail}</span>}
                 {geometry.status === 'unknown' && <span class="dim"> The server has not reported a fingerprint for this map.</span>}
@@ -297,6 +299,8 @@ export const MapViewPage = ({ ctx, server, map, name, next, plan, geometry }: Ma
               </span>
               <label><input type="checkbox" data-walls checked /> Walls</label>
               {geometry.info.water ? <label><input type="checkbox" data-water checked /> Water</label> : null}
+              {geometry.info.props?.placed ? <label><input type="checkbox" data-props checked /> Props</label> : null}
+              {geometry.info.props?.foliage ? <label><input type="checkbox" data-foliage checked /> Glass and leaves</label> : null}
             </div>
             <p class="foot dark">Drag to turn, scroll or pinch to zoom, right-drag to move. A simplified map (no doors or glass): it shows the layout, not what a player could see. Colour: Plain shows the form, Height tints by height, Levels gives each storey its own colour, lowest green.</p>
           </div>

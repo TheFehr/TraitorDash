@@ -8,7 +8,7 @@ import {
 import { hex } from './teamColours'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { applyColouring, explainNoWebGL, heightColours, levelColour, makeCamera, makeRenderer, makeScene, prepareWater, savedColouring, type Painted } from './sceneKit'
+import { applyColouring, explainNoWebGL, heightColours, levelColour, makeCamera, makeRenderer, makeScene, prepareProps, prepareWater, savedColouring, type Painted } from './sceneKit'
 import {
   decodeTrack, poseAt, lastPoseAt, trailBetween, levelOf, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose, fitLabel,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
@@ -250,6 +250,7 @@ async function start(root: HTMLElement) {
         painted.push({ mesh, wall: isWall, level: l.index })
       })
       prepareWater(model, cut)
+      prepareProps(model, cut)
       heightColours(painted)
       applyColouring(painted, savedColouring(), levelNodes.length)
       scene.add(model)

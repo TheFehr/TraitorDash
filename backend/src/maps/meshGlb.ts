@@ -132,6 +132,26 @@ export function nearTriangles(soup: number[], around: number[][], margin: number
   return cropTriangles(soup, { minX: minX - margin, maxX: maxX + margin, minY: minY - margin, maxY: maxY + margin })
 }
 
+/** The models placed in a map (RFC 18, 4.3): each distinct model once, and every place it stands. */
+export interface PropSet {
+  models: { name: string, solid: number[], foliage: number[] }[]
+  /** `model` is an index into `models`; the angles are Source's pitch, yaw, roll in degrees. */
+  placements: { model: number, x: number, y: number, z: number, pitch: number, yaw: number, roll: number }[]
+}
+
+/** Source's angles (pitch, yaw, roll, degrees) as a quaternion x, y, z, w: a turn by roll about X, then pitch about Y, then yaw about Z. */
+export function angleQuaternion(pitch: number, yaw: number, roll: number): [number, number, number, number] {
+  const h = Math.PI / 360
+  const [sp, cp, sy, cy, sr, cr] = [Math.sin(pitch * h), Math.cos(pitch * h), Math.sin(yaw * h), Math.cos(yaw * h), Math.sin(roll * h), Math.cos(roll * h)]
+  // q = qz(yaw) * qy(pitch) * qx(roll)
+  return [
+    cy * cp * sr - sy * sp * cr,
+    cy * sp * cr + sy * cp * sr,
+    sy * cp * cr - cy * sp * sr,
+    cy * cp * cr + sy * sp * sr,
+  ]
+}
+
 export interface MeshLevel { index: number, lo: number, hi: number, floorTriangles: number, wallTriangles: number }
 export interface GlbInfo {
   vertices: number
@@ -141,11 +161,13 @@ export interface GlbInfo {
   levels: MeshLevel[]
   /** Triangles of the water group (not counted in `triangles`' levels, and not part of the level model). */
   waterTriangles: number
+  /** What was placed: places, distinct models, and the triangles drawn (every place counts its model's triangles). */
+  props: { placements: number, models: number, triangles: number }
   /** Triangles removed by the crop. */
   cropped: { floors: number, walls: number }
 }
 
-export interface MeshInput { floors: number[], walls: number[], water?: number[], fingerprint: string, version: number, revision: number }
+export interface MeshInput { floors: number[], walls: number[], water?: number[], props?: PropSet, fingerprint: string, version: number, revision: number }
 export interface MeshOptions {
   map: string
   /** The playable area (already including any margin). Triangles whose centre is outside are left out. */
@@ -270,7 +292,7 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
   const mats = { floor: material('floor', [0.2, 0.7, 0.3]), wall: material('wall', [0.6, 0.6, 0.65]) }
   const waterMat = doc.createMaterial('water').setBaseColorFactor([0.23, 0.49, 0.65, 0.55]).setAlphaMode('BLEND').setMetallicFactor(0).setRoughnessFactor(1).setDoubleSided(true)
 
-  const info: GlbInfo = { vertices: 0, triangles: 0, droppedDegenerate: f.dropped + w.dropped, levels: [], waterTriangles: 0, cropped }
+  const info: GlbInfo = { vertices: 0, triangles: 0, droppedDegenerate: f.dropped + w.dropped, levels: [], waterTriangles: 0, props: { placements: 0, models: 0, triangles: 0 }, cropped }
   byLevel.forEach((lv) => {
     if (lv.floors.length === 0 && lv.walls.length === 0) return
     const index = info.levels.length + 1
@@ -302,6 +324,39 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
       .setAttribute('POSITION', doc.createAccessor('water-positions').setType('VEC3').setArray(positions).setBuffer(buffer))
       .setIndices(doc.createAccessor('water-indices').setType('SCALAR').setArray(indices).setBuffer(buffer)))
     root.addChild(doc.createNode('water').setMesh(mesh).setExtras({ group: 'water', triangles: info.waterTriangles }))
+  }
+
+  // The props: one node `props` holding a node per place; a place is a transform with two children, the solid mesh of its
+  // model and its foliage mesh (drawn translucent), so a viewer can hide either. A model's meshes are written once and shared by all its places.
+  if (s.props && s.props.placements.length > 0) {
+    const propMat = doc.createMaterial('prop').setBaseColorFactor([0.72, 0.7, 0.63, 1]).setMetallicFactor(0).setRoughnessFactor(1).setDoubleSided(true)
+    const foliageMat = doc.createMaterial('foliage').setBaseColorFactor([0.72, 0.7, 0.63, 0.33]).setAlphaMode('BLEND').setMetallicFactor(0).setRoughnessFactor(1).setDoubleSided(true)
+    const meshes = new Map<number, { solid: ReturnType<typeof doc.createMesh> | null, foliage: ReturnType<typeof doc.createMesh> | null, triangles: number }>()
+    const meshOf = (name: string, soup: number[], material: typeof propMat) => {
+      if (soup.length === 0) return null
+      const { positions, indices } = indexed(soup)
+      return doc.createMesh(name).addPrimitive(doc.createPrimitive().setMaterial(material)
+        .setAttribute('POSITION', doc.createAccessor(`${name}-positions`).setType('VEC3').setArray(positions).setBuffer(buffer))
+        .setIndices(doc.createAccessor(`${name}-indices`).setType('SCALAR').setArray(indices).setBuffer(buffer)))
+    }
+    const group = doc.createNode('props')
+    root.addChild(group)
+    for (const pl of s.props.placements) {
+      const model = s.props.models[pl.model]
+      if (!model) throw new RangeError('a placement names a model that is not there')
+      let m = meshes.get(pl.model)
+      if (!m) {
+        m = { solid: meshOf(`prop:${model.name}`, model.solid, propMat), foliage: meshOf(`foliage:${model.name}`, model.foliage, foliageMat), triangles: (model.solid.length + model.foliage.length) / 9 }
+        meshes.set(pl.model, m)
+        info.props.models++
+      }
+      const node = doc.createNode('prop').setTranslation([pl.x, pl.y, pl.z]).setRotation(angleQuaternion(pl.pitch, pl.yaw, pl.roll))
+      if (m.solid) node.addChild(doc.createNode('solid').setMesh(m.solid))
+      if (m.foliage) node.addChild(doc.createNode('foliage').setMesh(m.foliage))
+      group.addChild(node)
+      info.props.placements++
+      info.props.triangles += m.triangles
+    }
   }
 
   doc.getRoot().setExtras({

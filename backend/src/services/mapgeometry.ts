@@ -1,6 +1,7 @@
 import { rm } from 'node:fs/promises'
 import { Store } from './Store'
 import { BspError, extractMapEntities, extractSurfaces, readHeader, type ByteSource } from '../maps/bsp'
+import { buildPropSet } from '../maps/propset'
 import { nearTriangles, removeSkybox, surfacesToGlb } from '../maps/meshGlb'
 import { fileSource } from '../maps/fileSource'
 export { fileSource }
@@ -8,9 +9,22 @@ export { fileSource }
 /** Is the feature switched on for this backend (RFC 11, 3.1)? Off unless the operator sets MAP_GEOMETRY=1. */
 export const geometryEnabled = () => process.env.MAP_GEOMETRY === '1'
 
+/** What is stored about a mesh (and shown on the map page). `props` is what was drawn; `unavailable` models are the game's own, which the map does not carry. */
+export interface GeometryInfo {
+  vertices: number, triangles: number, levels: number, water: number
+  props?: { placed: number, models: number, foliage: number, unavailable: number, unreadable: number, dropped: number }
+}
+
 export type GeometryResult =
-  | { ok: true, glb: Uint8Array, info: { vertices: number, triangles: number, levels: number, water: number } }
+  | { ok: true, glb: Uint8Array, info: GeometryInfo }
   | { ok: false, error: string }
+
+/** The box (x and y) around some triangle soups, or null when they are all empty. */
+function boxOf(...soups: number[][]): { minX: number, minY: number, maxX: number, maxY: number } | null {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const a of soups) for (let i = 0; i < a.length; i += 3) { minX = Math.min(minX, a[i]!); maxX = Math.max(maxX, a[i]!); minY = Math.min(minY, a[i + 1]!); maxY = Math.max(maxY, a[i + 1]!) }
+  return Number.isFinite(minX) ? { minX, minY, maxX, maxY } : null
+}
 
 /**
  * A map file to a mesh. The file must be the one the server reported: its header must hash to
@@ -20,13 +34,17 @@ export async function buildGeometry(src: ByteSource, map: string, fingerprint: s
   try {
     const header = await readHeader(src)
     if (header.fingerprint !== fingerprint) return { ok: false, error: 'The file is not the version of the map the server has (fingerprint differs).' }
-    const { spawns, skyCameras, fixtureModels } = await extractMapEntities(src)
+    const { spawns, skyCameras, fixtureModels, entityProps } = await extractMapEntities(src)
     const surfaces = await extractSurfaces(src, {}, fixtureModels)
     const cleaned = removeSkybox(surfaces, { skyCameras, spawns })
     const water = nearTriangles(surfaces.water, [cleaned.floors, cleaned.walls], 512)
-    const out = await surfacesToGlb({ ...surfaces, ...cleaned, water }, { map })
+    const { set, report } = await buildPropSet(src, header, entityProps, boxOf(cleaned.floors, cleaned.walls))
+    const out = await surfacesToGlb({ ...surfaces, ...cleaned, water, props: set }, { map })
     if (!out) return { ok: false, error: 'The map has no surfaces to draw.' }
-    return { ok: true, glb: out.glb, info: { vertices: out.info.vertices, triangles: out.info.triangles, levels: out.info.levels.length, water: out.info.waterTriangles } }
+    return { ok: true, glb: out.glb, info: {
+      vertices: out.info.vertices, triangles: out.info.triangles, levels: out.info.levels.length, water: out.info.waterTriangles,
+      props: { placed: report.drawnPlacements, models: report.drawnModels, foliage: report.foliageModels, unavailable: report.unavailable, unreadable: report.unreadable + report.tooBig, dropped: report.dropped },
+    } }
   } catch (e) {
     // BspError messages describe the file's structure, not its content; anything else is ours.
     return { ok: false, error: e instanceof BspError ? e.message : 'Reading the map failed.' }

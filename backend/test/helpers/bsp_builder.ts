@@ -5,7 +5,7 @@ export const HEADER_BYTES = 1036
 
 export const LUMP = {
   ENTITIES: 0, PLANES: 1, VERTEXES: 3, TEXINFO: 6, FACES: 7, EDGES: 12, SURFEDGES: 13, MODELS: 14,
-  TEXDATA: 2, DISPINFO: 26, DISP_VERTS: 33, TEXDATA_STRING_DATA: 43, TEXDATA_STRING_TABLE: 44, PAKFILE: 40, DISP_TRIS: 48,
+  TEXDATA: 2, DISPINFO: 26, DISP_VERTS: 33, GAME_LUMP: 35, TEXDATA_STRING_DATA: 43, TEXDATA_STRING_TABLE: 44, PAKFILE: 40, DISP_TRIS: 48,
 } as const
 
 export const SURF = { SKY: 0x4, SKY2D: 0x2, WARP: 0x8, TRIGGER: 0x40, NODRAW: 0x80, HINT: 0x100, SKIP: 0x200 } as const
@@ -36,6 +36,12 @@ export interface BspSpec {
   raw?: Partial<Record<number, Buffer>>
   /** Lumps to mark as compressed (a non-zero fourCC in the directory). */
   compressed?: number[]
+  /** The static props (the `sprp` game lump): the model table, and one record per prop. `stride` is the record size (the real ones are 56 to 76). */
+  staticProps?: { models: string[], props: { model: number, x: number, y: number, z: number, pitch?: number, yaw?: number, roll?: number }[], stride?: number
+    /** Bytes after the last record (so the records are not a whole number), and a prop count that is not the real one. */
+    strayBytes?: number, declaredProps?: number }
+  /** The pakfile lump: a ZIP, or any bytes. */
+  pak?: Buffer
   /** Bytes of junk in the pakfile lump (the big embedded-content lump the reader must never read). */
   pakfileBytes?: number
 }
@@ -84,7 +90,25 @@ export function buildBsp(spec: BspSpec = {}): Buffer {
   lumps[LUMP.DISP_VERTS] = Buffer.concat((spec.dispVerts ?? []).map(dispvert))
   lumps[LUMP.ENTITIES] = Buffer.from((spec.entities ?? '{ "classname" "worldspawn" }') + '\0')
   if (spec.pakfileBytes) lumps[LUMP.PAKFILE] = Buffer.alloc(spec.pakfileBytes, 0x50)
+  if (spec.pak) lumps[LUMP.PAKFILE] = spec.pak
   for (const [i, raw] of Object.entries(spec.raw ?? {})) lumps[Number(i)] = raw!
+  if (spec.staticProps) {
+    const sp = spec.staticProps, stride = sp.stride ?? 64
+    const table = Buffer.alloc(sp.models.length * 128); sp.models.forEach((m, i) => table.write(m, i * 128, 'latin1'))
+    const records = Buffer.alloc(sp.props.length * stride)
+    sp.props.forEach((p, i) => {
+      const at = i * stride
+      ;[p.x, p.y, p.z, p.pitch ?? 0, p.yaw ?? 0, p.roll ?? 0].forEach((n, k) => records.writeFloatLE(n, at + k * 4))
+      records.writeUInt16LE(p.model, at + 24)
+    })
+    const body = Buffer.concat([int(sp.models.length), table, int(0), int(sp.declaredProps ?? sp.props.length), records, Buffer.alloc(sp.strayBytes ?? 0)])
+    const before = lumps.slice(0, LUMP.GAME_LUMP).reduce((n, l) => n + l.length, 0)
+    const dirEntry = Buffer.alloc(16)
+    dirEntry.write('prps', 0, 'latin1') // the id 'sprp' is stored as a little-endian int, so the bytes are reversed
+    dirEntry.writeUInt16LE(0, 4); dirEntry.writeUInt16LE(6, 6)
+    dirEntry.writeInt32LE(HEADER_BYTES + before + 4 + 16, 8); dirEntry.writeInt32LE(body.length, 12)
+    lumps[LUMP.GAME_LUMP] = Buffer.concat([int(1), dirEntry, body])
+  }
 
   const header = Buffer.alloc(HEADER_BYTES)
   header.write('VBSP', 0, 'latin1')

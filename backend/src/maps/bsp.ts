@@ -340,6 +340,9 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
 // ---- the entities we need: spawn points and the 3D skybox camera ---------------------------------
 
 export interface Spawn { class: string, x: number, y: number, z: number }
+/** A model placed in the map: its path, where it stands, and its angles (pitch, yaw, roll, in degrees). */
+export interface Placement { model: string, x: number, y: number, z: number, pitch: number, yaw: number, roll: number }
+const PROP_CLASS = /^prop_(dynamic|physics|physics_override|dynamic_override|physics_multiplayer)$/
 export interface Point { x: number, y: number, z: number }
 export interface SpawnLimits { maxEntities?: number, maxEntityBytes?: number }
 const SPAWN_CLASS = /^info_player_[a-z_]+$/
@@ -358,15 +361,15 @@ function originOf(entity: Record<string, string>): Point | null {
  * which sits inside the skybox section, far from the map), from the entity lump: a few tens of KB
  * of text, blocks of "key" "value" lines in braces. Only the header and that one lump are read.
  */
-export async function extractMapEntities(src: ByteSource, limits: SpawnLimits = {}): Promise<{ spawns: Spawn[], skyCameras: Point[], fixtureModels: number[] }> {
+export async function extractMapEntities(src: ByteSource, limits: SpawnLimits = {}): Promise<{ spawns: Spawn[], skyCameras: Point[], fixtureModels: number[], entityProps: Placement[] }> {
   const maxEntities = limits.maxEntities ?? 100_000
   const maxBytes = limits.maxEntityBytes ?? 4 * 1024 * 1024
   const header = await readHeader(src)
   const lump = header.lumps[0]!
   if (lump.compressed) throw new BspError('the entity lump is compressed, which is not supported')
   if (lump.length > maxBytes) throw new BspError(`the entity lump is ${lump.length} bytes, over the limit of ${maxBytes}`)
-  const spawns: Spawn[] = [], skyCameras: Point[] = [], fixtureModels: number[] = []
-  if (lump.length === 0) return { spawns, skyCameras, fixtureModels }
+  const spawns: Spawn[] = [], skyCameras: Point[] = [], fixtureModels: number[] = [], entityProps: Placement[] = []
+  if (lump.length === 0) return { spawns, skyCameras, fixtureModels, entityProps }
   const bytes = await src.read(lump.offset, lump.length)
   if (bytes.length !== lump.length) throw new BspError('short read of the entity lump')
   const text = Buffer.from(bytes).toString('latin1')
@@ -386,6 +389,11 @@ export async function extractMapEntities(src: ByteSource, limits: SpawnLimits = 
       const at = entity && cls ? originOf(entity) : null
       if (cls && at) {
         if (SPAWN_CLASS.test(cls)) spawns.push({ class: cls, ...at })
+        else if (PROP_CLASS.test(cls) && /^models\/[^\0]{1,200}\.mdl$/i.test(entity?.['model'] ?? '')) {
+          const a = (entity!['angles'] ?? '0 0 0').trim().split(/\s+/).map(Number)
+          const [pitch, yaw, roll] = [0, 1, 2].map(i => (Number.isFinite(a[i]) ? a[i]! : 0)) as [number, number, number]
+          if (entityProps.length < 20_000) entityProps.push({ model: entity!['model']!.toLowerCase(), ...at, pitch, yaw, roll })
+        }
         else if (cls === 'sky_camera') skyCameras.push(at)
       }
       entity = null; key = null
@@ -394,7 +402,7 @@ export async function extractMapEntities(src: ByteSource, limits: SpawnLimits = 
       else { entity[key] = m[1]!; key = null }
     }
   }
-  return { spawns, skyCameras, fixtureModels }
+  return { spawns, skyCameras, fixtureModels, entityProps }
 }
 
 /** The player spawns of a map (see extractMapEntities). */

@@ -7,6 +7,11 @@ become a package of its own later (RFC 18, 8b):
 *   `gma.ts`: the file table of a Garry's Mod addon archive.
 *   `fileSource.ts`: a file, or a range of one, as a source of bytes.
 *   `levels.ts`: the storey model.
+*   `pak.ts`: the ZIP a map carries (its models and materials), read by its directory, member by member.
+*   `props.ts`: where the static props stand (the game lump).
+*   `model.ts`: the mesh of one model from its `.mdl`, `.vvd` and `.vtx`, and whether a material is foliage.
+*   `propset.ts`: the props of a map as the mesh gets them: near the map, from the pack, within the limits.
+*   `meshVersion.ts`: which generation of the extractor made a mesh.
 *   `meshGlb.ts`: the skybox rule, the cutting at storey heights, and the glTF (GLB) writer.
 
 **The rule:** nothing in this folder imports from outside it, except `node:` modules and the glTF library.
