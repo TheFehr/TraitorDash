@@ -22,10 +22,10 @@ const MIN_CELLS = 6 // ...and at least this many
  * sample counts one, or `weights[i]` (for samples of different size, such as the triangles of a
  * mesh weighted by the ground they cover, in units of one grid cell).
  */
-export const storeyModel = (zs: number[], weights?: number[]): { levels: Level[], storeyOf: (z: number) => number, bounds: number[] } => {
+export const storeyModel = (zs: number[], weights?: number[]): { levels: Level[], storeyOf: (z: number) => number, bounds: number[], peaks: number[] } => {
   if (weights && weights.length !== zs.length) throw new RangeError('there must be one weight per height')
   if (weights && weights.some(w => !Number.isFinite(w) || w < 0)) throw new RangeError('weights must be finite and not negative')
-  if (zs.length === 0) return { levels: [], storeyOf: () => 0, bounds: [] }
+  if (zs.length === 0) return { levels: [], storeyOf: () => 0, bounds: [], peaks: [] }
   const weight = (i: number) => (weights ? weights[i]! : 1)
   const counts = new Map<number, number>()
   let total = 0
@@ -66,5 +66,17 @@ export const storeyModel = (zs: number[], weights?: number[]): { levels: Level[]
   for (const l of levels) l.cells = Math.round(l.cells * 1000) / 1000
   // Where one storey ends and the next begins: halfway between their heights (what `nearest` decides by).
   const bounds = peaks.slice(1).map((p, i) => (peaks[i]!.z + p.z) / 2)
-  return { levels, storeyOf: nearest, bounds }
+  return { levels, storeyOf: nearest, bounds, peaks: peaks.map(p => p.z) }
+}
+
+/**
+ * How much of the floor lies at a storey: the share of the weight within `reach` units of the height of some storey. Storeys
+ * are real when most of the floor is at a few heights (a building, a ship); on a hill or a terrain the floor is spread over all
+ * heights and what `storeyModel` finds are only the busiest of them.
+ */
+export function storeyCoverage(zs: number[], weights: number[], peaks: number[], reach = 48): number {
+  if (zs.length === 0 || peaks.length === 0) return 0
+  let near = 0, total = 0
+  zs.forEach((z, i) => { total += weights[i]!; if (peaks.some(p => Math.abs(p - z) <= reach)) near += weights[i]! })
+  return total > 0 ? near / total : 0
 }

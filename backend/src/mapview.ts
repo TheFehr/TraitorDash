@@ -3,8 +3,8 @@ import {
   Box3, Vector3, Mesh, MeshStandardMaterial, Plane, type Object3D, type BufferGeometry,
 } from 'three'
 import {
-  applyColouring, COLOURINGS, explainNoWebGL, heightColours, makeCamera, makeRenderer, makeScene, prepareProps, prepareWater, saveColouring, savedColouring,
-  type Colouring, type Painted,
+  applyColouring, boxWithout, COLOURINGS, explainNoWebGL, heightColours, makeCamera, makeRenderer, makeScene, makeSpawnMarkers, prepareDetached, prepareProps, prepareWater, saveColouring, savedColouring,
+  type Colouring, type Painted, type SpawnPoint,
 } from './sceneKit'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
@@ -35,6 +35,8 @@ function start(root: HTMLElement) {
   const walls: Mesh[] = []
   const painted: Painted[] = []
   let water: Object3D | null = null
+  let detached: Object3D | null = null
+  let spawnMarkers: Object3D | null = null
   let propMeshes: { solid: Mesh[], foliage: Mesh[] } = { solid: [], foliage: [] }
   const draw = () => renderer.render(scene, camera)
   controls.addEventListener('change', draw)
@@ -92,6 +94,14 @@ function start(root: HTMLElement) {
     for (const m of propMeshes.foliage) m.visible = (e.target as HTMLInputElement).checked
     draw()
   })
+  root.querySelector<HTMLInputElement>('[data-parts]')?.addEventListener('change', e => {
+    if (detached) detached.visible = (e.target as HTMLInputElement).checked
+    draw()
+  })
+  root.querySelector<HTMLInputElement>('[data-spawns]')?.addEventListener('change', e => {
+    if (spawnMarkers) spawnMarkers.visible = (e.target as HTMLInputElement).checked
+    draw()
+  })
   root.querySelector<HTMLInputElement>('[data-water]')?.addEventListener('change', e => {
     if (water) water.visible = (e.target as HTMLInputElement).checked
     draw()
@@ -106,8 +116,8 @@ function start(root: HTMLElement) {
   say('Loading the map…')
   fetch(src, { credentials: 'same-origin' })
     .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.arrayBuffer() })
-    .then(buf => new Promise<Object3D>((ok, fail) => new GLTFLoader().parse(buf, '', g => ok(g.scene), fail)))
-    .then(model => {
+    .then(buf => new Promise<{ scene: Object3D, userData: Record<string, unknown> }>((ok, fail) => new GLTFLoader().parse(buf, '', g => ok({ scene: g.scene, userData: g.userData ?? {} }), fail)))
+    .then(({ scene: model, userData }) => {
       model.traverse(o => { const m = LEVEL_NAME.exec(o.name); if (m && !levels.some(l => l.node === o)) levels.push({ index: Number(m[1]), node: o, hi: Number(o.userData.hi) }) })
       levels.sort((a, b) => a.index - b.index)
       for (const l of levels) {
@@ -128,14 +138,19 @@ function start(root: HTMLElement) {
       }
       water = prepareWater(model, cut)
       propMeshes = prepareProps(model, cut)
+      // Parts apart from the map are hidden until asked for; they are painted like a level but do not decide where the camera looks.
+      const apart = prepareDetached(model, cut)
+      if (apart) { detached = apart.node; painted.push(...apart.painted) }
+      spawnMarkers = makeSpawnMarkers(model, Array.isArray(userData['spawns']) ? userData['spawns'] as SpawnPoint[] : [], cut)
       heightColours(painted)
-      colour(savedColouring())
+      // A hill or a terrain has no storeys, so Levels would only stripe it: Height is the default there (a saved choice still wins).
+      colour(savedColouring(root.dataset.storeys === '0' ? 'height' : 'plain'))
       root.querySelectorAll<HTMLElement>('[data-colour]').forEach(b => b.addEventListener('click', () => {
         const mode = (b.dataset.colour ?? 'plain') as Colouring
         if ((COLOURINGS as string[]).includes(mode)) { saveColouring(mode); colour(mode) }
       }))
       scene.add(model)
-      const box = new Box3().setFromObject(model)
+      const box = boxWithout(model, ['detached', 'spawn-markers'])
       size = box.getSize(new Vector3())
       centre = box.getCenter(new Vector3())
       camera.far = size.length() * 20

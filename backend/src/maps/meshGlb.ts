@@ -1,5 +1,5 @@
 import { Document, NodeIO } from '@gltf-transform/core'
-import { storeyModel } from './levels'
+import { storeyModel, storeyCoverage } from './levels'
 import { MESH_VERSION } from './meshVersion'
 
 // RFC 11, 3.6: the map's exact geometry as glTF 2.0 (GLB), an existing standard, not a format of our
@@ -49,77 +49,6 @@ export function cropTriangles(soup: number[], b: Bounds): number[] {
 }
 
 /**
- * Takes the 3D skybox out of the surfaces. A map's world model also holds a small scaled copy of the
- * surroundings, built far from the map and marked by a `sky_camera` inside it; drawn with the map it
- * is a slab of ground and a few buildings in the distance. Geometry is grouped into pieces (cells of
- * `cell` units, neighbours joined); a piece that holds a sky camera and no spawn point is the skybox.
- * It is **never guessed**: if the skybox is joined to the map there is nothing to remove, and if the
- * pieces to remove are more than half of all triangles nothing is removed (a map is not that much sky).
- */
-export function removeSkybox(
-  s: { floors: number[], walls: number[] },
-  where: { skyCameras: { x: number, y: number, z: number }[], spawns: { x: number, y: number, z: number }[] },
-  opts: { cell?: number, maxShare?: number } = {},
-): { floors: number[], walls: number[], removed: { floors: number, walls: number } } {
-  check(s.floors, 'floors'); check(s.walls, 'walls')
-  const none = { floors: s.floors, walls: s.walls, removed: { floors: 0, walls: 0 } }
-  if (where.skyCameras.length === 0) return none
-  const cell = opts.cell ?? 1024
-  const maxShare = opts.maxShare ?? 0.5
-
-  const at = (x: number, y: number, z: number) => `${Math.floor(x / cell)},${Math.floor(y / cell)},${Math.floor(z / cell)}`
-  const centreCell = (soup: number[], i: number) =>
-    at((soup[i]! + soup[i + 3]! + soup[i + 6]!) / 3, (soup[i + 1]! + soup[i + 4]! + soup[i + 7]!) / 3, (soup[i + 2]! + soup[i + 5]! + soup[i + 8]!) / 3)
-
-  const cells = new Map<string, number>() // occupied cell -> triangles
-  for (const soup of [s.floors, s.walls]) for (let i = 0; i < soup.length; i += 9) { const k = centreCell(soup, i); cells.set(k, (cells.get(k) ?? 0) + 1) }
-
-  const piece = new Map<string, number>() // cell -> piece id
-  const sizes: number[] = []
-  for (const start of cells.keys()) {
-    if (piece.has(start)) continue
-    const id = sizes.length
-    let size = 0
-    const todo = [start]
-    piece.set(start, id)
-    while (todo.length) {
-      const c = todo.pop()!
-      size += cells.get(c)!
-      const [x, y, z] = c.split(',').map(Number) as [number, number, number]
-      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
-        const n = `${x + dx},${y + dy},${z + dz}`
-        if (cells.has(n) && !piece.has(n)) { piece.set(n, id); todo.push(n) }
-      }
-    }
-    sizes.push(size)
-  }
-
-  const piecesNear = (p: { x: number, y: number, z: number }) => {
-    const ids = new Set<number>()
-    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
-      const id = piece.get(at(p.x + dx * cell, p.y + dy * cell, p.z + dz * cell))
-      if (id !== undefined) ids.add(id)
-    }
-    return ids
-  }
-  const sky = new Set<number>(), play = new Set<number>()
-  for (const p of where.skyCameras) for (const id of piecesNear(p)) sky.add(id)
-  for (const p of where.spawns) for (const id of piecesNear(p)) play.add(id)
-  const drop = new Set([...sky].filter(id => !play.has(id)))
-  const total = sizes.reduce((a, b) => a + b, 0)
-  const dropped = [...drop].reduce((a, id) => a + sizes[id]!, 0)
-  if (dropped === 0 || dropped > maxShare * total) return none
-
-  const keep = (soup: number[]) => {
-    const out: number[] = []
-    for (let i = 0; i < soup.length; i += 9) if (!drop.has(piece.get(centreCell(soup, i))!)) for (let k = 0; k < 9; k++) out.push(soup[i + k]!)
-    return out
-  }
-  const floors = keep(s.floors), walls = keep(s.walls)
-  return { floors, walls, removed: { floors: (s.floors.length - floors.length) / 9, walls: (s.walls.length - walls.length) / 9 } }
-}
-
-/**
  * Keeps the triangles of a group (water) whose centre lies within `margin` units of the box around `around`
  * (the floors and walls that were kept). A 3D skybox has water of its own, far from the map.
  */
@@ -161,13 +90,25 @@ export interface GlbInfo {
   levels: MeshLevel[]
   /** Triangles of the water group (not counted in `triangles`' levels, and not part of the level model). */
   waterTriangles: number
+  /** False when the floor is spread over all heights (a hill, a terrain) rather than at a few storeys: the levels are then only a list (RFC 18, 4.4). */
+  storeys: boolean
+  /** The triangles and the number of parts that are detached (drawn in a group of their own, hidden by default). */
+  detached: { triangles: number, parts: number }
+  /** Spawn points written into the file. */
+  spawns: number
   /** What was placed: places, distinct models, and the triangles drawn (every place counts its model's triangles). */
   props: { placements: number, models: number, triangles: number }
   /** Triangles removed by the crop. */
   cropped: { floors: number, walls: number }
 }
 
-export interface MeshInput { floors: number[], walls: number[], water?: number[], props?: PropSet, fingerprint: string, version: number, revision: number }
+/** Parts of the map that are not near the rest (RFC 18, 4.4): outside the level model, in a group of their own. */
+export interface DetachedParts { floors: number[], walls: number[], parts: { triangles: number, min: number[], max: number[] }[] }
+export interface MeshSpawn { class: string, x: number, y: number, z: number }
+export interface MeshInput { floors: number[], walls: number[], water?: number[], detached?: DetachedParts, spawns?: MeshSpawn[], props?: PropSet, fingerprint: string, version: number, revision: number }
+/** A map has storeys when at least this share of its floor lies within 48 units of the height of one (see `storeyCoverage`). */
+export const STOREY_COVERAGE = 0.6
+const MAX_SPAWNS = 512
 export interface MeshOptions {
   map: string
   /** The playable area (already including any margin). Triangles whose centre is outside are left out. */
@@ -277,6 +218,7 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
   const heights: number[] = [], weights: number[] = []
   for (let i = 0; i < floors.length; i += 9) { heights.push(centre(floors, i)); weights.push(area2d(floors, i) / (cell * cell)) }
   const model = storeyModel(heights, weights)
+  const storeys = heights.length === 0 || storeyCoverage(heights, weights, model.peaks) >= STOREY_COVERAGE
   const count = Math.max(1, model.levels.length)
   const byLevel = Array.from({ length: count }, () => ({ floors: [] as number[], walls: [] as number[] }))
   for (let i = 0, n = 0; i < floors.length; i += 9, n++) byLevel[model.storeyOf(heights[n]!)]!.floors.push(...floors.slice(i, i + 9))
@@ -292,7 +234,7 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
   const mats = { floor: material('floor', [0.2, 0.7, 0.3]), wall: material('wall', [0.6, 0.6, 0.65]) }
   const waterMat = doc.createMaterial('water').setBaseColorFactor([0.23, 0.49, 0.65, 0.55]).setAlphaMode('BLEND').setMetallicFactor(0).setRoughnessFactor(1).setDoubleSided(true)
 
-  const info: GlbInfo = { vertices: 0, triangles: 0, droppedDegenerate: f.dropped + w.dropped, levels: [], waterTriangles: 0, props: { placements: 0, models: 0, triangles: 0 }, cropped }
+  const info: GlbInfo = { vertices: 0, triangles: 0, droppedDegenerate: f.dropped + w.dropped, levels: [], storeys, detached: { triangles: 0, parts: 0 }, spawns: 0, waterTriangles: 0, props: { placements: 0, models: 0, triangles: 0 }, cropped }
   byLevel.forEach((lv) => {
     if (lv.floors.length === 0 && lv.walls.length === 0) return
     const index = info.levels.length + 1
@@ -324,6 +266,22 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
       .setAttribute('POSITION', doc.createAccessor('water-positions').setType('VEC3').setArray(positions).setBuffer(buffer))
       .setIndices(doc.createAccessor('water-indices').setType('SCALAR').setArray(indices).setBuffer(buffer)))
     root.addChild(doc.createNode('water').setMesh(mesh).setExtras({ group: 'water', triangles: info.waterTriangles }))
+  }
+
+  // The detached parts: a group of their own, outside the levels, so they neither make storeys nor take part in the cutaway.
+  const detached = s.detached ? { floors: withoutDegenerate(s.detached.floors).kept, walls: withoutDegenerate(s.detached.walls).kept } : null
+  if (s.detached && detached && detached.floors.length + detached.walls.length > 0) {
+    const mesh = doc.createMesh('detached')
+    for (const [kind, soup] of [['floor', detached.floors], ['wall', detached.walls]] as const) {
+      if (soup.length === 0) continue
+      const { positions, indices } = indexed(soup)
+      info.vertices += positions.length / 3
+      mesh.addPrimitive(doc.createPrimitive().setMaterial(mats[kind])
+        .setAttribute('POSITION', doc.createAccessor(`detached-${kind}-positions`).setType('VEC3').setArray(positions).setBuffer(buffer))
+        .setIndices(doc.createAccessor(`detached-${kind}-indices`).setType('SCALAR').setArray(indices).setBuffer(buffer)))
+    }
+    info.detached = { triangles: (detached.floors.length + detached.walls.length) / 9, parts: s.detached.parts.length }
+    root.addChild(doc.createNode('detached').setMesh(mesh).setExtras({ group: 'detached', triangles: info.detached.triangles, parts: s.detached.parts.slice(0, 64) }))
   }
 
   // The props: one node `props` holding a node per place; a place is a transform with two children, the solid mesh of its
@@ -362,7 +320,9 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
   doc.getRoot().setExtras({
     generator: 'TraitorDash (RFC 18)', meshVersion: MESH_VERSION, map: opts.map, fingerprint: s.fingerprint, mapVersion: s.version, mapRevision: s.revision,
     units: 'Source units (about 1.9 cm); Z is up before the root node turns it into glTF\'s Y-up',
-    cropped: opts.crop !== undefined, levels: info.levels.length,
+    cropped: opts.crop !== undefined, levels: info.levels.length, storeys,
+    spawns: (s.spawns ?? []).slice(0, MAX_SPAWNS).map(p => ({ class: p.class, x: p.x, y: p.y, z: p.z })),
   })
+  info.spawns = Math.min((s.spawns ?? []).length, MAX_SPAWNS)
   return { glb: await new NodeIO().writeBinary(doc), info }
 }

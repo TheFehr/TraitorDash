@@ -1,5 +1,6 @@
 import {
   WebGLRenderer, Scene, PerspectiveCamera, HemisphereLight, AmbientLight, DirectionalLight, Color, BufferAttribute,
+  Box3, ConeGeometry, Group, Mesh as MeshClass, MeshBasicMaterial,
   type Mesh, type MeshStandardMaterial, type BufferGeometry, type Object3D, type Plane,
 } from 'three'
 
@@ -72,9 +73,9 @@ const STORE_KEY = 'traitordash.mapcolour'
 export const levelColour = (index: number, count: number) => new Color().setHSL(0.38 - 0.34 * (count > 1 ? (index - 1) / (count - 1) : 0), 0.55, 0.45)
 
 /** The choice made on the map page, kept in this browser; Plain without one (or without storage). */
-export const savedColouring = (): Colouring => {
+export const savedColouring = (fallback: Colouring = 'plain'): Colouring => {
   try { const v = localStorage.getItem(STORE_KEY); if (v && (COLOURINGS as string[]).includes(v)) return v as Colouring } catch { /* storage may be off */ }
-  return 'plain'
+  return fallback
 }
 export const saveColouring = (c: Colouring) => { try { localStorage.setItem(STORE_KEY, c) } catch { /* the choice just is not remembered */ } }
 
@@ -143,4 +144,62 @@ export function prepareProps(model: Object3D, cut: Plane): { solid: Mesh[], foli
     ;(foliage ? out.foliage : out.solid).push(mesh)
   })
   return out
+}
+
+/**
+ * The detached parts of a model (RFC 18, 4.4: pieces not near the rest of the map), if it has any: cut like the levels, matte,
+ * hidden until asked for. Returns the node and its floor and wall meshes (to be painted like a level's).
+ */
+export function prepareDetached(model: Object3D, cut: Plane): { node: Object3D, painted: Painted[] } | null {
+  const node = model.getObjectByName('detached')
+  if (!node) return null
+  node.visible = false
+  const painted: Painted[] = []
+  node.traverse(o => {
+    if (!(o as Mesh).isMesh) return
+    const mesh = o as Mesh<BufferGeometry, MeshStandardMaterial>
+    const wall = mesh.material.name === 'wall'
+    mesh.material = mesh.material.clone()
+    mesh.material.clippingPlanes = [cut]
+    mesh.material.metalness = 0
+    mesh.material.roughness = 1
+    painted.push({ mesh, wall, level: 1 })
+  })
+  return { node, painted }
+}
+
+/** The box around a model without some of its nodes (the detached parts must not decide where the camera looks). In the model's own space (three's Y-up, as `Box3.setFromObject`). */
+export function boxWithout(model: Object3D, names: string[]): Box3 {
+  model.updateWorldMatrix(true, true)
+  const box = new Box3()
+  const walk = (o: Object3D) => { if (names.includes(o.name)) return; if ((o as Mesh).isMesh) box.expandByObject(o, true); else o.children.forEach(walk) }
+  walk(model)
+  return box.isEmpty() ? new Box3().setFromObject(model) : box
+}
+
+export interface SpawnPoint { class: string, x: number, y: number, z: number }
+const SPAWN_COLOURS: [RegExp, number][] = [[/terror/, 0xe5484d], [/counter|_ct/, 0x4f8ff7], [/.*/, 0x4cc38a]]
+
+/** The spawn points as small cones standing on their spot, a group in the model's Source space (Z up), hidden until asked for. Red for the terrorists' spawns, blue for the counter-terrorists', green for the rest. */
+export function makeSpawnMarkers(model: Object3D, spawns: SpawnPoint[], cut: Plane): Group | null {
+  const space = model.getObjectByName('z-up')
+  if (!space || spawns.length === 0) return null
+  const group = new Group()
+  group.name = 'spawn-markers'
+  group.visible = false
+  const geometry = new ConeGeometry(20, 64, 8)
+  geometry.rotateX(Math.PI / 2) // the cone points along Y; this world's up is Z
+  geometry.translate(0, 0, 32)
+  const materials = new Map<number, MeshBasicMaterial>()
+  for (const s of spawns) {
+    if (![s.x, s.y, s.z].every(Number.isFinite)) continue
+    const colour = SPAWN_COLOURS.find(([re]) => re.test(s.class))![1]
+    let material = materials.get(colour)
+    if (!material) { material = new MeshBasicMaterial({ color: colour, clippingPlanes: [cut] }); materials.set(colour, material) }
+    const marker = new MeshClass(geometry, material)
+    marker.position.set(s.x, s.y, s.z)
+    group.add(marker)
+  }
+  space.add(group)
+  return group
 }

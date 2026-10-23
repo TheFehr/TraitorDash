@@ -260,6 +260,8 @@ export const MapViewPage = ({ ctx, server, map, name, next, plan, geometry }: Ma
               <p>
                 <i class={`pill ${geometry.status === 'parsed' ? 'ok' : geometry.status === 'failed' ? 'wait' : 'mute'}`}>{GEOMETRY_LABEL[geometry.status ?? 'queued'] ?? 'Unknown'}</i>
                 {geometry.status === 'parsed' && geometry.info && <span>{geometry.info.triangles} triangles, {geometry.info.levels} {geometry.info.levels === 1 ? 'level' : 'levels'}{geometry.info.water ? ', water' : ''}{geometry.info.props?.placed ? `, ${geometry.info.props.placed} props` : ''}</span>}
+                {geometry.status === 'parsed' && geometry.info?.detached ? <span class="dim"> {geometry.info.detached} triangles lie apart from the rest of the map and are hidden (Parts apart).</span> : null}
+                {geometry.status === 'parsed' && geometry.info?.storeys === false ? <span class="dim"> The floor is not at a few storeys (a hill or terrain), so there are no level buttons.</span> : null}
                 {geometry.status === 'parsed' && geometry.info?.props?.cards ? <span class="dim"> {geometry.info.props.cards} {geometry.info.props.cards === 1 ? 'model has' : 'models have'} flat texture cards (trees, clouds), which are left out.</span> : null}
                 {geometry.status === 'parsed' && geometry.info?.props?.fromGame ? <span class="dim"> {geometry.info.props.fromGame} {geometry.info.props.fromGame === 1 ? 'model is' : 'models are'} the game's own.</span> : null}
                 {geometry.status === 'parsed' && geometry.info?.props?.unavailable ? <span class="dim"> {geometry.info.props.unavailable} {geometry.info.props.unavailable === 1 ? 'model belongs' : 'models belong'} to the game, not the map, and {geometry.info.props.unavailable === 1 ? 'is' : 'are'} not drawn.</span> : null}
@@ -278,17 +280,19 @@ export const MapViewPage = ({ ctx, server, map, name, next, plan, geometry }: Ma
       {hasView && geometry?.info && (
         <div class="f" style="--c:#22c55e;margin-top:1.2rem">
           <h2 class="ft">3D view</h2>
-          <div data-mapview data-src={`${mapPath(id, name)}/mesh.glb`}>
+          <div data-mapview data-src={`${mapPath(id, name)}/mesh.glb`} data-storeys={geometry.info.storeys === false ? '0' : '1'}>
             <div class="view">
               <canvas aria-label={`3D view of ${name}`}></canvas>
               <p data-status>This view needs JavaScript.</p>
             </div>
             <div class="tools">
-              <span role="group" aria-label="Levels shown">
-                <span class="cap">Up to level</span>
-                {Array.from({ length: geometry.info.levels }, (_, i) => i + 1).map(n => <button type="button" data-level={n} aria-pressed="false" class="tog">{n}</button>)}
-                <button type="button" data-level="all" aria-pressed="true" class="tog">All</button>
-              </span>
+              {geometry.info.storeys === false ? null : (
+                <span role="group" aria-label="Levels shown">
+                  <span class="cap">Up to level</span>
+                  {Array.from({ length: geometry.info.levels }, (_, i) => i + 1).map(n => <button type="button" data-level={n} aria-pressed="false" class="tog">{n}</button>)}
+                  <button type="button" data-level="all" aria-pressed="true" class="tog">All</button>
+                </span>
+              )}
               <span role="group" aria-label="View">
                 <button type="button" data-view="orbit" class="tog">3D</button>
                 <button type="button" data-view="top" class="tog">From above</button>
@@ -303,6 +307,8 @@ export const MapViewPage = ({ ctx, server, map, name, next, plan, geometry }: Ma
               {geometry.info.water ? <label><input type="checkbox" data-water checked /> Water</label> : null}
               {geometry.info.props?.placed ? <label><input type="checkbox" data-props checked /> Props</label> : null}
               {geometry.info.props?.foliage ? <label><input type="checkbox" data-foliage checked /> Glass and leaves</label> : null}
+              {geometry.info.detached ? <label><input type="checkbox" data-parts /> Parts apart</label> : null}
+              {geometry.info.spawns ? <label><input type="checkbox" data-spawns /> Spawns</label> : null}
             </div>
             <p class="foot dark">Drag to turn, scroll or pinch to zoom, right-drag to move. A simplified map (no doors or glass): it shows the layout, not what a player could see. Colour: Plain shows the form, Height tints by height, Levels gives each storey its own colour, lowest green.</p>
           </div>

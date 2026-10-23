@@ -286,6 +286,34 @@ describe('the 3D view on the map page', () => {
     expect(html).toContain(', water')
   })
 
+  test('parts apart and spawns get their switches (off), only when the mesh has them', async () => {
+    await toggle(serverId, 'ttt_a', true)
+    await geo.runGeometryQueue(writer(file))
+    const plain = await page()
+    expect(plain).not.toContain('data-parts')
+    expect(plain).not.toContain('data-spawns')
+    const info = JSON.parse((db.prepare('SELECT info FROM map_geometry').get() as any).info)
+    db.run('UPDATE map_geometry SET info = ?', [JSON.stringify({ ...info, detached: 40, spawns: 3 })])
+    const html = await page()
+    expect(html).toMatch(/<input type="checkbox" data-parts="true"\/> Parts apart/)
+    expect(html).toMatch(/<input type="checkbox" data-spawns="true"\/> Spawns/)
+    expect(html).not.toMatch(/data-parts[^>]*checked/)
+    expect(html).toContain('40 triangles lie apart')
+  })
+
+  test('a map without storeys (a hill) has no level buttons, says why, and tells the viewer', async () => {
+    await toggle(serverId, 'ttt_a', true)
+    await geo.runGeometryQueue(writer(file))
+    expect(await page()).toContain('data-storeys="1"')
+    const info = JSON.parse((db.prepare('SELECT info FROM map_geometry').get() as any).info)
+    db.run('UPDATE map_geometry SET info = ?', [JSON.stringify({ ...info, storeys: false })])
+    const html = await page()
+    expect(html).toContain('data-storeys="0"')
+    expect(html).not.toContain('data-level=')
+    expect(html).toContain('no level buttons')
+    expect(html).toContain('data-colour="height"')
+  })
+
   test('says so on the page when a rebuild failed and the earlier mesh is kept', async () => {
     await toggle(serverId, 'ttt_a', true)
     await geo.runGeometryQueue(writer(file))

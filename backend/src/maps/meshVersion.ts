@@ -3,10 +3,11 @@
  * raise it whenever a change to the reader or the writer should show in the maps that are already stored.
  * 2: water apart from the floors, brush entities that stand still, sky and helper materials left out.
  * 3: the props that are in the map file.
- * 4: also the game's own models (only where that is switched on, see `meshVersion`).
+ * 4: brush entities at their own origin, parts (detached ones in a group of their own, the skybox by shared corners), storeys flag, spawns.
+ * 5: also the game's own models (only where that is switched on, see `meshVersion`).
  */
-export const MESH_VERSION = 3
-export const MESH_VERSION_GAME = 4
+export const MESH_VERSION = 4
+export const MESH_VERSION_GAME = 5
 
 /** The generation a backend wants: the one with the game's own models when it has them, else the one without. */
 export const meshVersion = (withGameContent: boolean) => withGameContent ? MESH_VERSION_GAME : MESH_VERSION

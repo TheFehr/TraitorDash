@@ -97,6 +97,19 @@ export const isNotSurfaceMaterial = (material: string): boolean =>
   material.includes('skybox') || /(^|\/)[a-z0-9_]*sky$/.test(material) || material.startsWith('tools/')
 
 /** The brush entities that stand still: their faces are drawn with the world (RFC 18, 4.2). Doors, lifts, trains, buttons and triggers are not. */
+/** A brush entity that stands still: which model, and where it stands (its faces are stored around the model's own origin). */
+export interface Fixture { model: number, x: number, y: number, z: number, pitch: number, yaw: number, roll: number }
+
+/** Source's angles (pitch, yaw, roll, degrees) as a 3 by 3 matrix: a turn by roll about X, then pitch about Y, then yaw about Z (the same as `angleQuaternion` in the mesh writer). */
+export function angleMatrix(pitch: number, yaw: number, roll: number): number[] {
+  const [sp, cp, sy, cy, sr, cr] = [Math.sin(pitch * Math.PI / 180), Math.cos(pitch * Math.PI / 180), Math.sin(yaw * Math.PI / 180), Math.cos(yaw * Math.PI / 180), Math.sin(roll * Math.PI / 180), Math.cos(roll * Math.PI / 180)]
+  return [
+    cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr,
+    sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr,
+    -sp, cp * sr, cp * cr,
+  ]
+}
+
 export const FIXTURE_CLASSES = /^func_(brush|wall|breakable|lod|wall_toggle)$/
 const FLOOR_NZ = 0.7 // the steepest slope a player can walk up
 const MAX_FACE_EDGES = 4096
@@ -129,7 +142,7 @@ export interface Surfaces {
  * models). A displacement (terrain) is turned into its grid of triangles: the face's four corners
  * are interpolated across the grid and every vertex is pushed along its own direction.
  */
-export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {}, fixtureModels: number[] = []): Promise<Surfaces> {
+export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {}, fixtures: Fixture[] = []): Promise<Surfaces> {
   const lim = { ...DEFAULT_LIMITS, ...limits }
   const header = await readHeader(src)
 
@@ -199,25 +212,26 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
   if (firstFace < 0 || numFaces < 0 || firstFace + numFaces > nFaces) throw new BspError('the world model names faces that do not exist')
   // The world model, and the models of the brush entities that stand still. Others (doors, lifts) are counted, not drawn.
   const drawn = new Set<number>([0])
-  for (const m of fixtureModels) if (Number.isInteger(m) && m > 0 && m < nModels) drawn.add(m)
-  const ranges: [number, number][] = [[firstFace, numFaces]]
+  const standing = new Map<number, Fixture>()
+  for (const fx of fixtures) if (Number.isInteger(fx.model) && fx.model > 0 && fx.model < nModels && !standing.has(fx.model)) { drawn.add(fx.model); standing.set(fx.model, fx) }
+  const ranges: [number, number, Fixture | null][] = [[firstFace, numFaces, null]]
   let otherModelFaces = 0
   for (let m = 1; m < nModels; m++) {
     const first = models.getInt32(m * RECORD.MODELS + 40, true), n = models.getInt32(m * RECORD.MODELS + 44, true)
     if (n < 0) throw new BspError(`model ${m} has a negative face count`)
     if (drawn.has(m)) {
       if (first < 0 || first + n > nFaces) throw new BspError(`model ${m} names faces that do not exist`)
-      ranges.push([first, n])
+      ranges.push([first, n, standing.get(m)!])
     } else otherModelFaces += n
   }
-  const faceList = function* () { for (const [from, n] of ranges) for (let f = from; f < from + n; f++) yield f }
+  const faceList = function* () { for (const [from, n, fx] of ranges) for (let f = from; f < from + n; f++) yield [f, fx] as const }
 
   const floors: number[] = [], walls: number[] = [], water: number[] = []
   const stats = {
     faces: numFaces, floorFaces: 0, wallFaces: 0, ceilingFaces: 0, skipped: 0, otherModelFaces, displacements: 0, displacementTriangles: 0,
     skippedByMaterial: 0, waterFaces: 0, fixtureModels: drawn.size - 1,
   }
-  for (const f of faceList()) {
+  for (const [f, fixture] of faceList()) {
     const at = f * RECORD.FACES
     const plane = faces.getUint16(at, true), side = faces.getUint8(at + 2)
     const firstEdge = faces.getInt32(at + 4, true), numEdges = faces.getInt16(at + 8, true)
@@ -236,6 +250,15 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
     let nz = planes.getFloat32(plane * RECORD.PLANES + 8, true)
     if (!Number.isFinite(nx) || !Number.isFinite(ny) || !Number.isFinite(nz)) throw new BspError(`plane ${plane} is not a finite number`)
     if (side) { nx = -nx; ny = -ny; nz = -nz } // the side of the plane the face is on
+    // A brush entity's faces are stored around its own origin: turned by its angles, then moved to where it stands.
+    const turn = fixture && (fixture.pitch !== 0 || fixture.yaw !== 0 || fixture.roll !== 0) ? angleMatrix(fixture.pitch, fixture.yaw, fixture.roll) : null
+    if (turn) [nx, ny, nz] = [turn[0]! * nx + turn[1]! * ny + turn[2]! * nz, turn[3]! * nx + turn[4]! * ny + turn[5]! * nz, turn[6]! * nx + turn[7]! * ny + turn[8]! * nz]
+    const place = (v: number): [number, number, number] => {
+      let x = xyz[v * 3]!, y = xyz[v * 3 + 1]!, z = xyz[v * 3 + 2]!
+      if (turn) [x, y, z] = [turn[0]! * x + turn[1]! * y + turn[2]! * z, turn[3]! * x + turn[4]! * y + turn[5]! * z, turn[6]! * x + turn[7]! * y + turn[8]! * z]
+      if (fixture) { x += fixture.x; y += fixture.y; z += fixture.z }
+      return [Math.round(x), Math.round(y), Math.round(z)]
+    }
 
     // The corners, in order: a surfedge is an edge index, negative when the edge is walked backwards.
     const corner: number[] = []
@@ -256,7 +279,7 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
 
     if ((flags & SURF_WARP) !== 0) {
       stats.waterFaces++
-      if (nz >= 0.5) for (let k = 1; k + 1 < corner.length; k++) for (const v of [corner[0]!, corner[k]!, corner[k + 1]!]) water.push(Math.round(xyz[v * 3]!), Math.round(xyz[v * 3 + 1]!), Math.round(xyz[v * 3 + 2]!))
+      if (nz >= 0.5) for (let k = 1; k + 1 < corner.length; k++) for (const v of [corner[0]!, corner[k]!, corner[k + 1]!]) water.push(...place(v))
       continue
     }
     if (nz <= -FLOOR_NZ + 1e-6) { stats.ceilingFaces++; continue }
@@ -264,7 +287,7 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
     if (isFloor) stats.floorFaces++; else stats.wallFaces++
     const out = isFloor ? floors : walls
     for (let k = 1; k + 1 < corner.length; k++) {
-      for (const v of [corner[0]!, corner[k]!, corner[k + 1]!]) out.push(Math.round(xyz[v * 3]!), Math.round(xyz[v * 3 + 1]!), Math.round(xyz[v * 3 + 2]!))
+      for (const v of [corner[0]!, corner[k]!, corner[k + 1]!]) out.push(...place(v))
     }
   }
 
@@ -356,19 +379,25 @@ function originOf(entity: Record<string, string>): Point | null {
   return { x: parts[0]!, y: parts[1]!, z: parts[2]! }
 }
 
+/** An entity's `angles` (pitch, yaw, roll), zero for what is missing or not a number. */
+function anglesOf(entity: Record<string, string>): [number, number, number] {
+  const a = (entity['angles'] ?? '0 0 0').trim().split(/\s+/).map(Number)
+  return [0, 1, 2].map(i => (Number.isFinite(a[i]) ? a[i]! : 0)) as [number, number, number]
+}
+
 /**
  * Where players start (the `info_player_*` entities) and where the 3D skybox camera is (`sky_camera`,
  * which sits inside the skybox section, far from the map), from the entity lump: a few tens of KB
  * of text, blocks of "key" "value" lines in braces. Only the header and that one lump are read.
  */
-export async function extractMapEntities(src: ByteSource, limits: SpawnLimits = {}): Promise<{ spawns: Spawn[], skyCameras: Point[], fixtureModels: number[], entityProps: Placement[] }> {
+export async function extractMapEntities(src: ByteSource, limits: SpawnLimits = {}): Promise<{ spawns: Spawn[], skyCameras: Point[], fixtureModels: Fixture[], entityProps: Placement[] }> {
   const maxEntities = limits.maxEntities ?? 100_000
   const maxBytes = limits.maxEntityBytes ?? 4 * 1024 * 1024
   const header = await readHeader(src)
   const lump = header.lumps[0]!
   if (lump.compressed) throw new BspError('the entity lump is compressed, which is not supported')
   if (lump.length > maxBytes) throw new BspError(`the entity lump is ${lump.length} bytes, over the limit of ${maxBytes}`)
-  const spawns: Spawn[] = [], skyCameras: Point[] = [], fixtureModels: number[] = [], entityProps: Placement[] = []
+  const spawns: Spawn[] = [], skyCameras: Point[] = [], fixtureModels: Fixture[] = [], entityProps: Placement[] = []
   if (lump.length === 0) return { spawns, skyCameras, fixtureModels, entityProps }
   const bytes = await src.read(lump.offset, lump.length)
   if (bytes.length !== lump.length) throw new BspError('short read of the entity lump')
@@ -385,13 +414,16 @@ export async function extractMapEntities(src: ByteSource, limits: SpawnLimits = 
     } else if (brace === '}') {
       const cls = entity?.['classname']
       // A brush entity that stands still names its model `*N` and has no parent that could move it.
-      if (entity && cls && FIXTURE_CLASSES.test(cls) && /^\*\d{1,5}$/.test(entity['model'] ?? '') && !entity['parentname']) fixtureModels.push(Number(entity['model']!.slice(1)))
+      if (entity && cls && FIXTURE_CLASSES.test(cls) && /^\*\d{1,5}$/.test(entity['model'] ?? '') && !entity['parentname']) {
+        const o = originOf(entity!) ?? { x: 0, y: 0, z: 0 }
+        const a = anglesOf(entity!)
+        fixtureModels.push({ model: Number(entity['model']!.slice(1)), ...o, pitch: a[0], yaw: a[1], roll: a[2] })
+      }
       const at = entity && cls ? originOf(entity) : null
       if (cls && at) {
         if (SPAWN_CLASS.test(cls)) spawns.push({ class: cls, ...at })
         else if (PROP_CLASS.test(cls) && /^models\/[^\0]{1,200}\.mdl$/i.test(entity?.['model'] ?? '')) {
-          const a = (entity!['angles'] ?? '0 0 0').trim().split(/\s+/).map(Number)
-          const [pitch, yaw, roll] = [0, 1, 2].map(i => (Number.isFinite(a[i]) ? a[i]! : 0)) as [number, number, number]
+          const [pitch, yaw, roll] = anglesOf(entity!)
           if (entityProps.length < 20_000) entityProps.push({ model: entity!['model']!.toLowerCase(), ...at, pitch, yaw, roll })
         }
         else if (cls === 'sky_camera') skyCameras.push(at)

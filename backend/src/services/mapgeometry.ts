@@ -2,7 +2,8 @@ import { rm } from 'node:fs/promises'
 import { Store } from './Store'
 import { BspError, extractMapEntities, extractSurfaces, readHeader, type ByteSource } from '../maps/bsp'
 import { buildPropSet, type StockModels } from '../maps/propset'
-import { nearTriangles, removeSkybox, surfacesToGlb } from '../maps/meshGlb'
+import { nearTriangles, surfacesToGlb } from '../maps/meshGlb'
+import { findParts, soupOfKinds } from '../maps/parts'
 import { fileSource } from '../maps/fileSource'
 export { fileSource }
 
@@ -12,6 +13,8 @@ export const geometryEnabled = () => process.env.MAP_GEOMETRY === '1'
 /** What is stored about a mesh (and shown on the map page). `props` is what was drawn; `unavailable` models are the game's own, which the map does not carry. */
 export interface GeometryInfo {
   vertices: number, triangles: number, levels: number, water: number
+  /** False for a hill or terrain (no storeys); the triangles in detached parts; spawn points in the file. */
+  storeys?: boolean, detached?: number, spawns?: number
   props?: { placed: number, models: number, foliage: number, cards?: number, fromGame?: number, unavailable: number, unreadable: number, dropped: number }
 }
 
@@ -36,13 +39,18 @@ export async function buildGeometry(src: ByteSource, map: string, fingerprint: s
     if (header.fingerprint !== fingerprint) return { ok: false, error: 'The file is not the version of the map the server has (fingerprint differs).' }
     const { spawns, skyCameras, fixtureModels, entityProps } = await extractMapEntities(src)
     const surfaces = await extractSurfaces(src, {}, fixtureModels)
-    const cleaned = removeSkybox(surfaces, { skyCameras, spawns })
+    // The parts by shared corners: the skybox goes, detached parts are kept apart (RFC 18, 4.4).
+    const found = findParts([surfaces.floors, surfaces.walls], { spawns, skyCameras })
+    const kind = (k: ('main' | 'detached')[]) => ({ floors: soupOfKinds(surfaces.floors, found.of[0]!, found.parts, k), walls: soupOfKinds(surfaces.walls, found.of[1]!, found.parts, k) })
+    const cleaned = kind(['main'])
+    const apart = kind(['detached'])
+    const detached = { ...apart, parts: found.parts.filter(p => p.kind === 'detached').sort((a, b) => b.triangles - a.triangles).map(p => ({ triangles: p.triangles, min: p.min.map(Math.round), max: p.max.map(Math.round) })) }
     const water = nearTriangles(surfaces.water, [cleaned.floors, cleaned.walls], 512)
     const { set, report } = await buildPropSet(src, header, entityProps, boxOf(cleaned.floors, cleaned.walls), undefined, stock)
-    const out = await surfacesToGlb({ ...surfaces, ...cleaned, water, props: set }, { map })
+    const out = await surfacesToGlb({ ...surfaces, ...cleaned, water, detached, spawns, props: set }, { map })
     if (!out) return { ok: false, error: 'The map has no surfaces to draw.' }
     return { ok: true, glb: out.glb, note: report.stockError ? `The game's own models could not all be fetched: ${report.stockError}` : undefined, info: {
-      vertices: out.info.vertices, triangles: out.info.triangles, levels: out.info.levels.length, water: out.info.waterTriangles,
+      vertices: out.info.vertices, triangles: out.info.triangles, levels: out.info.levels.length, water: out.info.waterTriangles, storeys: out.info.storeys, detached: out.info.detached.triangles, spawns: out.info.spawns,
       props: { placed: report.drawnPlacements, models: report.drawnModels, foliage: report.foliageModels, cards: report.cards, fromGame: report.fromGame, unavailable: report.unavailable, unreadable: report.unreadable + report.tooBig, dropped: report.dropped },
     } }
   } catch (e) {

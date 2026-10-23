@@ -1,7 +1,7 @@
 import { expect, test, describe } from 'bun:test'
 import { NodeIO } from '@gltf-transform/core'
 import validator from 'gltf-validator'
-import { surfacesToGlb, nearTriangles, MESH_VERSION, cropTriangles, planBounds, spawnBounds, expandBounds, removeSkybox, splitAtHeights } from '../src/maps/meshGlb'
+import { surfacesToGlb, nearTriangles, MESH_VERSION, cropTriangles, planBounds, spawnBounds, expandBounds, splitAtHeights } from '../src/maps/meshGlb'
 
 // RFC 11, 3.6: the exact geometry as glTF 2.0 (GLB): one node per level, floors and walls as two
 // primitives, the playable area only. The Khronos reference validator is the test oracle.
@@ -276,99 +276,6 @@ describe('cropping to the playable area', () => {
   })
 })
 
-describe('removing the 3D skybox', () => {
-  // The skybox is a small scaled copy of the surroundings, built far from the map and marked by a sky_camera inside it.
-  const main = () => [...floor(0, 0, 0, 800), ...floor(0, 900, 0, 800), ...wall(0, 100, 0, 0, 800)]
-  const sky = () => [...floor(0, 50_000, 50_000, 600), ...floor(0, 50_700, 50_000, 600)]
-  const camera = { x: 50_300, y: 50_300, z: 100 }
-  const spawn = { class: 'info_player_start', x: 400, y: 400, z: 40 }
-  const run = (floors: number[], walls: number[], skyCameras: { x: number, y: number, z: number }[], spawns = [spawn]) => removeSkybox({ floors, walls }, { skyCameras, spawns })
-
-  test('removes the piece of geometry that holds the sky camera, and keeps the map', () => {
-    const r = run([...main().slice(0, 36), ...sky()], [], [camera])
-    expect(r.floors).toEqual(main().slice(0, 36))
-    expect(r.removed).toEqual({ floors: 4, walls: 0 })
-  })
-
-  test('walls of the skybox go too, floors and walls separately counted', () => {
-    const r = run([...floor(0, 0, 0, 800), ...floor(0, 50_000, 50_000, 600)], [...wall(0, 100, 0, 0, 800), ...wall(0, 100, 50_000, 50_000, 600)], [camera])
-    expect(r.removed).toEqual({ floors: 2, walls: 2 })
-    expect(r.walls).toEqual(wall(0, 100, 0, 0, 800))
-  })
-
-  test('without a sky camera nothing is removed (most maps have no 3D skybox)', () => {
-    const f = [...main(), ...sky()]
-    const r = run(f, [], [])
-    expect(r.floors).toEqual(f)
-    expect(r.removed).toEqual({ floors: 0, walls: 0 })
-  })
-
-  test('if the skybox is connected to the playable area it is left alone: it cannot be told apart', () => {
-    const connected = [...floor(0, 0, 0, 800), ...floor(0, 800, 0, 800), ...floor(0, 1600, 0, 800)]
-    const r = run(connected, [], [{ x: 2000, y: 400, z: 0 }])
-    expect(r.removed).toEqual({ floors: 0, walls: 0 })
-  })
-
-  test('the camera is in the empty air of the skybox: it finds the piece next to its cell, but not one farther away', () => {
-    const f = [...main(), ...sky()] // the sky floors end at x 51 300
-    expect(run(f, [], [{ x: 51_300 + 900, y: 50_300, z: 100 }]).removed.floors).toBe(4) // one cell beyond the geometry
-    expect(run(f, [], [{ x: 51_300 + 3000, y: 50_300, z: 100 }]).removed.floors).toBe(0) // three cells beyond: not part of it
-    expect(run(f, [], [{ x: 50_300, y: 50_300, z: 100 + 1500 }]).removed.floors).toBe(4) // above it, also next to it
-  })
-
-  test('a sky camera that is not near any geometry removes nothing', () => {
-    expect(run(main(), [], [{ x: -99_999, y: -99_999, z: 0 }]).removed).toEqual({ floors: 0, walls: 0 })
-  })
-
-  test('two separate skybox pieces, each with a camera, are both removed', () => {
-    const f = [...main(), ...floor(0, 50_000, 50_000, 600), ...floor(0, -60_000, 50_000, 600)]
-    const r = run(f, [], [camera, { x: -59_700, y: 50_300, z: 0 }])
-    expect(r.removed.floors).toBe(4)
-    expect(r.floors).toEqual(main())
-  })
-
-  test('never takes more than half of the map: a "skybox" that is most of it is probably the map', () => {
-    const big = [...floor(0, 0, 0, 800), ...floor(0, 0, 900, 800)]
-    const small = floor(0, 50_000, 50_000, 600)
-    // the component with the camera is the larger one (4 of 6 triangles): leave everything
-    const r = run([...big, ...small, ...floor(0, 0, 1800, 800)], [], [{ x: 400, y: 1300, z: 0 }], [])
-    expect(r.removed).toEqual({ floors: 0, walls: 0 })
-  })
-
-  test('without spawns it still removes a clearly separate small piece', () => {
-    const r = run([...main(), ...sky()], [], [camera], [])
-    expect(r.removed.floors).toBe(4)
-  })
-
-  test('a piece the spawns are in is not the skybox even if the camera is in it', () => {
-    const f = [...main(), ...sky()]
-    const r = run(f, [], [camera], [{ class: 'info_player_start', x: 50_300, y: 50_300, z: 0 }])
-    expect(r.removed).toEqual({ floors: 0, walls: 0 })
-  })
-
-  test('geometry less than a cell apart is one piece; more than a cell and a half apart is two', () => {
-    const near = [...floor(0, 0, 0, 100), ...floor(0, 1500, 0, 100)] // centres 1500 apart: in different cells, adjacent
-    expect(run(near, [], [{ x: 1550, y: 50, z: 0 }]).removed).toEqual({ floors: 0, walls: 0 }) // joined with the spawn's piece
-    const far = [...floor(0, 0, 0, 100), ...floor(0, 5000, 0, 100)]
-    expect(run(far, [], [{ x: 5050, y: 50, z: 0 }]).removed.floors).toBe(2)
-  })
-
-  test('keeps the order of what stays, and is deterministic', () => {
-    const f = [...main(), ...sky()]
-    expect(run(f, [], [camera])).toEqual(run(f, [], [camera]))
-  })
-
-  test('refuses input that is not triangles', () => {
-    expect(() => run([1, 2, 3], [], [camera])).toThrow(/triangles/)
-  })
-
-  test('the result goes straight into the writer', async () => {
-    const cleaned = run([...main(), ...sky()], wall(0, 100, 0, 0, 800), [camera])
-    const r = await ok(cleaned.floors, cleaned.walls)
-    expect(r.info.triangles).toBe(cleaned.floors.length / 9 + cleaned.walls.length / 9)
-  })
-})
-
 describe('splitAtHeights (a tall wall is cut where one storey ends, so hiding a storey leaves a clean edge)', () => {
   const area = (s: number[]) => {
     let a = 0
@@ -455,5 +362,49 @@ describe('the water group (RFC 18, 4.1)', () => {
     const near = floor(0, 0, 0, 64), far = floor(0, 50_000, 0, 64)
     expect(nearTriangles([...near, ...far], [floor(0, 0, 0, 1000)], 512)).toEqual(near)
     expect(nearTriangles(near, [[], []], 512)).toEqual([])
+  })
+})
+
+describe('detached parts, storeys and spawns in the file (RFC 18, 4.4)', () => {
+  const storeyed = () => [...floor(0, 0, 0, 640), ...floor(300, 0, 0, 640), ...floor(600, 0, 0, 640)]
+  const extras = async (r: { glb: Uint8Array }) => (await read(r.glb)).getRoot().getExtras() as any
+
+  test('detached parts are a group of their own, outside the levels, with their boxes', async () => {
+    const detached = { floors: floor(-6000, 5000, 0, 200), walls: wall(-6000, -5900, 5000, 0, 200), parts: [{ triangles: 4, min: [5000, 0, -6000], max: [5200, 200, -5900] }] }
+    const r = (await surfacesToGlb({ ...base, floors: storeyed(), walls: [], detached }, { map: 'ttt_test' }))!
+    expect(r.info.levels).toHaveLength(3) // the slab at -6000 makes no level
+    expect(r.info.detached).toEqual({ triangles: 4, parts: 1 })
+    const doc = await read(r.glb)
+    const node = doc.getRoot().listNodes().find(n => n.getName() === 'detached')!
+    expect(node.getExtras()).toMatchObject({ group: 'detached', triangles: 4, parts: [{ triangles: 4 }] })
+    expect(doc.getRoot().listNodes().filter(n => /^level-/.test(n.getName()))).toHaveLength(3)
+    const report = await validator.validateBytes(r.glb, { maxIssues: 20 })
+    expect(report.issues.numErrors).toBe(0)
+  })
+
+  test('no detached parts, no group', async () => {
+    const r = await ok(storeyed())
+    expect(r.info.detached).toEqual({ triangles: 0, parts: 0 })
+    expect((await read(r.glb)).getRoot().listNodes().some(n => n.getName() === 'detached')).toBe(false)
+  })
+
+  test('floors at a few heights have storeys; floors spread over all heights (a hill) do not, and the file says so', async () => {
+    expect((await ok(storeyed())).info.storeys).toBe(true)
+    const hill: number[] = []
+    for (let i = 0; i < 40; i++) hill.push(...floor(i * 25, i * 70, 0, 64))
+    const r = await ok(hill)
+    expect(r.info.storeys).toBe(false)
+    expect(r.info.levels.length).toBeGreaterThan(0) // still listed, flagged
+    expect((await extras(r)).storeys).toBe(false)
+  })
+
+  test('spawn points are written into the extras, at most 512', async () => {
+    const spawns = Array.from({ length: 600 }, (_, i) => ({ class: i % 2 ? 'info_player_terrorist' : 'info_player_start', x: i, y: -i, z: 8 }))
+    const r = (await surfacesToGlb({ ...base, floors: storeyed(), walls: [], spawns }, { map: 'ttt_test' }))!
+    expect(r.info.spawns).toBe(512)
+    const e = await extras(r)
+    expect(e.spawns).toHaveLength(512)
+    expect(e.spawns[1]).toEqual({ class: 'info_player_terrorist', x: 1, y: -1, z: 8 })
+    expect((await ok(storeyed())).info.spawns).toBe(0)
   })
 })
