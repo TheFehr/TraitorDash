@@ -405,6 +405,14 @@ export const migrations: Array<(db: Database) => void> = [
       server_id TEXT NOT NULL, role_name TEXT NOT NULL, text TEXT NOT NULL, updated_at TEXT NOT NULL,
       PRIMARY KEY (server_id, role_name)
     )`)
+  },
+  // v22 (RFC 15): what the game says about a role that is made during a round: `selectable` (0 = not dealt at the
+  // start, 1 = dealt, NULL = not reported yet) and `base_role`, the role it is a subrole of (the Zombie's is the
+  // Necromancer), which for such a role is the one that makes it.
+  (db) => {
+    if (!db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='roles'").get()) return
+    db.run('ALTER TABLE roles ADD COLUMN selectable INTEGER')
+    db.run('ALTER TABLE roles ADD COLUMN base_role TEXT')
   }
 ]
 

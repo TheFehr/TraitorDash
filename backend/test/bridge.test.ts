@@ -322,6 +322,24 @@ describe('Sync', () => {
     expect(r).toBe('PLAIN t')
   })
 
+  test("the game's own word on a role goes with the ingest: whether it is dealt, and the role it is a subrole of", () => {
+    const r = run(`${flow}
+      roles = { GetByIndex = function(i) for _, v in ipairs(roles.GetList()) do if v.index == i then return v end end end,
+        GetList = function() return {
+          { ClassName = "boss", index = 7, Initialize = function() end },
+          { ClassName = "zed", index = 8, baserole = 7, notSelectable = true, Initialize = function() end },
+          { ClassName = "gunner", index = 9, baserole = 7, Initialize = function() end },
+          { ClassName = "lone", index = 10, Initialize = function() end },
+        } end }
+      for _, n in ipairs({ "boss", "zed", "gunner", "lone" }) do FILES["terrortown/entities/roles/" .. n .. ".lua"] = n end
+      TraitorDash.Sync()
+      local i = 1 while SENT[i] do SENT[i].success(200, "{}") i = i + 1 end
+      local o = {}
+      for _, p in ipairs(PAYLOADS) do if p.role_name then o[#o + 1] = p.role_name .. "=" .. tostring(p.selectable) .. "/" .. tostring(p.base_role) end end
+      RESULT = table.concat(o, " ")`, WORLD).result
+    expect(r).toBe('boss=true/nil zed=false/boss gunner=true/boss lone=true/nil')
+  })
+
   test('a plain Sync does not force; Sync(true) does', () => {
     const forced = (arg: string) => run(`${flow}
       TraitorDash.Sync(${arg})

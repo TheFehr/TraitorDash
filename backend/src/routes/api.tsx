@@ -142,6 +142,11 @@ api.post('/ingest', getServer, async (c) => {
     const { role_code, role_name, convar_state, data_state, active_admins, md5_hash, force } = body
     // The game's own word for the role's team, when the bridge has it.
     const liveTeam = typeof body.team === 'string' && TEAM_ID.test(body.team) ? body.team : null
+    // And whether it is dealt at the start of a round, and the role it is a subrole of (RFC 15).
+    const liveMeta = {
+      selectable: typeof body.selectable === 'boolean' ? body.selectable : null,
+      baseRole: typeof body.base_role === 'string' && NAME.test(body.base_role) ? body.base_role : null,
+    }
 
     if (!role_code || typeof role_code !== 'string') {
       return c.json({ error: 'Missing role_code' }, 400)
@@ -167,6 +172,7 @@ api.post('/ingest', getServer, async (c) => {
       if (existingHash === md5_hash) {
         console.log(`[API] Ingest: ${name} for ${server.name} unchanged (MD5: ${md5_hash}). Skipping extraction.`)
         if (liveTeam) Store.setRoleTeam(server.id, name, liveTeam)
+        Store.setRoleMeta(server.id, name, liveMeta)
         // Schema included so the bridge can still work out which ConVars to report.
         return c.json({
           success: true,
@@ -188,6 +194,7 @@ api.post('/ingest', getServer, async (c) => {
 
     // Save to database via Store
     Store.saveSchema(server.id, name, team, isPolicingRole, baserole, schema, md5_hash, extracted.description, extracted.color)
+    Store.setRoleMeta(server.id, name, liveMeta)
 
     return c.json({
       success: true,

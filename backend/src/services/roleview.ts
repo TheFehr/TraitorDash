@@ -10,7 +10,7 @@ import { NAME, SMALL_INT } from './validators'
  * fields: a field added to the stored objects later does not reach the page by itself.
  */
 /** A role that can make another during a round, with what decides whether it is in play. */
-export interface Maker { name: string, enabled: boolean, min: number | null }
+export interface Maker { name: string, enabled: boolean, min: number | null, /** True when the game itself names it (the role's base role); false when it is worked out from team and description. */ exact: boolean }
 
 export interface RoleView {
   name: string
@@ -73,32 +73,37 @@ export function factsOf(team: string, policing: boolean): string | null {
  * `_random`), is not dealt at the start of a round: TTT2 makes it by a conversion (the Zombie from a Necromancer's revival, the
  * Defector from a Jihad, ...). With nothing reported for it yet we cannot tell, and it counts as dealt.
  */
-export const isMadeInRound = (live: Record<string, LiveConVar>, roleName: string): boolean =>
-  Object.values(live).some(lv => lv.role === roleName && lv.present)
+export const isMadeInRound = (live: Record<string, LiveConVar>, roleName: string, selectable: number | null = null): boolean =>
+  selectable !== null && selectable !== undefined ? selectable === 0 : Object.values(live).some(lv => lv.role === roleName && lv.present)
   && !['pct', 'max', 'min_players', 'random'].some(k => live[`ttt_${roleName}_${k}`]?.present === true)
 
 const GENERIC_TEAMS = new Set(['innocents', 'traitors', 'nones', 'unknown', ''])
 const escapeRe = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 /**
- * Which dealt roles probably make each role that is made during a round. TTT2 has no field for it, so it is worked out from
- * two things that are there: a made role plays for its maker's team when that team is a special one (the Zombie for the
- * Necromancers), and its description names the roles involved. More than four candidates is too vague to say anything.
+ * Who makes each role that is made during a round. When the game said so, it is exact: such a role is a subrole of its
+ * maker (the Zombie's base role is the Necromancer). When it did not (a role made by a shop item, like the Defector or the
+ * Sidekick, has none) it is worked out from two things that are there: a made role plays for its maker's team when that
+ * team is a special one, and its description names the roles involved. More than four candidates is too vague to say anything.
  */
 export function makersOf(serverId: string): Map<string, Maker[]> {
   const live = Store.getConVarValues(serverId)
-  const info = Store.getRoles(serverId).map(r => ({
-    name: String(r.role_name), team: String(r.team ?? ''), made: isMadeInRound(live, r.role_name),
+  const rows = Store.getRoles(serverId)
+  const info = rows.map(r => ({
+    name: String(r.role_name), team: String(r.team ?? ''), made: isMadeInRound(live, r.role_name, r.selectable ?? null),
+    base: r.base_role ? String(r.base_role) : null,
     enabled: isRoleEnabled(live, r.role_name), min: roleMetrics(live, r.role_name).minPlayers.sort,
   }))
   const dealt = info.filter(i => !i.made)
   const out = new Map<string, Maker[]>()
   for (const x of info.filter(i => i.made)) {
+    const base = x.base ? info.find(y => y.name === x.base) : undefined
+    if (base) { out.set(x.name, [{ name: base.name, enabled: base.enabled, min: base.min, exact: true }]); continue }
     const text = (Store.getRoleNote(serverId, x.name) ?? Store.getRoleDescription(serverId, x.name) ?? '')
     const found = dealt.filter(y => y.name !== x.name && (
       (!GENERIC_TEAMS.has(x.team) && y.team === x.team)
       || (y.name.length >= 3 && new RegExp(`\\b${escapeRe(y.name)}\\b`, 'i').test(text))))
-    if (found.length > 0 && found.length <= 4) out.set(x.name, found.map(y => ({ name: y.name, enabled: y.enabled, min: y.min })))
+    if (found.length > 0 && found.length <= 4) out.set(x.name, found.map(y => ({ name: y.name, enabled: y.enabled, min: y.min, exact: false })))
   }
   return out
 }
@@ -191,7 +196,7 @@ export function buildRoleView(serverId: string, roleName: string): RoleView | nu
     team: String(role.team ?? ''),
     color: roleColour(role.color, String(role.team ?? '')),
     enabled: isRoleEnabled(live, roleName),
-    made: isMadeInRound(live, roleName),
+    made: isMadeInRound(live, roleName, role.selectable ?? null),
     makers: makersOf(serverId).get(roleName) ?? [],
     min: metrics.minPlayers.sort,
     description: cleanDescription(Store.getRoleNote(serverId, roleName) ?? Store.getRoleDescription(serverId, roleName)),
@@ -212,6 +217,6 @@ export function listRoles(serverId: string, query = ''): RoleListEntry[] {
     .map(r => {
       const m = roleMetrics(live, r.role_name)
       const team = String(r.team ?? '')
-      return { name: String(r.role_name), team, color: roleColour(r.color, team), enabled: isRoleEnabled(live, r.role_name), made: isMadeInRound(live, r.role_name), makers: makers.get(String(r.role_name)) ?? [], pct: m.pct.text, minPlayers: m.minPlayers.text, min: m.minPlayers.sort }
+      return { name: String(r.role_name), team, color: roleColour(r.color, team), enabled: isRoleEnabled(live, r.role_name), made: isMadeInRound(live, r.role_name, r.selectable ?? null), makers: makers.get(String(r.role_name)) ?? [], pct: m.pct.text, minPlayers: m.minPlayers.text, min: m.minPlayers.sort }
     })
 }

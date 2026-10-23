@@ -582,6 +582,8 @@ function TraitorDash.IngestRole(roleName, roleCode, hash, force, callback)
         data_state = data_state,
         -- The team the game itself gives the role; the backend's replay of the role file can miss it.
         team = TraitorDash.RoleMeta[roleName] and TraitorDash.RoleMeta[roleName].team or nil,
+        selectable = TraitorDash.RoleMeta[roleName] and TraitorDash.RoleMeta[roleName].selectable,
+        base_role = TraitorDash.RoleMeta[roleName] and TraitorDash.RoleMeta[roleName].base or nil,
         active_admins = TraitorDash.GetActiveAdmins()
     })
     
@@ -689,7 +691,16 @@ local function LoadRole(v)
 
     -- Cache the code for dynamic re-ingestion
     TraitorDash.RoleCodeCache[name] = content
-    TraitorDash.RoleMeta[name] = { abbr = v.abbr, team = v.defaultTeam }
+    -- What the game itself says: whether the role is dealt at the start of a round (a role made by a conversion
+    -- sets notSelectable), and the role it is a subrole of. For a role that is made (the Zombie, a subrole of the
+    -- Necromancer) that base role is the one that makes it.
+    local base
+    if type(v.baserole) == "number" and roles and roles.GetByIndex then
+        local b = roles.GetByIndex(v.baserole)
+        local baseName = b and (b.ClassName or b.name)
+        if baseName and baseName ~= name then base = baseName end
+    end
+    TraitorDash.RoleMeta[name] = { abbr = v.abbr, team = v.defaultTeam, selectable = v.notSelectable ~= true, base = base }
 
     return { name = name, code = content, hash = util.MD5(content) }
 end

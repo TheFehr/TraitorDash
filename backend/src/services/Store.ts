@@ -571,8 +571,18 @@ export class Store {
     return row ? row.md5_hash : null
   }
 
+  /** The pages of a role are cached by when its row last changed, so a change here has to move `updated_at` too. */
   static setRoleTeam(serverId: string, roleName: string, team: string) {
-    db.prepare('UPDATE roles SET team = ? WHERE server_id = ? AND role_name = ? AND team != ?').run(team, serverId, roleName, team)
+    db.prepare('UPDATE roles SET team = ?, updated_at = ? WHERE server_id = ? AND role_name = ? AND team != ?').run(team, new Date().toISOString(), serverId, roleName, team)
+  }
+
+  /** What the game says about the role: whether it is dealt at the start of a round, and the role it is a subrole of. */
+  static setRoleMeta(serverId: string, roleName: string, meta: { selectable: boolean | null, baseRole: string | null }) {
+    if (meta.selectable === null && meta.baseRole === null) return
+    const now = meta.selectable === null ? null : meta.selectable ? 1 : 0
+    db.prepare(`UPDATE roles SET selectable = COALESCE(?, selectable), base_role = ?, updated_at = ?
+      WHERE server_id = ? AND role_name = ? AND (selectable IS NOT COALESCE(?, selectable) OR base_role IS NOT ?)`)
+      .run(now, meta.baseRole, new Date().toISOString(), serverId, roleName, now, meta.baseRole)
   }
 
   static saveSchema(serverId: string, roleName: string, team: string, isPolicing: boolean, baserole: number, schema: any[], md5Hash?: string, description: string | null = null, color: string | null = null) {
@@ -595,7 +605,7 @@ export class Store {
   }
 
   static getRoles(serverId: string): any[] {
-    const query = db.prepare('SELECT role_name, team, is_policing, baserole, color FROM roles WHERE server_id = ? ORDER BY team ASC, role_name ASC')
+    const query = db.prepare('SELECT role_name, team, is_policing, baserole, color, selectable, base_role FROM roles WHERE server_id = ? ORDER BY team ASC, role_name ASC')
     return query.all(serverId)
   }
 
