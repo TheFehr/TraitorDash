@@ -25,6 +25,9 @@ line matches the one the app prints, and so on).
 ## Importing
 
 1. Admin > Eggs > Import, choose `egg-traitordash.json`.
+   The egg carries its own update address (the file on `main` of this repository), so after the first import
+   the panel's **Update** button on the egg fetches new variables from there. A server that already exists keeps
+   its own variables until you open its Startup tab and fill in the new ones.
 2. For a **new** server pick this egg, fill in the variables, allocate one port.
 
 ## Moving the existing server to it

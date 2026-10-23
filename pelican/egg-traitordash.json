@@ -2,9 +2,9 @@
   "_comment": "Maintained in the TraitorDash repository (pelican/). Import it in the panel under Admin > Eggs.",
   "meta": {
     "version": "PLCN_v3",
-    "update_url": null
+    "update_url": "https://raw.githubusercontent.com/TheFehr/TraitorDash/main/pelican/egg-traitordash.json"
   },
-  "exported_at": "2026-10-17T00:00:00+00:00",
+  "exported_at": "2026-10-24T00:00:00+00:00",
   "name": "TraitorDash",
   "author": "traitordash.opt237@passmail.net",
   "uuid": "c0840f94-3be9-4cd5-8032-db97771f9d53",
