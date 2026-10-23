@@ -20,7 +20,10 @@ export const pageHeaders = (scripts = false): Record<string, string> => ({
     ? "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
     : "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; font-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
   'X-Content-Type-Options': 'nosniff',
-  'Referrer-Policy': 'no-referrer',
+  // Not `no-referrer`: under it Firefox sends `Origin: null` with a form post, which the cross-site check
+  // (middleware/csrf.ts) must refuse, so the pin, delete and settings forms of these pages would not work there.
+  // `same-origin` sends nothing to another site.
+  'Referrer-Policy': 'same-origin',
 })
 
 export const isEmbed = (c: any): boolean => ['1', 'true'].includes(c.req.query('embed') ?? '')

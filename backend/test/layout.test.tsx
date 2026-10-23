@@ -21,4 +21,9 @@ describe('Tab icon', () => {
   test('the data URI is safe inside the attribute (no raw quotes, angle brackets or spaces)', () => {
     expect(href).not.toMatch(/["<> ]/)
   })
+
+  test('the pages leak no referrer to other sites but do not use no-referrer (Firefox then posts forms with Origin: null, which is refused)', () => {
+    expect(html).toContain('<meta name="referrer" content="same-origin"')
+    expect(html).not.toContain('no-referrer')
+  })
 })

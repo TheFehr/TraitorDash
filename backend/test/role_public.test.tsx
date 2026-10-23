@@ -175,7 +175,7 @@ describe('embed and headers', () => {
       expect(r.headers.get('content-security-policy'), p).toContain("default-src 'none'")
       expect(r.headers.get('content-security-policy'), p).toContain("frame-ancestors 'none'")
       expect(r.headers.get('x-content-type-options'), p).toBe('nosniff')
-      expect(r.headers.get('referrer-policy'), p).toBe('no-referrer')
+      expect(r.headers.get('referrer-policy'), p).toBe('same-origin') // never no-referrer: Firefox then posts forms with Origin: null
     }
     const emb = await get(`/servers/${serverId}/roles/haunter?embed=1`)
     expect(emb.headers.get('x-robots-tag')).toBe('noindex')

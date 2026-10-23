@@ -116,7 +116,7 @@ export const Shell = ({ title, embed, children, viewer, scripts = [], admin = fa
     <head>
       <meta charset="UTF-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-      <meta name="referrer" content="no-referrer" />
+      <meta name="referrer" content="same-origin" />
       {embed && <meta name="robots" content="noindex" />}
       <title>{title}</title>
       <link rel="icon" href={FAVICON} />
