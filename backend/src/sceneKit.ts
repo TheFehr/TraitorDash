@@ -26,3 +26,31 @@ export function makeScene(): Scene {
 
 /** The perspective camera both views use. */
 export const makeCamera = (): PerspectiveCamera => new PerspectiveCamera(40, 1, 1, 200000)
+
+/**
+ * What a page shows when the browser has no WebGL (the game's built-in browser has it switched off, so the 3D map and the
+ * replay cannot be drawn in the game's window): the controls that would do nothing go away, and the message says where to
+ * open the page instead. `hint` is a sentence for what is still there (the replay keeps its lists).
+ */
+export function explainNoWebGL(root: HTMLElement, say: (t: string) => void, what: string, hint = ''): void {
+  root.querySelector('.view')?.classList.add('nogl')
+  root.querySelector('canvas')?.setAttribute('hidden', '')
+  root.querySelectorAll('.tools, [data-controls], [data-background], [data-disclaimer]').forEach(e => e.setAttribute('hidden', ''))
+  const url = new URL(location.href)
+  url.searchParams.delete('embed')
+  // In the game the Lua part gives the page `traitordash.open`, which opens a page of this server in the player's own browser.
+  const open = (window as any).traitordash?.open
+  if (typeof open === 'function') {
+    say(`This browser cannot draw ${what}: WebGL is not available in the game's window.${hint ? ` ${hint}` : ''}`)
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.dataset.openInBrowser = ''
+    button.textContent = 'Open in your browser'
+    button.addEventListener('click', () => open(url.pathname))
+    const status = root.querySelector('[data-status]')
+    status?.after(button)
+    button.style.margin = '0 1.2rem 1.2rem'
+    return
+  }
+  say(`This browser cannot draw ${what}: WebGL is not available in it. Open this page in your normal browser: ${url.host}${url.pathname}${hint ? ` ${hint}` : ''}`)
+}

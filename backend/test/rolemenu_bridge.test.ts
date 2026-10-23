@@ -244,6 +244,28 @@ describe('traitordash_roles_cl.lua: the key', () => {
     }
     expect(url(`TraitorDash.RoleGuideClient.SetKey(nil) RESULT = { s = TraitorDash.RoleGuideClient.SectionUrl("maps") }`).s).toBe('https://d.example.org/servers/abc-1/maps?embed=1')
   })
+  test('OpenExternal opens only a path under this server in the player\'s browser, through the sign-in when there is a key', () => {
+    const o = url(`EXT = {} gui = { OpenURL = function(u) EXT[#EXT + 1] = u end } local g = TraitorDash.RoleGuideClient
+      local ok = g.OpenExternal("/servers/abc-1/maps/ttt_a")
+      g.lastOpen = nil g.SetKey("${KEY}")
+      local keyed = g.OpenExternal("/servers/abc-1/rounds/round-000001/replay")
+      RESULT = { ok = ok, keyed = keyed, urls = EXT }`)
+    expect(o).toEqual({ ok: true, keyed: true, urls: [
+      'https://d.example.org/servers/abc-1/maps/ttt_a',
+      `https://d.example.org/auth/game?k=${KEY}&to=%2Fservers%2Fabc-1%2Frounds%2Fround-000001%2Freplay`,
+    ] })
+  })
+  test('OpenExternal refuses another server, odd characters, dot-dot, a long path, a non-string, and a second open within a second', () => {
+    const o = url(`EXT = {} gui = { OpenURL = function(u) EXT[#EXT + 1] = u end } local g = TraitorDash.RoleGuideClient
+      local r = {}
+      for i, p in ipairs({ "/servers/other/maps/x", "/servers/abc-1/maps/../x", "/servers/abc-1/maps/x?a=1", "//evil.example/servers/abc-1/", "servers/abc-1/x", "/auth/steam", "/servers/abc-1/" .. string.rep("a", 300) }) do
+        g.lastOpen = nil r[i] = g.OpenExternal(p)
+      end
+      g.lastOpen = nil r[8] = g.OpenExternal(nil) r[9] = g.OpenExternal(42)
+      g.lastOpen = nil g.OpenExternal("/servers/abc-1/maps/a") r[10] = g.OpenExternal("/servers/abc-1/maps/b")
+      RESULT = { r = r, n = #EXT }`)
+    expect(o).toEqual({ r: [false, false, false, false, false, false, false, false, false, false], n: 1 })
+  })
   test('a later bad key removes the earlier one; the role guide never uses the key', () => {
     const o = url(`TraitorDash.RoleGuideClient.SetKey("${KEY}") TraitorDash.RoleGuideClient.SetKey("junk")
       RESULT = { s = TraitorDash.RoleGuideClient.SectionUrl("stats") }`)

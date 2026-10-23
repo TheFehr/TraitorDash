@@ -2,7 +2,7 @@
 import {
   Box3, Vector3, Color, Mesh, MeshStandardMaterial, Plane, type Object3D, type BufferGeometry,
 } from 'three'
-import { makeCamera, makeRenderer, makeScene } from './sceneKit'
+import { explainNoWebGL, makeCamera, makeRenderer, makeScene } from './sceneKit'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 
@@ -22,9 +22,8 @@ function start(root: HTMLElement) {
   const say = (t: string) => { if (status) { status.textContent = t; status.hidden = t === '' } }
 
   let renderer: ReturnType<typeof makeRenderer>
-  try { renderer = makeRenderer(canvas) } catch (e) {
-    // No WebGL (the game's built-in browser may have it switched off): say so, with the reason, instead of leaving "needs JavaScript".
-    say('This browser cannot draw the 3D view (WebGL is not available). Open this page in a normal browser.' + (e instanceof Error && e.message ? ' (' + e.message.slice(0, 120) + ')' : ''))
+  try { renderer = makeRenderer(canvas) } catch {
+    explainNoWebGL(root, say, 'the 3D view')
     return
   }
   const scene = makeScene()

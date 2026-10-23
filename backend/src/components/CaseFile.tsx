@@ -214,6 +214,8 @@ h2+.f,h2+.plans,h2+p+.f{margin-top:1.1rem}
 .view canvas{display:block;width:100%;height:min(60vh,28rem);background:#14110e;touch-action:none}
 .view [data-status]{position:absolute;left:0;right:0;top:0;bottom:0;margin:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:0 1rem;pointer-events:none;color:#a89f8c}
 .view [data-status][hidden]{display:none}
+.view.nogl{background:#14110e}
+.view.nogl [data-status]{position:static;display:block;padding:1.2rem;text-align:left;overflow-wrap:anywhere;color:#d9d0bd}
 .tools{display:flex;flex-wrap:wrap;gap:.5rem 1.4rem;align-items:center;margin:.6rem 0}
 .tools .cap{display:inline-block;margin:0 .5rem 0 0;font-family:"Barlow Condensed",sans-serif;font-size:.78rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
 .tools label{display:inline-flex;align-items:center;gap:.4rem;color:#d9d0bd}

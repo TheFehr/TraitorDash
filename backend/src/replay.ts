@@ -8,7 +8,7 @@ import {
 import { hex } from './teamColours'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { makeCamera, makeRenderer, makeScene } from './sceneKit'
+import { explainNoWebGL, makeCamera, makeRenderer, makeScene } from './sceneKit'
 import {
   decodeTrack, poseAt, lastPoseAt, trailBetween, levelOf, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose, fitLabel,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
@@ -196,9 +196,7 @@ async function start(root: HTMLElement) {
   try {
     renderer = makeRenderer(canvas)
   } catch {
-    canvas.hidden = true
-    say('This browser cannot draw the replay (WebGL is not available). The list of deaths is below.')
-    el(root, '[data-controls]')?.setAttribute('hidden', '')
+    explainNoWebGL(root, say, 'the replay', 'The lists beside it still work.')
     return
   }
   const scene = makeScene()

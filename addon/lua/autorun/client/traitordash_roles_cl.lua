@@ -90,12 +90,31 @@ function Guide.SectionUrl(section)
     return Guide.base .. path
 end
 
+--- Opens a page of this server on the dashboard in the player's own browser (the game's own browser has no WebGL, so
+-- the 3D map and the replay can only be seen outside the game). Only a path under this server's own address is
+-- opened, built here on the dashboard's address; with a key the game sign-in goes first, so the page knows the player.
+function Guide.OpenExternal(path)
+    if not Guide.Available() or type(path) ~= "string" or #path > 200 then return false end
+    if not path:match("^/[%w%-_%./]*$") or path:find("..", 1, true) then return false end
+    local prefix = "/servers/" .. Guide.serverId .. "/"
+    if path:sub(1, #prefix) ~= prefix then return false end
+    local now = SysTime and SysTime() or 0
+    if Guide.lastOpen and now - Guide.lastOpen < 1 then return false end
+    Guide.lastOpen = now
+    local url = Guide.base .. path
+    if Guide.key then url = Guide.base .. "/auth/game?k=" .. Guide.key .. "&to=" .. Encode(path) end
+    gui.OpenURL(url)
+    return true
+end
+
 --- A browser panel on `url`, as tall as the visible area of the menu page it sits in.
 -- TTT2 puts a page into a scrolling area that grows to fit its content, so a panel docked to FILL
 -- collapses to a thin strip; this one is given the height of the area instead.
 function Guide.Browser(parent, url, section)
     local html = vgui.Create("DHTML", parent)
     html:Dock(TOP)
+    -- The pages call traitordash.open("/servers/<id>/...") from a button ("Open in your browser"); see OpenExternal.
+    if html.AddFunction then html:AddFunction("traitordash", "open", function(path) Guide.OpenExternal(path) end) end
     html:OpenURL(url)
     if section then Guide.panels[#Guide.panels + 1] = { html = html, section = section } end
     if html.SetTall then
