@@ -10,6 +10,7 @@ become a package of its own later (RFC 18, 8b):
 *   `pak.ts`: the ZIP a map carries (its models and materials), read by its directory, member by member.
 *   `props.ts`: where the static props stand (the game lump).
 *   `model.ts`: the mesh of one model from its `.mdl`, `.vvd` and `.vtx`, and whether a material is foliage.
+*   `vpk.ts`: the index of a Valve package (`*_dir.vpk`) and the files in its archives.
 *   `propset.ts`: the props of a map as the mesh gets them: near the map, from the pack, within the limits.
 *   `meshVersion.ts`: which generation of the extractor made a mesh.
 *   `meshGlb.ts`: the skybox rule, the cutting at storey heights, and the glTF (GLB) writer.

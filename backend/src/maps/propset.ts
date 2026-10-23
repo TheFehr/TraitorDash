@@ -1,6 +1,6 @@
 import type { BspHeader, ByteSource, Placement } from './bsp'
 import type { PropSet } from './meshGlb'
-import { readModel } from './model'
+import { readModel, type ModelFiles } from './model'
 import { readPak, readPakMember, type Pak } from './pak'
 import { readStaticProps } from './props'
 
@@ -34,28 +34,40 @@ export interface PropReport {
   foliageModels: number
   /** Distinct models that have cards (flat sheets that need their texture, see `CARD_TRIANGLE_AREA`), which are left out; a model of nothing else is not drawn at all. */
   cards: number
-  /** Distinct models that are not in the pack (the game's own: not drawn), unreadable, or over the triangle limit. */
+  /** Distinct drawn models that came from the game's own content (RFC 18, 4.5), not from the map. */
+  fromGame: number
+  /** Distinct models that are in neither the pack nor the game content given (not drawn), unreadable, or over the triangle limit. */
   unavailable: number
   unreadable: number
   tooBig: number
   /** Places left out because a limit was reached. */
   dropped: number
   skippedRecords: number
+  /** Why the game's own models could not all be fetched, when that is so. */
+  stockError?: string
 }
 
 const FOLIAGE = /["']?\$(alphatest|translucent)["']?\s+["']?1/i
 
-/** What the pack of a map holds for a model, and the answer to "is this material foliage" for the materials it names. */
-async function loadModel(src: ByteSource, pak: Pak, name: string, foliageCache: Map<string, boolean>, maxTriangles: number): Promise<'unavailable' | 'unreadable' | 'big' | { solid: number[], foliage: number[], cards: number }> {
+/**
+ * The game's own models (RFC 18, 4.5): the files of the models it has, by model name; names it does not have are left out.
+ * `error` says why some could not be fetched (a download failed); the models that were fetched are in the answer anyway.
+ */
+export type StockModels = (names: string[]) => Promise<{ models: Map<string, ModelFiles>, error?: string }>
+
+/** The three files of a model in the map's pack, or null when they are not all there. */
+async function packFiles(src: ByteSource, pak: Pak, name: string): Promise<ModelFiles | null> {
   const base = name.replace(/\.mdl$/, '')
   const [mdl, vvd, vtx] = await Promise.all([
     readPakMember(src, pak, `${base}.mdl`),
     readPakMember(src, pak, `${base}.vvd`),
     readPakMember(src, pak, `${base}.dx90.vtx`).then(b => b ?? readPakMember(src, pak, `${base}.dx80.vtx`)),
   ])
-  if (!mdl) return 'unavailable'
-  if (!vvd || !vtx) return 'unavailable'
-  const files = { mdl, vvd, vtx }
+  return mdl && vvd && vtx ? { mdl, vvd, vtx } : null
+}
+
+/** The mesh of a model from its files, and the answer to "is this material foliage" for the materials it names (those in the pack; the game's own count as solid). */
+async function loadModel(src: ByteSource, pak: Pak, files: ModelFiles, foliageCache: Map<string, boolean>, maxTriangles: number): Promise<'unreadable' | 'big' | { solid: number[], foliage: number[], cards: number }> {
   // First ask which materials the model names, read those that are in the pack, then ask again with the answers.
   const wanted = new Set<string>()
   if (!readModel(files, paths => { for (const p of paths) wanted.add(p); return false }, maxTriangles)) {
@@ -75,13 +87,13 @@ async function loadModel(src: ByteSource, pak: Pak, name: string, foliageCache: 
  */
 export async function buildPropSet(
   src: ByteSource, header: BspHeader, entityProps: Placement[], around: { minX: number, minY: number, maxX: number, maxY: number } | null,
-  limits: PropLimits = PROP_LIMITS,
+  limits: PropLimits = PROP_LIMITS, stock?: StockModels,
 ): Promise<{ set: PropSet, report: PropReport }> {
   const statics = await readStaticProps(src, header)
   const all = [...statics.placements, ...entityProps]
   const m = limits.nearMargin
   const near = around ? all.filter(p => p.x >= around.minX - m && p.x <= around.maxX + m && p.y >= around.minY - m && p.y <= around.maxY + m) : []
-  const report: PropReport = { found: all.length, near: near.length, drawnModels: 0, drawnPlacements: 0, triangles: 0, foliageModels: 0, cards: 0, unavailable: 0, unreadable: 0, tooBig: 0, dropped: 0, skippedRecords: statics.skipped }
+  const report: PropReport = { found: all.length, near: near.length, drawnModels: 0, drawnPlacements: 0, fromGame: 0, triangles: 0, foliageModels: 0, cards: 0, unavailable: 0, unreadable: 0, tooBig: 0, dropped: 0, skippedRecords: statics.skipped }
   const set: PropSet = { models: [], placements: [] }
   if (near.length === 0) return { set, report }
 
@@ -89,8 +101,8 @@ export async function buildPropSet(
   const foliageCache = new Map<string, boolean>()
   const loaded = new Map<string, { solid: number[], foliage: number[], triangles: number } | null>()
   const names = [...new Set(near.map(p => p.model))]
-  for (const name of names) {
-    const r = await loadModel(src, pak, name, foliageCache, limits.maxModelTriangles)
+  const fromGame = new Set<string>()
+  const settle = (name: string, r: Awaited<ReturnType<typeof loadModel>> | 'unavailable') => {
     if (r === 'unavailable') { report.unavailable++; loaded.set(name, null) }
     else if (r === 'unreadable') { report.unreadable++; loaded.set(name, null) }
     else if (r === 'big') { report.tooBig++; loaded.set(name, null) }
@@ -99,6 +111,21 @@ export async function buildPropSet(
       // A model that is nothing but cards has nothing to draw.
       loaded.set(name, r.solid.length + r.foliage.length === 0 ? null : { solid: r.solid, foliage: r.foliage, triangles: (r.solid.length + r.foliage.length) / 9 })
     }
+  }
+  const missing: string[] = []
+  for (const name of names) {
+    const files = await packFiles(src, pak, name)
+    if (files) settle(name, await loadModel(src, pak, files, foliageCache, limits.maxModelTriangles))
+    else missing.push(name)
+  }
+  const answer = stock && missing.length ? await stock(missing) : { models: new Map<string, ModelFiles>() }
+  const game = answer.models
+  if ('error' in answer && answer.error) report.stockError = answer.error
+  for (const name of missing) {
+    const files = game.get(name)
+    if (!files) { settle(name, 'unavailable'); continue }
+    fromGame.add(name)
+    settle(name, await loadModel(src, pak, files, foliageCache, limits.maxModelTriangles))
   }
 
   // Over a limit, the biggest models go first: the places are sorted by the triangles of their model, and the list is cut.
@@ -115,6 +142,7 @@ export async function buildPropSet(
     triangles += model.triangles
   }
   report.drawnModels = set.models.length
+  report.fromGame = set.models.filter(m => fromGame.has(m.name)).length
   report.foliageModels = set.models.filter(m => m.foliage.length > 0).length
   report.drawnPlacements = set.placements.length
   report.triangles = triangles

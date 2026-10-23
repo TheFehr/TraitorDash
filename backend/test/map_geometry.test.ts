@@ -349,6 +349,27 @@ describe('rebuilding a mesh of an older generation (RFC 18)', () => {
     expect(state().detail).toBeNull()
   })
 
+  test('switching the game\'s own models on rebuilds the meshes made without them, once', async () => {
+    await parse()
+    expect(Store.getGeometryQueue()).toEqual([])
+    process.env.GAME_CONTENT = '1'
+    try {
+      expect(Store.getGeometryQueue()).toEqual([{ map: 'ttt_a', fingerprint: FP }])
+      await geo.runGeometryQueue(writer(file))
+      expect(version()).toBe(MESH_VERSION + 1)
+      expect(Store.getGeometryQueue()).toEqual([])
+    } finally { delete process.env.GAME_CONTENT }
+    expect(Store.getGeometryQueue()).toEqual([]) // switched off again: the richer mesh is not older
+  })
+
+  test('a note from the build (the game\'s models could not be fetched) is kept with the mesh and shown', async () => {
+    await toggle(serverId, 'ttt_a', true)
+    Store.startGeometry('ttt_a', FP)
+    Store.finishGeometry('ttt_a', FP, { mesh: new Uint8Array([1]), info: { vertices: 0, triangles: 0, levels: 1, water: 0 }, note: 'The game\'s own models could not all be fetched: the download failed' })
+    expect(state().detail).toContain('could not all be fetched')
+    expect(state().status).toBe('parsed')
+  })
+
   test('a map nobody asks for is not rebuilt', async () => {
     await parse()
     makeOld()
@@ -394,7 +415,7 @@ describe('props in the mesh (RFC 18, 4.3)', () => {
     const b = withProps('"VertexLitGeneric" { $alphatest 1 }')
     const r = await geo.buildGeometry(bsp.memorySource(b), 'ttt_a', fpOf(b))
     if (!r.ok) throw new Error(r.error)
-    expect(r.info.props).toEqual({ placed: 2, models: 1, foliage: 1, cards: 0, unavailable: 1, unreadable: 0, dropped: 0 })
+    expect(r.info.props).toEqual({ placed: 2, models: 1, foliage: 1, cards: 0, fromGame: 0, unavailable: 1, unreadable: 0, dropped: 0 })
   })
 
   test('the map page says how many props, how many models are the game\'s own, and has the Props and the Glass and leaves switches', async () => {

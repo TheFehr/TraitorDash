@@ -76,12 +76,15 @@ async function findFiles(dir: string, suffixes: string[]): Promise<string[]> {
   return out
 }
 
-/** Runs the helper for one addon into `dir`. Returns an error text, or null when it exited cleanly in time and size. */
-async function download(binary: string, wsid: string, dir: string, o: Required<Pick<WorkshopOptions, 'maxBytes' | 'timeoutMs'>>): Promise<string | null> {
+/**
+ * Runs the helper with `args` (and `-dir <dir>/out`). Returns an error text, or null when it exited cleanly in time and size.
+ * Shared with the game content download (RFC 18, 4.5).
+ */
+export async function runHelper(binary: string, args: string[], dir: string, o: Required<Pick<WorkshopOptions, 'maxBytes' | 'timeoutMs'>>): Promise<string | null> {
   await mkdir(join(dir, 'home'), { recursive: true })
   let proc: ReturnType<typeof Bun.spawn>
   try {
-    proc = Bun.spawn([binary, '-app', GAME_APP, '-pubfile', wsid, '-dir', join(dir, 'out')], {
+    proc = Bun.spawn([binary, ...args, '-dir', join(dir, 'out')], {
       cwd: dir,
       stdin: 'ignore', stdout: 'pipe', stderr: 'pipe',
       // Nothing of this process's environment is handed on: no tokens, no database path.
@@ -104,6 +107,10 @@ async function download(binary: string, wsid: string, dir: string, o: Required<P
     return why ? `The download failed (the helper said: ${why})` : `The download failed (the helper exited with code ${code}).`
   } finally { clearTimeout(timer); clearInterval(watch) }
 }
+
+/** Runs the helper for one addon into `dir`. */
+const download = (binary: string, wsid: string, dir: string, o: Required<Pick<WorkshopOptions, 'maxBytes' | 'timeoutMs'>>) =>
+  runHelper(binary, ['-app', GAME_APP, '-pubfile', wsid], dir, o)
 
 /**
  * Old Workshop items are one LZMA stream around the archive. Decodes it with the system `xz` into

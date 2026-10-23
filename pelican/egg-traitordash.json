@@ -182,6 +182,20 @@
         "string",
         "in:0,1"
       ]
+    },
+    {
+      "sort": 12,
+      "name": "The game's own models",
+      "description": "1 lets the backend fetch Counter-Strike: Source and Garry's Mod models (props_c17 and the like) for the 3D maps from Valve's free dedicated-server downloads, no account needed (RFC 18, 4.5): up to about 1.9 GB of transfer once, kept as a cache of a few tens of MB. Needs exact map geometry. Off by default.",
+      "env_variable": "GAME_CONTENT",
+      "default_value": "0",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": [
+        "required",
+        "string",
+        "in:0,1"
+      ]
     }
   ]
 }

@@ -19,7 +19,8 @@ import { buildRoleView, listRoles, parsePlayers, publicRoles, publicRoleSettings
 import { RoleListPage, RolePage, RoleNotFound } from './components/RolePublic'
 import { HomePage } from './components/HomePage'
 import { MapsPage, MapFilePage, MapViewPage, nextOf } from './components/MapPages'
-import { geometryEnabled, kickGeometryQueue, setGeometryFetcher } from './services/mapgeometry'
+import { geometryEnabled, kickGeometryQueue, setGeometryFetcher, setStockModels } from './services/mapgeometry'
+import { gameContent, gameContentEnabled } from './services/gameContent'
 import { helperAvailable, workshopFetcher } from './services/workshop'
 import { sameOrigin } from './middleware/csrf'
 
@@ -587,6 +588,11 @@ if (import.meta.main) {
   setTimeout(() => console.log(`${STARTUP_LOG_LINE} ${port} (source ${sourceHash()})`), 0)
   if (geometryEnabled()) {
     setGeometryFetcher(workshopFetcher())
+    if (gameContentEnabled()) {
+      const content = gameContent()
+      setStockModels(content.models)
+      console.log(`[Geometry] The game's own models are fetched on demand into ${content.root}.`)
+    }
     helperAvailable().then(ok => console.log(ok
       ? '[Geometry] Exact map geometry is on.'
       : '[Geometry] MAP_GEOMETRY=1, but the download helper (DepotDownloader) was not found; requested maps will fail. Set DEPOTDOWNLOADER_PATH.'))
