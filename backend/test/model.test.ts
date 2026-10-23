@@ -60,6 +60,14 @@ describe('foliage (a material with a cut-out or a translucent texture)', () => {
     expect(m.foliage).toEqual([10, 0, 0, 0, 10, 0, 10, 10, 5])
   })
 
+  test('a foliage mesh of a few huge flat sheets is a card: left out and counted; a big solid one is kept', () => {
+    const huge: [number, number, number][] = [[0, 0, 0], [2400, 0, 0], [0, 1000, 0]]
+    const files = buildModel({ ...spec, meshes: [{ material: 0, vertices: huge, tris: [0, 1, 2] }, { material: 1, vertices: huge, tris: [0, 1, 2] }] })
+    const m = readModel(files, p => p.includes('materials/models/props/tree/leaves.vmt'))!
+    expect(tri(m)).toEqual({ solid: 1, foliage: 0 })
+    expect(m.cards).toBe(1)
+  })
+
   test('a material that is not named by the model counts as solid', () => {
     const m = readModel(buildModel({ ...spec, skinref: [0] }), () => true)! // mesh 1 has material 1, which the skin table does not have
     expect(tri(m)).toEqual({ solid: 1, foliage: 1 })

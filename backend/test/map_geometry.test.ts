@@ -394,7 +394,7 @@ describe('props in the mesh (RFC 18, 4.3)', () => {
     const b = withProps('"VertexLitGeneric" { $alphatest 1 }')
     const r = await geo.buildGeometry(bsp.memorySource(b), 'ttt_a', fpOf(b))
     if (!r.ok) throw new Error(r.error)
-    expect(r.info.props).toEqual({ placed: 2, models: 1, foliage: 1, unavailable: 1, unreadable: 0, dropped: 0 })
+    expect(r.info.props).toEqual({ placed: 2, models: 1, foliage: 1, cards: 0, unavailable: 1, unreadable: 0, dropped: 0 })
   })
 
   test('the map page says how many props, how many models are the game\'s own, and has the Props and the Glass and leaves switches', async () => {

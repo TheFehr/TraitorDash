@@ -12,7 +12,7 @@ export const geometryEnabled = () => process.env.MAP_GEOMETRY === '1'
 /** What is stored about a mesh (and shown on the map page). `props` is what was drawn; `unavailable` models are the game's own, which the map does not carry. */
 export interface GeometryInfo {
   vertices: number, triangles: number, levels: number, water: number
-  props?: { placed: number, models: number, foliage: number, unavailable: number, unreadable: number, dropped: number }
+  props?: { placed: number, models: number, foliage: number, cards?: number, unavailable: number, unreadable: number, dropped: number }
 }
 
 export type GeometryResult =
@@ -43,7 +43,7 @@ export async function buildGeometry(src: ByteSource, map: string, fingerprint: s
     if (!out) return { ok: false, error: 'The map has no surfaces to draw.' }
     return { ok: true, glb: out.glb, info: {
       vertices: out.info.vertices, triangles: out.info.triangles, levels: out.info.levels.length, water: out.info.waterTriangles,
-      props: { placed: report.drawnPlacements, models: report.drawnModels, foliage: report.foliageModels, unavailable: report.unavailable, unreadable: report.unreadable + report.tooBig, dropped: report.dropped },
+      props: { placed: report.drawnPlacements, models: report.drawnModels, foliage: report.foliageModels, cards: report.cards, unavailable: report.unavailable, unreadable: report.unreadable + report.tooBig, dropped: report.dropped },
     } }
   } catch (e) {
     // BspError messages describe the file's structure, not its content; anything else is ours.

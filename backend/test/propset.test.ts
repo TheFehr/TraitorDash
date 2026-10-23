@@ -94,6 +94,31 @@ describe('foliage, from the material files in the pack', () => {
   })
 })
 
+describe('cards: foliage that is only a few huge flat sheets (RFC 18, 4.3)', () => {
+  const huge: [number, number, number][] = [[0, 0, 0], [2400, 0, 0], [0, 1000, 0]] // one triangle of 1 200 000 units squared
+  const crown = buildModel({ textures: ['leaves'], meshes: [{ vertices: [A, B, C], tris: [0, 1, 2] }] })
+  const card = buildModel({ textures: ['leaves'], meshes: [{ vertices: huge, tris: [0, 1, 2] }] })
+  const trunkAndCard = buildModel({ textures: ['bark', 'leaves'], meshes: [{ material: 0, vertices: huge, tris: [0, 1, 2] }, { material: 1, vertices: huge, tris: [0, 1, 2] }] })
+  const pack = { ...files('crown', crown), ...files('card', card), ...files('mixed', trunkAndCard), 'materials/models/test/leaves.vmt': '"VertexLitGeneric" { $alphatest 1 }' }
+  const at = (n: string, i: number) => ({ model: `models/test/${n}.mdl`, x: 100 + i * 50, y: 100 })
+
+  test('a crown of small leaves is kept as foliage; a model of nothing but cards is not drawn, and is counted', async () => {
+    const { src, header } = await open(pack, [at('crown', 0), at('card', 1)])
+    const { set, report } = await buildPropSet(src, header, [], around)
+    expect(set.models.map(m => m.name)).toEqual(['models/test/crown.mdl'])
+    expect(set.models[0]!.foliage).toHaveLength(9)
+    expect(report).toMatchObject({ drawnModels: 1, drawnPlacements: 1, foliageModels: 1, cards: 1 })
+  })
+
+  test('a model with solid parts and a card keeps the solid parts (a big flat solid is a wall, not a card)', async () => {
+    const { src, header } = await open(pack, [at('mixed', 0)])
+    const { set, report } = await buildPropSet(src, header, [], around)
+    expect(set.models[0]!.solid).toHaveLength(9) // the bark mesh is huge too, but it is solid: kept
+    expect(set.models[0]!.foliage).toEqual([])
+    expect(report.cards).toBe(1)
+  })
+})
+
 describe('the limits (RFC 18, 7): over one, the biggest models go first, and the report says how many went', () => {
   const pack = { ...files('small', big(2)), ...files('mid', big(10)), ...files('large', big(40)) }
   const props = ['small', 'mid', 'large'].flatMap((n, i) => [0, 1].map(k => ({ model: `models/test/${n}.mdl`, x: 100 + i * 100 + k * 10, y: 100 })))
@@ -141,7 +166,7 @@ describe('the mesh', () => {
     expect(doc.getRoot().listMeshes().map(m => m.getName()).filter(n => n.startsWith('prop:') || n.startsWith('foliage:'))).toEqual(['prop:models/test/glassy.mdl', 'foliage:models/test/glassy.mdl'])
     const mats = place.listChildren().map(c => c.getMesh()!.listPrimitives()[0]!.getMaterial()!)
     expect(mats.map(m => m.getName())).toEqual(['prop', 'foliage'])
-    expect(mats[1]!.getAlphaMode()).toBe('BLEND')
+    expect(mats[1]!.getAlphaMode()).toBe('OPAQUE') // foliage is drawn solid: translucent it looked like fog
     const report = await validator.validateBytes(r.glb)
     expect(report.issues.numErrors).toBe(0)
     expect(report.issues.numWarnings).toBe(0)

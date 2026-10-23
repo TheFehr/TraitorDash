@@ -327,10 +327,10 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
   }
 
   // The props: one node `props` holding a node per place; a place is a transform with two children, the solid mesh of its
-  // model and its foliage mesh (drawn translucent), so a viewer can hide either. A model's meshes are written once and shared by all its places.
+  // model and its foliage mesh (a little darker, so a crown can be told from its trunk), so a viewer can hide either. A model's meshes are written once and shared by all its places.
   if (s.props && s.props.placements.length > 0) {
     const propMat = doc.createMaterial('prop').setBaseColorFactor([0.72, 0.7, 0.63, 1]).setMetallicFactor(0).setRoughnessFactor(1).setDoubleSided(true)
-    const foliageMat = doc.createMaterial('foliage').setBaseColorFactor([0.72, 0.7, 0.63, 0.33]).setAlphaMode('BLEND').setMetallicFactor(0).setRoughnessFactor(1).setDoubleSided(true)
+    const foliageMat = doc.createMaterial('foliage').setBaseColorFactor([0.62, 0.62, 0.55, 1]).setMetallicFactor(0).setRoughnessFactor(1).setDoubleSided(true)
     const meshes = new Map<number, { solid: ReturnType<typeof doc.createMesh> | null, foliage: ReturnType<typeof doc.createMesh> | null, triangles: number }>()
     const meshOf = (name: string, soup: number[], material: typeof propMat) => {
       if (soup.length === 0) return null

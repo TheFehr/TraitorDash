@@ -126,7 +126,7 @@ export function prepareWater(model: Object3D, cut: Plane): Object3D | null {
   return water
 }
 
-/** The props of a model, if it has any: the meshes by kind, cut like the levels, matte; foliage never hides what is behind it. Their materials are shared by all the places, so they are set once. */
+/** The props of a model, if it has any: the meshes by kind, cut like the levels, matte. Their materials are shared by all the places, so they are set once. */
 export function prepareProps(model: Object3D, cut: Plane): { solid: Mesh[], foliage: Mesh[] } {
   const out = { solid: [] as Mesh[], foliage: [] as Mesh[] }
   const seen = new Set<MeshStandardMaterial>()
@@ -139,7 +139,6 @@ export function prepareProps(model: Object3D, cut: Plane): { solid: Mesh[], foli
       mesh.material.clippingPlanes = [cut]
       mesh.material.metalness = 0
       mesh.material.roughness = 1
-      if (foliage) mesh.material.depthWrite = false
     }
     ;(foliage ? out.foliage : out.solid).push(mesh)
   })

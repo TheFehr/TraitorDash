@@ -7,9 +7,19 @@
 export interface ModelMesh {
   /** Triangles of the solid meshes, x y z per corner, in the model's own space. */
   solid: number[]
-  /** Triangles of the meshes whose material is foliage. */
+  /** Triangles of the meshes whose material is foliage (a cut-out or translucent material) and that have a shape of their own. */
   foliage: number[]
+  /** Foliage meshes left out because they are cards: see `CARD_TRIANGLE_AREA`. */
+  cards: number
 }
+
+/**
+ * A foliage mesh whose triangles are on average bigger than this (units squared, about 220 by 220) is a card: a few huge
+ * flat sheets that take their shape from a texture, which is not read, so without it they are only a sheet (the leaf cards
+ * of `ttt_alps` are 230 triangles over 2 400 units; the cloud and mountain backdrops of other maps are the same). It is
+ * left out. A crown made of many small leaves is far below this (the largest in the 27 maps measured: about 20 000).
+ */
+export const CARD_TRIANGLE_AREA = 50_000
 
 export interface ModelFiles { mdl: Uint8Array, vvd: Uint8Array, vtx: Uint8Array }
 
@@ -103,11 +113,12 @@ function read({ mdl, vvd, vtx }: ModelFiles, isFoliage: (vmtPaths: string[]) => 
   const vtxMeshes = cap(t.getInt32(vtxLod, true), MAX_MESHES), vtxMeshAt = vtxLod + t.getInt32(vtxLod + 4, true)
 
   const solid: number[] = [], foliage: number[] = []
-  let triangles = 0
+  let triangles = 0, cards = 0
   for (let k = 0; k < Math.min(nMeshes, vtxMeshes); k++) {
     const mesh = meshAt + k * STUDIO_MESH
     const vertexOffset = m.getInt32(mesh + 12, true)
-    const target = foliageMaterial(m.getInt32(mesh, true)) ? foliage : solid
+    const isFoliage_ = foliageMaterial(m.getInt32(mesh, true))
+    const target = isFoliage_ ? [] as number[] : solid
     const vm = vtxMeshAt + k * 9
     const groups = cap(t.getInt32(vm, true), MAX_STRIP_GROUPS), groupAt = vm + t.getInt32(vm + 4, true)
     for (let g = 0; g < groups; g++) {
@@ -133,6 +144,21 @@ function read({ mdl, vvd, vtx }: ModelFiles, isFoliage: (vmtPaths: string[]) => 
         }
       }
     }
+    if (isFoliage_) {
+      if (meanArea(target) > CARD_TRIANGLE_AREA) cards++
+      else for (const x of target) foliage.push(x)
+    }
   }
-  return triangles === 0 ? null : { solid, foliage }
+  return triangles === 0 ? null : { solid, foliage, cards }
+}
+
+/** The mean area of the triangles of a soup (x y z per corner). */
+function meanArea(soup: number[]): number {
+  let total = 0
+  for (let i = 0; i < soup.length; i += 9) {
+    const ux = soup[i + 3]! - soup[i]!, uy = soup[i + 4]! - soup[i + 1]!, uz = soup[i + 5]! - soup[i + 2]!
+    const vx = soup[i + 6]! - soup[i]!, vy = soup[i + 7]! - soup[i + 1]!, vz = soup[i + 8]! - soup[i + 2]!
+    total += Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx) / 2
+  }
+  return soup.length === 0 ? 0 : total / (soup.length / 9)
 }

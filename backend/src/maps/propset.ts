@@ -32,6 +32,8 @@ export interface PropReport {
   triangles: number
   /** Distinct drawn models that have foliage in them. */
   foliageModels: number
+  /** Distinct models that have cards (flat sheets that need their texture, see `CARD_TRIANGLE_AREA`), which are left out; a model of nothing else is not drawn at all. */
+  cards: number
   /** Distinct models that are not in the pack (the game's own: not drawn), unreadable, or over the triangle limit. */
   unavailable: number
   unreadable: number
@@ -44,7 +46,7 @@ export interface PropReport {
 const FOLIAGE = /["']?\$(alphatest|translucent)["']?\s+["']?1/i
 
 /** What the pack of a map holds for a model, and the answer to "is this material foliage" for the materials it names. */
-async function loadModel(src: ByteSource, pak: Pak, name: string, foliageCache: Map<string, boolean>, maxTriangles: number): Promise<'unavailable' | 'unreadable' | 'big' | { solid: number[], foliage: number[] }> {
+async function loadModel(src: ByteSource, pak: Pak, name: string, foliageCache: Map<string, boolean>, maxTriangles: number): Promise<'unavailable' | 'unreadable' | 'big' | { solid: number[], foliage: number[], cards: number }> {
   const base = name.replace(/\.mdl$/, '')
   const [mdl, vvd, vtx] = await Promise.all([
     readPakMember(src, pak, `${base}.mdl`),
@@ -79,7 +81,7 @@ export async function buildPropSet(
   const all = [...statics.placements, ...entityProps]
   const m = limits.nearMargin
   const near = around ? all.filter(p => p.x >= around.minX - m && p.x <= around.maxX + m && p.y >= around.minY - m && p.y <= around.maxY + m) : []
-  const report: PropReport = { found: all.length, near: near.length, drawnModels: 0, drawnPlacements: 0, triangles: 0, foliageModels: 0, unavailable: 0, unreadable: 0, tooBig: 0, dropped: 0, skippedRecords: statics.skipped }
+  const report: PropReport = { found: all.length, near: near.length, drawnModels: 0, drawnPlacements: 0, triangles: 0, foliageModels: 0, cards: 0, unavailable: 0, unreadable: 0, tooBig: 0, dropped: 0, skippedRecords: statics.skipped }
   const set: PropSet = { models: [], placements: [] }
   if (near.length === 0) return { set, report }
 
@@ -92,7 +94,11 @@ export async function buildPropSet(
     if (r === 'unavailable') { report.unavailable++; loaded.set(name, null) }
     else if (r === 'unreadable') { report.unreadable++; loaded.set(name, null) }
     else if (r === 'big') { report.tooBig++; loaded.set(name, null) }
-    else loaded.set(name, { ...r, triangles: (r.solid.length + r.foliage.length) / 9 })
+    else {
+      if (r.cards > 0) report.cards++
+      // A model that is nothing but cards has nothing to draw.
+      loaded.set(name, r.solid.length + r.foliage.length === 0 ? null : { solid: r.solid, foliage: r.foliage, triangles: (r.solid.length + r.foliage.length) / 9 })
+    }
   }
 
   // Over a limit, the biggest models go first: the places are sorted by the triangles of their model, and the list is cut.
