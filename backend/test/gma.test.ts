@@ -25,6 +25,11 @@ describe('readGmaIndex', () => {
     expect(mapEntries([e('maps/sub/x.bsp'), e('maps/../x.bsp'), e('maps/a b.bsp'), e('maps/x.bsp.bz2'), e('maps/' + 'a'.repeat(65) + '.bsp')])).toEqual([])
   })
 
+  test('an addon with a long description (some have pages of it) is read', async () => {
+    const long = buildGma({ 'maps/ttt_a.bsp': 'BSPDATA' }, 'x'.repeat(5000))
+    expect((await readGmaIndex(memorySource(long))).map(f => f.name)).toEqual(['maps/ttt_a.bsp'])
+  })
+
   test('refuses what is not an archive, or is cut off, or lies about sizes', async () => {
     await expect(readGmaIndex(memorySource(Buffer.from('not an addon at all')))).rejects.toThrow('Not a readable addon archive')
     await expect(readGmaIndex(memorySource(gma.subarray(0, 30)))).rejects.toThrow('Not a readable addon archive')

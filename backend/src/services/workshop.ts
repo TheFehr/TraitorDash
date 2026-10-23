@@ -68,10 +68,10 @@ async function dirBytes(dir: string): Promise<number> {
   return total
 }
 
-async function findFiles(dir: string, suffix: string): Promise<string[]> {
+async function findFiles(dir: string, suffixes: string[]): Promise<string[]> {
   const out: string[] = []
   for (const e of await readdir(dir, { withFileTypes: true, recursive: true }).catch(() => [])) {
-    if (e.isFile() && e.name.toLowerCase().endsWith(suffix) && !e.parentPath.includes('.DepotDownloader')) out.push(join(e.parentPath, e.name))
+    if (e.isFile() && suffixes.some(s => e.name.toLowerCase().endsWith(s)) && !e.parentPath.includes('.DepotDownloader')) out.push(join(e.parentPath, e.name))
   }
   return out
 }
@@ -124,10 +124,13 @@ async function unlzma(path: string, out: string, maxBytes: number): Promise<stri
   return (await stat(out).catch(() => null))?.size === size ? null : 'The compressed addon could not be opened.'
 }
 
-/** Makes the downloaded files plain archives, returning their paths. */
+/**
+ * Makes the downloaded files plain archives, returning their paths. The oldest Workshop items (2013 to
+ * 2014) are stored as `.gm`, not `.gma`; they are the same LZMA-wrapped archive.
+ */
 async function archives(dir: string, maxBytes: number): Promise<{ paths: string[] } | { error: string }> {
   const paths: string[] = []
-  for (const f of await findFiles(join(dir, 'out'), '.gma')) {
+  for (const f of await findFiles(join(dir, 'out'), ['.gma', '.gm'])) {
     const head = new Uint8Array(await Bun.file(f).slice(0, 4).arrayBuffer())
     if (new TextDecoder().decode(head) === 'GMAD') { paths.push(f); continue }
     const plain = f + '.plain'

@@ -4,6 +4,7 @@ import { BspError, type ByteSource } from './bsp'
 // bytes one after another. This reads the table only, so a map can be read in place afterwards
 // without unpacking anything (RFC 11, 3.2).
 
+const MAX_TEXT = 1024 * 1024 // an addon's description; the table limit bounds it anyway
 export interface GmaEntry { name: string, offset: number, size: number }
 export interface GmaLimits { maxTableBytes?: number, maxFiles?: number }
 
@@ -44,7 +45,7 @@ export async function readGmaIndex(src: ByteSource, limits: GmaLimits = {}): Pro
   if (version < 1 || version > 3) fail(`version ${version}`)
   u64(); u64() // steam id, timestamp
   if (version > 1) { while (str() !== '') { /* required content */ } }
-  str(); str(); str() // title, description, author
+  str(); str(MAX_TEXT); str() // title, description (a long text on some addons), author
   u32() // addon version
 
   const entries: GmaEntry[] = []

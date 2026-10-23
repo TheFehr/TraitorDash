@@ -39,7 +39,8 @@ if [ -f "${fix}/$ID.noisy" ]; then head -c 3000000 /dev/zero | tr '\\0' 'x' | fo
 [ -f "${fix}/$ID.sleep" ] && exec sleep 30
 mkdir -p "$OUT/sub"
 if [ -f "${fix}/$ID.big" ]; then dd if=/dev/zero of="$OUT/sub/big.gma" bs=1M count=3 2>/dev/null; exec sleep 30; fi
-cp "${fix}/$ID.gma" "$OUT/sub/gmpublisher.gma"
+EXT=gma; [ -f "${fix}/$ID.ext" ] && EXT=$(cat "${fix}/$ID.ext")
+cp "${fix}/$ID.gma" "$OUT/sub/gmpublisher.$EXT"
 `)
   chmodSync(script, 0o755)
   return script
@@ -281,6 +282,15 @@ describe('old items (one LZMA stream around the archive)', () => {
     await geo.runGeometryQueue(fetcher())
     expect(status('ttt_a').status).toBe('parsed')
     expect(readdirSync(scratch)).toEqual([])
+  })
+
+  test.skipIf(!xz)('the oldest ones are stored as .gm, not .gma, and are opened all the same', async () => {
+    addon('333', lzma(buildGma({ 'maps/ttt_a.bsp': bspA })))
+    writeFileSync(join(fix, '333.ext'), 'gm')
+    report([['ttt_a', bspA]], ['333'])
+    want('ttt_a')
+    await geo.runGeometryQueue(fetcher())
+    expect(status('ttt_a').status).toBe('parsed')
   })
 
   test.skipIf(!xz)('one that unpacks to more than the limit is refused before it is unpacked', async () => {

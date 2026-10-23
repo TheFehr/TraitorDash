@@ -120,14 +120,14 @@ export function flatDisplacement(power: number, z = 0, size = 64, opts: { start?
 }
 
 /** A GMA (Garry's Mod addon archive, version 3) holding `files`. */
-export function buildGma(files: Record<string, Buffer | string>): Buffer {
+export function buildGma(files: Record<string, Buffer | string>, description = '{}'): Buffer {
   const cstr = (s: string) => Buffer.concat([Buffer.from(s, 'latin1'), Buffer.from([0])])
   const u32 = (n: number) => { const b = Buffer.alloc(4); b.writeUInt32LE(n); return b }
   const u64 = (n: number) => { const b = Buffer.alloc(8); b.writeBigUInt64LE(BigInt(n)); return b }
   const bodies = Object.values(files).map(v => (typeof v === 'string' ? Buffer.from(v) : v))
   const table = Object.keys(files).map((name, i) => Buffer.concat([u32(i + 1), cstr(name), u64(bodies[i]!.length), u32(0)]))
   return Buffer.concat([
-    Buffer.from('GMAD'), Buffer.from([3]), u64(0), u64(0), cstr(''), cstr('test addon'), cstr('{}'), cstr('test'), u32(1),
+    Buffer.from('GMAD'), Buffer.from([3]), u64(0), u64(0), cstr(''), cstr('test addon'), cstr(description), cstr('test'), u32(1),
     ...table, u32(0), ...bodies, u32(0),
   ])
 }
