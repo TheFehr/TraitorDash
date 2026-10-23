@@ -66,6 +66,14 @@ export interface RoundReport {
   revives?: { victim: string, reviver: string | null, how: string | null, why: string | null, at: number | null }[]
 }
 
+/**
+ * An ISO timestamp that is later than the one before it, even inside the same millisecond. A page cache is
+ * keyed by `MAX(updated_at)`; two changes in one millisecond (a test, or a burst of reports) would otherwise
+ * leave the key as it was and serve the old page.
+ */
+let lastStamp = 0
+const stamp = () => { lastStamp = Math.max(Date.now(), lastStamp + 1); return new Date(lastStamp).toISOString() }
+
 export class Store {
   static getServers(): any[] {
     const query = db.prepare(`SELECT ${SERVER_COLS} FROM servers ORDER BY name ASC`)
@@ -573,7 +581,7 @@ export class Store {
 
   /** The pages of a role are cached by when its row last changed, so a change here has to move `updated_at` too. */
   static setRoleTeam(serverId: string, roleName: string, team: string) {
-    db.prepare('UPDATE roles SET team = ?, updated_at = ? WHERE server_id = ? AND role_name = ? AND team != ?').run(team, new Date().toISOString(), serverId, roleName, team)
+    db.prepare('UPDATE roles SET team = ?, updated_at = ? WHERE server_id = ? AND role_name = ? AND team != ?').run(team, stamp(), serverId, roleName, team)
   }
 
   /** What the game says about the role: whether it is dealt at the start of a round, and the role it is a subrole of. */
@@ -583,7 +591,7 @@ export class Store {
     const selectable = meta.selectable === null ? null : meta.selectable ? 1 : 0
     db.prepare(`UPDATE roles SET selectable = COALESCE(?, selectable), base_role = ?, makers = ?, updated_at = ?
       WHERE server_id = ? AND role_name = ? AND (selectable IS NOT COALESCE(?, selectable) OR base_role IS NOT ? OR makers IS NOT ?)`)
-      .run(selectable, meta.baseRole, makers, new Date().toISOString(), serverId, roleName, selectable, meta.baseRole, makers)
+      .run(selectable, meta.baseRole, makers, stamp(), serverId, roleName, selectable, meta.baseRole, makers)
   }
 
   static saveSchema(serverId: string, roleName: string, team: string, isPolicing: boolean, baserole: number, schema: any[], md5Hash?: string, description: string | null = null, color: string | null = null) {
