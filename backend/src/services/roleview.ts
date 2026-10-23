@@ -21,7 +21,8 @@ export interface RoleView {
   facts: string | null
   /** For a role the addon does not describe: the text of the Workshop page of the addon it comes from, when that page is about few roles. */
   workshop: { wsid: string, title: string, text: string, alsoCovers: string[] } | null
-  numbers: { key: MetricKey, label: string, text: string }[]
+  /** `text` is "—" for a value the server has not given; `synced` says the server has reported other settings of this role, so the missing one is not a setting this role has. */
+  numbers: { key: MetricKey, label: string, text: string, synced: boolean }[]
   /** Null when the operator hides the settings (PUBLIC_ROLE_SETTINGS=0). */
   settings: { label: string, value: string | null, default: string | null }[] | null
 }
@@ -140,6 +141,9 @@ export function buildRoleView(serverId: string, roleName: string): RoleView | nu
   if (!role) return null
   const live = Store.getConVarValues(serverId)
   const metrics = roleMetrics(live, roleName)
+  // A role such as the Defector is made by a conversion in the game, not dealt at the start of a round, so it has no
+  // distribution, limit or chance settings: the server reports its other ConVars but never these.
+  const synced = Object.values(live).some(lv => lv.role === roleName && lv.present)
   return {
     name: roleName,
     team: String(role.team ?? ''),
@@ -149,7 +153,7 @@ export function buildRoleView(serverId: string, roleName: string): RoleView | nu
     description: cleanDescription(Store.getRoleNote(serverId, roleName) ?? Store.getRoleDescription(serverId, roleName)),
     facts: factsOf(String(role.team ?? ''), !!role.is_policing),
     workshop: workshopOf(serverId, roleName),
-    numbers: (Object.keys(METRICS) as MetricKey[]).map(key => ({ key, label: METRICS[key].label, text: metrics[key].text })),
+    numbers: (Object.keys(METRICS) as MetricKey[]).map(key => ({ key, label: METRICS[key].label, text: metrics[key].text, synced })),
     settings: publicRoleSettings() ? settingsOf(Store.getSchema(serverId, roleName) ?? [], live, roleName) : null,
   }
 }

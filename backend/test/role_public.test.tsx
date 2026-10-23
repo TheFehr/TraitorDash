@@ -115,6 +115,15 @@ describe('content', () => {
     expect(html).toContain('The addon does not describe this role.')
     expect(html).toContain('not reported yet')
   })
+  test('a role the server has reported other settings for, but not a distribution or limit, says there is no such setting (a Defector is made by a conversion, not dealt)', async () => {
+    Store.saveSchema(serverId, 'converted', 'traitors', false, -1, [], 'c1', null)
+    Store.setConVarValues(serverId, [live('ttt_conv_credits_starting', '0', '0', 'converted')])
+    const html = await (await get(`/servers/${serverId}/roles/converted`)).text()
+    expect(html).toContain('no such setting')
+    expect(html).not.toContain('not reported yet')
+    // a role nothing was reported for is still just "not reported yet"
+    expect(await (await get(`/servers/${serverId}/roles/plain`)).text()).toContain('not reported yet')
+  })
   test('a disabled role says so and keeps its numbers', async () => {
     Store.setConVarValues(serverId, [live('ttt_haunter_enabled', '0', '1')])
     const html = await page()

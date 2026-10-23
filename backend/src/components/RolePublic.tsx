@@ -91,7 +91,7 @@ export const RolePage = ({ server, role, embed, admin, players = null }: { serve
             </>}
         <h2>How it appears on this server</h2>
         <dl class="ledger">
-          {role.numbers.map(n => <div><dt>{n.label}</dt><dd>{n.text === '—' ? 'not reported yet' : n.text}</dd></div>)}
+          {role.numbers.map(n => <div><dt>{n.label}</dt><dd>{n.text !== '—' ? n.text : n.synced ? 'no such setting' : 'not reported yet'}</dd></div>)}
         </dl>
         {role.settings && (
           <>
