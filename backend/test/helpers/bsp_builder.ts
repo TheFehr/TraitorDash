@@ -5,10 +5,10 @@ export const HEADER_BYTES = 1036
 
 export const LUMP = {
   ENTITIES: 0, PLANES: 1, VERTEXES: 3, TEXINFO: 6, FACES: 7, EDGES: 12, SURFEDGES: 13, MODELS: 14,
-  DISPINFO: 26, DISP_VERTS: 33, PAKFILE: 40, DISP_TRIS: 48,
+  TEXDATA: 2, DISPINFO: 26, DISP_VERTS: 33, TEXDATA_STRING_DATA: 43, TEXDATA_STRING_TABLE: 44, PAKFILE: 40, DISP_TRIS: 48,
 } as const
 
-export const SURF = { SKY: 0x4, SKY2D: 0x2, TRIGGER: 0x40, NODRAW: 0x80, HINT: 0x100, SKIP: 0x200 } as const
+export const SURF = { SKY: 0x4, SKY2D: 0x2, WARP: 0x8, TRIGGER: 0x40, NODRAW: 0x80, HINT: 0x100, SKIP: 0x200 } as const
 
 export interface Plane { nx: number, ny: number, nz: number, dist: number }
 export interface Face { plane: number, side?: number, firstEdge: number, numEdges: number, texinfo?: number, dispinfo?: number }
@@ -23,6 +23,8 @@ export interface BspSpec {
   surfedges?: number[]
   faces?: Face[]
   texinfoFlags?: number[]
+  /** The material name of each texinfo (by index), as in the map's texture data lumps. */
+  materials?: string[]
   models?: Model[]
   /** Displacement records (terrain): where the grid starts, where its vertices begin in the vertex lump, and its power (2 to 4). */
   displacements?: { startPosition: [number, number, number], vertStart: number, power: number }[]
@@ -48,7 +50,7 @@ const face = (f: Face) => {
   b.writeInt16LE(f.texinfo ?? 0, 10); b.writeInt16LE(f.dispinfo ?? -1, 12)
   return b
 }
-const texinfo = (flags: number) => { const b = Buffer.alloc(72); b.writeInt32LE(flags, 64); return b }
+const texinfo = (flags: number, texdata = 0) => { const b = Buffer.alloc(72); b.writeInt32LE(flags, 64); b.writeInt32LE(texdata, 68); return b }
 const dispinfo = (d: { startPosition: [number, number, number], vertStart: number, power: number }) => {
   const b = Buffer.alloc(176)
   d.startPosition.forEach((n, i) => b.writeFloatLE(n, i * 4)); b.writeInt32LE(d.vertStart, 12); b.writeInt32LE(d.power, 20)
@@ -68,7 +70,15 @@ export function buildBsp(spec: BspSpec = {}): Buffer {
   lumps[LUMP.EDGES] = Buffer.concat((spec.edges ?? []).map(edge))
   lumps[LUMP.SURFEDGES] = Buffer.concat((spec.surfedges ?? []).map(int))
   lumps[LUMP.FACES] = Buffer.concat((spec.faces ?? []).map(face))
-  lumps[LUMP.TEXINFO] = Buffer.concat((spec.texinfoFlags ?? [0]).map(texinfo))
+  const count = Math.max((spec.texinfoFlags ?? [0]).length, (spec.materials ?? []).length)
+  lumps[LUMP.TEXINFO] = Buffer.concat(Array.from({ length: count }, (_, i) => texinfo((spec.texinfoFlags ?? [0])[i] ?? 0, i)))
+  if (spec.materials) {
+    // texture data: one record per material (the name is entry i of the string table); the strings are NUL-ended, one after another.
+    lumps[LUMP.TEXDATA] = Buffer.concat(spec.materials.map((_, i) => { const b = Buffer.alloc(32); b.writeInt32LE(i, 12); return b }))
+    let at = 0
+    lumps[LUMP.TEXDATA_STRING_TABLE] = Buffer.concat(spec.materials.map(m => { const b = int(at); at += m.length + 1; return b }))
+    lumps[LUMP.TEXDATA_STRING_DATA] = Buffer.concat(spec.materials.map(m => Buffer.from(m + '\0', 'latin1')))
+  }
   lumps[LUMP.MODELS] = Buffer.concat((spec.models ?? [{ firstFace: 0, numFaces: (spec.faces ?? []).length }]).map(model))
   lumps[LUMP.DISPINFO] = Buffer.concat((spec.displacements ?? []).map(dispinfo))
   lumps[LUMP.DISP_VERTS] = Buffer.concat((spec.dispVerts ?? []).map(dispvert))
@@ -91,6 +101,20 @@ export function buildBsp(spec: BspSpec = {}): Buffer {
     if (l.length) { body.push(l); offset += l.length }
   })
   return Buffer.concat([header, ...body])
+}
+
+/** Several flat quads, each of 64 by 64 at its own height, facing up, one face each (face i is the quad at heights[i]). */
+export function flatQuads(heights: number[]): Required<Pick<BspSpec, 'planes' | 'vertices' | 'edges' | 'surfedges' | 'faces' | 'texinfoFlags'>> {
+  const out = { texinfoFlags: heights.map(() => 0), planes: [] as Plane[], vertices: [] as [number, number, number][], edges: [[0, 0]] as [number, number][], surfedges: [] as number[], faces: [] as Face[] }
+  heights.forEach((z, i) => {
+    const v = out.vertices.length, e = out.edges.length
+    out.planes.push({ nx: 0, ny: 0, nz: 1, dist: z })
+    out.vertices.push([i * 100, 0, z], [i * 100 + 64, 0, z], [i * 100 + 64, 64, z], [i * 100, 64, z])
+    out.edges.push([v, v + 1], [v + 1, v + 2], [v + 2, v + 3], [v + 3, v])
+    out.faces.push({ plane: i, firstEdge: out.surfedges.length, numEdges: 4, texinfo: i })
+    out.surfedges.push(e, e + 1, e + 2, e + 3)
+  })
+  return out
 }
 
 /** A quad on the plane z = `z`, facing up, as two vertices-per-edge records. Returns the spec parts. */

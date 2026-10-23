@@ -230,7 +230,7 @@ export interface MapViewProps {
   next: string | null
   plan: (MapPlanMeta & { levels: Level[] }) | null
   /** Exact geometry (RFC 11); undefined when the operator has not switched the feature on. */
-  geometry?: { requested: boolean, status?: string, detail?: string | null, info?: { vertices: number, triangles: number, levels: number } | null }
+  geometry?: { requested: boolean, status?: string, detail?: string | null, info?: { vertices: number, triangles: number, levels: number, water?: number } | null }
 }
 
 const GEOMETRY_LABEL: Record<string, string> = { queued: 'Queued', fetching: 'Fetching', parsed: 'Parsed', failed: 'Failed', unknown: 'Unknown' }
@@ -258,7 +258,8 @@ export const MapViewPage = ({ ctx, server, map, name, next, plan, geometry }: Ma
             : (
               <p>
                 <i class={`pill ${geometry.status === 'parsed' ? 'ok' : geometry.status === 'failed' ? 'wait' : 'mute'}`}>{GEOMETRY_LABEL[geometry.status ?? 'queued'] ?? 'Unknown'}</i>
-                {geometry.status === 'parsed' && geometry.info && <span>{geometry.info.triangles} triangles, {geometry.info.levels} {geometry.info.levels === 1 ? 'level' : 'levels'}</span>}
+                {geometry.status === 'parsed' && geometry.info && <span>{geometry.info.triangles} triangles, {geometry.info.levels} {geometry.info.levels === 1 ? 'level' : 'levels'}{geometry.info.water ? ', water' : ''}</span>}
+                {geometry.status === 'parsed' && geometry.detail && <span class="dim"> {geometry.detail}</span>}
                 {geometry.status === 'failed' && geometry.detail && <span class="dim"> {geometry.detail}</span>}
                 {geometry.status === 'unknown' && <span class="dim"> The server has not reported a fingerprint for this map.</span>}
               </p>
@@ -266,7 +267,6 @@ export const MapViewPage = ({ ctx, server, map, name, next, plan, geometry }: Ma
           <form method="post" action={`${mapPath(id, name)}/geometry`} class="inline">
             <input type="hidden" name="on" value={geometry.requested ? '0' : '1'} />
             <button type="submit" class="btn">{geometry.requested ? 'Turn off' : 'Turn on'}</button>
-            {geometry.status === 'parsed' && <a href={`${mapPath(id, name)}/mesh.glb`}>Download GLB</a>}
           </form>
         </div>
       )}
@@ -289,9 +289,16 @@ export const MapViewPage = ({ ctx, server, map, name, next, plan, geometry }: Ma
                 <button type="button" data-view="orbit" class="tog">3D</button>
                 <button type="button" data-view="top" class="tog">From above</button>
               </span>
+              <span role="group" aria-label="Colour">
+                <span class="cap">Colour</span>
+                <button type="button" data-colour="plain" aria-pressed="true" class="tog">Plain</button>
+                <button type="button" data-colour="height" aria-pressed="false" class="tog">Height</button>
+                <button type="button" data-colour="levels" aria-pressed="false" class="tog">Levels</button>
+              </span>
               <label><input type="checkbox" data-walls checked /> Walls</label>
+              {geometry.info.water ? <label><input type="checkbox" data-water checked /> Water</label> : null}
             </div>
-            <p class="foot dark">Drag to turn, scroll or pinch to zoom, right-drag to move. Floors are coloured by level, lowest green. A simplified map (no doors, glass or props): it shows the layout, not what a player could see.</p>
+            <p class="foot dark">Drag to turn, scroll or pinch to zoom, right-drag to move. A simplified map (no doors or glass): it shows the layout, not what a player could see. Colour: Plain shows the form, Height tints by height, Levels gives each storey its own colour, lowest green.</p>
           </div>
         </div>
       )}

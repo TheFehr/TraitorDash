@@ -1,7 +1,7 @@
 import { rm } from 'node:fs/promises'
 import { Store } from './Store'
 import { BspError, extractMapEntities, extractSurfaces, readHeader, type ByteSource } from '../maps/bsp'
-import { removeSkybox, surfacesToGlb } from '../maps/meshGlb'
+import { nearTriangles, removeSkybox, surfacesToGlb } from '../maps/meshGlb'
 import { fileSource } from '../maps/fileSource'
 export { fileSource }
 
@@ -9,7 +9,7 @@ export { fileSource }
 export const geometryEnabled = () => process.env.MAP_GEOMETRY === '1'
 
 export type GeometryResult =
-  | { ok: true, glb: Uint8Array, info: { vertices: number, triangles: number, levels: number } }
+  | { ok: true, glb: Uint8Array, info: { vertices: number, triangles: number, levels: number, water: number } }
   | { ok: false, error: string }
 
 /**
@@ -20,12 +20,13 @@ export async function buildGeometry(src: ByteSource, map: string, fingerprint: s
   try {
     const header = await readHeader(src)
     if (header.fingerprint !== fingerprint) return { ok: false, error: 'The file is not the version of the map the server has (fingerprint differs).' }
-    const surfaces = await extractSurfaces(src)
-    const { spawns, skyCameras } = await extractMapEntities(src)
+    const { spawns, skyCameras, fixtureModels } = await extractMapEntities(src)
+    const surfaces = await extractSurfaces(src, {}, fixtureModels)
     const cleaned = removeSkybox(surfaces, { skyCameras, spawns })
-    const out = await surfacesToGlb({ ...surfaces, ...cleaned }, { map })
+    const water = nearTriangles(surfaces.water, [cleaned.floors, cleaned.walls], 512)
+    const out = await surfacesToGlb({ ...surfaces, ...cleaned, water }, { map })
     if (!out) return { ok: false, error: 'The map has no surfaces to draw.' }
-    return { ok: true, glb: out.glb, info: { vertices: out.info.vertices, triangles: out.info.triangles, levels: out.info.levels.length } }
+    return { ok: true, glb: out.glb, info: { vertices: out.info.vertices, triangles: out.info.triangles, levels: out.info.levels.length, water: out.info.waterTriangles } }
   } catch (e) {
     // BspError messages describe the file's structure, not its content; anything else is ours.
     return { ok: false, error: e instanceof BspError ? e.message : 'Reading the map failed.' }

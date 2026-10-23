@@ -1,8 +1,11 @@
 /// <reference lib="dom" />
 import {
-  Box3, Vector3, Color, Mesh, MeshStandardMaterial, Plane, type Object3D, type BufferGeometry,
+  Box3, Vector3, Mesh, MeshStandardMaterial, Plane, type Object3D, type BufferGeometry,
 } from 'three'
-import { explainNoWebGL, makeCamera, makeRenderer, makeScene } from './sceneKit'
+import {
+  applyColouring, COLOURINGS, explainNoWebGL, heightColours, makeCamera, makeRenderer, makeScene, prepareWater, saveColouring, savedColouring,
+  type Colouring, type Painted,
+} from './sceneKit'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 
@@ -11,9 +14,6 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 // changes), so an open tab costs nothing while nobody touches it.
 
 const LEVEL_NAME = /^level-(\d+)$/
-/** One hue per level, low to high, so the storeys can be told apart. */
-const levelColour = (index: number, count: number) => new Color().setHSL(0.38 - 0.34 * (count > 1 ? (index - 1) / (count - 1) : 0), 0.55, 0.45)
-
 function start(root: HTMLElement) {
   const src = root.dataset.src
   const canvas = root.querySelector<HTMLCanvasElement>('canvas')
@@ -33,6 +33,8 @@ function start(root: HTMLElement) {
 
   const levels: { index: number, node: Object3D, hi: number }[] = []
   const walls: Mesh[] = []
+  const painted: Painted[] = []
+  let water: Object3D | null = null
   const draw = () => renderer.render(scene, camera)
   controls.addEventListener('change', draw)
 
@@ -81,6 +83,16 @@ function start(root: HTMLElement) {
     for (const m of walls) m.visible = (e.target as HTMLInputElement).checked
     draw()
   })
+  root.querySelector<HTMLInputElement>('[data-water]')?.addEventListener('change', e => {
+    if (water) water.visible = (e.target as HTMLInputElement).checked
+    draw()
+  })
+
+  const colour = (mode: Colouring) => {
+    applyColouring(painted, mode, levels.length)
+    root.querySelectorAll<HTMLElement>('[data-colour]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.colour === mode)))
+    draw()
+  }
 
   say('Loading the map…')
   fetch(src, { credentials: 'same-origin' })
@@ -101,9 +113,17 @@ function start(root: HTMLElement) {
           // does not have (the sides facing away from the light were black). Plain matte instead.
           mesh.material.metalness = 0
           mesh.material.roughness = 1
-          if (isWall) walls.push(mesh); else mesh.material.color = levelColour(l.index, levels.length)
+          if (isWall) walls.push(mesh)
+          painted.push({ mesh, wall: isWall, level: l.index })
         })
       }
+      water = prepareWater(model, cut)
+      heightColours(painted)
+      colour(savedColouring())
+      root.querySelectorAll<HTMLElement>('[data-colour]').forEach(b => b.addEventListener('click', () => {
+        const mode = (b.dataset.colour ?? 'plain') as Colouring
+        if ((COLOURINGS as string[]).includes(mode)) { saveColouring(mode); colour(mode) }
+      }))
       scene.add(model)
       const box = new Box3().setFromObject(model)
       size = box.getSize(new Vector3())

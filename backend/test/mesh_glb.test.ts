@@ -1,7 +1,7 @@
 import { expect, test, describe } from 'bun:test'
 import { NodeIO } from '@gltf-transform/core'
 import validator from 'gltf-validator'
-import { surfacesToGlb, cropTriangles, planBounds, spawnBounds, expandBounds, removeSkybox, splitAtHeights } from '../src/maps/meshGlb'
+import { surfacesToGlb, nearTriangles, MESH_VERSION, cropTriangles, planBounds, spawnBounds, expandBounds, removeSkybox, splitAtHeights } from '../src/maps/meshGlb'
 
 // RFC 11, 3.6: the exact geometry as glTF 2.0 (GLB): one node per level, floors and walls as two
 // primitives, the playable area only. The Khronos reference validator is the test oracle.
@@ -414,5 +414,46 @@ describe('splitAtHeights (a tall wall is cut where one storey ends, so hiding a 
     expect(r.info.levels).toHaveLength(2)
     expect(r.info.levels[0]!.wallTriangles).toBeGreaterThan(0)
     expect(r.info.levels[1]!.wallTriangles).toBeGreaterThan(0)
+  })
+})
+
+describe('the water group (RFC 18, 4.1)', () => {
+  const withWater = (water: number[]) => surfacesToGlb({ ...base, floors: floor(0), walls: wall(0, 100), water }, { map: 'ttt_test' })
+
+  test('water is a mesh of its own, outside the levels, in a translucent material, and the file is valid', async () => {
+    const r = (await withWater(floor(50, -500, -500, 2000)))!
+    expect(r.info.waterTriangles).toBe(2)
+    expect(r.info.levels).toHaveLength(1)
+    const doc = await read(r.glb)
+    const nodes = doc.getRoot().listScenes()[0]!.listChildren()[0]!.listChildren()
+    expect(nodes.map(n => n.getName())).toEqual(['level-1', 'water'])
+    const water = nodes[1]!
+    expect(water.getExtras()).toMatchObject({ group: 'water', triangles: 2 })
+    const mat = water.getMesh()!.listPrimitives()[0]!.getMaterial()!
+    expect(mat.getAlphaMode()).toBe('BLEND')
+    expect(mat.getBaseColorFactor()[3]).toBeLessThan(1)
+    const report = await validator.validateBytes(r.glb)
+    expect(report.issues.numErrors).toBe(0)
+    expect(report.issues.numWarnings).toBe(0)
+  })
+
+  test('the water does not move the levels: a sea over a floor is not a storey', async () => {
+    const a = (await surfacesToGlb({ ...base, floors: floor(0, 0, 0, 2000), walls: [] }, { map: 'x' }))!
+    const b = (await surfacesToGlb({ ...base, floors: floor(0, 0, 0, 2000), walls: [], water: floor(500, -2000, -2000, 6000) }, { map: 'x' }))!
+    expect(b.info.levels).toEqual(a.info.levels)
+  })
+
+  test('no water, no water node; and the file says which generation made it', async () => {
+    const r = (await surfacesToGlb({ ...base, floors: floor(0), walls: [] }, { map: 'x' }))!
+    expect(r.info.waterTriangles).toBe(0)
+    const doc = await read(r.glb)
+    expect(doc.getRoot().listScenes()[0]!.listChildren()[0]!.listChildren().map(n => n.getName())).toEqual(['level-1'])
+    expect(doc.getRoot().getExtras()).toMatchObject({ meshVersion: MESH_VERSION })
+  })
+
+  test('nearTriangles keeps what is close to the map and drops what is far (a skybox\'s own water)', () => {
+    const near = floor(0, 0, 0, 64), far = floor(0, 50_000, 0, 64)
+    expect(nearTriangles([...near, ...far], [floor(0, 0, 0, 1000)], 512)).toEqual(near)
+    expect(nearTriangles(near, [[], []], 512)).toEqual([])
   })
 })

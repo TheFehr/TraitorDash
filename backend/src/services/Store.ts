@@ -2,6 +2,7 @@ import db from './Database'
 import { HEX6 } from '../teamColours'
 import { BOT_ID_PREFIX } from './validators'
 import type { MapPlan } from './mapplan'
+import { MESH_VERSION } from '../maps/meshVersion'
 import { createHash } from 'node:crypto'
 import { hashToken } from './migrations'
 import { CODE_TTL_MS, generateCode, hashCode } from './pairing'
@@ -30,7 +31,7 @@ export interface GeometryState {
   /** queued | fetching | parsed | failed | unknown (the map has no fingerprint) */
   status: string
   detail: string | null
-  info: { vertices: number, triangles: number, levels: number } | null
+  info: { vertices: number, triangles: number, levels: number, water?: number } | null
 }
 
 export interface MapPlanMeta {
@@ -526,14 +527,17 @@ export class Store {
       FROM map_geometry_requests r
       JOIN server_maps m ON m.server_id = r.server_id AND m.name = r.map_name AND m.fingerprint IS NOT NULL
       LEFT JOIN map_geometry g ON g.map_name = r.map_name AND g.fingerprint = m.fingerprint
-      WHERE g.status IS NULL
+      WHERE g.status IS NULL OR (g.status = 'parsed' AND g.version < ?)
       GROUP BY r.map_name, m.fingerprint
       ORDER BY MIN(r.requested_at)
-    `).all() as any[]
+    `).all(MESH_VERSION) as any[]
   }
 
   /** Records that a job has taken the map (so it is not started twice), or replaces an earlier failure. */
   static startGeometry(map: string, fingerprint: string): boolean {
+    // A stored mesh of an older generation is rebuilt: it stays in place (and is drawn) until the new one replaces it.
+    const stored = db.prepare('SELECT status, version FROM map_geometry WHERE map_name = ? AND fingerprint = ?').get(map, fingerprint) as { status: string, version: number } | null
+    if (stored?.status === 'parsed') return stored.version < MESH_VERSION
     const now = new Date().toISOString()
     const r = db.prepare(`
       INSERT INTO map_geometry (map_name, fingerprint, status, created_at) VALUES (?, ?, 'fetching', ?)
@@ -545,11 +549,18 @@ export class Store {
 
   static finishGeometry(map: string, fingerprint: string, r: { mesh: Uint8Array, info: unknown } | { error: string }) {
     if ('error' in r) {
-      db.prepare("UPDATE map_geometry SET status = 'failed', detail = ?, mesh = NULL, info = NULL WHERE map_name = ? AND fingerprint = ?")
-        .run(r.error.slice(0, 300), map, fingerprint)
+      const stored = db.prepare('SELECT status FROM map_geometry WHERE map_name = ? AND fingerprint = ?').get(map, fingerprint) as { status: string } | null
+      if (stored?.status === 'parsed') {
+        // A rebuild that failed: the mesh that is there stays, and the attempt counts as made (so it is not retried at every report).
+        db.prepare('UPDATE map_geometry SET detail = ?, version = ? WHERE map_name = ? AND fingerprint = ?')
+          .run(`The rebuild failed, the earlier mesh is kept: ${r.error}`.slice(0, 300), MESH_VERSION, map, fingerprint)
+      } else {
+        db.prepare("UPDATE map_geometry SET status = 'failed', detail = ?, mesh = NULL, info = NULL WHERE map_name = ? AND fingerprint = ?")
+          .run(r.error.slice(0, 300), map, fingerprint)
+      }
     } else {
-      db.prepare("UPDATE map_geometry SET status = 'parsed', detail = NULL, mesh = ?, info = ? WHERE map_name = ? AND fingerprint = ?")
-        .run(r.mesh, JSON.stringify(r.info), map, fingerprint)
+      db.prepare("UPDATE map_geometry SET status = 'parsed', detail = NULL, mesh = ?, info = ?, version = ? WHERE map_name = ? AND fingerprint = ?")
+        .run(r.mesh, JSON.stringify(r.info), MESH_VERSION, map, fingerprint)
     }
   }
 

@@ -76,6 +76,7 @@ const NEEDED = [
   { i: 1, name: 'planes', record: 20 }, { i: 3, name: 'vertices', record: 12 }, { i: 6, name: 'texinfo', record: 72 },
   { i: 7, name: 'faces', record: 56 }, { i: 12, name: 'edges', record: 4 }, { i: 13, name: 'surfedges', record: 4 },
   { i: 14, name: 'models', record: 48 },
+  { i: 2, name: 'texture data', record: 32 }, { i: 44, name: 'texture data string table', record: 4 }, { i: 43, name: 'texture data strings', record: 1 },
   { i: 26, name: 'displacement info', record: 176 }, { i: 33, name: 'displacement vertices', record: 20 },
 ] as const
 const L = { PLANES: 1, VERTEXES: 3, TEXINFO: 6, FACES: 7, EDGES: 12, SURFEDGES: 13, MODELS: 14, DISPINFO: 26, DISPVERTS: 33 } as const
@@ -83,6 +84,20 @@ const RECORD = { PLANES: 20, VERTEXES: 12, TEXINFO: 72, FACES: 56, EDGES: 4, SUR
 
 // Faces a player never meets: sky, triggers, nodraw, hints, skip.
 const SKIP_FLAGS = 0x4 | 0x2 | 0x40 | 0x80 | 0x100 | 0x200
+// A liquid surface (water, lava, slime): drawn as water, never as a floor (RFC 18, 4.1).
+const SURF_WARP = 0x8
+
+/**
+ * Materials that are never a surface a player stands on or walks along, though their flags say nothing (RFC 18, 4.1a):
+ * a sky picture pasted on ordinary brushes, the geometry of a 3D skybox, and the helper materials under `tools/`. The
+ * rule is narrow on purpose: `skyscraper`, `skybridge` and `skynetmountain` are real buildings in real maps.
+ * `material` is the name in the map, lower case.
+ */
+export const isNotSurfaceMaterial = (material: string): boolean =>
+  material.includes('skybox') || /(^|\/)[a-z0-9_]*sky$/.test(material) || material.startsWith('tools/')
+
+/** The brush entities that stand still: their faces are drawn with the world (RFC 18, 4.2). Doors, lifts, trains, buttons and triggers are not. */
+export const FIXTURE_CLASSES = /^func_(brush|wall|breakable|lod|wall_toggle)$/
 const FLOOR_NZ = 0.7 // the steepest slope a player can walk up
 const MAX_FACE_EDGES = 4096
 const MAX_COORD = 131_072 // Source maps are at most +-16384; room to spare, far from float garbage
@@ -97,8 +112,12 @@ export interface Surfaces {
   /** Triangles as flat x, y, z, x, y, z, ... in whole map units. */
   floors: number[]
   walls: number[]
+  /** The upward-facing triangles of liquid surfaces; not floors. */
+  water: number[]
   stats: {
     faces: number, floorFaces: number, wallFaces: number, ceilingFaces: number, skipped: number, otherModelFaces: number
+    /** Faces left out because of the name of their material, liquid surfaces seen, and brush-entity models drawn with the world. */
+    skippedByMaterial: number, waterFaces: number, fixtureModels: number
     /** Displacements (terrain) drawn, and the triangles they made (ceilings among them are dropped like any ceiling). */
     displacements: number, displacementTriangles: number
   }
@@ -110,7 +129,7 @@ export interface Surfaces {
  * models). A displacement (terrain) is turned into its grid of triangles: the face's four corners
  * are interpolated across the grid and every vertex is pushed along its own direction.
  */
-export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {}): Promise<Surfaces> {
+export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {}, fixtureModels: number[] = []): Promise<Surfaces> {
   const lim = { ...DEFAULT_LIMITS, ...limits }
   const header = await readHeader(src)
 
@@ -145,6 +164,27 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
   const planes = data[L.PLANES]!, verts = data[L.VERTEXES]!, tex = data[L.TEXINFO]!, faces = data[L.FACES]!
   const edges = data[L.EDGES]!, surf = data[L.SURFEDGES]!, models = data[L.MODELS]!
   const dispInfo = data[L.DISPINFO]!, dispVerts = data[L.DISPVERTS]!
+  const texData = data[2]!, texTable = data[44]!, texStrings = data[43]!
+  const nTexData = count(2, 32), nTexTable = count(44, 4)
+
+  /** The lower-case name of the material of a texinfo. A name that cannot be found is '' (and is no reason to leave a face out). */
+  const materialNames = new Map<number, string>()
+  const materialOf = (texinfo: number): string => {
+    const known = materialNames.get(texinfo)
+    if (known !== undefined) return known
+    let name = ''
+    const di = tex.getInt32(texinfo * RECORD.TEXINFO + 68, true)
+    if (di >= 0 && di < nTexData) {
+      const ti = texData.getInt32(di * 32 + 12, true)
+      if (ti >= 0 && ti < nTexTable) {
+        let at = texTable.getInt32(ti * 4, true)
+        if (at >= 0) for (; at < texStrings.byteLength && name.length < 256; at++) { const c = texStrings.getUint8(at); if (c === 0) break; name += String.fromCharCode(c) }
+      }
+    }
+    name = name.toLowerCase()
+    materialNames.set(texinfo, name)
+    return name
+  }
 
   // The vertices are checked once, all of them: a corrupt coordinate is refused even if no face uses it.
   const xyz = new Float64Array(nVerts * 3)
@@ -157,16 +197,27 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
 
   const firstFace = models.getInt32(40, true), numFaces = models.getInt32(44, true)
   if (firstFace < 0 || numFaces < 0 || firstFace + numFaces > nFaces) throw new BspError('the world model names faces that do not exist')
+  // The world model, and the models of the brush entities that stand still. Others (doors, lifts) are counted, not drawn.
+  const drawn = new Set<number>([0])
+  for (const m of fixtureModels) if (Number.isInteger(m) && m > 0 && m < nModels) drawn.add(m)
+  const ranges: [number, number][] = [[firstFace, numFaces]]
   let otherModelFaces = 0
   for (let m = 1; m < nModels; m++) {
-    const n = models.getInt32(m * RECORD.MODELS + 44, true)
+    const first = models.getInt32(m * RECORD.MODELS + 40, true), n = models.getInt32(m * RECORD.MODELS + 44, true)
     if (n < 0) throw new BspError(`model ${m} has a negative face count`)
-    otherModelFaces += n
+    if (drawn.has(m)) {
+      if (first < 0 || first + n > nFaces) throw new BspError(`model ${m} names faces that do not exist`)
+      ranges.push([first, n])
+    } else otherModelFaces += n
   }
+  const faceList = function* () { for (const [from, n] of ranges) for (let f = from; f < from + n; f++) yield f }
 
-  const floors: number[] = [], walls: number[] = []
-  const stats = { faces: numFaces, floorFaces: 0, wallFaces: 0, ceilingFaces: 0, skipped: 0, otherModelFaces, displacements: 0, displacementTriangles: 0 }
-  for (let f = firstFace; f < firstFace + numFaces; f++) {
+  const floors: number[] = [], walls: number[] = [], water: number[] = []
+  const stats = {
+    faces: numFaces, floorFaces: 0, wallFaces: 0, ceilingFaces: 0, skipped: 0, otherModelFaces, displacements: 0, displacementTriangles: 0,
+    skippedByMaterial: 0, waterFaces: 0, fixtureModels: drawn.size - 1,
+  }
+  for (const f of faceList()) {
     const at = f * RECORD.FACES
     const plane = faces.getUint16(at, true), side = faces.getUint8(at + 2)
     const firstEdge = faces.getInt32(at + 4, true), numEdges = faces.getInt16(at + 8, true)
@@ -177,7 +228,9 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
     if (numEdges < 3 || numEdges > MAX_FACE_EDGES) throw new BspError(`face ${f} has ${numEdges} edges`)
     if (firstEdge < 0 || firstEdge + numEdges > nSurf) throw new BspError(`face ${f} reaches past the surfedges`)
 
-    if ((tex.getInt32(texinfo * RECORD.TEXINFO + 64, true) & SKIP_FLAGS) !== 0) { stats.skipped++; continue }
+    const flags = tex.getInt32(texinfo * RECORD.TEXINFO + 64, true)
+    if ((flags & SKIP_FLAGS) !== 0) { stats.skipped++; continue }
+    if (isNotSurfaceMaterial(materialOf(texinfo))) { stats.skippedByMaterial++; continue }
 
     let nx = planes.getFloat32(plane * RECORD.PLANES, true), ny = planes.getFloat32(plane * RECORD.PLANES + 4, true)
     let nz = planes.getFloat32(plane * RECORD.PLANES + 8, true)
@@ -201,6 +254,11 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
       continue
     }
 
+    if ((flags & SURF_WARP) !== 0) {
+      stats.waterFaces++
+      if (nz >= 0.5) for (let k = 1; k + 1 < corner.length; k++) for (const v of [corner[0]!, corner[k]!, corner[k + 1]!]) water.push(Math.round(xyz[v * 3]!), Math.round(xyz[v * 3 + 1]!), Math.round(xyz[v * 3 + 2]!))
+      continue
+    }
     if (nz <= -FLOOR_NZ + 1e-6) { stats.ceilingFaces++; continue }
     const isFloor = nz + 1e-6 >= FLOOR_NZ
     if (isFloor) stats.floorFaces++; else stats.wallFaces++
@@ -276,7 +334,7 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
     }
   }
 
-  return { fingerprint: header.fingerprint, version: header.version, revision: header.revision, floors, walls, stats }
+  return { fingerprint: header.fingerprint, version: header.version, revision: header.revision, floors, walls, water, stats }
 }
 
 // ---- the entities we need: spawn points and the 3D skybox camera ---------------------------------
@@ -300,15 +358,15 @@ function originOf(entity: Record<string, string>): Point | null {
  * which sits inside the skybox section, far from the map), from the entity lump: a few tens of KB
  * of text, blocks of "key" "value" lines in braces. Only the header and that one lump are read.
  */
-export async function extractMapEntities(src: ByteSource, limits: SpawnLimits = {}): Promise<{ spawns: Spawn[], skyCameras: Point[] }> {
+export async function extractMapEntities(src: ByteSource, limits: SpawnLimits = {}): Promise<{ spawns: Spawn[], skyCameras: Point[], fixtureModels: number[] }> {
   const maxEntities = limits.maxEntities ?? 100_000
   const maxBytes = limits.maxEntityBytes ?? 4 * 1024 * 1024
   const header = await readHeader(src)
   const lump = header.lumps[0]!
   if (lump.compressed) throw new BspError('the entity lump is compressed, which is not supported')
   if (lump.length > maxBytes) throw new BspError(`the entity lump is ${lump.length} bytes, over the limit of ${maxBytes}`)
-  const spawns: Spawn[] = [], skyCameras: Point[] = []
-  if (lump.length === 0) return { spawns, skyCameras }
+  const spawns: Spawn[] = [], skyCameras: Point[] = [], fixtureModels: number[] = []
+  if (lump.length === 0) return { spawns, skyCameras, fixtureModels }
   const bytes = await src.read(lump.offset, lump.length)
   if (bytes.length !== lump.length) throw new BspError('short read of the entity lump')
   const text = Buffer.from(bytes).toString('latin1')
@@ -323,6 +381,8 @@ export async function extractMapEntities(src: ByteSource, limits: SpawnLimits = 
       entity = {}; key = null
     } else if (brace === '}') {
       const cls = entity?.['classname']
+      // A brush entity that stands still names its model `*N` and has no parent that could move it.
+      if (entity && cls && FIXTURE_CLASSES.test(cls) && /^\*\d{1,5}$/.test(entity['model'] ?? '') && !entity['parentname']) fixtureModels.push(Number(entity['model']!.slice(1)))
       const at = entity && cls ? originOf(entity) : null
       if (cls && at) {
         if (SPAWN_CLASS.test(cls)) spawns.push({ class: cls, ...at })
@@ -334,7 +394,7 @@ export async function extractMapEntities(src: ByteSource, limits: SpawnLimits = 
       else { entity[key] = m[1]!; key = null }
     }
   }
-  return { spawns, skyCameras }
+  return { spawns, skyCameras, fixtureModels }
 }
 
 /** The player spawns of a map (see extractMapEntities). */

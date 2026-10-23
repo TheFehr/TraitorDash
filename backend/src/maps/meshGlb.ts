@@ -1,10 +1,13 @@
 import { Document, NodeIO } from '@gltf-transform/core'
 import { storeyModel } from './levels'
+import { MESH_VERSION } from './meshVersion'
 
 // RFC 11, 3.6: the map's exact geometry as glTF 2.0 (GLB), an existing standard, not a format of our
 // own. One scene; a root node that turns Source's Z-up into glTF's Y-up; one node per level (the
 // storeys of RFC 10), each with a `floors` and a `walls` primitive in two materials. Coordinates stay
 // whole Source units. The tests check every file with the Khronos reference validator.
+
+export { MESH_VERSION }
 
 export interface Bounds { minX: number, maxX: number, minY: number, maxY: number }
 
@@ -116,6 +119,19 @@ export function removeSkybox(
   return { floors, walls, removed: { floors: (s.floors.length - floors.length) / 9, walls: (s.walls.length - walls.length) / 9 } }
 }
 
+/**
+ * Keeps the triangles of a group (water) whose centre lies within `margin` units of the box around `around`
+ * (the floors and walls that were kept). A 3D skybox has water of its own, far from the map.
+ */
+export function nearTriangles(soup: number[], around: number[][], margin: number): number[] {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const a of around) for (let i = 0; i < a.length; i += 3) {
+    minX = Math.min(minX, a[i]!); maxX = Math.max(maxX, a[i]!); minY = Math.min(minY, a[i + 1]!); maxY = Math.max(maxY, a[i + 1]!)
+  }
+  if (!Number.isFinite(minX)) return []
+  return cropTriangles(soup, { minX: minX - margin, maxX: maxX + margin, minY: minY - margin, maxY: maxY + margin })
+}
+
 export interface MeshLevel { index: number, lo: number, hi: number, floorTriangles: number, wallTriangles: number }
 export interface GlbInfo {
   vertices: number
@@ -123,11 +139,13 @@ export interface GlbInfo {
   /** Triangles that collapsed to a line or a point when the coordinates were rounded to whole units. */
   droppedDegenerate: number
   levels: MeshLevel[]
+  /** Triangles of the water group (not counted in `triangles`' levels, and not part of the level model). */
+  waterTriangles: number
   /** Triangles removed by the crop. */
   cropped: { floors: number, walls: number }
 }
 
-export interface MeshInput { floors: number[], walls: number[], fingerprint: string, version: number, revision: number }
+export interface MeshInput { floors: number[], walls: number[], water?: number[], fingerprint: string, version: number, revision: number }
 export interface MeshOptions {
   map: string
   /** The playable area (already including any margin). Triangles whose centre is outside are left out. */
@@ -229,6 +247,7 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
   const f = withoutDegenerate(floors), w = withoutDegenerate(walls)
   floors = f.kept; walls = w.kept
   if (floors.length === 0 && walls.length === 0) return null
+  const water = withoutDegenerate(s.water ?? []).kept
 
   // The levels: floors weighted by the ground they cover, in grid cells (RFC 10 4.5).
   const centre = (soup: number[], i: number) => (soup[i + 2]! + soup[i + 5]! + soup[i + 8]!) / 3
@@ -249,8 +268,9 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
   scene.addChild(root)
   const material = (name: string, rgb: [number, number, number]) => doc.createMaterial(name).setBaseColorFactor([...rgb, 1]).setMetallicFactor(0).setRoughnessFactor(1).setDoubleSided(true)
   const mats = { floor: material('floor', [0.2, 0.7, 0.3]), wall: material('wall', [0.6, 0.6, 0.65]) }
+  const waterMat = doc.createMaterial('water').setBaseColorFactor([0.23, 0.49, 0.65, 0.55]).setAlphaMode('BLEND').setMetallicFactor(0).setRoughnessFactor(1).setDoubleSided(true)
 
-  const info: GlbInfo = { vertices: 0, triangles: 0, droppedDegenerate: f.dropped + w.dropped, levels: [], cropped }
+  const info: GlbInfo = { vertices: 0, triangles: 0, droppedDegenerate: f.dropped + w.dropped, levels: [], waterTriangles: 0, cropped }
   byLevel.forEach((lv) => {
     if (lv.floors.length === 0 && lv.walls.length === 0) return
     const index = info.levels.length + 1
@@ -274,8 +294,18 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
     root.addChild(doc.createNode(name).setMesh(mesh).setExtras({ level: level.index, lo: level.lo, hi: level.hi, floorTriangles: level.floorTriangles, wallTriangles: level.wallTriangles }))
   })
 
+  // The water: one mesh of its own, outside the levels (it is not a floor and a level cutaway does not cut it).
+  if (water.length > 0) {
+    const { positions, indices } = indexed(water)
+    info.vertices += positions.length / 3; info.waterTriangles = indices.length / 3
+    const mesh = doc.createMesh('water').addPrimitive(doc.createPrimitive().setMaterial(waterMat)
+      .setAttribute('POSITION', doc.createAccessor('water-positions').setType('VEC3').setArray(positions).setBuffer(buffer))
+      .setIndices(doc.createAccessor('water-indices').setType('SCALAR').setArray(indices).setBuffer(buffer)))
+    root.addChild(doc.createNode('water').setMesh(mesh).setExtras({ group: 'water', triangles: info.waterTriangles }))
+  }
+
   doc.getRoot().setExtras({
-    generator: 'TraitorDash (RFC 11)', map: opts.map, fingerprint: s.fingerprint, mapVersion: s.version, mapRevision: s.revision,
+    generator: 'TraitorDash (RFC 18)', meshVersion: MESH_VERSION, map: opts.map, fingerprint: s.fingerprint, mapVersion: s.version, mapRevision: s.revision,
     units: 'Source units (about 1.9 cm); Z is up before the root node turns it into glTF\'s Y-up',
     cropped: opts.crop !== undefined, levels: info.levels.length,
   })

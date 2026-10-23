@@ -419,6 +419,12 @@ export const migrations: Array<(db: Database) => void> = [
   (db) => {
     if (!db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='roles'").get()) return
     db.run('ALTER TABLE roles ADD COLUMN makers TEXT')
+  },
+  // v24 (RFC 18): which generation of the extractor made a stored mesh (1 for every mesh made before this column);
+  // a mesh below the current generation is rebuilt in the background.
+  (db) => {
+    if (!db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='map_geometry'").get()) return
+    db.run('ALTER TABLE map_geometry ADD COLUMN version INTEGER NOT NULL DEFAULT 1')
   }
 ]
 

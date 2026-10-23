@@ -8,7 +8,7 @@ import {
 import { hex } from './teamColours'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { explainNoWebGL, makeCamera, makeRenderer, makeScene } from './sceneKit'
+import { applyColouring, explainNoWebGL, heightColours, levelColour, makeCamera, makeRenderer, makeScene, prepareWater, savedColouring, type Painted } from './sceneKit'
 import {
   decodeTrack, poseAt, lastPoseAt, trailBetween, levelOf, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose, fitLabel,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
@@ -32,7 +32,6 @@ interface Payload {
 }
 
 const LEVEL_NAME = /^level-(\d+)$/
-const levelColour = (index: number, count: number) => new Color().setHSL(0.38 - 0.34 * (count > 1 ? (index - 1) / (count - 1) : 0), 0.55, 0.45)
 const CUT_ABOVE = 128
 const TRAIL_MS = 4000
 const KILL_LINE_MS = 2500
@@ -237,6 +236,8 @@ async function start(root: HTMLElement) {
       const model = await new Promise<Object3D>((ok, fail) => new GLTFLoader().parse(buf, '', g => ok(g.scene), fail))
       model.traverse(o => { const m = LEVEL_NAME.exec(o.name); if (m && !levelNodes.some(l => l.node === o)) levelNodes.push({ index: Number(m[1]), node: o }) })
       levelNodes.sort((a, b) => a.index - b.index)
+      // The same colouring as the map page (the choice made there, Plain without one), and the same water.
+      const painted: Painted[] = []
       for (const l of levelNodes) l.node.traverse(o => {
         if (!(o as Mesh).isMesh) return
         const mesh = o as Mesh<BufferGeometry, StdMat>
@@ -245,8 +246,12 @@ async function start(root: HTMLElement) {
         mesh.material.clippingPlanes = [cut]
         mesh.material.metalness = 0
         mesh.material.roughness = 1
-        if (isWall) wallMeshes.push(mesh); else mesh.material.color = levelColour(l.index, levelNodes.length)
+        if (isWall) wallMeshes.push(mesh)
+        painted.push({ mesh, wall: isWall, level: l.index })
       })
+      prepareWater(model, cut)
+      heightColours(painted)
+      applyColouring(painted, savedColouring(), levelNodes.length)
       scene.add(model)
       const b = new Box3().setFromObject(model) // in three's Y-up
       // back to Source's Z-up: (x, y, z) three = (x, z, -y) Source

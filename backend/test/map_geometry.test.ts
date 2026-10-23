@@ -3,8 +3,9 @@ import { serializeSigned } from 'hono/utils/cookie'
 import { mkdtempSync, writeFileSync, existsSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildBsp, flatQuad } from './helpers/bsp_builder'
+import { buildBsp, flatQuad, flatQuads, SURF } from './helpers/bsp_builder'
 import * as bsp from '../src/maps/bsp'
+import { MESH_VERSION } from '../src/maps/meshVersion'
 
 process.env.TRAITORDASH_DB = ':memory:'
 process.env.SESSION_SECRET = 'test-secret-test-secret-test-secret-0'
@@ -263,11 +264,113 @@ describe('the 3D view on the map page', () => {
     expect(html).toContain('data-level="all"')
   })
 
+  test('has the Colour choice (Plain first and pressed), no water switch for a map without water, and no Download GLB', async () => {
+    await toggle(serverId, 'ttt_a', true)
+    await geo.runGeometryQueue(writer(file))
+    const html = await page()
+    expect(html.match(/data-colour="(plain|height|levels)"/g)).toEqual(['data-colour="plain"', 'data-colour="height"', 'data-colour="levels"'])
+    expect(html).toMatch(/data-colour="plain" aria-pressed="true"/)
+    expect(html).not.toContain('data-water')
+    expect(html).not.toContain('Download GLB')
+    expect(html).toContain('data-walls')
+  })
+
+  test('a map with water gets the Water switch, on, and the count says so', async () => {
+    const sea = buildBsp({ ...flatQuads([0, 200]), texinfoFlags: [0, SURF.WARP] })
+    report(serverId, [M('ttt_a', fpOf(sea))])
+    await toggle(serverId, 'ttt_a', true)
+    await geo.runGeometryQueue(writer(sea))
+    const html = await page()
+    expect(html).toMatch(/<input type="checkbox" data-water="true" checked=""\/> Water/)
+    expect(html).toContain(', water')
+  })
+
+  test('says so on the page when a rebuild failed and the earlier mesh is kept', async () => {
+    await toggle(serverId, 'ttt_a', true)
+    await geo.runGeometryQueue(writer(file))
+    db.run('UPDATE map_geometry SET version = 1')
+    await geo.runGeometryQueue(async () => ({ error: 'The addon could not be found.' }))
+    const html = await page()
+    expect(html).toContain('data-mapview')
+    expect(html).toContain('The rebuild failed, the earlier mesh is kept')
+  })
+
   test('is not on the page when the operator has the feature off, and the script is not loaded elsewhere', async () => {
     await toggle(serverId, 'ttt_a', true)
     await geo.runGeometryQueue(writer(file))
     delete process.env.MAP_GEOMETRY
     expect(await page()).not.toContain('data-mapview')
     expect(await (await req(`/servers/${serverId}/maps`)).text()).not.toContain('mapview.js')
+  })
+})
+
+describe('rebuilding a mesh of an older generation (RFC 18)', () => {
+  const parse = async () => { await toggle(serverId, 'ttt_a', true); await geo.runGeometryQueue(writer(file)) }
+  const makeOld = () => db.run('UPDATE map_geometry SET version = 1')
+  const version = () => (db.prepare('SELECT version FROM map_geometry').get() as any).version
+
+  test('a mesh made now is of the current generation, and is not queued again', async () => {
+    await parse()
+    expect(version()).toBe(MESH_VERSION)
+    expect(Store.getGeometryQueue()).toEqual([])
+  })
+
+  test('an older one is queued, rebuilt, and replaced; it stays served until then', async () => {
+    await parse()
+    makeOld()
+    expect(Store.getGeometryQueue()).toEqual([{ map: 'ttt_a', fingerprint: FP }])
+    expect(state().status).toBe('parsed')
+    expect((await req(`/servers/${serverId}/maps/ttt_a/mesh.glb`)).status).toBe(200)
+    const f = writer(file)
+    expect(await geo.runGeometryQueue(f)).toBe(1)
+    expect(f.calls).toBe(1)
+    expect(version()).toBe(MESH_VERSION)
+    expect(Store.getGeometryQueue()).toEqual([])
+  })
+
+  test('a rebuild that fails keeps the mesh that is there, says why, and is not retried at every report', async () => {
+    await parse()
+    makeOld()
+    await geo.runGeometryQueue(async () => ({ error: 'The addon could not be found.' }))
+    expect(state().status).toBe('parsed')
+    expect(state().detail).toContain('The addon could not be found.')
+    expect((await req(`/servers/${serverId}/maps/ttt_a/mesh.glb`)).status).toBe(200)
+    expect(version()).toBe(MESH_VERSION)
+    expect(Store.getGeometryQueue()).toEqual([])
+  })
+
+  test('a rebuild that works clears an earlier failure note', async () => {
+    await parse()
+    makeOld()
+    await geo.runGeometryQueue(async () => ({ error: 'x' }))
+    makeOld()
+    await geo.runGeometryQueue(writer(file))
+    expect(state().detail).toBeNull()
+  })
+
+  test('a map nobody asks for is not rebuilt', async () => {
+    await parse()
+    makeOld()
+    await toggle(serverId, 'ttt_a', false)
+    expect(Store.getGeometryQueue()).toEqual([])
+  })
+})
+
+describe('water in the mesh (RFC 18, 4.1)', () => {
+  test('liquid surfaces become a water group that is counted apart; the sea is not a floor', async () => {
+    const sea = buildBsp({ ...flatQuads([0, 200]), texinfoFlags: [0, SURF.WARP] })
+    const r = await geo.buildGeometry(bsp.memorySource(sea), 'ttt_sea', fpOf(sea))
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.info).toMatchObject({ triangles: 2, levels: 1, water: 2 })
+  })
+
+  test('water far from the map (the water of a 3D skybox) is not kept', async () => {
+    // a floor at the origin, a sea 100 000 units away
+    const q = flatQuads([0, 0])
+    q.vertices.forEach((v, i) => { if (i >= 4) v[0] += 100_000 })
+    const far = buildBsp({ ...q, texinfoFlags: [0, SURF.WARP] })
+    const r = await geo.buildGeometry(bsp.memorySource(far), 'ttt_far', fpOf(far))
+    if (r.ok) expect(r.info.water).toBe(0)
+    else throw new Error(r.error)
   })
 })
