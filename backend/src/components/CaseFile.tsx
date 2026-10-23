@@ -29,8 +29,10 @@ h2{font-size:.85rem;font-weight:800;letter-spacing:.16em;text-transform:uppercas
 .crumbs{font-size:.85rem;letter-spacing:.08em;text-transform:uppercase;color:#a89f8c;margin-bottom:.3rem}
 .crumbs a{text-decoration:underline}
 .sections{display:flex;flex-wrap:wrap;gap:.5rem;margin:.2rem 0 .9rem}
-.sections a,.sections span{border:1px solid #6b6455;padding:.2rem .7rem;font-size:.85rem;letter-spacing:.06em;text-transform:uppercase;color:#d9d0bd}
-.sections span{background:#e9dfc4;color:#2b2418;border-color:#e9dfc4}
+.sections a{border:1px solid #6b6455;padding:.2rem .7rem;font-size:.85rem;letter-spacing:.06em;text-transform:uppercase;color:#d9d0bd}
+.sections a:hover{border-color:#e9dfc4;color:#fff}
+.sections a[aria-current]:hover{color:#2b2418}
+.sections a[aria-current]{background:#e9dfc4;color:#2b2418;border-color:#e9dfc4}
 .muted{color:#a89f8c}
 .bar{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin:.7rem 0 .2rem;font-size:.9rem;letter-spacing:.1em;text-transform:uppercase;color:#b9b2a0}
 .bar b,.bar strong{color:#fff}.bar .sp{flex:1}
@@ -82,7 +84,7 @@ table.set td.v{font-weight:700}table.set td.d{color:#5f5846}
 /** The other public pages of the server, so none of them is a dead end. Not shown inside the game. */
 export const Sections = ({ serverId, current }: { serverId: string, current?: Section }) => (
   <nav class="sections" aria-label="Sections">
-    {sectionsOf(serverId).map(s => s.key === current ? <span aria-current="page">{s.label}</span> : <a href={s.href}>{s.label}</a>)}
+    {sectionsOf(serverId).map(s => <a href={s.href} aria-current={s.key === current ? 'page' : undefined}>{s.label}</a>)}
   </nav>
 )
 
@@ -182,8 +184,9 @@ main>p .pill.ok{color:#4ade80}main>p .pill.wait{color:#fbbf24}main>p .pill.mute{
 .g.wide{grid-template-columns:repeat(auto-fill,minmax(min(100%,36rem),1fr))}
 h2+.f,h2+.plans,h2+p+.f{margin-top:1.1rem}
 .f .sections{margin:.6rem 0 0}
-.f .sections a,.f .sections span{color:#2a2418;border-color:#5f5846}
-.f .sections span{background:#2a2418;color:#e9dfc4;border-color:#2a2418}
+.f .sections a{color:#2a2418;border-color:#5f5846}
+.f .sections a:hover{color:#2a2418;border-color:#2a2418}
+.f .sections a[aria-current],.f .sections a[aria-current]:hover{background:#2a2418;color:#e9dfc4;border-color:#2a2418}
 .replay{display:grid;grid-template-columns:minmax(0,1fr) 17rem;gap:1.2rem}
 @media (max-width:760px){.replay{grid-template-columns:minmax(0,1fr)}}
 .replay .main{min-width:0}
