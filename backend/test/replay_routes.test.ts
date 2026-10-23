@@ -21,7 +21,7 @@ beforeAll(async () => {
   db = (await import('../src/services/Database')).default
   gates = await import('../src/services/gates')
   glb = await import('../src/services/replay')
-  surfacesToGlb = (await import('../src/services/meshGlb')).surfacesToGlb
+  surfacesToGlb = (await import('../src/maps/meshGlb')).surfacesToGlb
   const floor = (z: number) => [0, 0, z, 256, 0, z, 256, 256, z, 0, 0, z, 256, 256, z, 0, 256, z]
   MESH = (await surfacesToGlb({ floors: [...floor(0), ...floor(300)], walls: [], fingerprint: FP, version: 20, revision: 1 }, { map: 'ttt_a' })).glb
 })

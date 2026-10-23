@@ -4,8 +4,8 @@
 //   bun tools/survey-maps.ts <directory>
 import { readdirSync } from 'node:fs'
 import * as geo from '../backend/src/services/mapgeometry'
-import * as gma from '../backend/src/services/gma'
-import * as bsp from '../backend/src/services/bsp'
+import * as gma from '../backend/src/maps/gma'
+import * as bsp from '../backend/src/maps/bsp'
 const dir = process.argv[2]
 if (!dir) { console.error('usage: bun tools/survey-maps.ts <directory of .gma files>'); process.exit(1) }
 const rows:any[]=[]

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { buildBsp, buildGma, flatQuad } from './helpers/bsp_builder'
-import { bspFingerprint } from '../src/services/bsp'
+import { bspFingerprint } from '../src/maps/bsp'
 
 process.env.TRAITORDASH_DB = ':memory:'
 process.env.SESSION_SECRET = 'test-secret-test-secret-test-secret-0'

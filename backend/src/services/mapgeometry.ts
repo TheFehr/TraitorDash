@@ -1,30 +1,12 @@
-import { open, stat, rm } from 'node:fs/promises'
+import { rm } from 'node:fs/promises'
 import { Store } from './Store'
-import { BspError, extractMapEntities, extractSurfaces, readHeader, type ByteSource } from './bsp'
-import { removeSkybox, surfacesToGlb } from './meshGlb'
+import { BspError, extractMapEntities, extractSurfaces, readHeader, type ByteSource } from '../maps/bsp'
+import { removeSkybox, surfacesToGlb } from '../maps/meshGlb'
+import { fileSource } from '../maps/fileSource'
+export { fileSource }
 
 /** Is the feature switched on for this backend (RFC 11, 3.1)? Off unless the operator sets MAP_GEOMETRY=1. */
 export const geometryEnabled = () => process.env.MAP_GEOMETRY === '1'
-
-/** A `.bsp` on disk (or a range of a larger file, such as a map inside an addon archive), read in ranges; the file is never held in memory as a whole. */
-export async function fileSource(path: string, offset = 0, length?: number): Promise<{ src: ByteSource, close: () => Promise<void> }> {
-  const fileSize = (await stat(path)).size
-  const size = length ?? fileSize - offset
-  if (offset < 0 || size < 0 || offset + size > fileSize) throw new Error('range outside the file')
-  const fh = await open(path, 'r')
-  return {
-    src: {
-      size,
-      async read(at, len) {
-        const want = Math.max(0, Math.min(len, size - at))
-        const buf = new Uint8Array(want)
-        const { bytesRead } = await fh.read(buf, 0, want, offset + at)
-        return buf.subarray(0, bytesRead)
-      },
-    },
-    close: () => fh.close(),
-  }
-}
 
 export type GeometryResult =
   | { ok: true, glb: Uint8Array, info: { vertices: number, triangles: number, levels: number } }

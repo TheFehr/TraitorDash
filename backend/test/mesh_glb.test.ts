@@ -1,7 +1,7 @@
 import { expect, test, describe } from 'bun:test'
 import { NodeIO } from '@gltf-transform/core'
 import validator from 'gltf-validator'
-import { surfacesToGlb, cropTriangles, planBounds, spawnBounds, expandBounds, removeSkybox, splitAtHeights } from '../src/services/meshGlb'
+import { surfacesToGlb, cropTriangles, planBounds, spawnBounds, expandBounds, removeSkybox, splitAtHeights } from '../src/maps/meshGlb'
 
 // RFC 11, 3.6: the exact geometry as glTF 2.0 (GLB): one node per level, floors and walls as two
 // primitives, the playable area only. The Khronos reference validator is the test oracle.

@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, existsSync, readdirSync, rmSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildBsp, flatQuad } from './helpers/bsp_builder'
-import * as bsp from '../src/services/bsp'
+import * as bsp from '../src/maps/bsp'
 
 process.env.TRAITORDASH_DB = ':memory:'
 process.env.SESSION_SECRET = 'test-secret-test-secret-test-secret-0'

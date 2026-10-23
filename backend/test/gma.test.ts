@@ -1,7 +1,7 @@
 import { expect, test, describe } from 'bun:test'
 import { buildGma } from './helpers/bsp_builder'
-import { memorySource } from '../src/services/bsp'
-import { readGmaIndex, mapEntries, sliceSource } from '../src/services/gma'
+import { memorySource } from '../src/maps/bsp'
+import { readGmaIndex, mapEntries, sliceSource } from '../src/maps/gma'
 
 // RFC 11, 3.2: the addon archive's file table is read, and a map inside it is read in place.
 

@@ -1,5 +1,5 @@
 import { expect, test, describe } from 'bun:test'
-import { readHeader, extractSurfaces, extractSpawns, extractMapEntities, memorySource, bspFingerprint, BspError, type ByteSource } from '../src/services/bsp'
+import { readHeader, extractSurfaces, extractSpawns, extractMapEntities, memorySource, bspFingerprint, BspError, type ByteSource } from '../src/maps/bsp'
 import { buildBsp, flatQuad, flatDisplacement, HEADER_BYTES, LUMP, SURF } from './helpers/bsp_builder'
 
 // RFC 11, step 1: reading the surface geometry out of a Source map without reading the map. The

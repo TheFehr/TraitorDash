@@ -1,5 +1,5 @@
 import { Document, NodeIO } from '@gltf-transform/core'
-import { storeyModel } from './mapplan'
+import { storeyModel } from './levels'
 
 // RFC 11, 3.6: the map's exact geometry as glTF 2.0 (GLB), an existing standard, not a format of our
 // own. One scene; a root node that turns Source's Z-up into glTF's Y-up; one node per level (the
