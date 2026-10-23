@@ -10,7 +10,7 @@ import { NAME, SMALL_INT } from './validators'
  * fields: a field added to the stored objects later does not reach the page by itself.
  */
 /** A role that can make another during a round, with what decides whether it is in play. */
-export interface Maker { name: string, enabled: boolean, min: number | null, /** True when the game itself names it (the role's base role); false when it is worked out from team and description. */ exact: boolean }
+export interface Maker { name: string, enabled: boolean, min: number | null }
 
 export interface RoleView {
   name: string
@@ -19,7 +19,7 @@ export interface RoleView {
   enabled: boolean
   /** True for a role that is made during a round (a conversion: Sidekick, Zombie, Defector...) and is not dealt at its start, so it has no distribution, limit or chance. */
   made: boolean
-  /** For a made role: the roles that probably make it, worked out from its team and its description (TTT2 does not say). */
+  /** For a made role: the roles that make it, as the bridge worked them out from the game's code (see `makersOf`). */
   makers: Maker[]
   min: number | null
   /** The description the server's admins wrote, else the one from the language files, cleaned; null when the addon has none. */
@@ -78,13 +78,13 @@ export const isMadeInRound = (live: Record<string, LiveConVar>, roleName: string
   && !['pct', 'max', 'min_players', 'random'].some(k => live[`ttt_${roleName}_${k}`]?.present === true)
 
 const GENERIC_TEAMS = new Set(['innocents', 'traitors', 'nones', 'unknown', ''])
-const escapeRe = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 /**
- * Who makes each role that is made during a round. When the game said so, it is exact: such a role is a subrole of its
- * maker (the Zombie's base role is the Necromancer). When it did not (a role made by a shop item, like the Defector or the
- * Sidekick, has none) it is worked out from two things that are there: a made role plays for its maker's team when that
- * team is a special one, and its description names the roles involved. More than four candidates is too vague to say anything.
+ * Who makes each role that is made during a round, from what the game says (nothing is guessed from text). A made role that is
+ * a subrole of a special role is made by it (the Zombie's base role is the Necromancer); a plain team role as base (the Thrall
+ * and the Defector are subroles of the Traitor) is only the team it joins. Otherwise it is made through an item, and the
+ * bridge works out from the game's code which roles hand that item out or can buy it (the Mesmerist's loadout line gives the
+ * Thrall's revive item; the Jackal's shop holds the Sidekick deagle) and sends them as `makers`.
  */
 export function makersOf(serverId: string): Map<string, Maker[]> {
   const live = Store.getConVarValues(serverId)
@@ -92,20 +92,27 @@ export function makersOf(serverId: string): Map<string, Maker[]> {
   const info = rows.map(r => ({
     name: String(r.role_name), team: String(r.team ?? ''), made: isMadeInRound(live, r.role_name, r.selectable ?? null),
     base: r.base_role ? String(r.base_role) : null,
+    items: parseMakers(r.makers),
     enabled: isRoleEnabled(live, r.role_name), min: roleMetrics(live, r.role_name).minPlayers.sort,
   }))
-  const dealt = info.filter(i => !i.made)
   const out = new Map<string, Maker[]>()
   for (const x of info.filter(i => i.made)) {
-    const base = x.base ? info.find(y => y.name === x.base) : undefined
-    if (base) { out.set(x.name, [{ name: base.name, enabled: base.enabled, min: base.min, exact: true }]); continue }
-    const text = (Store.getRoleNote(serverId, x.name) ?? Store.getRoleDescription(serverId, x.name) ?? '')
-    const found = dealt.filter(y => y.name !== x.name && (
-      (!GENERIC_TEAMS.has(x.team) && y.team === x.team)
-      || (y.name.length >= 3 && new RegExp(`\\b${escapeRe(y.name)}\\b`, 'i').test(text))))
-    if (found.length > 0 && found.length <= 4) out.set(x.name, found.map(y => ({ name: y.name, enabled: y.enabled, min: y.min, exact: false })))
+    const names: string[] = []
+    const base = x.base ? info.find(y => y.name === x.base && !GENERIC_TEAMS.has(y.team)) : undefined
+    if (base) names.push(base.name)
+    for (const n of x.items) if (!names.includes(n)) names.push(n)
+    const list = names.map(n => info.find(y => y.name === n)).filter((y): y is NonNullable<typeof y> => !!y && y.name !== x.name)
+    if (list.length > 0) out.set(x.name, list.map(y => ({ name: y.name, enabled: y.enabled, min: y.min })))
   }
   return out
+}
+
+/** The stored list of makers, or an empty one. */
+const parseMakers = (raw: unknown): string[] => {
+  try {
+    const v = typeof raw === 'string' ? JSON.parse(raw) : null
+    return Array.isArray(v) ? v.filter((n): n is string => typeof n === 'string' && NAME.test(n)) : []
+  } catch { return [] }
 }
 
 export const publicRoles = () => process.env.PUBLIC_ROLES !== '0'

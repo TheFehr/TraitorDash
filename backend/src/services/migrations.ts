@@ -413,6 +413,12 @@ export const migrations: Array<(db: Database) => void> = [
     if (!db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='roles'").get()) return
     db.run('ALTER TABLE roles ADD COLUMN selectable INTEGER')
     db.run('ALTER TABLE roles ADD COLUMN base_role TEXT')
+  },
+  // v23 (RFC 15): the roles that make a role which is made during a round, as the bridge worked them out from
+  // the game's own code (a JSON array of role names; NULL when none was reported).
+  (db) => {
+    if (!db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='roles'").get()) return
+    db.run('ALTER TABLE roles ADD COLUMN makers TEXT')
   }
 ]
 

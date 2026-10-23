@@ -139,67 +139,78 @@ describe('content', () => {
     expect(await (await get(`/servers/${serverId}/roles/haunter`)).text()).not.toContain('not dealt at its start')
   })
   describe('who makes a made role', () => {
+    // What the bridge reports from the game: the flag, the base role, and the roles that hand out or sell the item that makes the role.
     beforeEach(() => {
       Store.saveSchema(serverId, 'necromancer', 'necromancers', false, -1, [], 'n1', 'Raises the dead.')
-      Store.saveSchema(serverId, 'zombie', 'necromancers', false, -1, [], 'z1', 'A zombie is created when a Necromancer revives a corpse.')
-      Store.saveSchema(serverId, 'thrall', 'traitors', false, -1, [], 't1', 'Made by a vampire bite.')
+      Store.saveSchema(serverId, 'zombie', 'necromancers', false, -1, [], 'z1', 'A zombie.')
+      Store.saveSchema(serverId, 'mesmerist', 'traitors', false, -1, [], 'm1', 'Revives the dead.')
+      Store.saveSchema(serverId, 'traitor', 'traitors', false, -1, [], 'tr1', 'The traitor.')
+      Store.saveSchema(serverId, 'thrall', 'traitors', false, -1, [], 't1', 'The Mesmerist has revived you from the dead! You are now a Traitor')
       Store.setConVarValues(serverId, [
         live('ttt_necromancer_pct', '0.1', '0.1', 'necromancer'), live('ttt_necromancer_min_players', '6', '6', 'necromancer'),
+        live('ttt_mesmerist_pct', '0.1', '0.1', 'mesmerist'), live('ttt_mesmerist_min_players', '9', '9', 'mesmerist'),
         live('ttt_zombie_credits_starting', '0', '0', 'zombie'), live('ttt_thrall_credits_starting', '0', '0', 'thrall'),
       ])
+      Store.setRoleMeta(serverId, 'necromancer', { selectable: true, baseRole: null })
+      Store.setRoleMeta(serverId, 'mesmerist', { selectable: true, baseRole: 'traitor' })
+      Store.setRoleMeta(serverId, 'zombie', { selectable: false, baseRole: 'necromancer' })
+      Store.setRoleMeta(serverId, 'thrall', { selectable: false, baseRole: 'traitor', makers: ['mesmerist'] })
     })
     const card = (html: string, name: string) => html.split('<a class="f ').slice(1).find(c => c.includes(`/roles/${name}`)) ?? ''
-    test('a made role is put away while its maker is, and says why; it is in play once the maker is', async () => {
-      const few = card(await (await get(`/servers/${serverId}/roles?players=4`)).text(), 'zombie')
+    const list = async (q = '') => (await get(`/servers/${serverId}/roles${q}`)).text()
+    const page = async (name: string, q = '') => (await get(`/servers/${serverId}/roles/${name}${q}`)).text()
+
+    test('a subrole of a special role is made by it; a made role is put away while its maker is, and says why', async () => {
+      const few = card(await list('?players=4'), 'zombie')
       expect(few).toMatch(/^few"/)
       expect(few).toContain('needs necromancer')
       expect(few).toContain('made by necromancer, who needs 6+ players')
-      const ok = card(await (await get(`/servers/${serverId}/roles?players=8`)).text(), 'zombie')
+      const ok = card(await list('?players=8'), 'zombie')
       expect(ok).toMatch(/^made"/)
-      expect(ok).toContain('Probably made by necromancer')
-      expect(card(await (await get(`/servers/${serverId}/roles`)).text(), 'zombie')).toMatch(/^made"/)
-    })
-    test('the role page names the probable maker and says it is a guess; a disabled maker is said so', async () => {
-      const page = await (await get(`/servers/${serverId}/roles/zombie?players=4`)).text()
-      expect(page).toContain('Probably made by <strong>necromancer</strong>')
-      expect(page).toContain('the game does not say')
-      expect(page).toContain('Not in play in this round: made by necromancer, who needs 6+ players')
-      Store.setConVarValues(serverId, [live('ttt_necromancer_enabled', '0', '1', 'necromancer')])
-      expect(await (await get(`/servers/${serverId}/roles/zombie?players=8`)).text()).toContain('made by necromancer, which is disabled')
-    })
-    test('what the game says is exact: not dealt, and the base role makes it; no "probably", and the game\'s word beats the guess', async () => {
-      Store.saveSchema(serverId, 'necromancer', 'necromancers', false, -1, [], 'n1', 'Raises the dead.')
-      Store.setRoleMeta(serverId, 'zombie', { selectable: false, baseRole: 'necromancer' })
-      Store.setRoleMeta(serverId, 'necromancer', { selectable: true, baseRole: null })
-      const ok = card(await (await get(`/servers/${serverId}/roles?players=8`)).text(), 'zombie')
       expect(ok).toContain('Made by necromancer')
-      expect(ok).not.toContain('Probably')
-      const page = await (await get(`/servers/${serverId}/roles/zombie?players=8`)).text()
-      expect(page).toContain('Made by <strong>necromancer</strong>.')
-      expect(page).not.toContain('the game does not say')
-      // the game's flag says a role with a distribution ConVar is not made, and one without is
-      Store.setRoleMeta(serverId, 'haunter', { selectable: false, baseRole: null })
-      expect(card(await (await get(`/servers/${serverId}/roles`)).text(), 'haunter')).toMatch(/^made"/)
-      Store.setRoleMeta(serverId, 'haunter', { selectable: true, baseRole: null })
-      expect(card(await (await get(`/servers/${serverId}/roles`)).text(), 'haunter')).not.toMatch(/^made"/)
+      expect(card(await list(), 'zombie')).toMatch(/^made"/)
     })
-    test('the bridge sends the flag and the base role with an ingest, also when the role file is unchanged, and odd values are dropped', async () => {
+    test('the role page names the maker and why the role is not in play; a disabled maker is said so', async () => {
+      const html = await page('zombie', '?players=4')
+      expect(html).toContain('Made by <strong>necromancer</strong>.')
+      expect(html).toContain('Not in play in this round: made by necromancer, who needs 6+ players')
+      Store.setConVarValues(serverId, [live('ttt_necromancer_enabled', '0', '1', 'necromancer')])
+      expect(await page('zombie', '?players=8')).toContain('made by necromancer, which is disabled')
+    })
+    test('a role made through an item is made by the roles the bridge found hand it out; the Traitor it is a subrole of is only its team', async () => {
+      const html = await page('thrall', '?players=12')
+      expect(html).toContain('Made by <strong>mesmerist</strong>.')
+      expect(html).not.toContain('traitor</strong>')
+      // the Mesmerist needs 9 players: the Thrall waits with it
+      expect(card(await list('?players=8'), 'thrall')).toMatch(/^few"/)
+      expect(card(await list('?players=9'), 'thrall')).toMatch(/^made"/)
+    })
+    test('nothing is guessed from a description or a team: with no maker reported the role just says it is made during the round', async () => {
+      Store.setRoleMeta(serverId, 'thrall', { selectable: false, baseRole: 'traitor', makers: null })
+      Store.saveSchema(serverId, 'thrall', 'traitors', false, -1, [], 't2', 'The Mesmerist has revived you from the dead! You are now a Traitor')
+      Store.setRoleMeta(serverId, 'thrall', { selectable: false, baseRole: 'traitor', makers: null })
+      const html = await list('?players=2')
+      expect(card(html, 'thrall')).toMatch(/^made"/)
+      expect(card(html, 'thrall')).toContain('Made during the round, not dealt')
+      expect(await page('thrall')).not.toContain('Made by')
+    })
+    test('the game\'s flag decides what is made: a role with a distribution ConVar is not made, and one without is', async () => {
+      Store.setRoleMeta(serverId, 'haunter', { selectable: false, baseRole: null })
+      expect(card(await list(), 'haunter')).toMatch(/^made"/)
+      Store.setRoleMeta(serverId, 'haunter', { selectable: true, baseRole: null })
+      expect(card(await list(), 'haunter')).not.toMatch(/^made"/)
+    })
+    test('the bridge sends the flag, the base role and the makers with an ingest, also when the role file is unchanged; odd values are dropped', async () => {
       const token = Store.regenerateToken(serverId)
       const send = (extra: object) => app.fetch(new Request('http://x/api/ingest', {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ role_name: 'conv2', role_code: 'ROLE.defaultTeam = "traitors"', md5_hash: 'h-conv2', ...extra }),
       }))
-      expect((await send({ selectable: false, base_role: 'necromancer' })).status).toBe(200)
-      let row = Store.getRoles(serverId).find((r: any) => r.role_name === 'conv2')
-      expect([row.selectable, row.base_role]).toEqual([0, 'necromancer'])
-      expect((await send({ selectable: true, base_role: 'bad name;' })).status).toBe(200) // unchanged file: cached path
-      row = Store.getRoles(serverId).find((r: any) => r.role_name === 'conv2')
-      expect([row.selectable, row.base_role]).toEqual([1, null])
-    })
-    test('a made role with nothing to tie it to just says it is made during the round', async () => {
-      const html = await (await get(`/servers/${serverId}/roles?players=2`)).text()
-      expect(card(html, 'thrall')).toMatch(/^made"/)
-      expect(card(html, 'thrall')).toContain('Made during the round, not dealt')
+      const row = () => Store.getRoles(serverId).find((r: any) => r.role_name === 'conv2')
+      expect((await send({ selectable: false, base_role: 'necromancer', makers: ['mesmerist', 'bad name;', 7, 'jackal'] })).status).toBe(200)
+      expect([row().selectable, row().base_role, JSON.parse(row().makers)]).toEqual([0, 'necromancer', ['mesmerist', 'jackal']])
+      expect((await send({ selectable: true, base_role: 'bad name;', makers: [] })).status).toBe(200) // unchanged file: the cached path
+      expect([row().selectable, row().base_role, row().makers]).toEqual([1, null, null])
     })
   })
   test('a disabled role says so and keeps its numbers', async () => {

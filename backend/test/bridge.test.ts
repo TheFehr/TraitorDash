@@ -340,6 +340,53 @@ describe('Sync', () => {
     expect(r).toBe('boss=true/nil zed=false/boss gunner=true/boss lone=true/nil')
   })
 
+  describe('which roles make a role that is not dealt', () => {
+    // Roles: mesmerist hands out an item (a loadout line) that makes thrall; jackal can buy one that makes sidekick; zombie has a base role.
+    const GAME = `
+      roles = { GetByIndex = function(i) for _, v in ipairs(roles.GetList()) do if v.index == i then return v end end end,
+        GetList = function() return {
+          { ClassName = "necromancer", index = 3, Initialize = function() end },
+          { ClassName = "zombie", index = 4, baserole = 3, notSelectable = true, Initialize = function() end },
+          { ClassName = "mesmerist", index = 5, Initialize = function() end },
+          { ClassName = "thrall", index = 6, baserole = 1, notSelectable = true, Initialize = function() end },
+          { ClassName = "jackal", index = 7, Initialize = function() end },
+          { ClassName = "sidekick", index = 8, notSelectable = true, Initialize = function() end },
+          { ClassName = "defector", index = 9, notSelectable = true, Initialize = function() end },
+          { ClassName = "traitor", index = 1, Initialize = function() end },
+        } end }
+      STORED = {
+        weapon_ttt_mesdefi = { ClassName = "weapon_ttt_mesdefi", CanBuy = nil, Think = function() end },
+        weapon_ttt2_sidekickdeagle = { ClassName = "weapon_ttt2_sidekickdeagle", CanBuy = { [7] = 7 }, Think = function() end },
+        weapon_ttt_defector_jihad = { ClassName = "weapon_ttt_defector_jihad", CanBuy = { 1 }, Think = function() end },
+        weapon_other = { ClassName = "weapon_other", CanBuy = { 1 }, Think = function() end },
+      }
+      weapons = { GetStored = function(c) return STORED[c] end,
+        GetList = function() local o = {} for _, w in pairs(STORED) do o[#o + 1] = w end return o end }
+      for _, n in ipairs({ "necromancer", "zombie", "thrall", "jackal", "sidekick", "defector", "traitor" }) do FILES["terrortown/entities/roles/" .. n .. ".lua"] = "-- " .. n end
+      FILES["terrortown/entities/roles/mesmerist.lua"] = 'function ROLE:GiveRoleLoadout(ply) ply:GiveEquipmentWeapon("weapon_ttt_mesdefi") end'
+      FILES["gamemodes/terrortown/entities/weapons/weapon_ttt_mesdefi.lua"] = "ply:SetRole(ROLE_THRALL, TEAM_TRAITOR)"
+      FILES["gamemodes/terrortown/entities/weapons/weapon_ttt2_sidekickdeagle.lua"] = "AddSidekick(target, attacker) if target:GetSubRole() == ROLE_JACKAL then end"
+      FILES["gamemodes/terrortown/entities/weapons/weapon_ttt_defector_jihad.lua"] = "ConvertDefector(owner)"
+      FILES["gamemodes/terrortown/entities/weapons/weapon_other.lua"] = "-- no role named here, and no made role in its name"
+    `
+    const makers = () => run(`${flow}
+      ${GAME}
+      TraitorDash.Sync()
+      local i = 1 while SENT[i] do SENT[i].success(200, "{}") i = i + 1 end
+      local o = {}
+      for _, n in ipairs({ "zombie", "thrall", "sidekick", "defector", "mesmerist" }) do
+        local m = TraitorDash.RoleMeta[n].makers
+        o[#o + 1] = n .. "=" .. (m and table.concat(m, "+") or "-")
+      end
+      local sent = {}
+      for _, p in ipairs(PAYLOADS) do if p.role_name == "thrall" then sent = p.makers or {} end end
+      RESULT = table.concat(o, " ") .. " | sent " .. table.concat(sent, "+")`, WORLD).result
+    test('the role whose code names the item makes the role the item turns a player into; a buyer of the item makes the role named in its class; nothing else is guessed', () => {
+      // zombie: no item at all (its base role says), so no maker here; defector: the Traitor can buy the Jihad
+      expect(makers()).toBe('zombie=- thrall=mesmerist sidekick=jackal defector=traitor mesmerist=- | sent mesmerist')
+    })
+  })
+
   test('a plain Sync does not force; Sync(true) does', () => {
     const forced = (arg: string) => run(`${flow}
       TraitorDash.Sync(${arg})

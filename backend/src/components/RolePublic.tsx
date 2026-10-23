@@ -66,7 +66,7 @@ export const RoleListPage = ({ server, roles, query, embed, admin, players = nul
                 <i class="stamp">{state === 'off' ? 'disabled' : state === 'few' ? `needs ${r.min}+` : state === 'wait' ? `needs ${r.makers[0]!.name}` : r.team || 'no team'}</i>
                 <h2 class="ft">{r.name}</h2>
                 {state === 'made' || state === 'wait'
-                  ? <span class={state === 'wait' ? 'need' : 'via'}>{state === 'wait' ? `Not in play: ${waitNote(r.makers, players)}` : r.makers.length > 0 ? `${r.makers.every(m => m.exact) ? 'Made by' : 'Probably made by'} ${names(r.makers)}` : 'Made during the round, not dealt'}</span>
+                  ? <span class={state === 'wait' ? 'need' : 'via'}>{state === 'wait' ? `Not in play: ${waitNote(r.makers, players)}` : r.makers.length > 0 ? `Made by ${names(r.makers)}` : 'Made during the round, not dealt'}</span>
                   : <span>Chance: {r.pct}</span>}
                 {state === 'made' || state === 'wait' ? null : state === 'few' ? <span class="need">{more(r.min! - players!)}</span> : <span>Needs: {r.min === null ? 'not reported' : `${r.min}+ players`}</span>}
               </a>
@@ -92,9 +92,7 @@ export const RolePage = ({ server, role, embed, admin, players = null }: { serve
         {(state === 'made' || state === 'wait') && (
           <p class={`note${state === 'wait' ? ' need' : ''}`}>
             Made during a round, not dealt at its start: another role turns a player into it (a conversion), so it has no chance or player limit of its own.
-            {role.makers.length > 0 && (role.makers.every(m => m.exact)
-              ? <> Made by <strong>{names(role.makers)}</strong>.</>
-              : <> Probably made by <strong>{names(role.makers)}</strong> (worked out from its team and description; the game does not say).</>)}
+            {role.makers.length > 0 && <> Made by <strong>{names(role.makers)}</strong>.</>}
             {state === 'wait' && <> Not in play in this round: {waitNote(role.makers, players)}.</>}
           </p>
         )}

@@ -584,6 +584,7 @@ function TraitorDash.IngestRole(roleName, roleCode, hash, force, callback)
         team = TraitorDash.RoleMeta[roleName] and TraitorDash.RoleMeta[roleName].team or nil,
         selectable = TraitorDash.RoleMeta[roleName] and TraitorDash.RoleMeta[roleName].selectable,
         base_role = TraitorDash.RoleMeta[roleName] and TraitorDash.RoleMeta[roleName].base or nil,
+        makers = TraitorDash.RoleMeta[roleName] and TraitorDash.RoleMeta[roleName].makers or nil,
         active_admins = TraitorDash.GetActiveAdmins()
     })
     
@@ -705,6 +706,100 @@ local function LoadRole(v)
     return { name = name, code = content, hash = util.MD5(content) }
 end
 
+--- The source of a weapon (an item a role hands out or sells), or nil when it cannot be found. The path comes from one
+-- of its own functions, as for a role; a few usual places are tried after it.
+local function ReadWeaponSource(class)
+    local paths = {}
+    local stored = weapons and weapons.GetStored and weapons.GetStored(class)
+    if type(stored) == "table" then
+        for _, f in pairs(stored) do
+            if type(f) == "function" then
+                local info = debug.getinfo(f, "S")
+                local src = info and info.source or ""
+                if src:sub(1, 1) == "@" then src = src:sub(2) end
+                if src ~= "" then paths[#paths + 1] = src end
+                break
+            end
+        end
+    end
+    for _, p in ipairs({
+        "gamemodes/terrortown/entities/weapons/" .. class .. ".lua",
+        "gamemodes/terrortown/entities/weapons/" .. class .. "/shared.lua",
+        "weapons/" .. class .. ".lua", "weapons/" .. class .. "/shared.lua",
+        "lua/weapons/" .. class .. ".lua", "lua/weapons/" .. class .. "/shared.lua",
+    }) do paths[#paths + 1] = p end
+    for _, p in ipairs(paths) do
+        for _, where in ipairs({ "GAME", "LUA" }) do
+            local code = file.Read(p, where)
+            if code and code ~= "" then return code end
+        end
+    end
+end
+
+--- Works out, from the game's own code, which roles make each role that is not dealt at the start of a round (the Thrall,
+-- the Sidekick, the Zombie...). Such a role is made through an item: the item's code names the role it turns a player into
+-- (or its class is named after it: weapon_ttt2_sidekickdeagle), and the maker is a role that hands the item out (its code
+-- names the item, as in the Mesmerist's loadout line `GiveEquipmentWeapon("weapon_ttt_mesdefi")`) or that can buy it (the
+-- item's CanBuy, which the game fills in at run time). Stored as RoleMeta[role].makers.
+function TraitorDash.ComputeMakers()
+    local made = {}
+    for name, meta in pairs(TraitorDash.RoleMeta) do
+        meta.makers = nil
+        if meta.selectable == false then made[name] = true end
+    end
+    if next(made) == nil then return end
+
+    -- The items worth reading: those a role's code names, and those whose class is named after a role that is made.
+    local classes = {}
+    for _, code in pairs(TraitorDash.RoleCodeCache) do
+        for class in code:gmatch('["\']([%w_]*weapon[%w_]*)["\']') do classes[class] = true end
+    end
+    if weapons and weapons.GetList then
+        for _, w in ipairs(weapons.GetList()) do
+            local lower = type(w.ClassName) == "string" and w.ClassName:lower() or nil
+            if lower then
+                for name in pairs(made) do
+                    if #name >= 4 and lower:find(name, 1, true) then classes[w.ClassName] = true end
+                end
+            end
+        end
+    end
+
+    local makers = {}
+    for class in pairs(classes) do
+        local code = ReadWeaponSource(class)
+        if code then
+            local lower = class:lower()
+            for name in pairs(made) do
+                local mentions = code:find("ROLE_" .. name:upper() .. "%f[^%w_]") ~= nil
+                local named = #name >= 4 and lower:find(name, 1, true) ~= nil
+                if mentions or named then
+                    makers[name] = makers[name] or {}
+                    -- roles that hand it out
+                    for other, otherCode in pairs(TraitorDash.RoleCodeCache) do
+                        if other ~= name and not made[other] and otherCode:find(class, 1, true) then makers[name][other] = true end
+                    end
+                    -- roles that can buy it
+                    local stored = weapons and weapons.GetStored and weapons.GetStored(class)
+                    if type(stored) == "table" and type(stored.CanBuy) == "table" and roles and roles.GetByIndex then
+                        for _, index in pairs(stored.CanBuy) do
+                            local r = type(index) == "number" and roles.GetByIndex(index) or nil
+                            local other = r and (r.ClassName or r.name)
+                            if other and other ~= name and not made[other] then makers[name][other] = true end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    for name, set in pairs(makers) do
+        local list = {}
+        for other in pairs(set) do list[#list + 1] = other end
+        table.sort(list)
+        if #list > 0 then TraitorDash.RoleMeta[name].makers = list end
+    end
+end
+
 function TraitorDash.Sync(force)
     if not roles or not roles.GetList then
         print("[TraitorDash] Error: TTT2 roles library not found!")
@@ -723,6 +818,10 @@ function TraitorDash.Sync(force)
         local item = LoadRole(v)
         if item then table.insert(queue, item) end
     end
+
+    -- Every role's code is known now: which roles make the ones that are not dealt.
+    local okMakers, errMakers = pcall(TraitorDash.ComputeMakers)
+    if not okMakers then print("[TraitorDash] Could not work out which roles make which: " .. tostring(errMakers)) end
 
     local count = 0
     local total = #queue

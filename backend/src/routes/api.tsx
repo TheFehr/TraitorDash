@@ -146,6 +146,8 @@ api.post('/ingest', getServer, async (c) => {
     const liveMeta = {
       selectable: typeof body.selectable === 'boolean' ? body.selectable : null,
       baseRole: typeof body.base_role === 'string' && NAME.test(body.base_role) ? body.base_role : null,
+      // The roles that make this one, which the bridge worked out from the game's code: at most eight plain role names.
+      makers: Array.isArray(body.makers) ? body.makers.filter((m: unknown): m is string => typeof m === 'string' && NAME.test(m)).slice(0, 8) : null,
     }
 
     if (!role_code || typeof role_code !== 'string') {
