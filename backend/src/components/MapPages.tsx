@@ -108,12 +108,17 @@ export const MapsPage = ({ ctx, server, state, maps, activity, showAll, plans, m
                     {a
                       ? <><Split results={a.results} rounds={a.rounds} /><span>{a.rounds} {a.rounds === 1 ? 'round' : 'rounds'} · last <When iso={a.lastRound} now={ctx.now} /></span></>
                       : <span class="dim">Not played yet</span>}
-                    {admin && plan && <span><a class="pill ok" href={mapPath(id, m.name)}>Floor plan</a>{planOutdated(plan, m) && <i class="pill wait">Outdated</i>}</span>}
-                    {meshes?.has(m.name) && (ctx.viewer
-                      ? <span><a data-3d class="pill ok" href={link(ctx, mapPath(id, m.name))}>3D</a></span>
-                      : ctx.signinOpen && !ctx.embed
-                        ? <span><a data-3d-signin class="pill mute" href={signinUrl(mapPath(id, m.name))}>3D: sign in</a></span>
-                        : <span><i data-3d-locked class="pill mute">3D: sign in</i></span>)}
+                    {/* An admin's 3D view and floor plan are one page: one pill, not two that lead to the same place */}
+                    {admin && plan && meshes?.has(m.name) && ctx.viewer
+                      ? <span><a data-3d class="pill ok" href={link(ctx, mapPath(id, m.name))}>3D · Floor plan</a>{planOutdated(plan, m) && <i class="pill wait">Outdated</i>}</span>
+                      : <>
+                        {admin && plan && <span><a class="pill ok" href={mapPath(id, m.name)}>Floor plan</a>{planOutdated(plan, m) && <i class="pill wait">Outdated</i>}</span>}
+                        {meshes?.has(m.name) && (ctx.viewer
+                          ? <span><a data-3d class="pill ok" href={link(ctx, mapPath(id, m.name))}>3D</a></span>
+                          : ctx.signinOpen && !ctx.embed
+                            ? <span><a data-3d-signin class="pill mute" href={signinUrl(mapPath(id, m.name))}>3D: sign in</a></span>
+                            : <span><i data-3d-locked class="pill mute">3D: sign in</i></span>)}
+                      </>}
                   </div>
                 )
               })}
