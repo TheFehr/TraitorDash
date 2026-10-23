@@ -44,7 +44,7 @@ const page = async (id = serverId) => (await get(`/servers/${id}/maps`)).text()
 /** The page as a signed-in admin sees it; `all` is the opt-in for maps outside the vote pool. */
 const adminPage = async (id = serverId, all = false) => (await get(`/servers/${id}/maps${all ? '?all=1' : ''}`, true)).text()
 // a map is a card of its own: everything from its opening tag to the next card
-const rowsOf = (html: string) => html.split('<div class="f"').slice(1)
+const rowsOf = (html: string) => html.split('<div class="f card"').slice(1)
 const rowFor = (html: string, name: string) => rowsOf(html).find((r: string) => r.includes(`>${name}</span>`))
 /** The number shown under a caption of the figures at the top of the page. */
 const figure = (html: string, label: string) => new RegExp(`<div class="num">([^<]*)</div><div class="cap">${label}</div>`).exec(html)?.[1]

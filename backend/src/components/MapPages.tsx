@@ -101,7 +101,7 @@ export const MapsPage = ({ ctx, server, state, maps, activity, showAll, plans, m
                 const a = activity.get(m.name)
                 const plan = plans?.find(p => p.map === m.name)
                 return (
-                  <div class="f" style={`--c:${tabColour(m)}`}>
+                  <div class="f card" style={`--c:${tabColour(m)}`}>
                     <h2 class="ft"><a href={link(ctx, `${mapPath(id, m.name)}/rounds`)}>{prettyMap(m.name)}</a></h2>
                     <span class="file">{m.name}</span>
                     <span><Pills m={m} next={next} />{admin && <i class="pill mute">{mapSize(m.size)}</i>}</span>

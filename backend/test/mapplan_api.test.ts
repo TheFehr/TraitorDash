@@ -177,7 +177,7 @@ describe('floor plans: the Maps page links, the map\'s own page shows (admins on
 
   test('the Maps page marks the maps that have a plan, and links every map to its page, for admins', async () => {
     const html = await (await get(`/servers/${serverId}/maps`, true)).text()
-    const rows = html.split('<div class="f"').slice(1)
+    const rows = html.split('<div class="f card"').slice(1)
     const row = (n: string) => rows.find((r: string) => r.includes(`>${n}</span>`))!
     // every map is a card that opens the map's file; a map with a plan also links straight to its own page
     expect(row('ttt_a')).toContain(`href="/servers/${serverId}/maps/ttt_a/rounds"`)
