@@ -27,7 +27,7 @@ import { sameOrigin } from './middleware/csrf'
 // Components
 import { AdminHomePage, ServersPage, ServerPage, RoleConfigPage } from './components/AdminPages'
 import { RoleListPartial } from './components/Sidebar'
-import { checkHealth, sourceHash } from './services/version'
+import { checkHealth, features, sourceHash } from './services/version'
 import { StatsPage, RoundPage, PlayerPage } from './components/StatsPages'
 import { NotFound } from './components/CaseFile'
 import { adminOf, link } from './components/kit'
@@ -83,10 +83,10 @@ const userOf = async (c: any): Promise<string | undefined> => {
  * Liveness and identity: which code is running. Unauthenticated on purpose (monitoring and
  * load balancers call it), so it carries no secrets, paths or error details.
  */
-app.get('/health', (c) => {
+app.get('/health', async (c) => {
   const health = checkHealth()
   c.header('Cache-Control', 'no-store')
-  return c.json(health, health.status === 'ok' ? 200 : 503)
+  return c.json({ ...health, features: await features() }, health.status === 'ok' ? 200 : 503)
 })
 
 /**

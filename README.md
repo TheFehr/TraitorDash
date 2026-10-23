@@ -101,7 +101,7 @@ The two ConVars `traitordash_url` and `traitordash_token` in `server.cfg` still 
 ### 3. Deploy (optional)
 
 -   `pelican/` has the [Pelican egg](./pelican/README.md) the backend runs under, configured through egg variables (`BASE_URL`, `ADMIN_STEAM_IDS`, `SESSION_SECRET`, ...).
--   Every push to `main` is tested by GitHub Actions, which also publishes the backend as a tarball (`backend.tar.gz` with a `.sha256`, commit recorded in `build.json`) on the rolling [`main-latest` release](https://github.com/TheFehr/TraitorDash/releases/tag/main-latest); `GET /health` shows the commit that is running.
+-   Every push to `main` is tested by GitHub Actions, which also publishes the backend as a tarball (`backend.tar.gz` with a `.sha256`, commit recorded in `build.json`) on the rolling [`main-latest` release](https://github.com/TheFehr/TraitorDash/releases/tag/main-latest); `GET /health` shows the commit that is running. It also says `true` or `false` for each optional feature under `features` (`mapGeometry`, `downloadHelper`, `gameContent`, `publicRoles`, `publicRoleSettings`, `openSignin`, `trustProxy`); `gameContent` is `true` only when `MAP_GEOMETRY=1` is set as well.
 
 ---
 

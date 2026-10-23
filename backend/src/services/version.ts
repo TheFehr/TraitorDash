@@ -2,6 +2,10 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import db from './Database'
+import { gameContentEnabled } from './gameContent'
+import { geometryEnabled } from './mapgeometry'
+import { publicRoles, publicRoleSettings } from './roleview'
+import { helperAvailable } from './workshop'
 
 // What is running, answerable from the running process alone. The deployed app has no .git
 // (it is shipped as a tarball), so the identity is a hash of the SOURCE FILES it was started from:
@@ -56,6 +60,43 @@ const startedAt = new Date()
 let cachedHash: string | null = null
 export const sourceHash = () => (cachedHash ??= computeSourceHash())
 
+/** Which optional features this backend runs with: a true or false each, so a monitor or a person can query them. No values, paths or secrets. */
+export interface Features {
+  /** MAP_GEOMETRY=1: 3D maps are built from the Workshop. */
+  mapGeometry: boolean
+  /** The download helper (DepotDownloader) is there; false means requested maps fail. */
+  downloadHelper: boolean
+  /** The game's own models are fetched (GAME_CONTENT=1, and only works with mapGeometry). */
+  gameContent: boolean
+  publicRoles: boolean
+  publicRoleSettings: boolean
+  /** OPEN_SIGNIN=1: any Steam account may sign in, not only admins. */
+  openSignin: boolean
+  /** TRUST_PROXY=1: the client address comes from the proxy's header. */
+  trustProxy: boolean
+}
+
+let helperSeen: { at: number, ok: boolean } | null = null
+/** Is the download helper there? Asked at most once a minute, because the answer starts a process. */
+async function downloadHelper(): Promise<boolean> {
+  if (!geometryEnabled()) return false
+  if (!helperSeen || Date.now() - helperSeen.at > 60_000) helperSeen = { at: Date.now(), ok: await helperAvailable() }
+  return helperSeen.ok
+}
+
+export async function features(): Promise<Features> {
+  const { openSignin } = await import('../middleware/session') // needs the session secret, so not at load time
+  return {
+    mapGeometry: geometryEnabled(),
+    downloadHelper: await downloadHelper(),
+    gameContent: geometryEnabled() && gameContentEnabled(),
+    publicRoles: publicRoles(),
+    publicRoleSettings: publicRoleSettings(),
+    openSignin: openSignin(),
+    trustProxy: process.env.TRUST_PROXY === '1',
+  }
+}
+
 export interface Health {
   status: 'ok' | 'error'
   sourceHash: string
@@ -64,6 +105,7 @@ export interface Health {
   uptimeSeconds: number
   schemaVersion: number | null
   runtime: string
+  features?: Features
   error?: string
 }
 

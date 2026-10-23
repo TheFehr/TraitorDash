@@ -7,7 +7,7 @@ process.env.TRAITORDASH_DB = ':memory:'
 process.env.SESSION_SECRET = 'test-secret-test-secret-test-secret-0'
 process.env.ADMIN_STEAM_IDS = '76561198000000000'
 
-import { computeSourceHash, checkHealth, readBuildInfo } from '../src/services/version'
+import { computeSourceHash, checkHealth, features, readBuildInfo } from '../src/services/version'
 
 let app: any
 beforeAll(async () => { app = (await import('../src/index')).default })
@@ -24,6 +24,26 @@ describe('GET /health', () => {
     expect(typeof body.startedAt).toBe('string')
     expect(body.uptimeSeconds).toBeGreaterThanOrEqual(0)
     expect(body.schemaVersion).toBeGreaterThan(0)
+  })
+
+  test('says true or false for each optional feature', async () => {
+    const body = await (await app.fetch(new Request('http://x/health'))).json()
+    expect(Object.keys(body.features).sort()).toEqual(['downloadHelper', 'gameContent', 'mapGeometry', 'openSignin', 'publicRoleSettings', 'publicRoles', 'trustProxy'])
+    for (const v of Object.values(body.features)) expect(typeof v).toBe('boolean')
+  })
+
+  test('game content counts as on only together with map geometry', async () => {
+    const was = { g: process.env.MAP_GEOMETRY, c: process.env.GAME_CONTENT }
+    try {
+      process.env.MAP_GEOMETRY = '0'; process.env.GAME_CONTENT = '1'
+      expect((await features()).gameContent).toBe(false)
+      process.env.MAP_GEOMETRY = '1'
+      expect((await features()).gameContent).toBe(true)
+      process.env.GAME_CONTENT = '0'
+      expect((await features()).gameContent).toBe(false)
+    } finally {
+      for (const [k, v] of [['MAP_GEOMETRY', was.g], ['GAME_CONTENT', was.c]] as const) { if (v === undefined) delete process.env[k]; else process.env[k] = v }
+    }
   })
 
   test('carries no secrets, environment values or file paths', async () => {
