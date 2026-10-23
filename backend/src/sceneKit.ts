@@ -2,8 +2,8 @@ import { WebGLRenderer, Scene, PerspectiveCamera, HemisphereLight, AmbientLight,
 
 /** What the map view and the replay start from: the same renderer, lit scene and camera, so a map looks the same in both. */
 
-/** The page's dark background (Tailwind gray-900), also behind the drawing. */
-export const BACKGROUND = 0x111827
+/** The dark background of the drawing: the canvas's own colour in the page stylesheet (#14110e). */
+export const BACKGROUND = 0x14110e
 
 /** A renderer on the canvas, with clipping on (the level cutaway) and the pixel ratio capped at 2. Throws without WebGL. */
 export function makeRenderer(canvas: HTMLCanvasElement): WebGLRenderer {

@@ -21,7 +21,12 @@ function start(root: HTMLElement) {
   if (!src || !canvas) return
   const say = (t: string) => { if (status) { status.textContent = t; status.hidden = t === '' } }
 
-  const renderer = makeRenderer(canvas)
+  let renderer: ReturnType<typeof makeRenderer>
+  try { renderer = makeRenderer(canvas) } catch (e) {
+    // No WebGL (the game's built-in browser may have it switched off): say so, with the reason, instead of leaving "needs JavaScript".
+    say('This browser cannot draw the 3D view (WebGL is not available). Open this page in a normal browser.' + (e instanceof Error && e.message ? ' (' + e.message.slice(0, 120) + ')' : ''))
+    return
+  }
   const scene = makeScene()
   const camera = makeCamera()
   const controls = new OrbitControls(camera, canvas)
@@ -114,4 +119,9 @@ function start(root: HTMLElement) {
     .catch(() => say('The map could not be loaded.'))
 }
 
-document.querySelectorAll<HTMLElement>('[data-mapview]').forEach(start)
+document.querySelectorAll<HTMLElement>('[data-mapview]').forEach(root => {
+  try { start(root) } catch (e) {
+    const status = root.querySelector<HTMLElement>('[data-status]')
+    if (status) { status.hidden = false; status.textContent = 'The 3D view failed to start: ' + (e instanceof Error ? e.message : String(e)).slice(0, 160) }
+  }
+})
