@@ -110,7 +110,14 @@ export function angleMatrix(pitch: number, yaw: number, roll: number): number[] 
   ]
 }
 
-export const FIXTURE_CLASSES = /^func_(brush|wall|breakable|lod|wall_toggle)$/
+export const FIXTURE_CLASSES = /^func_(brush|wall|breakable|lod|wall_toggle|movelinear)$/
+/**
+ * A sliding brush (`func_movelinear`) is drawn where it starts when it travels a long way (a building that collapses as a trap
+ * slides 2 080 units; on the 27 maps measured, no door, gate or hatch slides more than 100, so they stay out), and only when it
+ * starts at the beginning of its track: one that starts part way along rests somewhere else.
+ */
+const LONG_SLIDE = 1024
+const atRest = (entity: Record<string, string>) => entity['classname'] !== 'func_movelinear' || (Number(entity['movedistance']) >= LONG_SLIDE && !Number(entity['startposition'] ?? 0))
 const FLOOR_NZ = 0.7 // the steepest slope a player can walk up
 const MAX_FACE_EDGES = 4096
 const MAX_COORD = 131_072 // Source maps are at most +-16384; room to spare, far from float garbage
@@ -414,7 +421,7 @@ export async function extractMapEntities(src: ByteSource, limits: SpawnLimits = 
     } else if (brace === '}') {
       const cls = entity?.['classname']
       // A brush entity that stands still names its model `*N` and has no parent that could move it.
-      if (entity && cls && FIXTURE_CLASSES.test(cls) && /^\*\d{1,5}$/.test(entity['model'] ?? '') && !entity['parentname']) {
+      if (entity && cls && FIXTURE_CLASSES.test(cls) && /^\*\d{1,5}$/.test(entity['model'] ?? '') && !entity['parentname'] && atRest(entity)) {
         const o = originOf(entity!) ?? { x: 0, y: 0, z: 0 }
         const a = anglesOf(entity!)
         fixtureModels.push({ model: Number(entity['model']!.slice(1)), ...o, pitch: a[0], yaw: a[1], roll: a[2] })

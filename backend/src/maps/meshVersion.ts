@@ -5,9 +5,10 @@
  * 3: the props that are in the map file.
  * 4: brush entities at their own origin, parts (detached ones in a group of their own, the skybox by shared corners), storeys flag, spawns.
  * 5: also the game's own models (only where that is switched on, see `meshVersion`).
+ * 6 and 7 (with the game's own models): sliding brushes (`func_movelinear`, such as a collapsing building) at their starting place.
  */
-export const MESH_VERSION = 4
-export const MESH_VERSION_GAME = 5
+export const MESH_VERSION = 6
+export const MESH_VERSION_GAME = 7
 
 /** The generation a backend wants: the one with the game's own models when it has them, else the one without. */
 export const meshVersion = (withGameContent: boolean) => withGameContent ? MESH_VERSION_GAME : MESH_VERSION

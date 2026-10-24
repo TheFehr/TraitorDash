@@ -73,6 +73,17 @@ describe('brush entities that stand still (RFC 18, 4.2)', () => {
     expect((await extractMapEntities(memorySource(spec()))).fixtureModels.map(f => f.model)).toEqual([1, 4])
   })
 
+  test('a sliding brush that travels a long way (a building that collapses as a trap) is drawn where it starts; a door-sized slide, or one that starts part way along its track, is not', async () => {
+    const lump = [
+      '{ "classname" "worldspawn" }',
+      '{ "classname" "func_movelinear" "model" "*1" "startposition" "0" "movedir" "90 0 0" "movedistance" "2080" }',
+      '{ "classname" "func_movelinear" "model" "*2" "movedistance" "65" }',
+      '{ "classname" "func_movelinear" "model" "*3" "startposition" "0.5" "movedistance" "2000" }',
+    ].join('\n')
+    const bsp = buildBsp({ ...flatQuads([0, 10, 20, 30]), entities: lump, models: [{ firstFace: 0, numFaces: 1 }, { firstFace: 1, numFaces: 1 }, { firstFace: 2, numFaces: 1 }, { firstFace: 3, numFaces: 1 }] })
+    expect((await extractMapEntities(memorySource(bsp))).fixtureModels.map(f => f.model)).toEqual([1])
+  })
+
   test('their faces are drawn with the world; the others are counted and left out', async () => {
     const without = await extractSurfaces(memorySource(spec()))
     expect(without.floors.length / 9).toBe(2)
