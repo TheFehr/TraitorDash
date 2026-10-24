@@ -31,6 +31,7 @@ const PRELUDE = `
   function E:GetAngles() return self.ang end
   function E:GetParent() return self.parent or { valid = false } end
   function E:IsPlayer() return self.player == true end
+  function E:IsBot() return self.bot == true end
   ENTS = {}
   local nextIdx = 1
   function Ent(class, model, name)
@@ -83,7 +84,9 @@ const PRELUDE = `
   PRINTED = {}
   print = function(...) local o = {} for i = 1, select("#", ...) do o[i] = tostring((select(i, ...))) end PRINTED[#PRINTED + 1] = table.concat(o, " ") end
   DATA = {}
-  file = { Read = function(p) return DATA[p] end, Write = function(p, c) DATA[p] = c end }
+  file = { Read = function(p) return DATA[p] end, Write = function(p, c) DATA[p] = c end, Delete = function(p) DATA[p] = nil end }
+  FRAME = 0.015
+  function FrameTime() return FRAME end
   COMMAND = nil
   concommand = { Add = function(n, fn) COMMAND = fn end }
   function Cmd(...) COMMAND(CONSOLE_PLAYER, "traitordash_parts_probe", { ... }) end
@@ -92,6 +95,11 @@ const PRELUDE = `
 `
 
 function play(script: string): { printed: string[], out: any } {
+  return playWithData('', script)
+}
+
+// "before" runs after the fake GMod is set up and before the addon loads, like a file already on the server.
+function playWithData(before: string, script: string): { printed: string[], out: any } {
   const L = lauxlib.luaL_newstate()
   lualib.luaL_openlibs(L)
   const run = (code: string) => {
@@ -99,6 +107,7 @@ function play(script: string): { printed: string[], out: any } {
   }
   try {
     run(PRELUDE)
+    if (before) run(before)
     run(fs.readFileSync(FILE, 'utf8'))
     run(script)
     run(`
@@ -311,7 +320,7 @@ describe('partsprobe.lua', () => {
     expect(text(r)).toContain('for 1800 s (manual)')
   })
 
-  test('round: armed, watches from the start of the next round to its end, and a restarted round drops the watch', () => {
+  test('round: armed, watches from the start of the next round to its end, and a restarted round ends the watch with what it saw', () => {
     const r = play(`
       Ent("func_door", "*3", "door1")
       Cmd("round")
@@ -322,13 +331,97 @@ describe('partsprobe.lua', () => {
       Fire("TTTEndRound")
       local after = HookCount("AcceptInput")
       Cmd("round") Fire("TTTBeginRound")
+      Advance(3)
       Fire("TTTPrepareRound")                                -- the round is restarted
-      OUT = { armed = armed, during = during, after = after, dropped = HookCount("AcceptInput"), timers = TimerCount() }
+      OUT = { armed = armed, during = during, after = after, restarted = HookCount("AcceptInput"), timers = TimerCount() }
     `)
-    expect(r.out).toEqual({ armed: 0, during: 1, after: 0, dropped: 0, timers: 0 })
+    expect(r.out).toEqual({ armed: 0, during: 1, after: 0, restarted: 0, timers: 0 })
     const t = text(r)
     expect(t).toContain('watched 10 s (the round ended)')
-    expect(t).toContain('the round was restarted; watch dropped')
+    expect(t).toContain('watched 3 s (the round was restarted)')
+  })
+
+  test('auto: watches each round with enough humans, bots not counted, and keeps going round after round', () => {
+    const r = play(`
+      Ent("func_door", "*3", "door1")
+      local a, b, bot = Ply(), Ply(), Ply() bot.bot = true
+      PLAYERS = { a, bot }
+      Cmd("auto", "on", "2")
+      Fire("TTTBeginRound")                                   -- one human and a bot: too few
+      local few = HookCount("AcceptInput")
+      PLAYERS = { a, b, bot }
+      Fire("TTTBeginRound")                                   -- two humans
+      local first = HookCount("AcceptInput")
+      Advance(5) Fire("TTTEndRound")
+      Fire("TTTBeginRound")                                   -- the next round, no new command
+      local second = HookCount("AcceptInput")
+      Advance(5) Fire("TTTEndRound")
+      Cmd("auto", "off")
+      Fire("TTTBeginRound")
+      OUT = { few = few, first = first, second = second, off = HookCount("AcceptInput"), fileGone = DATA["traitordash_parts_probe_auto.txt"] == nil }
+    `)
+    expect(r.out).toEqual({ few: 0, first: 1, second: 1, off: 0, fileGone: true })
+    expect(text(r).match(/--- parts probe, round/g)).toHaveLength(2)
+  })
+
+  test('auto is kept in a file and comes back when the addon loads again', () => {
+    const r = play(`
+      Cmd("auto", "on", "12")
+      OUT = { saved = DATA["traitordash_parts_probe_auto.txt"] }
+    `)
+    expect(r.out.saved).toBe('12')
+    // a new load, with the file still there
+    const second = playWithData(`
+      DATA["traitordash_parts_probe_auto.txt"] = "12"
+    `, `
+      PLAYERS = {} for i = 1, 12 do PLAYERS[i] = Ply() end
+      Fire("TTTBeginRound")
+      OUT = { watching = HookCount("AcceptInput") }
+    `)
+    expect(second.out.watching).toBe(1)
+    expect(text(second)).toContain('auto: every round that starts with 12 or more people is watched')
+  })
+
+  test('a map change or shutdown ends the watch and writes what it saw', () => {
+    const r = play(`
+      Ent("func_door", "*3", "door1")
+      Cmd("round") Fire("TTTBeginRound")
+      Advance(7)
+      Fire("ShutDown")
+      OUT = { hooks = HookCount("AcceptInput"), timers = TimerCount() }
+    `)
+    expect(r.out).toEqual({ hooks: 0, timers: 0 })
+    expect(text(r)).toContain('watched 7 s (the server shut down or changed map)')
+  })
+
+  test('the report says how many people there were at most, how the frames did and has one summary line', () => {
+    const r = play(`
+      Ent("func_door", "*3", "door1")
+      local ps = {} for i = 1, 20 do ps[i] = Ply() end
+      PLAYERS = { ps[1], ps[2] }
+      Cmd("start", "60")
+      Advance(2)
+      PLAYERS = ps                                            -- the server fills up
+      Advance(3)
+      FRAME = 0.05 Advance(1) FRAME = 0.015
+      PLAYERS = { ps[1] }
+      Cmd("stop")
+    `)
+    const t = text(r)
+    expect(t).toContain('at the start 2 people (0 of them bots), at most 20 (20 humans), at the end 1 (1 humans)')
+    expect(t).toMatch(/SUMMARY humans<=20 \| inputs 0\.0\/s \| hook 0\.0 us avg 0\.0 us worst \| looking at parts [\d.]+ us avg [\d.]+ us worst \| unannounced movements 0 \| frames [\d.]+ ms avg 50\.00 ms worst/)
+  })
+
+  test('a data file that has grown too large is left alone, and the result still goes to the console', () => {
+    const r = play(`
+      Ent("func_door", "*3", "a")
+      DATA["traitordash_parts_probe.txt"] = string.rep("x", 600 * 1024)
+      Cmd("scan")
+      OUT = { size = #DATA["traitordash_parts_probe.txt"] }
+    `)
+    expect(r.out.size).toBe(600 * 1024)
+    expect(text(r)).toContain('movable entities: 1')
+    expect(text(r)).toContain('could not write data/traitordash_parts_probe.txt')
   })
 
   test('with more than 512 movable entities only the first 512 are watched, and it says so', () => {

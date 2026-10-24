@@ -3,6 +3,8 @@
 --   traitordash_parts_probe scan            list the movable entities of the map, once, and say how they look
 --   traitordash_parts_probe start [secs]    watch for that long (default 120, at most 1800), then print the result
 --   traitordash_parts_probe round           watch the next round, from its start to its end
+--   traitordash_parts_probe auto on [n]     watch every round that starts with at least n people (default 1), from now on,
+--                                           also after a restart or a map change, until "auto off"; for a night with a full server
 --   traitordash_parts_probe stop            end a watch and print the result
 --   traitordash_parts_probe status          what is going on
 --
@@ -15,6 +17,10 @@
 --   * does a part ever move without an input just before it? (what AcceptInput misses; PlayerUse is counted next to it)
 --   * what does the hook cost on a busy map, and what does sampling the parts cost?
 --   * how many doors that are props, breakable walls and buttons does the map have? (what is left out)
+--
+-- Every way a watch can end writes its result: the round ending, a restarted round, a map change or shutdown, the time
+-- running out. The hook cost is measured with SysTime around each call, which adds a little of its own, so it reads a
+-- bit high. The server's frame time is looked at five times a second, so it shows a trend, not every frame.
 --
 -- It only watches. The hooks end without returning a value on every path: in Garry's Mod, returning true from
 -- AcceptInput (or false from PlayerUse) stops the game from doing what it was about to do.
@@ -36,12 +42,15 @@ local MAX_PARTS = 512
 local DEFAULT_SECONDS, MAX_SECONDS = 120, 1800
 local SAMPLE = 0.2             -- seconds between two looks at the parts
 local ANNOUNCED = 5            -- a movement counts as announced when an input reached the part in the 5 s before
+local MAX_FILE = 512 * 1024    -- stop adding to the data file beyond this
+local AUTO_FILE = "traitordash_parts_probe_auto.txt"
 local MAX_LINES = 40           -- lines of detail kept for each list
 local STILL = 0.5              -- a part moved when its position changed by more than this many units...
 local TURNED = 0.25            -- ...or its angles by more than this many degrees
 
 local run = nil                -- the watch in progress
 local armed = false            -- "round": waiting for the next round to begin
+local auto = nil               -- "auto on": { min = people needed } while every round is watched
 
 local function Out(msg) print("[TraitorDash:parts] " .. msg) end
 
@@ -65,10 +74,11 @@ end
 -- The movable entities of the map, and how their models look. Pure reading.
 local function Scan()
     local parts, byIndex = {}, {}
-    local info = { byClass = {}, noModel = {}, duplicates = {}, unnamed = 0, parented = 0, others = {}, over = false }
+    local info = { byClass = {}, noModel = {}, duplicates = {}, unnamed = 0, parented = 0, others = {}, over = false, entityCount = 0 }
     local seen = {}
     for _, name in ipairs(OTHERS) do info.others[name] = 0 end
     for _, ent in ipairs(ents.GetAll()) do
+        info.entityCount = info.entityCount + 1
         if IsValid(ent) then
             local class = ent:GetClass()
             if CLASSES[class] then
@@ -107,6 +117,15 @@ local function ScanLines(info)
     return lines
 end
 
+local function Counts()
+    local all, humans = 0, 0
+    for _, ply in ipairs(player.GetAll()) do
+        all = all + 1
+        if not (ply.IsBot and ply:IsBot()) then humans = humans + 1 end
+    end
+    return all, humans
+end
+
 local function IsPlayer(ent) return IsValid(ent) and ent.IsPlayer ~= nil and ent:IsPlayer() end
 
 local function Report(lines, label)
@@ -116,6 +135,7 @@ local function Report(lines, label)
     for _, l in ipairs(lines) do Out(l) all[#all + 1] = l end
     local ok, err = pcall(function()
         local old = file.Read("traitordash_parts_probe.txt", "DATA") or ""
+        if #old > MAX_FILE then error("the file is over " .. MAX_FILE .. " bytes; move it away and the next result is written") end
         file.Write("traitordash_parts_probe.txt", old .. table.concat(all, "\n") .. "\n\n")
     end)
     if not ok then Out("could not write data/traitordash_parts_probe.txt: " .. tostring(err)) end
@@ -205,6 +225,15 @@ local function Sample()
             end
         end
     end
+    -- once a second: how many people, and how the server's frames are doing
+    if r.samples % 5 == 0 then
+        local all, humans = Counts()
+        if all > r.playersMax then r.playersMax = all end
+        if humans > r.humansMax then r.humansMax = humans end
+    end
+    local ft = FrameTime and FrameTime() or 0
+    r.frameSum = r.frameSum + ft
+    if ft > r.frameWorst then r.frameWorst = ft end
     local dt = SysTime() - t0
     r.samples = r.samples + 1
     r.sampleTime = r.sampleTime + dt
@@ -223,7 +252,13 @@ local function Finish(why)
 
     local secs = SysTime() - r.started
     local lines = {}
-    lines[#lines + 1] = string.format("watched %.0f s (%s), %d players", secs, why or r.label, #player.GetAll())
+    local all, humans = Counts()
+    lines[#lines + 1] = string.format("watched %.0f s (%s); at the start %d people (%d of them bots), at most %d (%d humans), at the end %d (%d humans); %d entities in the map",
+        secs, why or r.label, r.playersStart, r.playersStart - r.humansStart, math.max(r.playersMax, all), math.max(r.humansMax, humans), all, humans, r.info.entityCount)
+    lines[#lines + 1] = string.format("SUMMARY humans<=%d | inputs %.1f/s | hook %.1f us avg %.1f us worst | looking at parts %.1f us avg %.1f us worst | unannounced movements %d | frames %.2f ms avg %.2f ms worst (tick %.2f ms)",
+        math.max(r.humansMax, humans), secs > 0 and r.inputsAll / secs or 0, r.inputsAll > 0 and r.hookTime / r.inputsAll * 1e6 or 0, r.hookWorst * 1e6,
+        r.samples > 0 and r.sampleTime / r.samples * 1e6 or 0, r.sampleWorst * 1e6, r.unannounced,
+        r.samples > 0 and r.frameSum / r.samples * 1000 or 0, r.frameWorst * 1000, (engine and engine.TickInterval and engine.TickInterval() or 0) * 1000)
     for _, l in ipairs(ScanLines(r.info)) do lines[#lines + 1] = l end
     lines[#lines + 1] = string.format("inputs on any entity: %d (%.1f a second); on movable parts: %d; the hook cost %.1f us on average, %.1f us at worst (%.2f ms in all)",
         r.inputsAll, secs > 0 and r.inputsAll / secs or 0, r.inputsSeen, r.inputsAll > 0 and r.hookTime / r.inputsAll * 1e6 or 0, r.hookWorst * 1e6, r.hookTime * 1000)
@@ -255,8 +290,10 @@ local function Begin(label, seconds)
         inputs = {}, inputLines = {}, unannouncedLines = {}, goneLines = {},
         inputsAll = 0, inputsSeen = 0, byActivator = 0, byCaller = 0, byNobody = 0, hookTime = 0, hookWorst = 0,
         uses = 0, movements = 0, announced = 0, unannounced = 0, removed = 0, samples = 0, sampleTime = 0, sampleWorst = 0,
-        errors = 0, firstError = nil,
+        errors = 0, firstError = nil, frameSum = 0, frameWorst = 0,
     }
+    run.playersStart, run.humansStart = Counts()
+    run.playersMax, run.humansMax = run.playersStart, run.humansStart
     for _, p in ipairs(info.parts) do p.inputs, p.uses, p.moves, p.moving = 0, 0, 0, false end
     local function guard(fn)
         return function(...)
@@ -275,29 +312,51 @@ local function Begin(label, seconds)
     Out(string.format("watching %d movable parts for %d s (%s)", #info.parts, seconds, label))
 end
 
--- A round is watched from its start to its end (and for at most MAX_SECONDS).
+-- A round is watched from its start to its end (and for at most MAX_SECONDS). "round" watches the next one; "auto"
+-- watches each one that starts with enough people.
+local function Safe(fn, ...)
+    local ok, err = pcall(fn, ...)
+    if not ok then Out("error: " .. tostring(err)) end
+    return ok
+end
+
 hook.Add("TTTBeginRound", "TraitorDash_PartsProbeBegin", function()
-    if armed and not run then
-        local ok, err = pcall(Begin, "round", MAX_SECONDS)
-        if not ok then Out("could not start: " .. tostring(err)) armed = false end
+    if run then return end
+    local _, humans = Counts()
+    if armed or (auto and humans >= auto.min) then
+        armed = false
+        if not Safe(Begin, "round", MAX_SECONDS) then
+            run = nil
+            hook.Remove("AcceptInput", HOOK_INPUT) hook.Remove("PlayerUse", HOOK_USE)
+            timer.Remove(TIMER_SAMPLE) timer.Remove(TIMER_STOP)
+        end
     end
 end)
 hook.Add("TTTEndRound", "TraitorDash_PartsProbeEnd", function()
-    if run and run.label == "round" then
-        local ok, err = pcall(Finish, "the round ended")
-        if not ok then Out("error: " .. tostring(err)) end
-    end
+    if run and run.label == "round" then Safe(Finish, "the round ended") end
 end)
+-- a restarted round and a map change or shutdown end the watch the same way, with what was seen so far
 hook.Add("TTTPrepareRound", "TraitorDash_PartsProbePrepare", function()
-    if run and run.label == "round" then
-        hook.Remove("AcceptInput", HOOK_INPUT) hook.Remove("PlayerUse", HOOK_USE)
-        timer.Remove(TIMER_SAMPLE) timer.Remove(TIMER_STOP)
-        run = nil
-        Out("the round was restarted; watch dropped")
-    end
+    if run and run.label == "round" then Safe(Finish, "the round was restarted") end
+end)
+hook.Add("ShutDown", "TraitorDash_PartsProbeShutDown", function()
+    if run then Safe(Finish, "the server shut down or changed map") end
 end)
 
-local USAGE = "usage: traitordash_parts_probe scan | start [seconds] | round | stop | status"
+-- "auto on" is kept in a file, so it holds after a restart and a map change.
+local function SaveAuto()
+    if auto then file.Write(AUTO_FILE, tostring(auto.min)) else file.Delete(AUTO_FILE) end
+end
+local function LoadAuto()
+    local saved = file.Read(AUTO_FILE, "DATA")
+    local n = saved and tonumber(saved)
+    if n then
+        auto = { min = math.max(math.floor(n), 1) }
+        Out(string.format("auto: every round that starts with %d or more people is watched (traitordash_parts_probe auto off to end it)", auto.min))
+    end
+end
+
+local USAGE = "usage: traitordash_parts_probe scan | start [seconds] | round | auto on [people] | auto off | stop | status"
 
 concommand.Add("traitordash_parts_probe", function(ply, _, args)
     if IsValid(ply) and not ply:IsSuperAdmin() then return end
@@ -315,15 +374,31 @@ concommand.Add("traitordash_parts_probe", function(ply, _, args)
         if run then Out("already watching (" .. run.label .. "); stop it first") return end
         armed = true
         Out("armed: the next round will be watched")
+    elseif sub == "auto" then
+        local word = string.lower(args[2] or "")
+        if word == "on" then
+            auto = { min = math.max(math.floor(tonumber(args[3]) or 1), 1) }
+            SaveAuto()
+            Out(string.format("auto: every round that starts with %d or more people is watched, from now on", auto.min))
+        elseif word == "off" then
+            auto = nil
+            SaveAuto()
+            Out("auto is off" .. (run and run.label == "round" and "; the round in progress is still watched" or ""))
+        else
+            Out(auto and string.format("auto is on for %d or more people", auto.min) or "auto is off")
+        end
     elseif sub == "stop" then
         if not run then Out(armed and "nothing is being watched yet; the next round is armed" or "nothing is being watched") return end
         local ok, err = pcall(Finish, "stopped")
         if not ok then Out("error: " .. tostring(err)) end
     elseif sub == "status" then
-        if run then Out(string.format("watching (%s) for %.0f s: %d inputs seen, %d movements", run.label, SysTime() - run.started, run.inputsAll, run.movements))
-        elseif armed then Out("armed for the next round")
-        else Out("idle") end
+        local a = auto and string.format("; auto is on for %d or more people", auto.min) or ""
+        if run then Out(string.format("watching (%s) for %.0f s: %d inputs seen, %d movements%s", run.label, SysTime() - run.started, run.inputsAll, run.movements, a))
+        elseif armed then Out("armed for the next round" .. a)
+        else Out("idle" .. a) end
     else
         Out(USAGE)
     end
 end)
+
+LoadAuto()
