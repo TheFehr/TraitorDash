@@ -14,7 +14,7 @@ export const geometryEnabled = () => process.env.MAP_GEOMETRY === '1'
 export interface GeometryInfo {
   vertices: number, triangles: number, levels: number, water: number
   /** False for a hill or terrain (no storeys); the triangles in detached parts; spawn points in the file. */
-  storeys?: boolean, detached?: number, spawns?: number
+  storeys?: boolean, detached?: number, movable?: number, spawns?: number
   props?: { placed: number, models: number, foliage: number, cards?: number, fromGame?: number, unavailable: number, unreadable: number, dropped: number }
 }
 
@@ -47,10 +47,10 @@ export async function buildGeometry(src: ByteSource, map: string, fingerprint: s
     const detached = { ...apart, parts: found.parts.filter(p => p.kind === 'detached').sort((a, b) => b.triangles - a.triangles).map(p => ({ triangles: p.triangles, min: p.min.map(Math.round), max: p.max.map(Math.round) })) }
     const water = nearTriangles(surfaces.water, [cleaned.floors, cleaned.walls], 512)
     const { set, report } = await buildPropSet(src, header, entityProps, boxOf(cleaned.floors, cleaned.walls), undefined, stock)
-    const out = await surfacesToGlb({ ...surfaces, ...cleaned, water, detached, spawns, props: set }, { map })
+    const out = await surfacesToGlb({ ...surfaces, ...cleaned, water, movable: surfaces.movable, detached, spawns, props: set }, { map })
     if (!out) return { ok: false, error: 'The map has no surfaces to draw.' }
     return { ok: true, glb: out.glb, note: report.stockError ? `The game's own models could not all be fetched: ${report.stockError}` : undefined, info: {
-      vertices: out.info.vertices, triangles: out.info.triangles, levels: out.info.levels.length, water: out.info.waterTriangles, storeys: out.info.storeys, detached: out.info.detached.triangles, spawns: out.info.spawns,
+      vertices: out.info.vertices, triangles: out.info.triangles, levels: out.info.levels.length, water: out.info.waterTriangles, storeys: out.info.storeys, detached: out.info.detached.triangles, movable: out.info.movable, spawns: out.info.spawns,
       props: { placed: report.drawnPlacements, models: report.drawnModels, foliage: report.foliageModels, cards: report.cards, fromGame: report.fromGame, unavailable: report.unavailable, unreadable: report.unreadable + report.tooBig, dropped: report.dropped },
     } }
   } catch (e) {

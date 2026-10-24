@@ -69,19 +69,28 @@ describe('brush entities that stand still (RFC 18, 4.2)', () => {
     models: [{ firstFace: 0, numFaces: 1 }, { firstFace: 1, numFaces: 1 }, { firstFace: 2, numFaces: 1 }, { firstFace: 3, numFaces: 1 }, { firstFace: 4, numFaces: 1 }],
   })
 
-  test('the entity lump names the models of the brushes, the fixed ones only: not doors, not anything with a parent', async () => {
-    expect((await extractMapEntities(memorySource(spec()))).fixtureModels.map(f => f.model)).toEqual([1, 4])
+  test('the entity lump names the models of the brushes: the fixed ones, and the ones that can move (a door) marked as such; not anything with a parent', async () => {
+    const found = (await extractMapEntities(memorySource(spec()))).fixtureModels
+    expect(found.map(f => f.model)).toEqual([1, 2, 4])
+    expect(found.map(f => f.movable === true)).toEqual([false, true, false])
   })
 
-  test('a sliding brush that travels a long way (a building that collapses as a trap) is drawn where it starts; a door-sized slide, or one that starts part way along its track, is not', async () => {
-    const lump = [
-      '{ "classname" "worldspawn" }',
-      '{ "classname" "func_movelinear" "model" "*1" "startposition" "0" "movedir" "90 0 0" "movedistance" "2080" }',
-      '{ "classname" "func_movelinear" "model" "*2" "movedistance" "65" }',
-      '{ "classname" "func_movelinear" "model" "*3" "startposition" "0.5" "movedistance" "2000" }',
-    ].join('\n')
-    const bsp = buildBsp({ ...flatQuads([0, 10, 20, 30]), entities: lump, models: [{ firstFace: 0, numFaces: 1 }, { firstFace: 1, numFaces: 1 }, { firstFace: 2, numFaces: 1 }, { firstFace: 3, numFaces: 1 }] })
-    expect((await extractMapEntities(memorySource(bsp))).fixtureModels.map(f => f.model)).toEqual([1])
+  test('every kind of brush that can move is marked movable: doors, sliding and turning parts, trains, pushable crates (not buttons)', async () => {
+    const classes = ['func_door', 'func_door_rotating', 'func_movelinear', 'func_rotating', 'func_tracktrain', 'func_physbox', 'func_physbox_multiplayer']
+    const lump = ['{ "classname" "worldspawn" }', ...classes.map((c, i) => `{ "classname" "${c}" "model" "*${i + 1}" }`), '{ "classname" "func_button" "model" "*8" }'].join('\n')
+    const models = Array.from({ length: 9 }, (_, i) => ({ firstFace: i, numFaces: 1 }))
+    const bsp = buildBsp({ ...flatQuads([0, 10, 20, 30, 40, 50, 60, 70, 80]), entities: lump, models })
+    const found = (await extractMapEntities(memorySource(bsp))).fixtureModels
+    expect(found.map(f => f.model)).toEqual([1, 2, 3, 4, 5, 6, 7])
+    expect(found.every(f => f.movable === true)).toBe(true)
+  })
+
+  test('the faces of movable brushes go into a list of their own, where the map puts them, not into floors or walls', async () => {
+    const withDoor = await extractSurfaces(memorySource(spec()), {}, [fx(1), fx(2, { movable: true, x: 7 })])
+    expect(withDoor.floors.length / 9).toBe(4) // the world and model 1; the door is not a floor
+    expect(withDoor.movable.length / 9).toBe(2)
+    expect(withDoor.stats.movableFaces).toBe(1)
+    expect(withDoor.stats.otherModelFaces).toBe(2)
   })
 
   test('their faces are drawn with the world; the others are counted and left out', async () => {

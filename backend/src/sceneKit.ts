@@ -127,6 +127,20 @@ export function prepareWater(model: Object3D, cut: Plane): Object3D | null {
   return water
 }
 
+/** The parts that can move (doors, lifts, a collapsing building): cut like the levels, matte, and left in their own orange whatever the colouring. Null when the model has none. */
+export function prepareMovable(model: Object3D, cut: Plane): Object3D | null {
+  const node = model.getObjectByName('movable') ?? null
+  node?.traverse(o => {
+    if (!(o as Mesh).isMesh) return
+    const mesh = o as Mesh<BufferGeometry, MeshStandardMaterial>
+    mesh.material = mesh.material.clone()
+    mesh.material.clippingPlanes = [cut]
+    mesh.material.metalness = 0
+    mesh.material.roughness = 1
+  })
+  return node
+}
+
 /** The props of a model, if it has any: the meshes by kind, cut like the levels, matte. Their materials are shared by all the places, so they are set once. */
 export function prepareProps(model: Object3D, cut: Plane): { solid: Mesh[], foliage: Mesh[] } {
   const out = { solid: [] as Mesh[], foliage: [] as Mesh[] }

@@ -94,6 +94,8 @@ export interface GlbInfo {
   storeys: boolean
   /** The triangles and the number of parts that are detached (drawn in a group of their own, hidden by default). */
   detached: { triangles: number, parts: number }
+  /** Triangles of the parts that can move (doors, lifts, a collapsing building): a group of their own, in a colour of their own. */
+  movable: number
   /** Spawn points written into the file. */
   spawns: number
   /** What was placed: places, distinct models, and the triangles drawn (every place counts its model's triangles). */
@@ -105,7 +107,7 @@ export interface GlbInfo {
 /** Parts of the map that are not near the rest (RFC 18, 4.4): outside the level model, in a group of their own. */
 export interface DetachedParts { floors: number[], walls: number[], parts: { triangles: number, min: number[], max: number[] }[] }
 export interface MeshSpawn { class: string, x: number, y: number, z: number }
-export interface MeshInput { floors: number[], walls: number[], water?: number[], detached?: DetachedParts, spawns?: MeshSpawn[], props?: PropSet, fingerprint: string, version: number, revision: number }
+export interface MeshInput { floors: number[], walls: number[], water?: number[], movable?: number[], detached?: DetachedParts, spawns?: MeshSpawn[], props?: PropSet, fingerprint: string, version: number, revision: number }
 /** A map has storeys when at least this share of its floor lies within 48 units of the height of one (see `storeyCoverage`). */
 export const STOREY_COVERAGE = 0.6
 const MAX_SPAWNS = 512
@@ -197,7 +199,7 @@ function indexed(soup: number[]) {
  * triangles at all, or the crop took them all). Throws for input that is not triangles.
  */
 export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ glb: Uint8Array, info: GlbInfo } | null> {
-  check(s.floors, 'floors'); check(s.walls, 'walls')
+  check(s.floors, 'floors'); check(s.walls, 'walls'); if (s.movable) check(s.movable, 'movable')
   const cell = opts.cell ?? 64
 
   let floors = s.floors, walls = s.walls
@@ -232,9 +234,11 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
   scene.addChild(root)
   const material = (name: string, rgb: [number, number, number]) => doc.createMaterial(name).setBaseColorFactor([...rgb, 1]).setMetallicFactor(0).setRoughnessFactor(1).setDoubleSided(true)
   const mats = { floor: material('floor', [0.2, 0.7, 0.3]), wall: material('wall', [0.6, 0.6, 0.65]) }
+  // Parts that can move are orange in every colouring, so they cannot be taken for the fixed map.
+  const movableMat = material('movable', [0.93, 0.5, 0.12])
   const waterMat = doc.createMaterial('water').setBaseColorFactor([0.23, 0.49, 0.65, 0.55]).setAlphaMode('BLEND').setMetallicFactor(0).setRoughnessFactor(1).setDoubleSided(true)
 
-  const info: GlbInfo = { vertices: 0, triangles: 0, droppedDegenerate: f.dropped + w.dropped, levels: [], storeys, detached: { triangles: 0, parts: 0 }, spawns: 0, waterTriangles: 0, props: { placements: 0, models: 0, triangles: 0 }, cropped }
+  const info: GlbInfo = { vertices: 0, triangles: 0, droppedDegenerate: f.dropped + w.dropped, levels: [], storeys, detached: { triangles: 0, parts: 0 }, movable: 0, spawns: 0, waterTriangles: 0, props: { placements: 0, models: 0, triangles: 0 }, cropped }
   byLevel.forEach((lv) => {
     if (lv.floors.length === 0 && lv.walls.length === 0) return
     const index = info.levels.length + 1
@@ -266,6 +270,19 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
       .setAttribute('POSITION', doc.createAccessor('water-positions').setType('VEC3').setArray(positions).setBuffer(buffer))
       .setIndices(doc.createAccessor('water-indices').setType('SCALAR').setArray(indices).setBuffer(buffer)))
     root.addChild(doc.createNode('water').setMesh(mesh).setExtras({ group: 'water', triangles: info.waterTriangles }))
+  }
+
+  // The parts that can move: one mesh of its own, outside the levels (they are not floors and make no storeys), cut like them.
+  const movableSoup = withoutDegenerate(opts.crop ? cropTriangles(s.movable ?? [], opts.crop) : s.movable ?? []).kept
+  if (movableSoup.length > 0) {
+    const { positions, indices } = indexed(movableSoup)
+    info.vertices += positions.length / 3
+    const mesh = doc.createMesh('movable')
+    mesh.addPrimitive(doc.createPrimitive().setMaterial(movableMat)
+      .setAttribute('POSITION', doc.createAccessor('movable-positions').setType('VEC3').setArray(positions).setBuffer(buffer))
+      .setIndices(doc.createAccessor('movable-indices').setType('SCALAR').setArray(indices).setBuffer(buffer)))
+    info.movable = movableSoup.length / 9
+    root.addChild(doc.createNode('movable').setMesh(mesh).setExtras({ group: 'movable', triangles: info.movable }))
   }
 
   // The detached parts: a group of their own, outside the levels, so they neither make storeys nor take part in the cutaway.

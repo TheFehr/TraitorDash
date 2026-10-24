@@ -382,6 +382,21 @@ describe('detached parts, storeys and spawns in the file (RFC 18, 4.4)', () => {
     expect(report.issues.numErrors).toBe(0)
   })
 
+  test('parts that can move are a group of their own, outside the levels, in a colour of their own', async () => {
+    const door = wall(100, 140, 0, 0, 100)
+    const r = (await surfacesToGlb({ ...base, floors: storeyed(), walls: [], movable: door }, { map: 'ttt_test' }))!
+    expect(r.info.levels).toHaveLength(3)
+    expect(r.info.movable).toBe(door.length / 9)
+    const doc = await read(r.glb)
+    const node = doc.getRoot().listNodes().find(n => n.getName() === 'movable')!
+    expect(node.getExtras()).toMatchObject({ group: 'movable', triangles: door.length / 9 })
+    expect(node.getMesh()!.listPrimitives()[0]!.getMaterial()!.getName()).toBe('movable')
+    expect((await ok(storeyed())).info.movable).toBe(0)
+    expect((await read((await ok(storeyed())).glb)).getRoot().listNodes().some(n => n.getName() === 'movable')).toBe(false)
+    const report = await validator.validateBytes(r.glb, { maxIssues: 20 })
+    expect(report.issues.numErrors).toBe(0)
+  })
+
   test('no detached parts, no group', async () => {
     const r = await ok(storeyed())
     expect(r.info.detached).toEqual({ triangles: 0, parts: 0 })

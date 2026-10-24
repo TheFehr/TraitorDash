@@ -8,7 +8,7 @@ import {
 import { hex } from './teamColours'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { applyColouring, explainNoWebGL, heightColours, levelColour, makeCamera, makeRenderer, makeScene, prepareProps, prepareWater, savedColouring, boxWithout, type Painted } from './sceneKit'
+import { applyColouring, explainNoWebGL, heightColours, levelColour, makeCamera, makeRenderer, makeScene, prepareMovable, prepareProps, prepareWater, savedColouring, boxWithout, type Painted } from './sceneKit'
 import {
   decodeTrack, poseAt, lastPoseAt, trailBetween, levelOf, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose, fitLabel,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
@@ -251,6 +251,7 @@ async function start(root: HTMLElement) {
       })
       prepareWater(model, cut)
       prepareProps(model, cut)
+      prepareMovable(model, cut)
       // Parts apart from the map (RFC 18, 4.4) are not drawn in the replay.
       const apart = model.getObjectByName('detached')
       if (apart) apart.visible = false

@@ -3,7 +3,7 @@ import {
   Box3, Vector3, Mesh, MeshStandardMaterial, Plane, type Object3D, type BufferGeometry,
 } from 'three'
 import {
-  applyColouring, boxWithout, COLOURINGS, explainNoWebGL, heightColours, makeCamera, makeRenderer, makeScene, makeSpawnMarkers, prepareDetached, prepareProps, prepareWater, saveColouring, savedColouring,
+  applyColouring, boxWithout, COLOURINGS, explainNoWebGL, heightColours, makeCamera, makeRenderer, makeScene, makeSpawnMarkers, prepareDetached, prepareMovable, prepareProps, prepareWater, saveColouring, savedColouring,
   type Colouring, type Painted, type SpawnPoint,
 } from './sceneKit'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
@@ -36,6 +36,7 @@ function start(root: HTMLElement) {
   const painted: Painted[] = []
   let water: Object3D | null = null
   let detached: Object3D | null = null
+  let movable: Object3D | null = null
   let spawnMarkers: Object3D | null = null
   let propMeshes: { solid: Mesh[], foliage: Mesh[] } = { solid: [], foliage: [] }
   const draw = () => renderer.render(scene, camera)
@@ -94,6 +95,10 @@ function start(root: HTMLElement) {
     for (const m of propMeshes.foliage) m.visible = (e.target as HTMLInputElement).checked
     draw()
   })
+  root.querySelector<HTMLInputElement>('[data-movable]')?.addEventListener('change', e => {
+    if (movable) movable.visible = (e.target as HTMLInputElement).checked
+    draw()
+  })
   root.querySelector<HTMLInputElement>('[data-parts]')?.addEventListener('change', e => {
     if (detached) detached.visible = (e.target as HTMLInputElement).checked
     draw()
@@ -138,6 +143,7 @@ function start(root: HTMLElement) {
       }
       water = prepareWater(model, cut)
       propMeshes = prepareProps(model, cut)
+      movable = prepareMovable(model, cut)
       // Parts apart from the map are hidden until asked for; they are painted like a level but do not decide where the camera looks.
       const apart = prepareDetached(model, cut)
       if (apart) { detached = apart.node; painted.push(...apart.painted) }

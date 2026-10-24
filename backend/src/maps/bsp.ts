@@ -98,7 +98,8 @@ export const isNotSurfaceMaterial = (material: string): boolean =>
 
 /** The brush entities that stand still: their faces are drawn with the world (RFC 18, 4.2). Doors, lifts, trains, buttons and triggers are not. */
 /** A brush entity that stands still: which model, and where it stands (its faces are stored around the model's own origin). */
-export interface Fixture { model: number, x: number, y: number, z: number, pitch: number, yaw: number, roll: number }
+/** A brush entity placed in the world. `movable`: it can move (a door, a lift, a collapsing building), and is drawn where the map file puts it, apart from the rest. */
+export interface Fixture { model: number, x: number, y: number, z: number, pitch: number, yaw: number, roll: number, movable?: boolean }
 
 /** Source's angles (pitch, yaw, roll, degrees) as a 3 by 3 matrix: a turn by roll about X, then pitch about Y, then yaw about Z (the same as `angleQuaternion` in the mesh writer). */
 export function angleMatrix(pitch: number, yaw: number, roll: number): number[] {
@@ -110,14 +111,9 @@ export function angleMatrix(pitch: number, yaw: number, roll: number): number[] 
   ]
 }
 
-export const FIXTURE_CLASSES = /^func_(brush|wall|breakable|lod|wall_toggle|movelinear)$/
-/**
- * A sliding brush (`func_movelinear`) is drawn where it starts when it travels a long way (a building that collapses as a trap
- * slides 2 080 units; on the 27 maps measured, no door, gate or hatch slides more than 100, so they stay out), and only when it
- * starts at the beginning of its track: one that starts part way along rests somewhere else.
- */
-const LONG_SLIDE = 1024
-const atRest = (entity: Record<string, string>) => entity['classname'] !== 'func_movelinear' || (Number(entity['movedistance']) >= LONG_SLIDE && !Number(entity['startposition'] ?? 0))
+export const FIXTURE_CLASSES = /^func_(brush|wall|breakable|lod|wall_toggle)$/
+/** Brush entities that can move: doors, lifts and sliding buildings, turning parts, trains, pushable crates. Their model sits where the mapper put it (a door shut). */
+export const MOVABLE_CLASSES = /^func_(door|door_rotating|movelinear|rotating|tracktrain|physbox|physbox_multiplayer)$/
 const FLOOR_NZ = 0.7 // the steepest slope a player can walk up
 const MAX_FACE_EDGES = 4096
 const MAX_COORD = 131_072 // Source maps are at most +-16384; room to spare, far from float garbage
@@ -134,10 +130,12 @@ export interface Surfaces {
   walls: number[]
   /** The upward-facing triangles of liquid surfaces; not floors. */
   water: number[]
+  /** The triangles of brush entities that can move (any slope), where the map file puts them. */
+  movable: number[]
   stats: {
     faces: number, floorFaces: number, wallFaces: number, ceilingFaces: number, skipped: number, otherModelFaces: number
     /** Faces left out because of the name of their material, liquid surfaces seen, and brush-entity models drawn with the world. */
-    skippedByMaterial: number, waterFaces: number, fixtureModels: number
+    skippedByMaterial: number, waterFaces: number, fixtureModels: number, movableFaces: number
     /** Displacements (terrain) drawn, and the triangles they made (ceilings among them are dropped like any ceiling). */
     displacements: number, displacementTriangles: number
   }
@@ -233,10 +231,10 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
   }
   const faceList = function* () { for (const [from, n, fx] of ranges) for (let f = from; f < from + n; f++) yield [f, fx] as const }
 
-  const floors: number[] = [], walls: number[] = [], water: number[] = []
+  const floors: number[] = [], walls: number[] = [], water: number[] = [], movable: number[] = []
   const stats = {
     faces: numFaces, floorFaces: 0, wallFaces: 0, ceilingFaces: 0, skipped: 0, otherModelFaces, displacements: 0, displacementTriangles: 0,
-    skippedByMaterial: 0, waterFaces: 0, fixtureModels: drawn.size - 1,
+    skippedByMaterial: 0, waterFaces: 0, fixtureModels: drawn.size - 1, movableFaces: 0,
   }
   for (const [f, fixture] of faceList()) {
     const at = f * RECORD.FACES
@@ -276,6 +274,14 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
       const v = edges.getUint16(e * RECORD.EDGES + (se < 0 ? 2 : 0), true)
       if (v >= nVerts) throw new BspError(`an edge of face ${f} names a vertex that does not exist`)
       corner.push(v)
+    }
+
+    if (fixture?.movable) {
+      // A part that can move is drawn whole, whatever its slope, and takes no part in floors, storeys or parts.
+      if (dispinfo >= 0 || (flags & SURF_WARP) !== 0) continue
+      stats.movableFaces++
+      for (let k = 1; k + 1 < corner.length; k++) for (const v of [corner[0]!, corner[k]!, corner[k + 1]!]) movable.push(...place(v))
+      continue
     }
 
     if (dispinfo >= 0) {
@@ -364,7 +370,7 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
     }
   }
 
-  return { fingerprint: header.fingerprint, version: header.version, revision: header.revision, floors, walls, water, stats }
+  return { fingerprint: header.fingerprint, version: header.version, revision: header.revision, floors, walls, water, movable, stats }
 }
 
 // ---- the entities we need: spawn points and the 3D skybox camera ---------------------------------
@@ -421,10 +427,10 @@ export async function extractMapEntities(src: ByteSource, limits: SpawnLimits = 
     } else if (brace === '}') {
       const cls = entity?.['classname']
       // A brush entity that stands still names its model `*N` and has no parent that could move it.
-      if (entity && cls && FIXTURE_CLASSES.test(cls) && /^\*\d{1,5}$/.test(entity['model'] ?? '') && !entity['parentname'] && atRest(entity)) {
+      if (entity && cls && (FIXTURE_CLASSES.test(cls) || MOVABLE_CLASSES.test(cls)) && /^\*\d{1,5}$/.test(entity['model'] ?? '') && !entity['parentname']) {
         const o = originOf(entity!) ?? { x: 0, y: 0, z: 0 }
         const a = anglesOf(entity!)
-        fixtureModels.push({ model: Number(entity['model']!.slice(1)), ...o, pitch: a[0], yaw: a[1], roll: a[2] })
+        fixtureModels.push({ model: Number(entity['model']!.slice(1)), ...o, pitch: a[0], yaw: a[1], roll: a[2], ...(MOVABLE_CLASSES.test(cls) ? { movable: true } : {}) })
       }
       const at = entity && cls ? originOf(entity) : null
       if (cls && at) {
