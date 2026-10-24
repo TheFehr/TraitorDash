@@ -21,6 +21,10 @@ if SERVER then
     local okFt, errFt = pcall(include, "traitordash/frametime.lua")
     if not okFt then print("[TraitorDash] Frame-time tool failed to load: " .. tostring(errFt)) end
 
+    -- A console probe for the parts of a map that move (RFC 20, stage 0); it does nothing until started.
+    local okPp, errPp = pcall(include, "traitordash/partsprobe.lua")
+    if not okPp then print("[TraitorDash] Parts probe failed to load: " .. tostring(errPp)) end
+
     -- The role guide in the F1 menu (RFC 15): the server's part. Optional; off without a public_url.
     local okRg, errRg = pcall(include, "traitordash/rolemenu.lua")
     if not okRg then print("[TraitorDash] Role guide failed to load: " .. tostring(errRg)) end
