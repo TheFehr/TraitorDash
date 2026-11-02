@@ -120,7 +120,7 @@ export const StatsPage = (p: StatsPageProps) => {
     <Shell title={`Round stats | ${server.name}`} embed={ctx.embed} viewer={ctx.viewer} scripts={admin ? ['/public/confirm.js'] : []}>
       <Crumbs><ServerName ctx={ctx} server={server} /></Crumbs>
       <h1>Round stats</h1>
-      {!ctx.embed && <Sections serverId={id} current="stats" />}
+      {!ctx.embed && <Sections serverId={id} current="stats" admin={adminOf(ctx)} />}
       {p.bots && <p class="foot" style="color:#e9b44c">Including bot test rounds</p>}
       <Tabs label="Round stats" current={p.view} items={VIEWS.map(v => ({ key: v.key, label: v.label, href: tab(v.key) }))} />
 
@@ -264,7 +264,7 @@ export const RoundPage = ({ ctx, server, round, deaths, firstBlood, hasReplay, c
   return (
     <Shell title={`${round.map ?? 'Round'} | ${server.name}`} embed={ctx.embed} viewer={ctx.viewer}>
       <Crumbs><a href={link(ctx, `${here(id)}/stats`, { view: 'rounds', bots })}>Rounds</a> / <When iso={round.startedAt} now={ctx.now} /></Crumbs>
-      {!ctx.embed && <Sections serverId={id} />}
+      {!ctx.embed && <Sections serverId={id} admin={adminOf(ctx)} />}
       <div class="f big" style={`--c:${teamHex(round.result)}`}>
         <div class="stamp" style={`--c:${teamHex(round.result)}`}>{teamLabel(round.result)}</div>
         <h1>{round.map ? prettyMap(round.map) : 'Unknown map'}</h1>
@@ -323,7 +323,7 @@ export const PlayerPage = ({ ctx, server, player, by = 'end', bots }: PlayerPage
       <Crumbs><ServerName ctx={ctx} server={server} /> / <a href={link(ctx, `${here(id)}/stats`, { view: 'leaders', bots })}>Round stats</a></Crumbs>
       <h1>{player.nick}</h1>
       <p class="muted" style="margin:0">{player.steamId}</p>
-      {!ctx.embed && <Sections serverId={id} />}
+      {!ctx.embed && <Sections serverId={id} admin={adminOf(ctx)} />}
       <div class="nums">
         <Num label="Rounds" value={player.rounds} />
         <Num label="Win rate" value={pct(player.wins, player.rounds)} />

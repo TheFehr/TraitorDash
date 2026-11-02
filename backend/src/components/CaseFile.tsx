@@ -31,6 +31,7 @@ h2{font-size:.85rem;font-weight:800;letter-spacing:.16em;text-transform:uppercas
 .sections{display:flex;flex-wrap:wrap;gap:.5rem;margin:.2rem 0 .9rem}
 .sections a{border:1px solid #6b6455;padding:.2rem .7rem;font-size:.85rem;letter-spacing:.06em;text-transform:uppercase;color:#d9d0bd}
 .sections a:hover{border-color:#e9dfc4;color:#fff}
+.sections a.manage{margin-left:auto;border-style:dashed}
 .sections a[aria-current]:hover{color:#2b2418}
 .sections a[aria-current]{background:#e9dfc4;color:#2b2418;border-color:#e9dfc4}
 .muted{color:#a89f8c}
@@ -83,9 +84,10 @@ table.set td.v{font-weight:700}table.set td.d{color:#5f5846}
 `
 
 /** The other public pages of the server, so none of them is a dead end. Not shown inside the game. */
-export const Sections = ({ serverId, current }: { serverId: string, current?: Section }) => (
+export const Sections = ({ serverId, current, admin = false }: { serverId: string, current?: Section, admin?: boolean }) => (
   <nav class="sections" aria-label="Sections">
     {sectionsOf(serverId).map(s => <a href={s.href} aria-current={s.key === current ? 'page' : undefined}>{s.label}</a>)}
+    {admin && <a href={`/servers/${serverId}`} class="manage" data-manage title="The server's settings, for admins">⚙ Manage</a>}
   </nav>
 )
 

@@ -82,6 +82,56 @@ describe('access', () => {
     expect((await get(p + '?embed=1', ADMIN)).headers.get('cache-control')).toBe('public, max-age=60') // identical for everybody, so shareable
     expect((await get(p, ADMIN)).headers.get('cache-control')).toContain('private')
   })
+  test('the header says who is signed in: Sign in for a visitor, the SteamID and Logout for a user, and the admin links for an admin; never in the embed', async () => {
+    process.env.OPEN_SIGNIN = '1'
+    const page = `/servers/${serverId}/roles`
+    const anon = await (await get(page)).text()
+    expect(anon).toContain('Sign in with Steam')
+    expect(anon).not.toContain('Logout')
+    const user = await (await get(page, USER)).text()
+    expect(user).toContain(USER)
+    expect(user).toContain('Logout')
+    expect(user).not.toContain('Sign in with Steam')
+    expect(user).not.toContain('data-admin-mark')
+    const admin = await (await get(page, ADMIN)).text()
+    expect(admin).toContain('data-admin-mark')
+    expect(admin).toContain('Logout')
+    const embed = await (await get(page + '?embed=1', USER)).text()
+    expect(embed).not.toContain('Logout')
+    expect(embed).not.toContain(USER)
+    // a role page too
+    expect(await (await get(page + '/haunter', USER)).text()).toContain('Logout')
+  })
+
+  test('a page for someone signed in is private and never comes from the cache of a visitor, and the other way round', async () => {
+    process.env.OPEN_SIGNIN = '1'
+    const page = `/servers/${serverId}/roles`
+    const anon = await get(page)
+    expect(anon.headers.get('cache-control')).toBe('public, max-age=60')
+    expect(anon.headers.get('vary')).toContain('Cookie')
+    const user = await get(page, USER)
+    expect(user.headers.get('cache-control')).toBe('private, max-age=0, must-revalidate')
+    expect(user.headers.get('etag')).not.toBe(anon.headers.get('etag'))
+    // the visitor's page, served again after the user's, still has no account in it
+    expect(await (await get(page)).text()).not.toContain(USER)
+  })
+
+  test('the Manage link to the server settings is the same labelled link on every page of the section row, for admins only, and the server name is text', async () => {
+    process.env.OPEN_SIGNIN = '1'
+    const page = `/servers/${serverId}/roles`
+    const admin = await (await get(page, ADMIN)).text()
+    expect(admin).toContain(`href="/servers/${serverId}" class="manage"`)
+    expect(admin).not.toContain(`<a href="/servers/${serverId}/stats">Pub</a>`)
+    for (const who of [null, USER]) {
+      const t = await (await get(page, who)).text()
+      expect(t).not.toContain('data-manage')
+    }
+    expect(await (await get(page + '?embed=1', ADMIN)).text()).not.toContain('data-manage')
+    expect(await (await get(`/servers/${serverId}/stats`, ADMIN)).text()).toContain('data-manage')
+    expect(await (await get(`/servers/${serverId}/stats`, USER)).text()).not.toContain('data-manage')
+    expect(await (await get(`/servers/${serverId}/maps`, ADMIN)).text()).toContain('data-manage')
+  })
+
   test('PUBLIC_ROLES=0 makes the pages admin only again', async () => {
     process.env.PUBLIC_ROLES = '0'
     expect((await get(`/servers/${serverId}/roles/haunter`)).status).toBe(302)

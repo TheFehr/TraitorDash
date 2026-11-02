@@ -1,5 +1,5 @@
 import type { RoleView, RoleListEntry, Maker } from '../services/roleview'
-import { Sections, Shell } from './CaseFile'
+import { Sections, Shell, type Viewer } from './CaseFile'
 
 const qs = (o: { embed?: boolean, players?: number | null, q?: string }) => {
   const parts: string[] = []
@@ -31,7 +31,7 @@ const waitNote = (ms: Maker[], players: number | null) => {
 const more = (n: number) => `${n} more player${n === 1 ? '' : 's'} needed`
 const PICKS = [6, 8, 10, 12]
 
-export const RoleListPage = ({ server, roles, query, embed, admin, players = null }: { server: { id: string, name: string }, roles: RoleListEntry[], query: string, embed: boolean, admin: boolean, players?: number | null }) => {
+export const RoleListPage = ({ server, roles, query, embed, admin, viewer, players = null }: { server: { id: string, name: string }, roles: RoleListEntry[], query: string, embed: boolean, admin: boolean, viewer?: Viewer | null, players?: number | null }) => {
   const base = `/servers/${server.id}/roles`
   // Roles that can be dealt first, then the ones made during a round, then the ones put away for lack of players, then the disabled ones; each group keeps its order.
   const rank = { ok: 0, made: 1, wait: 2, few: 2, off: 3 }
@@ -39,9 +39,9 @@ export const RoleListPage = ({ server, roles, query, embed, admin, players = nul
   const open = roles.filter(r => stateOf(r, players) === 'ok').length
   const made = roles.filter(r => stateOf(r, players) === 'made').length
   return (
-    <Shell title={`Roles | ${server.name}`} embed={embed}>
-      <div class="crumbs">{embed ? server.name : <><a href={`/servers/${server.id}/stats`}>{server.name}</a> / Roles</>}</div>
-      {!embed && <Sections serverId={server.id} current="roles" />}
+    <Shell title={`Roles | ${server.name}`} embed={embed} viewer={viewer}>
+      <div class="crumbs">{embed ? server.name : <>{server.name} / Roles</>}</div>
+      {!embed && <Sections serverId={server.id} current="roles" admin={admin} />}
       <h1>Role files</h1>
       <form class="find" method="get" action={base}>
         {embed && <input type="hidden" name="embed" value="1" />}
@@ -79,12 +79,12 @@ export const RoleListPage = ({ server, roles, query, embed, admin, players = nul
   )
 }
 
-export const RolePage = ({ server, role, embed, admin, players = null }: { server: { id: string, name: string }, role: RoleView, embed: boolean, admin: boolean, players?: number | null }) => {
+export const RolePage = ({ server, role, embed, admin, viewer, players = null }: { server: { id: string, name: string }, role: RoleView, embed: boolean, admin: boolean, viewer?: Viewer | null, players?: number | null }) => {
   const state = stateOf(role, players)
   return (
-    <Shell title={`${role.name} | ${server.name}`} embed={embed}>
+    <Shell title={`${role.name} | ${server.name}`} embed={embed} viewer={viewer}>
       <div class="crumbs"><a href={`/servers/${server.id}/roles${qs({ embed, players })}`}>All roles</a> / {role.name}</div>
-      {!embed && <Sections serverId={server.id} current="roles" />}
+      {!embed && <Sections serverId={server.id} current="roles" admin={admin} />}
       <article class="f big" style={`--c:${role.color}`}>
         <i class={`stamp ${state === 'off' ? 'off' : ''}`}>{state === 'off' ? 'disabled' : role.team || 'no team'}</i>
         <h1>{role.name}</h1>
@@ -135,8 +135,8 @@ export const RolePage = ({ server, role, embed, admin, players = null }: { serve
   )
 }
 
-export const RoleNotFound = ({ embed }: { embed: boolean }) => (
-  <Shell title="Not found" embed={embed}>
+export const RoleNotFound = ({ embed, viewer }: { embed: boolean, viewer?: Viewer | null }) => (
+  <Shell title="Not found" embed={embed} viewer={viewer}>
     <h1>Not found</h1>
     <p class="muted">There is no such server or role.</p>
   </Shell>

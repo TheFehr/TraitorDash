@@ -86,7 +86,7 @@ export const MapsPage = ({ ctx, server, state, maps, activity, showAll, plans, m
     <Shell title={`Maps | ${server.name}`} embed={ctx.embed} viewer={ctx.viewer}>
       <Crumbs><ServerName ctx={ctx} server={server} /></Crumbs>
       <h1>Map files</h1>
-      {!ctx.embed && <Sections serverId={id} current="maps" />}
+      {!ctx.embed && <Sections serverId={id} current="maps" admin={adminOf(ctx)} />}
       {state === null || maps.length === 0
         ? <div class="f"><h2 class="ft">No maps yet</h2><span>The server sends its maps when the bridge starts; this page fills in within a minute of that.</span></div>
         : (
@@ -170,7 +170,7 @@ export const MapFilePage = ({ ctx, server, name, map, state, activity, has3d, ha
   return (
     <Shell title={`${name} | ${server.name}`} embed={ctx.embed} viewer={ctx.viewer}>
       <Crumbs><a href={link(ctx, `${here(id)}/maps`)}>All maps</a> / {prettyMap(name)}</Crumbs>
-      {!ctx.embed && <Sections serverId={id} current="maps" />}
+      {!ctx.embed && <Sections serverId={id} current="maps" admin={adminOf(ctx)} />}
       <div class="f big" style={`--c:${tabColour(map)}`}>
         <h1>{prettyMap(name)}</h1>
         <p class="file" style="margin:.2rem 0 0">{name}</p>
@@ -244,7 +244,7 @@ export const MapViewPage = ({ ctx, server, map, name, next, plan, geometry }: Ma
   return (
     <Shell title={`${name} | ${server.name}`} embed={ctx.embed} viewer={ctx.viewer} scripts={hasView ? ['/public/mapview.js'] : []}>
       <Crumbs><a href={link(ctx, `${here(id)}/maps`)}>All maps</a> / <a href={link(ctx, `${mapPath(id, name)}/rounds`)}>{prettyMap(name)}</a></Crumbs>
-      {!ctx.embed && <Sections serverId={id} current="maps" />}
+      {!ctx.embed && <Sections serverId={id} current="maps" admin={adminOf(ctx)} />}
       <h1>{prettyMap(name)}</h1>
       <p class="file" style="margin:.1rem 0 .3rem">{name}</p>
       <p style="margin:.2rem 0 0">

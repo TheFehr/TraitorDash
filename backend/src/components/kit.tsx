@@ -42,10 +42,8 @@ export const teamHex = (team: string | null): string => hex(teamColour(team))
 
 export const Crumbs = ({ children }: { children: any }) => <div class="crumbs">{children}</div>
 
-/** The server's name; for an admin on the website it is the way back to the server's settings. */
-export const ServerName = ({ ctx, server }: { ctx: Ctx, server: { id: string, name: string } }) => (
-  adminOf(ctx) ? <a href={`/servers/${server.id}`}>{server.name}</a> : <>{server.name}</>
-)
+/** The server's name, as text for everyone: the way to the server's settings is the labelled Manage link of the section row, shown to admins only. */
+export const ServerName = ({ server }: { ctx?: Ctx, server: { id: string, name: string } }) => <>{server.name}</>
 
 /** The result of a round, as a tag in the team's colour. */
 export const Result = ({ result }: { result: string }) => <i class="res" style={`--c:${teamHex(result)}`}>{teamLabel(result)}</i>

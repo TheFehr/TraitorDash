@@ -504,7 +504,8 @@ const ROLE_PAGE_CACHE_MAX = 500
 const ROLE_PAGE_HEADERS = pageHeaders()
 
 async function rolePage(c: any, kind: 'list' | 'role') {
-  const admin = !!(await getAdminId(c))
+  const session = await getSession(c)
+  const admin = !!session?.admin
   if (!publicRoles() && !admin) return c.redirect('/')
 
   const address = clientAddress(c)
@@ -516,6 +517,8 @@ async function rolePage(c: any, kind: 'list' | 'role') {
 
   const serverId = c.req.param('serverId')
   const embed = ['1', 'true'].includes(c.req.query('embed') ?? '')
+  // The header says who is signed in. The game's window (embed) has no header, so its page stays the same for everyone.
+  const viewer = !embed && session ? { steamId: session.steamId, admin: session.admin } : null
   const server = Store.getServerById(serverId)
   const roleName = kind === 'role' ? c.req.param('roleName') : ''
   const missing = !server || (kind === 'role' && (!KNOWN_ROLE_NAME.test(roleName) || !Store.getRoles(serverId).some(r => r.role_name === roleName)))
@@ -523,16 +526,18 @@ async function rolePage(c: any, kind: 'list' | 'role') {
   if (embed) headers['X-Robots-Tag'] = 'noindex'
   if (missing) {
     headers['Cache-Control'] = 'no-store'
-    return c.html('<!DOCTYPE html>' + (<RoleNotFound embed={embed} />).toString(), 404, headers)
+    return c.html('<!DOCTYPE html>' + (<RoleNotFound embed={embed} viewer={viewer} />).toString(), 404, headers)
   }
 
   const showAdmin = admin && !embed
   const query = kind === 'list' ? (c.req.query('q') ?? '').slice(0, 64) : ''
   const players = parsePlayers(c.req.query('players'))
-  const key = [serverId, kind, roleName, query, players, embed, showAdmin, publicRoleSettings(), Store.getRoleDataVersion(serverId)].join('\u0000')
+  const key = [serverId, kind, roleName, query, players, embed, showAdmin, viewer ? viewer.steamId : '', publicRoleSettings(), Store.getRoleDataVersion(serverId)].join('\u0000')
   const etag = 'W/"' + createHash('sha1').update(key).digest('hex').slice(0, 20) + '"'
-  // The page differs for an admin (the edit link), so it is not shared.
-  headers['Cache-Control'] = showAdmin ? 'private, max-age=0, must-revalidate' : 'public, max-age=60'
+  // The page differs for an admin (the edit link) and for anyone signed in (the header), so those are not shared; the
+  // one for a visitor who is not signed in is, and a shared cache must not hand it to someone who is.
+  headers['Cache-Control'] = showAdmin || viewer ? 'private, max-age=0, must-revalidate' : 'public, max-age=60'
+  headers.Vary = 'Cookie'
   headers.ETag = etag
   const given = c.req.header('If-None-Match')
   if (given && given.split(',').map((x: string) => x.trim()).includes(etag)) return c.body(null, 304, headers)
@@ -542,8 +547,8 @@ async function rolePage(c: any, kind: 'list' | 'role') {
     const srv = { id: server!.id, name: server!.name }
     const view = kind === 'role' ? buildRoleView(serverId, roleName) : null
     const page = kind === 'list'
-      ? <RoleListPage server={srv} roles={listRoles(serverId, query)} query={query} embed={embed} admin={showAdmin} players={players} />
-      : <RolePage server={srv} role={view!} embed={embed} admin={showAdmin} players={players} />
+      ? <RoleListPage server={srv} roles={listRoles(serverId, query)} query={query} embed={embed} admin={showAdmin} viewer={viewer} players={players} />
+      : <RolePage server={srv} role={view!} embed={embed} admin={showAdmin} viewer={viewer} players={players} />
     html = '<!DOCTYPE html>' + page.toString()
     if (rolePageCache.size >= ROLE_PAGE_CACHE_MAX) rolePageCache.delete(rolePageCache.keys().next().value!)
     rolePageCache.set(key, html)
