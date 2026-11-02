@@ -47,7 +47,7 @@ export async function buildGeometry(src: ByteSource, map: string, fingerprint: s
     const detached = { ...apart, parts: found.parts.filter(p => p.kind === 'detached').sort((a, b) => b.triangles - a.triangles).map(p => ({ triangles: p.triangles, min: p.min.map(Math.round), max: p.max.map(Math.round) })) }
     const water = nearTriangles(surfaces.water, [cleaned.floors, cleaned.walls], 512)
     const { set, report } = await buildPropSet(src, header, entityProps, boxOf(cleaned.floors, cleaned.walls), undefined, stock)
-    const out = await surfacesToGlb({ ...surfaces, ...cleaned, water, movable: surfaces.movable, detached, spawns, props: set }, { map })
+    const out = await surfacesToGlb({ ...surfaces, ...cleaned, water, movable: surfaces.movable, movableParts: surfaces.movableParts, detached, spawns, props: set }, { map })
     if (!out) return { ok: false, error: 'The map has no surfaces to draw.' }
     return { ok: true, glb: out.glb, note: report.stockError ? `The game's own models could not all be fetched: ${report.stockError}` : undefined, info: {
       vertices: out.info.vertices, triangles: out.info.triangles, levels: out.info.levels.length, water: out.info.waterTriangles, storeys: out.info.storeys, detached: out.info.detached.triangles, movable: out.info.movable, spawns: out.info.spawns,

@@ -1,6 +1,7 @@
 import { Document, NodeIO } from '@gltf-transform/core'
 import { storeyModel, storeyCoverage } from './levels'
 import { MESH_VERSION } from './meshVersion'
+import { angleMatrix, type MovablePart } from './bsp'
 
 // RFC 11, 3.6: the map's exact geometry as glTF 2.0 (GLB), an existing standard, not a format of our
 // own. One scene; a root node that turns Source's Z-up into glTF's Y-up; one node per level (the
@@ -107,7 +108,7 @@ export interface GlbInfo {
 /** Parts of the map that are not near the rest (RFC 18, 4.4): outside the level model, in a group of their own. */
 export interface DetachedParts { floors: number[], walls: number[], parts: { triangles: number, min: number[], max: number[] }[] }
 export interface MeshSpawn { class: string, x: number, y: number, z: number }
-export interface MeshInput { floors: number[], walls: number[], water?: number[], movable?: number[], detached?: DetachedParts, spawns?: MeshSpawn[], props?: PropSet, fingerprint: string, version: number, revision: number }
+export interface MeshInput { floors: number[], walls: number[], water?: number[], movable?: number[], movableParts?: MovablePart[], detached?: DetachedParts, spawns?: MeshSpawn[], props?: PropSet, fingerprint: string, version: number, revision: number }
 /** A map has storeys when at least this share of its floor lies within 48 units of the height of one (see `storeyCoverage`). */
 export const STOREY_COVERAGE = 0.6
 const MAX_SPAWNS = 512
@@ -200,6 +201,7 @@ function indexed(soup: number[]) {
  */
 export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ glb: Uint8Array, info: GlbInfo } | null> {
   check(s.floors, 'floors'); check(s.walls, 'walls'); if (s.movable) check(s.movable, 'movable')
+  for (const p of s.movableParts ?? []) check(p.triangles, `movable part ${p.model}`)
   const cell = opts.cell ?? 64
 
   let floors = s.floors, walls = s.walls
@@ -272,17 +274,55 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
     root.addChild(doc.createNode('water').setMesh(mesh).setExtras({ group: 'water', triangles: info.waterTriangles }))
   }
 
-  // The parts that can move: one mesh of its own, outside the levels (they are not floors and make no storeys), cut like them.
-  const movableSoup = withoutDegenerate(opts.crop ? cropTriangles(s.movable ?? [], opts.crop) : s.movable ?? []).kept
-  if (movableSoup.length > 0) {
-    const { positions, indices } = indexed(movableSoup)
-    info.vertices += positions.length / 3
-    const mesh = doc.createMesh('movable')
-    mesh.addPrimitive(doc.createPrimitive().setMaterial(movableMat)
-      .setAttribute('POSITION', doc.createAccessor('movable-positions').setType('VEC3').setArray(positions).setBuffer(buffer))
-      .setIndices(doc.createAccessor('movable-indices').setType('SCALAR').setArray(indices).setBuffer(buffer)))
-    info.movable = movableSoup.length / 9
-    root.addChild(doc.createNode('movable').setMesh(mesh).setExtras({ group: 'movable', triangles: info.movable }))
+  // The parts that can move: a group outside the levels (they are not floors and make no storeys), cut like them. With the
+  // parts given, one child node for each, its triangles local to the part's origin and the node placed by the part's origin and
+  // angles (RFC 20, 4.2), so a viewer can move it; without them, one mesh of the world-space triangles.
+  const movableGroup = (triangles: number) => ({ group: 'movable', triangles })
+  if (s.movableParts && s.movableParts.length > 0) {
+    const group = doc.createNode('movable')
+    let triangles = 0, count = 0
+    for (const p of s.movableParts) {
+      // The crop keeps a triangle whose centre, once placed, is inside it.
+      let soup = p.triangles
+      if (opts.crop) {
+        const m = angleMatrix(p.pitch, p.yaw, p.roll)
+        const kept: number[] = []
+        for (let i = 0; i < soup.length; i += 9) {
+          const cx = (soup[i]! + soup[i + 3]! + soup[i + 6]!) / 3, cy = (soup[i + 1]! + soup[i + 4]! + soup[i + 7]!) / 3, cz = (soup[i + 2]! + soup[i + 5]! + soup[i + 8]!) / 3
+          const wx = m[0]! * cx + m[1]! * cy + m[2]! * cz + p.x, wy = m[3]! * cx + m[4]! * cy + m[5]! * cz + p.y
+          if (wx >= opts.crop.minX && wx <= opts.crop.maxX && wy >= opts.crop.minY && wy <= opts.crop.maxY) for (let k = 0; k < 9; k++) kept.push(soup[i + k]!)
+        }
+        soup = kept
+      }
+      soup = withoutDegenerate(soup).kept
+      if (soup.length === 0) continue
+      const { positions, indices } = indexed(soup)
+      info.vertices += positions.length / 3
+      const name = `movable-${p.model}`
+      const mesh = doc.createMesh(name).addPrimitive(doc.createPrimitive().setMaterial(movableMat)
+        .setAttribute('POSITION', doc.createAccessor(`${name}-positions`).setType('VEC3').setArray(positions).setBuffer(buffer))
+        .setIndices(doc.createAccessor(`${name}-indices`).setType('SCALAR').setArray(indices).setBuffer(buffer)))
+      const n = soup.length / 9
+      triangles += n; count++
+      group.addChild(doc.createNode(name).setMesh(mesh).setTranslation([p.x, p.y, p.z]).setRotation(angleQuaternion(p.pitch, p.yaw, p.roll))
+        .setExtras({ model: p.model, class: p.class, ...(p.name ? { name: p.name } : {}), origin: [p.x, p.y, p.z], angles: [p.pitch, p.yaw, p.roll], triangles: n }))
+    }
+    if (count > 0) {
+      info.movable = triangles
+      root.addChild(group.setExtras({ ...movableGroup(triangles), parts: count }))
+    }
+  } else {
+    const movableSoup = withoutDegenerate(opts.crop ? cropTriangles(s.movable ?? [], opts.crop) : s.movable ?? []).kept
+    if (movableSoup.length > 0) {
+      const { positions, indices } = indexed(movableSoup)
+      info.vertices += positions.length / 3
+      const mesh = doc.createMesh('movable')
+      mesh.addPrimitive(doc.createPrimitive().setMaterial(movableMat)
+        .setAttribute('POSITION', doc.createAccessor('movable-positions').setType('VEC3').setArray(positions).setBuffer(buffer))
+        .setIndices(doc.createAccessor('movable-indices').setType('SCALAR').setArray(indices).setBuffer(buffer)))
+      info.movable = movableSoup.length / 9
+      root.addChild(doc.createNode('movable').setMesh(mesh).setExtras(movableGroup(info.movable)))
+    }
   }
 
   // The detached parts: a group of their own, outside the levels, so they neither make storeys nor take part in the cutaway.

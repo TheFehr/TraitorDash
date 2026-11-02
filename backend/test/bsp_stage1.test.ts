@@ -93,6 +93,32 @@ describe('brush entities that stand still (RFC 18, 4.2)', () => {
     expect(withDoor.stats.otherModelFaces).toBe(2)
   })
 
+  test('each movable part also comes on its own, local to its origin: placed by its origin and angles it is exactly where the world list has it (RFC 20, 4.2)', async () => {
+    const turned = fx(2, { movable: true, class: 'func_door_rotating', name: 'door1', x: 100, y: -40, z: 8, pitch: 10, yaw: 90, roll: -20 })
+    const s = await extractSurfaces(memorySource(spec()), {}, [fx(1), turned])
+    expect(s.movableParts).toHaveLength(1)
+    const part = s.movableParts[0]!
+    expect(part).toMatchObject({ model: 2, class: 'func_door_rotating', name: 'door1', x: 100, y: -40, z: 8, pitch: 10, yaw: 90, roll: -20 })
+    expect(part.triangles).toHaveLength(s.movable.length)
+    const m = angleMatrix(10, 90, -20)
+    for (let i = 0; i < part.triangles.length; i += 3) {
+      const [x, y, z] = [part.triangles[i]!, part.triangles[i + 1]!, part.triangles[i + 2]!]
+      const placed = [m[0]! * x + m[1]! * y + m[2]! * z + 100, m[3]! * x + m[4]! * y + m[5]! * z - 40, m[6]! * x + m[7]! * y + m[8]! * z + 8]
+      for (let k = 0; k < 3; k++) expect(Math.abs(placed[k]! - s.movable[i + k]!)).toBeLessThanOrEqual(0.5) // the world list is in whole units
+    }
+  })
+
+  test('the entity lump gives each movable part its class and its name (for display only)', async () => {
+    const lump = ['{ "classname" "worldspawn" }', '{ "classname" "func_door" "model" "*1" "targetname" "roofdoor" }', '{ "classname" "func_rotating" "model" "*2" }'].join('\n')
+    const found = (await extractMapEntities(memorySource(buildBsp({ ...flatQuads([0, 10, 20]), entities: lump, models: [{ firstFace: 0, numFaces: 1 }, { firstFace: 1, numFaces: 1 }, { firstFace: 2, numFaces: 1 }] })))).fixtureModels
+    expect(found.map(f => [f.class, f.name])).toEqual([['func_door', 'roofdoor'], ['func_rotating', undefined]])
+  })
+
+  test('two entities with one model are one part', async () => {
+    const s = await extractSurfaces(memorySource(spec()), {}, [fx(2, { movable: true }), fx(2, { movable: true, x: 50 })])
+    expect(s.movableParts.map(p => [p.model, p.x])).toEqual([[2, 0]])
+  })
+
   test('their faces are drawn with the world; the others are counted and left out', async () => {
     const without = await extractSurfaces(memorySource(spec()))
     expect(without.floors.length / 9).toBe(2)

@@ -99,7 +99,13 @@ export const isNotSurfaceMaterial = (material: string): boolean =>
 /** The brush entities that stand still: their faces are drawn with the world (RFC 18, 4.2). Doors, lifts, trains, buttons and triggers are not. */
 /** A brush entity that stands still: which model, and where it stands (its faces are stored around the model's own origin). */
 /** A brush entity placed in the world. `movable`: it can move (a door, a lift, a collapsing building), and is drawn where the map file puts it, apart from the rest. */
-export interface Fixture { model: number, x: number, y: number, z: number, pitch: number, yaw: number, roll: number, movable?: boolean }
+export interface Fixture { model: number, x: number, y: number, z: number, pitch: number, yaw: number, roll: number, movable?: boolean, class?: string, name?: string }
+
+/**
+ * A part that can move, as the mesh holds it (RFC 20, 4.2): its triangles are local to the entity's origin (as the map file stores
+ * them), and the entity's origin and angles place them. `model` is the number the game gives the entity (`*N`), the join with it.
+ */
+export interface MovablePart { model: number, class: string, name?: string, x: number, y: number, z: number, pitch: number, yaw: number, roll: number, triangles: number[] }
 
 /** Source's angles (pitch, yaw, roll, degrees) as a 3 by 3 matrix: a turn by roll about X, then pitch about Y, then yaw about Z (the same as `angleQuaternion` in the mesh writer). */
 export function angleMatrix(pitch: number, yaw: number, roll: number): number[] {
@@ -132,6 +138,8 @@ export interface Surfaces {
   water: number[]
   /** The triangles of brush entities that can move (any slope), where the map file puts them. */
   movable: number[]
+  /** The same triangles, a part at a time, local to the part's origin (one entry for each model number). */
+  movableParts: MovablePart[]
   stats: {
     faces: number, floorFaces: number, wallFaces: number, ceilingFaces: number, skipped: number, otherModelFaces: number
     /** Faces left out because of the name of their material, liquid surfaces seen, and brush-entity models drawn with the world. */
@@ -232,6 +240,7 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
   const faceList = function* () { for (const [from, n, fx] of ranges) for (let f = from; f < from + n; f++) yield [f, fx] as const }
 
   const floors: number[] = [], walls: number[] = [], water: number[] = [], movable: number[] = []
+  const parts = new Map<number, MovablePart>()
   const stats = {
     faces: numFaces, floorFaces: 0, wallFaces: 0, ceilingFaces: 0, skipped: 0, otherModelFaces, displacements: 0, displacementTriangles: 0,
     skippedByMaterial: 0, waterFaces: 0, fixtureModels: drawn.size - 1, movableFaces: 0,
@@ -280,7 +289,18 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
       // A part that can move is drawn whole, whatever its slope, and takes no part in floors, storeys or parts.
       if (dispinfo >= 0 || (flags & SURF_WARP) !== 0) continue
       stats.movableFaces++
-      for (let k = 1; k + 1 < corner.length; k++) for (const v of [corner[0]!, corner[k]!, corner[k + 1]!]) movable.push(...place(v))
+      let part = parts.get(fixture.model)
+      if (!part) {
+        part = { model: fixture.model, class: fixture.class ?? 'func_door', ...(fixture.name ? { name: fixture.name } : {}), x: fixture.x, y: fixture.y, z: fixture.z, pitch: fixture.pitch, yaw: fixture.yaw, roll: fixture.roll, triangles: [] }
+        parts.set(fixture.model, part)
+      }
+      for (let k = 1; k + 1 < corner.length; k++) {
+        for (const v of [corner[0]!, corner[k]!, corner[k + 1]!]) {
+          movable.push(...place(v))
+          // local to the origin, in sixty-fourths of a unit (exact in a float32; whole units where the map has them)
+          part.triangles.push(Math.round(xyz[v * 3]! * 64) / 64, Math.round(xyz[v * 3 + 1]! * 64) / 64, Math.round(xyz[v * 3 + 2]! * 64) / 64)
+        }
+      }
       continue
     }
 
@@ -370,7 +390,7 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
     }
   }
 
-  return { fingerprint: header.fingerprint, version: header.version, revision: header.revision, floors, walls, water, movable, stats }
+  return { fingerprint: header.fingerprint, version: header.version, revision: header.revision, floors, walls, water, movable, movableParts: [...parts.values()].sort((a, b) => a.model - b.model), stats }
 }
 
 // ---- the entities we need: spawn points and the 3D skybox camera ---------------------------------
@@ -430,7 +450,7 @@ export async function extractMapEntities(src: ByteSource, limits: SpawnLimits = 
       if (entity && cls && (FIXTURE_CLASSES.test(cls) || MOVABLE_CLASSES.test(cls)) && /^\*\d{1,5}$/.test(entity['model'] ?? '') && !entity['parentname']) {
         const o = originOf(entity!) ?? { x: 0, y: 0, z: 0 }
         const a = anglesOf(entity!)
-        fixtureModels.push({ model: Number(entity['model']!.slice(1)), ...o, pitch: a[0], yaw: a[1], roll: a[2], ...(MOVABLE_CLASSES.test(cls) ? { movable: true } : {}) })
+        fixtureModels.push({ model: Number(entity['model']!.slice(1)), ...o, pitch: a[0], yaw: a[1], roll: a[2], ...(MOVABLE_CLASSES.test(cls) ? { movable: true, class: cls, ...(entity['targetname'] ? { name: entity['targetname'].slice(0, 80) } : {}) } : {}) })
       }
       const at = entity && cls ? originOf(entity) : null
       if (cls && at) {

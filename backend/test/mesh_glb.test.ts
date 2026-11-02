@@ -397,6 +397,44 @@ describe('detached parts, storeys and spawns in the file (RFC 18, 4.4)', () => {
     expect(report.issues.numErrors).toBe(0)
   })
 
+  test('with the parts given, the movable group has a node for each: triangles local to its origin, the node placed by origin and angles, with the model number and class in its extras (RFC 20, 4.2)', async () => {
+    const local = [-10, -2, 0, 10, -2, 0, 10, -2, 80, -10, -2, 0, 10, -2, 80, -10, -2, 80]
+    const parts = [
+      { model: 12, class: 'func_door_rotating', name: 'door1', x: 100, y: 200, z: 8, pitch: 0, yaw: 90, roll: 0, triangles: local },
+      { model: 5, class: 'func_movelinear', x: 0, y: 0, z: 0, pitch: 0, yaw: 0, roll: 0, triangles: local },
+    ]
+    const r = (await surfacesToGlb({ ...base, floors: storeyed(), walls: [], movable: [], movableParts: parts }, { map: 'ttt_test' }))!
+    expect(r.info.movable).toBe(4)
+    const doc = await read(r.glb)
+    const group = doc.getRoot().listNodes().find(n => n.getName() === 'movable')!
+    expect(group.getMesh()).toBeNull()
+    expect(group.getExtras()).toMatchObject({ group: 'movable', triangles: 4, parts: 2 })
+    const kids = group.listChildren()
+    expect(kids.map(k => k.getName())).toEqual(['movable-12', 'movable-5'])
+    const door = kids[0]!
+    expect(door.getTranslation()).toEqual([100, 200, 8])
+    const q = door.getRotation()
+    expect(q[2]).toBeCloseTo(Math.SQRT1_2, 5) // a turn of 90 degrees about Z
+    expect(q[3]).toBeCloseTo(Math.SQRT1_2, 5)
+    expect(door.getExtras()).toMatchObject({ model: 12, class: 'func_door_rotating', name: 'door1', origin: [100, 200, 8], angles: [0, 90, 0], triangles: 2 })
+    expect(kids[1]!.getExtras()).not.toHaveProperty('name')
+    expect(door.getMesh()!.listPrimitives()[0]!.getMaterial()!.getName()).toBe('movable')
+    const report = await validator.validateBytes(r.glb, { maxIssues: 20 })
+    expect(report.issues.numErrors).toBe(0)
+  })
+
+  test('the crop keeps a part triangle whose centre, once placed, is inside the area; a part left with nothing leaves no node', async () => {
+    const tri = [0, 0, 0, 10, 0, 0, 0, 0, 10]
+    const parts = [
+      { model: 1, class: 'func_door', x: 1000, y: 1000, z: 0, pitch: 0, yaw: 0, roll: 0, triangles: tri },
+      { model: 2, class: 'func_door', x: 5000, y: 5000, z: 0, pitch: 0, yaw: 0, roll: 0, triangles: tri },
+    ]
+    const r = (await surfacesToGlb({ ...base, floors: storeyed(), walls: [], movableParts: parts }, { map: 'ttt_test', crop: { minX: -1e6, maxX: 2000, minY: -1e6, maxY: 2000 } }))!
+    const names = (await read(r.glb)).getRoot().listNodes().map(n => n.getName())
+    expect(names).toContain('movable-1')
+    expect(names).not.toContain('movable-2')
+  })
+
   test('no detached parts, no group', async () => {
     const r = await ok(storeyed())
     expect(r.info.detached).toEqual({ triangles: 0, parts: 0 })
