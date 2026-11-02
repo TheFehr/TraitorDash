@@ -20,7 +20,7 @@
 --
 -- Every way a watch can end writes its result: the round ending, a restarted round, a map change or shutdown, the time
 -- running out. The hook cost is measured with SysTime around each call, which adds a little of its own, so it reads a
--- bit high. The server's frame time is looked at five times a second, so it shows a trend, not every frame.
+-- bit high. How late the sampling timer runs (it should fire every 0.2 s) shows whether the server hitches; it is a trend, not every frame. (The game's own FrameTime() on a server is the tick length, always, so it says nothing.)
 --
 -- It only watches. The hooks end without returning a value on every path: in Garry's Mod, returning true from
 -- AcceptInput (or false from PlayerUse) stops the game from doing what it was about to do.
@@ -181,13 +181,7 @@ local function OnUse(ply, ent)
     end
 end
 
-local function Differs(a, b)
-    return math.abs(a.x - b.x) + math.abs(a.y - b.y) + math.abs(a.z - b.z) > STILL
-end
-local function Turned(a, b)
-    local function d(x, y) local v = math.abs(x - y) % 360 return math.min(v, 360 - v) end
-    return d(a.p, b.p) + d(a.y, b.y) + d(a.r, b.r) > TURNED
-end
+local function Angle(x, y) local v = math.abs(x - y) % 360 return math.min(v, 360 - v) end
 
 local function Sample()
     local r = run
@@ -201,11 +195,12 @@ local function Sample()
                 r.removed = r.removed + 1
                 r.goneLines[#r.goneLines + 1] = string.format("  %6.1fs removed: %s", now, Describe(part))
             else
+                -- plain numbers in the part itself: no table is made for each look
                 local pos, ang = part.ent:GetPos(), part.ent:GetAngles()
-                local p = { x = pos.x, y = pos.y, z = pos.z }
-                local a = { p = ang.p, y = ang.y, r = ang.r }
-                if part.pos then
-                    local moved = Differs(p, part.pos) or Turned(a, part.ang)
+                local px, py, pz, ap, ay, ar = pos.x, pos.y, pos.z, ang.p, ang.y, ang.r
+                if part.px then
+                    local moved = math.abs(px - part.px) + math.abs(py - part.py) + math.abs(pz - part.pz) > STILL
+                        or Angle(ap, part.ap) + Angle(ay, part.ay) + Angle(ar, part.ar) > TURNED
                     if moved and not part.moving then
                         -- a movement begins: was it announced by an input a moment ago?
                         part.moving = true
@@ -221,7 +216,7 @@ local function Sample()
                         end
                     elseif not moved and part.moving then part.moving = false end
                 end
-                part.pos, part.ang = p, a
+                part.px, part.py, part.pz, part.ap, part.ay, part.ar = px, py, pz, ap, ay, ar
             end
         end
     end
@@ -231,9 +226,15 @@ local function Sample()
         if all > r.playersMax then r.playersMax = all end
         if humans > r.humansMax then r.humansMax = humans end
     end
-    local ft = FrameTime and FrameTime() or 0
-    r.frameSum = r.frameSum + ft
-    if ft > r.frameWorst then r.frameWorst = ft end
+    -- how late the timer ran: a server that is struggling runs it later than every SAMPLE seconds
+    if r.lastLook then
+        local late = t0 - r.lastLook - SAMPLE
+        if late < 0 then late = 0 end
+        r.lateSum = r.lateSum + late
+        if late > r.lateWorst then r.lateWorst = late end
+        if late > 0.05 then r.lateOver = r.lateOver + 1 end
+    end
+    r.lastLook = t0
     local dt = SysTime() - t0
     r.samples = r.samples + 1
     r.sampleTime = r.sampleTime + dt
@@ -255,10 +256,10 @@ local function Finish(why)
     local all, humans = Counts()
     lines[#lines + 1] = string.format("watched %.0f s (%s); at the start %d people (%d of them bots), at most %d (%d humans), at the end %d (%d humans); %d entities in the map",
         secs, why or r.label, r.playersStart, r.playersStart - r.humansStart, math.max(r.playersMax, all), math.max(r.humansMax, humans), all, humans, r.info.entityCount)
-    lines[#lines + 1] = string.format("SUMMARY humans<=%d | inputs %.1f/s | hook %.1f us avg %.1f us worst | looking at parts %.1f us avg %.1f us worst | unannounced movements %d | frames %.2f ms avg %.2f ms worst (tick %.2f ms)",
+    lines[#lines + 1] = string.format("SUMMARY humans<=%d | inputs %.1f/s | hook %.1f us avg %.1f us worst | looking at parts %.1f us avg %.1f us worst | unannounced movements %d | timer late %.1f ms avg %.1f ms worst, %d looks over 50 ms late",
         math.max(r.humansMax, humans), secs > 0 and r.inputsAll / secs or 0, r.inputsAll > 0 and r.hookTime / r.inputsAll * 1e6 or 0, r.hookWorst * 1e6,
         r.samples > 0 and r.sampleTime / r.samples * 1e6 or 0, r.sampleWorst * 1e6, r.unannounced,
-        r.samples > 0 and r.frameSum / r.samples * 1000 or 0, r.frameWorst * 1000, (engine and engine.TickInterval and engine.TickInterval() or 0) * 1000)
+        r.samples > 1 and r.lateSum / (r.samples - 1) * 1000 or 0, r.lateWorst * 1000, r.lateOver)
     for _, l in ipairs(ScanLines(r.info)) do lines[#lines + 1] = l end
     lines[#lines + 1] = string.format("inputs on any entity: %d (%.1f a second); on movable parts: %d; the hook cost %.1f us on average, %.1f us at worst (%.2f ms in all)",
         r.inputsAll, secs > 0 and r.inputsAll / secs or 0, r.inputsSeen, r.inputsAll > 0 and r.hookTime / r.inputsAll * 1e6 or 0, r.hookWorst * 1e6, r.hookTime * 1000)
@@ -290,7 +291,7 @@ local function Begin(label, seconds)
         inputs = {}, inputLines = {}, unannouncedLines = {}, goneLines = {},
         inputsAll = 0, inputsSeen = 0, byActivator = 0, byCaller = 0, byNobody = 0, hookTime = 0, hookWorst = 0,
         uses = 0, movements = 0, announced = 0, unannounced = 0, removed = 0, samples = 0, sampleTime = 0, sampleWorst = 0,
-        errors = 0, firstError = nil, frameSum = 0, frameWorst = 0,
+        errors = 0, firstError = nil, lateSum = 0, lateWorst = 0, lateOver = 0,
     }
     run.playersStart, run.humansStart = Counts()
     run.playersMax, run.humansMax = run.playersStart, run.humansStart

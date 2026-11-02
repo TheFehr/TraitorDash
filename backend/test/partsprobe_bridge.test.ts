@@ -85,8 +85,7 @@ const PRELUDE = `
   print = function(...) local o = {} for i = 1, select("#", ...) do o[i] = tostring((select(i, ...))) end PRINTED[#PRINTED + 1] = table.concat(o, " ") end
   DATA = {}
   file = { Read = function(p) return DATA[p] end, Write = function(p, c) DATA[p] = c end, Delete = function(p) DATA[p] = nil end }
-  FRAME = 0.015
-  function FrameTime() return FRAME end
+
   COMMAND = nil
   concommand = { Add = function(n, fn) COMMAND = fn end }
   function Cmd(...) COMMAND(CONSOLE_PLAYER, "traitordash_parts_probe", { ... }) end
@@ -394,7 +393,7 @@ describe('partsprobe.lua', () => {
     expect(text(r)).toContain('watched 7 s (the server shut down or changed map)')
   })
 
-  test('the report says how many people there were at most, how the frames did and has one summary line', () => {
+  test('the report says how many people there were at most, how late the timer ran and has one summary line', () => {
     const r = play(`
       Ent("func_door", "*3", "door1")
       local ps = {} for i = 1, 20 do ps[i] = Ply() end
@@ -403,13 +402,13 @@ describe('partsprobe.lua', () => {
       Advance(2)
       PLAYERS = ps                                            -- the server fills up
       Advance(3)
-      FRAME = 0.05 Advance(1) FRAME = 0.015
+      NOW = NOW + 0.3 Advance(1)                              -- the server hitches: the timer runs 0.2 s late
       PLAYERS = { ps[1] }
       Cmd("stop")
     `)
     const t = text(r)
     expect(t).toContain('at the start 2 people (0 of them bots), at most 20 (20 humans), at the end 1 (1 humans)')
-    expect(t).toMatch(/SUMMARY humans<=20 \| inputs 0\.0\/s \| hook 0\.0 us avg 0\.0 us worst \| looking at parts [\d.]+ us avg [\d.]+ us worst \| unannounced movements 0 \| frames [\d.]+ ms avg 50\.00 ms worst/)
+    expect(t).toMatch(/SUMMARY humans<=20 \| inputs 0\.0\/s \| hook 0\.0 us avg 0\.0 us worst \| looking at parts [\d.]+ us avg [\d.]+ us worst \| unannounced movements 0 \| timer late [\d.]+ ms avg 2\d\d\.\d ms worst, 1 looks over 50 ms late/)
   })
 
   test('a data file that has grown too large is left alone, and the result still goes to the console', () => {
