@@ -62,6 +62,7 @@ end
 local function Stack()
     local out = {}
     local full = debug.traceback("", 3)
+    if string.find(full, "ResetAllPlayers", 1, true) then return "(the role reset at the start of a round)" end
     for line in string.gmatch(full, "[^\n]+") do
         if string.find(line, "stack traceback", 1, true) == nil then
             out[#out + 1] = (string.gsub(line, "^%s+", ""))
@@ -106,9 +107,12 @@ local handlers = {
         if not Followed(ply) then return end
         Add(string.format("TEAM %s %s -> %s\n    %s", Name(ply), tostring(old), tostring(new), Stack()))
     end,
-    TTT2AttemptDefibPlayer = function(ply, target)
+    -- The hook gives the owner, the corpse and the weapon; the player is the corpse's.
+    TTT2AttemptDefibPlayer = function(owner, ragdoll, defib)
+        local target = CORPSE and CORPSE.GetPlayer and CORPSE.GetPlayer(ragdoll)
         if not (target and Followed(target)) then return end
-        Add(string.format("DEFIB by %s at %s role=%s team=%s", Name(ply), Name(target), Role(target), Team(target)))
+        local class = IsValid(defib) and defib.GetClass and defib:GetClass() or "?"
+        Add(string.format("DEFIB by %s with %s at %s role=%s team=%s", Name(owner), tostring(class), Name(target), Role(target), Team(target)))
     end,
     TTTEndRound = function()
         for _, ply in ipairs(player.GetAll()) do

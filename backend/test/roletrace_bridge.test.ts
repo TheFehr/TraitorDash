@@ -24,6 +24,7 @@ const PRELUDE = `
   function P:IsSuperAdmin() return self.admin == true end
   function Ply(uid, nick, role, team) return setmetatable({ uid = uid, nick = nick, role = role, team = team, alive = true }, P) end
   PLAYERS = {}
+  CORPSE = { GetPlayer = function(r) for _, p in ipairs(PLAYERS) do if r == "ragdoll-" .. string.lower(p.nick:sub(1, 1)) then return p end end end }
   player = { GetAll = function() return PLAYERS end }
   HOOKS = {}
   hook = {
@@ -115,7 +116,7 @@ describe('roletrace.lua', () => {
       Fire("TTTPrepareRound")
       Fire("TTT2UpdateSubrole", bystander, 1, 2)
       Fire("PlayerDeath", a)
-      Fire("TTT2AttemptDefibPlayer", necro, a)
+      Fire("TTT2AttemptDefibPlayer", necro, "ragdoll-a", { GetClass = function() return "weapon_ttt_necro_defi" end })
       NOW = 12
       Fire("PlayerSpawn", a)
       function AddZombie(p) a.role = "zombie" Fire("TTT2UpdateSubrole", p, 1, 9) end
@@ -125,13 +126,24 @@ describe('roletrace.lua', () => {
     `)
     const t = r.out.trace
     expect(t).toContain('DEATH Alice role=innocent team=innocents')
-    expect(t).toContain('DEFIB by Necro at Alice role=innocent')
+    expect(t).toContain('DEFIB by Necro with weapon_ttt_necro_defi at Alice role=innocent')
     expect(t).toContain('SPAWN Alice')
     expect(t).toContain('SUBROLE Alice 1 -> 9 (now zombie)')
     expect(t).toContain('AddZombie')               // the stack names the function that made the change
     expect(t).toContain('TEAM Alice innocents -> necromancers')
     expect(t).toContain('END Alice role=zombie team=innocents alive=true')
     expect(t).not.toContain('Bob')                 // never died, not followed
+  })
+
+  test('a role reset at the start of a round is one short line, not a stack', () => {
+    const r = play(`
+      Cmd(nil, "on")
+      local a = Ply(1, "Alice", "innocent", "innocents")
+      Fire("PlayerDeath", a)
+      function ResetAllPlayers() Fire("TTT2UpdateSubrole", a, 0, 3) end
+      ResetAllPlayers()
+    `)
+    expect(r.out.trace).toContain('SUBROLE Alice 0 -> 3 (now innocent)\n    (the role reset at the start of a round)')
   })
 
   test('a revived player who stays what they were shows no change after the spawn', () => {
