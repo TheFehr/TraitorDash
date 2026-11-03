@@ -25,6 +25,10 @@ if SERVER then
     local okPp, errPp = pcall(include, "traitordash/partsprobe.lua")
     if not okPp then print("[TraitorDash] Parts probe failed to load: " .. tostring(errPp)) end
 
+    -- A console trace of role changes after a death, with the call stack (what undoes a revive); off until switched on.
+    local okRt, errRt = pcall(include, "traitordash/roletrace.lua")
+    if not okRt then print("[TraitorDash] Role trace failed to load: " .. tostring(errRt)) end
+
     -- The role guide in the F1 menu (RFC 15): the server's part. Optional; off without a public_url.
     local okRg, errRg = pcall(include, "traitordash/rolemenu.lua")
     if not okRg then print("[TraitorDash] Role guide failed to load: " .. tostring(errRg)) end
