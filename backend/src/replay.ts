@@ -644,6 +644,22 @@ async function start(root: HTMLElement) {
     changed()
   }
   root.querySelectorAll<HTMLElement>('[data-cam]').forEach(b => b.addEventListener('click', () => setCam((b.dataset.cam as any) ?? 'orbit')))
+  // Theater: the replay fills the window (the page around it is 56 rem wide). T toggles, Esc leaves.
+  const theaterBtn = el(root, '[data-theater]')
+  const setTheater = (on: boolean) => {
+    root.classList.toggle('theater', on)
+    document.documentElement.classList.toggle('theater', on)
+    theaterBtn?.setAttribute('aria-pressed', String(on))
+    if (on) window.scrollTo(0, 0)
+    resize()
+  }
+  theaterBtn?.addEventListener('click', () => setTheater(!root.classList.contains('theater')))
+  document.addEventListener('keydown', e => {
+    const t = e.target as HTMLElement | null
+    if (e.ctrlKey || e.metaKey || e.altKey || (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) && (t as HTMLInputElement).type !== 'range')) return
+    if (e.key === 'Escape' && root.classList.contains('theater')) setTheater(false)
+    else if (e.key === 't' || e.key === 'T') setTheater(!root.classList.contains('theater'))
+  })
   root.querySelectorAll<HTMLElement>('[data-speed]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.speed === '1')))
   frame()
   setCam(selected ? 'follow' : 'orbit') // opens on the selected player, as RFC 12 says
@@ -656,7 +672,7 @@ async function start(root: HTMLElement) {
   changed()
 
   // for tests and for debugging in the page
-  ;(root as any).__replay = { seek, get ms() { return ms }, select: (id: string) => { selected = id; changed() }, setCam, setPlaying }
+  ;(root as any).__replay = { seek, get ms() { return ms }, select: (id: string) => { selected = id; changed() }, setCam, setPlaying, setTheater }
 }
 
 document.querySelectorAll<HTMLElement>('[data-replay]').forEach(r => { start(r) })

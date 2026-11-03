@@ -193,6 +193,9 @@ h2+.f,h2+.plans,h2+p+.f{margin-top:1.1rem}
 .replay{display:grid;grid-template-columns:minmax(0,1fr) 17rem;gap:1.2rem}
 @media (max-width:760px){.replay{grid-template-columns:minmax(0,1fr)}}
 .replay .main{min-width:0}
+.replay.theater{position:fixed;inset:0;z-index:50;overflow:auto;background:#1a1612;padding:.8rem 1rem;align-content:start}
+.replay.theater .view canvas{height:calc(100vh - 11rem);min-height:18rem}
+html.theater{overflow:hidden}
 .replay aside{display:flex;flex-direction:column;gap:1.3rem;min-width:0}
 .scrub{position:relative;margin-top:.6rem}
 .scrub input{width:100%;margin:0}

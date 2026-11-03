@@ -256,6 +256,7 @@ describe('the replay page', () => {
     expect(r.text).toContain(`data-viewer="${USER}"`)
     expect(r.text).toContain('/public/replay.js')
     expect(r.text).toContain('data-scrub')
+    expect(r.text).toContain('data-theater')
     expect(r.text).toContain('data-cam="top"')
     expect(r.text).toContain('not what they could see') // the fixed line: it is not a line-of-sight source
     expect(r.text).not.toContain('data-pin')

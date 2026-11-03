@@ -64,6 +64,7 @@ export const ReplayPage = ({ ctx, server, round, hasTrack, src, pinned, here, pi
                   <button type="button" data-cam="top" aria-pressed="false" class="tog">From above</button>
                   <button type="button" data-cam="follow" aria-pressed="false" class="tog">Follow</button>
                 </span>
+                <button type="button" data-theater aria-pressed="false" class="tog" title="Fill the window (T; Esc leaves)">Theater</button>
               </div>
               <div data-levels-wrap class="tools">
                 <span role="group" aria-label="Levels shown"><span class="cap">Up to level</span><span data-levels></span></span>
