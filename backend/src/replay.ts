@@ -6,6 +6,7 @@ import {
   type Camera, type MeshStandardMaterial as StdMat,
 } from 'three'
 import { hex } from './teamColours'
+import { depthOf } from './bodyDepth'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { clone as cloneRig } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
@@ -622,6 +623,19 @@ async function start(root: HTMLElement) {
   }
   const STILL: Record<ClipName, number> = { idle: 1, walk: 0, run: 0, cidle: 0, cwalk: 0 }
 
+  /**
+   * The model's file holds its shape at rest, whose back (the arms, the feet) reaches 27 units behind the origin; in the standing
+   * pose that is shown it is 7. A body lifted by the first lay 20 units above the floor (2026-11-04, "still floating"). The depth
+   * of the body in the pose that is drawn is measured once, in the figure's own space, and decides how a body lies.
+   */
+  let measured = false
+  const measureStill = (lying: Group) => {
+    if (measured || !real || !moving) return
+    measured = true
+    const d = depthOf(lying)
+    if (d) { real.back = -d.min; real.thick = d.max - d.min }
+  }
+
   interface Look { plain: CanvasTexture, pointer: CanvasTexture, cross: CanvasTexture, label: CanvasTexture }
   interface Marker {
     group: Group, pin: Sprite, label: Sprite, ring: Mesh, trail: Line, corpse: Group, deadPin: Sprite, segs: Segment[]
@@ -659,6 +673,8 @@ async function start(root: HTMLElement) {
     const corpse = new Group()
     const lying = figure(colour, true)
     lying.rotation.y = -Math.PI / 2 // onto its back, head towards -x
+    poseRig(lying, STILL, 0, 0) // a body is the standing pose, lying down
+    measureStill(lying) // how far the back reaches in that pose, which is not what the model's file says of its resting shape
     lying.position.z = real ? real.back : 9 // so the back lies on the floor
     const deadPin = screenSprite(look.cross, PIN, PIN)
     if (real) deadPin.position.set(-real.height / 2, 0, real.thick + 14) // over the middle of the body, which lies along -x from where it died
@@ -667,7 +683,6 @@ async function start(root: HTMLElement) {
     corpse.visible = false
 
     world.add(group, trail, corpse)
-    poseRig(lying, STILL, 0, 0) // a body is the standing pose, lying down
     markers.set(id, { group, pin, label, ring, trail, corpse, deadPin, segs: data.players.get(id) ?? [], body, lying, arrow, path: pathOf(data.players.get(id) ?? []), colour, looks, posedAt: -1e9 })
   }
   // The shot: a line of the width of a few pixels (a `Line` is one pixel wide in WebGL, which is too faint to see), as a thin
