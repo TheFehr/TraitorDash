@@ -1,5 +1,5 @@
 import { ago } from '../format'
-import { hex, teamColour, teamLabel } from '../teamColours'
+import { teamHexOf, teamLabel } from '../teamColours'
 import { pct } from '../format'
 import type { WinRow } from '../services/stats'
 import type { Viewer } from './CaseFile'
@@ -17,6 +17,8 @@ export interface Ctx {
   /** Open sign-in: whether a visitor who is not signed in can be offered the Steam login. */
   signinOpen?: boolean
   now?: number
+  /** Each team's colour as the game gives it (the colour of the role named like the team), by team name; set on a server's pages. */
+  teams?: Record<string, string>
 }
 
 /** Whether admin controls are shown: an admin on the website, never in the game's window. */
@@ -38,7 +40,7 @@ export const link = (ctx: Ctx, path: string, params: Record<string, Param> = {})
   path + qs({ embed: ctx.embed, ...params })
 
 /** A team's colour as `#rrggbb`. */
-export const teamHex = (team: string | null): string => hex(teamColour(team))
+export const teamHex = (team: string | null, ctx?: Pick<Ctx, 'teams'>): string => teamHexOf(ctx?.teams, team)
 
 export const Crumbs = ({ children }: { children: any }) => <div class="crumbs">{children}</div>
 
@@ -46,7 +48,7 @@ export const Crumbs = ({ children }: { children: any }) => <div class="crumbs">{
 export const ServerName = ({ server }: { ctx?: Ctx, server: { id: string, name: string } }) => <>{server.name}</>
 
 /** The result of a round, as a tag in the team's colour. */
-export const Result = ({ result }: { result: string }) => <i class="res" style={`--c:${teamHex(result)}`}>{teamLabel(result)}</i>
+export const Result = ({ result, ctx }: { result: string, ctx?: Pick<Ctx, 'teams'> }) => <i class="res" style={`--c:${teamHex(result, ctx)}`}>{teamLabel(result)}</i>
 
 /** A share of a whole as a labelled bar. */
 export const Bar = ({ label, part, whole, colour, title }: { label: string, part: number, whole: number, colour: string, title?: string }) => {

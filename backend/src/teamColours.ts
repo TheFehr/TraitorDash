@@ -54,6 +54,27 @@ export function teamColour(team: string | null): number {
 export const roleColour = (own: unknown, team: string | null): string =>
   typeof own === 'string' && HEX6.test(own) ? own : hex(teamColour(team))
 
+/**
+ * The colour of each team as the game gives it: the colour of the role that carries the team's name (Jackal for the
+ * jackals, Traitor for the traitors), by team name in lower case. A team with no such role is left out and falls back
+ * to the table above.
+ */
+export function teamColoursOf(roles: { role_name?: unknown, team?: unknown, color?: unknown }[]): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const r of roles) {
+    const name = String(r.role_name ?? '').toLowerCase(), team = String(r.team ?? '').toLowerCase()
+    if (!name || !team || typeof r.color !== 'string' || !HEX6.test(r.color)) continue
+    if (name === team || name + 's' === team || (team.endsWith('s') && name === team.slice(0, -1))) out[team] = r.color
+  }
+  return out
+}
+
+/** A team's colour as `#rrggbb`: the game's (`own`, from `teamColoursOf`), else the table's. */
+export function teamHexOf(own: Record<string, string> | undefined, team: string | null): string {
+  const t = (team ?? '').toLowerCase()
+  return own?.[t] ?? own?.[t + 's'] ?? hex(teamColour(team))
+}
+
 /** A player's colour (0xRRGGBB): the colour of their role if `colours` (role name to `#rrggbb`) has one, else their team's. */
 export function playerColour(colours: Record<string, string>, role: string | null, team: string | null): number {
   const own = role !== null && Object.prototype.hasOwnProperty.call(colours, role) ? colours[role] : undefined

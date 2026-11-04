@@ -1,4 +1,4 @@
-import { HEX6, TEAMS, hex, teamColour, teamLabel } from '../teamColours'
+import { HEX6, TEAMS, teamColoursOf, teamHexOf, teamLabel } from '../teamColours'
 import { isServerOnline } from '../services/ServerUtils'
 import { Heartbeat } from './Heartbeat'
 import { METRICS, type MetricKey, type RoleMetrics } from '../services/roles'
@@ -111,6 +111,8 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
     return acc
   }, {})
 
+  const gameTeams = teamColoursOf(roles.map((r: any) => ({ role_name: r.role_name, team: r.team, color: r.colour })))
+
   // Define sort order
   const order = Object.keys(TEAMS)
   const sortedGroups = Object.entries(groups).sort((a, b) => {
@@ -195,7 +197,7 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
           >
           {sortedGroups.map(([team, roleList]: [string, any]) => (
             <section x-show="sectionVisible($el)" x-bind:class="flat ? 'contents' : ''">
-              <h2 class="team" x-show="!flat" style={`color:${hex(teamColour(team))};border-color:${hex(teamColour(team))}`}>
+              <h2 class="team" x-show="!flat" style={`color:${teamHexOf(gameTeams, team)};border-color:${teamHexOf(gameTeams, team)}`}>
                 {teamLabel(team)}
               </h2>
               <div class="tiles" x-bind:style="{ display: flat ? 'contents' : '' }">

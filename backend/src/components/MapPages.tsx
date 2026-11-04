@@ -55,9 +55,9 @@ const Pills = ({ m, next }: { m: MapRow, next: string | null }) => (
 
 const tabColour = (m: MapRow | null | undefined) => (m?.votable === true ? '#22c55e' : m?.isCurrent ? '#e9b44c' : '#9ca3af')
 
-const Split = ({ results, rounds }: { results: { name: string, n: number }[], rounds: number }) => (
+const Split = ({ results, rounds, ctx }: { results: { name: string, n: number }[], rounds: number, ctx: Ctx }) => (
   <div class="split" aria-hidden="true">
-    {results.map(r => <i style={`--c:${teamHex(r.name)};width:${(r.n / rounds) * 100}%`}></i>)}
+    {results.map(r => <i style={`--c:${teamHex(r.name, ctx)};width:${(r.n / rounds) * 100}%`}></i>)}
   </div>
 )
 
@@ -109,7 +109,7 @@ export const MapsPage = ({ ctx, server, state, maps, activity, showAll, plans, m
                     <span class="file">{m.name}</span>
                     <span><Pills m={m} next={next} />{admin && <i class="pill mute">{mapSize(m.size)}</i>}</span>
                     {a
-                      ? <><Split results={a.results} rounds={a.rounds} /><span>{a.rounds} {a.rounds === 1 ? 'round' : 'rounds'} · last <When iso={a.lastRound} now={ctx.now} /></span></>
+                      ? <><Split results={a.results} rounds={a.rounds} ctx={ctx} /><span>{a.rounds} {a.rounds === 1 ? 'round' : 'rounds'} · last <When iso={a.lastRound} now={ctx.now} /></span></>
                       : <span class="dim">Not played yet</span>}
                     {/* An admin's 3D view and floor plan are one page: one pill, not two that lead to the same place */}
                     {admin && plan && meshes?.has(m.name) && ctx.viewer
@@ -202,7 +202,7 @@ export const MapFilePage = ({ ctx, server, name, map, state, activity, has3d, ha
               <div><dt>Last round</dt><dd><When iso={activity.lastRound} now={ctx.now} /></dd></div>
             </dl>
             <h2>Who wins here</h2>
-            {activity.results.slice(0, 5).map(r => <Bar label={teamLabel(r.name)} part={r.n} whole={activity.rounds} colour={teamHex(r.name)} />)}
+            {activity.results.slice(0, 5).map(r => <Bar label={teamLabel(r.name)} part={r.n} whole={activity.rounds} colour={teamHex(r.name, ctx)} />)}
           </>
         ) : <p class="none">No round has been played on this map yet.</p>}
         {has3d && (

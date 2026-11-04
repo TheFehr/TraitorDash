@@ -3,6 +3,8 @@ import { getSession, openSignin } from '../middleware/session'
 import { RateLimiter } from './rateLimit'
 import { clientAddress } from './gates'
 import { browserOf, type Ctx } from '../components/kit'
+import { Store } from './Store'
+import { teamColoursOf } from '../teamColours'
 
 // What the case-file pages (RFC 15, 16, 17) have in common on the way in and out: who is asking, how
 // often, which headers go with the page, and the cache. The pages themselves are components.
@@ -31,11 +33,13 @@ export const isEmbed = (c: any): boolean => ['1', 'true'].includes(c.req.query('
 /** Who is asking and where the page is shown. */
 export async function ctxOf(c: any): Promise<Ctx> {
   const session = await getSession(c)
+  const serverId = c.req.param?.('serverId') as string | undefined
   return {
     embed: isEmbed(c),
     viewer: session ? { steamId: session.steamId, admin: session.admin } : null,
     browser: browserOf(c.req.header('User-Agent')),
     signinOpen: openSignin(),
+    teams: serverId ? teamColoursOf(Store.getRoles(serverId)) : undefined,
   }
 }
 

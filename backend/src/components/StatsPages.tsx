@@ -145,7 +145,7 @@ export const StatsPage = (p: StatsPageProps) => {
           <div class="pair">
             <div class="f" style="--c:#22c55e">
               <h2 class="ft">Who wins</h2>
-              {p.overview.results.slice(0, 8).map(r => <Bar label={teamLabel(r.name)} part={r.n} whole={p.overview.rounds} colour={teamHex(r.name)} title={`${r.n} of ${p.overview.rounds} rounds`} />)}
+              {p.overview.results.slice(0, 8).map(r => <Bar label={teamLabel(r.name)} part={r.n} whole={p.overview.rounds} colour={teamHex(r.name, ctx)} title={`${r.n} of ${p.overview.rounds} rounds`} />)}
             </div>
             <div class="f" style="--c:#dc2626">
               <h2 class="ft">Best roles</h2>
@@ -276,7 +276,7 @@ export const RoundsTable = ({ ctx, serverId, rounds, tracked, bots }: { ctx: Ctx
               {pick && <td><input type="checkbox" name="round" value={r.roundId} aria-label={`Select the round of ${r.receivedAt}`} /></td>}
               <td><a href={link(ctx, `${here(serverId)}/rounds/${encodeURIComponent(r.roundId)}`, { bots })}><When iso={r.receivedAt} now={ctx.now} /></a></td>
               <td title={r.map ?? undefined}>{r.map ? prettyMap(r.map) : '–'}</td>
-              <td><Result result={r.result} /></td>
+              <td><Result result={r.result} ctx={ctx} /></td>
               <td class="r">{r.players}</td>
               <td class="r">{r.deaths}</td>
               <td class="r">{duration(r.duration)}</td>
@@ -336,8 +336,8 @@ export const RoundPage = ({ ctx, server, round, deaths, firstBlood, hasReplay, c
     <Shell title={`${round.map ?? 'Round'} | ${server.name}`} embed={ctx.embed} viewer={ctx.viewer}>
       <Crumbs><a href={link(ctx, `${here(id)}/stats`, { view: 'rounds', bots })}>Rounds</a> / <When iso={round.startedAt} now={ctx.now} /></Crumbs>
       {!ctx.embed && <Sections serverId={id} admin={adminOf(ctx)} />}
-      <div class="f big" style={`--c:${teamHex(round.result)}`}>
-        <div class="stamp" style={`--c:${teamHex(round.result)}`}>{teamLabel(round.result)}</div>
+      <div class="f big" style={`--c:${teamHex(round.result, ctx)}`}>
+        <div class="stamp" style={`--c:${teamHex(round.result, ctx)}`}>{teamLabel(round.result)}</div>
         <h1>{round.map ? prettyMap(round.map) : 'Unknown map'}</h1>
         {round.map && <p class="file" style="margin:.2rem 0 0">{round.map}</p>}
         <h2>The round</h2>
