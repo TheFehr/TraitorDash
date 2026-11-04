@@ -1,5 +1,5 @@
 /// <reference lib="dom" />
-import type { BufferGeometry, Mesh, MeshStandardMaterial, Object3D } from 'three'
+import { Color, type BufferGeometry, type Mesh, type MeshStandardMaterial, type Object3D } from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { hex } from './teamColours'
 import { applyColouring, heightColours, levelColour, savedColouring, type Painted } from './sceneKit'
@@ -41,7 +41,9 @@ const REVIVE_MARK_MS = 2500
 const GROUND = '#14110e' // the canvas's colour in the page stylesheet
 
 /** A colour as one key, with the low two bits of each channel dropped, so many triangles share one fill. */
-const keyOf = (r: number, g: number, b: number) => ((Math.round(r * 255) & 0xfc) << 16) | ((Math.round(g * 255) & 0xfc) << 8) | (Math.round(b * 255) & 0xfc)
+// three keeps colours in linear light and turns them back when it draws; the canvas wants the screen's values
+const screen = new Color()
+const keyOf = (r: number, g: number, b: number) => screen.setRGB(r, g, b).getHex() & 0xfcfcfc
 const css = (key: number) => `#${key.toString(16).padStart(6, '0')}`
 
 /** The triangles (six numbers each, Source's x and y) and the wall segments (four each) of one level, grouped by colour. */

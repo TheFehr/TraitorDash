@@ -3,9 +3,10 @@ import {
   Box3, Vector3, Mesh, MeshStandardMaterial, Plane, type Object3D, type BufferGeometry,
 } from 'three'
 import {
-  applyColouring, boxWithout, COLOURINGS, explainNoWebGL, heightColours, makeCamera, makeRenderer, makeScene, makeSpawnMarkers, prepareDetached, prepareMovable, prepareProps, prepareWater, saveColouring, savedColouring,
+  applyColouring, boxWithout, COLOURINGS, heightColours, makeCamera, makeRenderer, makeScene, makeSpawnMarkers, prepareDetached, prepareMovable, prepareProps, prepareWater, saveColouring, savedColouring,
   type Colouring, type Painted, type SpawnPoint,
 } from './sceneKit'
+import { startMapFlat } from './mapflat'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 
@@ -23,7 +24,7 @@ function start(root: HTMLElement) {
 
   let renderer: ReturnType<typeof makeRenderer>
   try { renderer = makeRenderer(canvas) } catch {
-    explainNoWebGL(root, say, 'the 3D view')
+    startMapFlat(root, canvas, say, src) // no WebGL (the game's window): a rough view on a 2D canvas (RFC 19)
     return
   }
   const scene = makeScene()

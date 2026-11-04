@@ -29,6 +29,7 @@ describe('flatten', () => {
     expect(floors.map(v => Math.round(v) + 0)).toEqual([0, 0, 100, 0, 0, 50])
     const walls = [...flat.layers[0]!.walls.values()].flat().map(v => Math.round(v) + 0)
     expect(walls).toEqual([0, 0, 100, 0]) // the longest edge of the wall's triangle, along the ground
+    expect([...flat.layers[0]!.floors.keys()]).toEqual([0xcfc6b0 & 0xfcfcfc]) // the plain floor colour as the screen shows it, not three's linear value
     expect(flat.min.map(v => Math.round(v) + 0)).toEqual([0, 0])
     expect(flat.max.map(v => Math.round(v) + 0)).toEqual([100, 50])
   })
