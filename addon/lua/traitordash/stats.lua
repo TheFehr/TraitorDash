@@ -114,6 +114,15 @@ local function WeaponClass(inflictor, attacker)
     return CleanName(ent:GetClass())
 end
 
+-- Where a player dies, taken in DoPlayerDeath, before they become a spectator. TTT2PostPlayerDeath, which counts the death, comes
+-- after: from then on `GetPos` is the spectator's, at the height of the eyes, so a body drawn there hangs 64 units in the air and a
+-- killzone is a storey too high. The position waits on the player until the death is counted.
+local function RememberDeathPos(victim)
+    if not round or not IsValid(victim) or not victim.GetPos then return end
+    local p = victim:GetPos()
+    victim.TraitorDashDeathPos = { x = p.x, y = p.y, z = p.z }
+end
+
 local function Death(victim, inflictor, attacker)
     if not round or #round.deaths >= MAX_DEATHS then return end
     if not IsValid(victim) or not victim:IsPlayer() then return end
@@ -128,14 +137,16 @@ local function Death(victim, inflictor, attacker)
     -- What it was done with and where the victim stood (RFC 21, 4.1); a failure here costs only these fields.
     local okW, weapon = pcall(WeaponClass, inflictor, attacker)
     death.weapon = okW and weapon or nil
-    local okP, x, y, z = pcall(function() local p = victim:GetPos() return math.floor(p.x + 0.5), math.floor(p.y + 0.5), math.floor(p.z + 0.5) end)
+    local at = victim.TraitorDashDeathPos
+    victim.TraitorDashDeathPos = nil
+    local okP, x, y, z = pcall(function() local p = at or victim:GetPos() return math.floor(p.x + 0.5), math.floor(p.y + 0.5), math.floor(p.z + 0.5) end)
     if okP then death.x, death.y, death.z = x, y, z end
     round.deaths[#round.deaths + 1] = death
     round.players[vsid].died = true
     -- A revival that comes with no defibrillator is put down to the role the player died as (RFC 14, 4.2).
     round.players[vsid].dead = true
     round.players[vsid].death_role = CleanName(RoleName(victim))
-    if TraitorDash.Track then TraitorDash.Track.Death(victim, inflictor, attacker, vsid, asid) end
+    if TraitorDash.Track then TraitorDash.Track.Death(victim, inflictor, attacker, vsid, asid, at) end
     Dbg(string.format("death: %s (%s) <- %s", round.players[vsid].nick, round.players[vsid].role, asid or "world"))
 end
 
@@ -324,6 +335,7 @@ end
 
 hook.Add("TTTPrepareRound", "TraitorDash_StatsReset", Safe("prepare", function() round = nil end))
 hook.Add("TTTBeginRound", "TraitorDash_StatsBegin", Safe("begin", Begin))
+hook.Add("DoPlayerDeath", "TraitorDash_StatsDeathPos", Safe("deathpos", RememberDeathPos))
 hook.Add("TTT2PostPlayerDeath", "TraitorDash_StatsDeath", Safe("death", Death))
 hook.Add("PostEntityTakeDamage", "TraitorDash_StatsDamage", Safe("damage", Damage))
 hook.Add("TTTEndRound", "TraitorDash_StatsEnd", Safe("end", End))

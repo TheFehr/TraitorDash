@@ -219,6 +219,47 @@ describe('track.lua: recording', () => {
     expect(segOf(t, A).x).toHaveLength(6)
   })
 
+  test('the death is where the victim died, taken before they became a spectator, not where the spectator is (64 units higher)', () => {
+    const r = play(`
+      Begin()
+      Run(2)
+      B.x, B.y, B.z = 400, 160, 8
+      NOW = NOW + 0.05
+      Fire("DoPlayerDeath", B, A, nil)      -- the victim still stands where they died
+      B.z = 8 + 64; B.alive = false         -- the spectator's view, at the height of the eyes
+      Fire("TTT2PostPlayerDeath", B, nil, A)
+      Run(2)
+      Fire("TTTEndRound", WIN_TRAITOR); Accept(1)
+    `)
+    const t = trackOf(r)
+    expect(t.deaths[0]).toMatchObject({ victim: B, vx: 50, vy: 20, vz: 1 })
+    expect(rebuild(segOf(t, B).z).pop()).toBe(1) // the sample taken at the death too
+    expect(roundOf(r).deaths[0]).toMatchObject({ x: 400, y: 160, z: 8 }) // and the round report (the killzones)
+  })
+
+  test('without the position from before (an older game server) the death is where GetPos says, as it was', () => {
+    const r = play(`
+      Begin()
+      B.x, B.y, B.z = 400, 160, 72
+      B.alive = false
+      Fire("TTT2PostPlayerDeath", B, nil, A)
+      Fire("TTTEndRound", WIN_TRAITOR); Accept(1)
+    `)
+    expect(trackOf(r).deaths[0]).toMatchObject({ vz: 9 })
+  })
+
+  test('the position waits on the player only until the death is counted: a second death is taken afresh', () => {
+    const r = play(`
+      Begin()
+      B.x, B.y, B.z = 400, 160, 8
+      Fire("DoPlayerDeath", B, A, nil); B.z = 72; B.alive = false
+      Fire("TTT2PostPlayerDeath", B, nil, A)
+      OUT = { left = B.TraitorDashDeathPos == nil }
+      Fire("TTTEndRound", WIN_TRAITOR); Accept(1)
+    `)
+    expect(r.out.left).toBe(true)
+  })
+
   test('a death by the world has no attacker position; an unknown victim is ignored', () => {
     const r = play(`
       Begin()

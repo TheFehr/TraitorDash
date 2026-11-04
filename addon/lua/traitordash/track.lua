@@ -58,8 +58,10 @@ local function EstimateBytes(r)
     return r.samples * BYTES_PER_SAMPLE + #r.t * 6 + #r.deaths * 120 + #r.events * 100
 end
 
-local function Pos(ply)
-    local p = ply:GetPos()
+-- `at` is where the player really was, when it is known and `GetPos` would say something else: a dead player's position is the
+-- one of a spectator, at the height of their eyes (see Track.Death).
+local function Pos(ply, at)
+    local p = at or ply:GetPos()
     local a = ply:EyeAngles()
     return Floor(p.x / 8), Floor(p.y / 8), Floor(p.z / 8), math.floor((a.y % 360) / 360 * 256) % 256
 end
@@ -126,7 +128,7 @@ local function SampleAll(r, now, also)
                 p.awaiting, p.sawDead = false, false
                 AddEvent(r, now, { p = sid, k = "revive" })
             end
-            Push(r, p, idx, Pos(ply))
+            Push(r, p, idx, Pos(ply, sid == also and r.deathAt or nil))
         else
             p.cur = nil -- not alive now: the segment ends here (a revived player starts a new one)
             if p.awaiting then p.sawDead = true end
@@ -260,7 +262,11 @@ end
 
 -- A tracked player died: a final sample is taken so the death position is exact, and the death is
 -- recorded with both positions. `vsid` / `asid` are the SteamIDs the stats use (asid is nil for the world).
-function Track.Death(victim, inflictor, attacker, vsid, asid)
+--
+-- `at` ({ x, y, z }) is where the victim died, taken before they became a spectator: by the time the hook this runs from fires
+-- (TTT2PostPlayerDeath), `GetPos` is the spectator's, 64 units too high for a standing player (a real round: 278 of 322 deaths).
+-- Without it (an older caller) `GetPos` is used as before.
+function Track.Death(victim, inflictor, attacker, vsid, asid, at)
     local r = rec
     if not r or #r.deaths >= MAX_DEATHS then return end
     local p = r.players[vsid]
@@ -268,12 +274,14 @@ function Track.Death(victim, inflictor, attacker, vsid, asid)
 
     local now = CurTime()
     if not r.stopped then
+        r.deathAt = at
         SampleAll(r, now, vsid)
+        r.deathAt = nil
         p.cur = nil
     end
     p.awaiting, p.sawDead = true, false -- a revival is expected from here on
     local d = { victim = vsid, t = math.min(math.max(Floor((now - r.t0) * 1000), 0), 6 * 3600 * 1000) }
-    d.vx, d.vy, d.vz = Pos(victim)
+    d.vx, d.vy, d.vz = Pos(victim, at)
     if asid and r.players[asid] and IsValid(attacker) then
         d.attacker = asid
         d.ax, d.ay, d.az = Pos(attacker)

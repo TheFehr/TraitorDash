@@ -1,5 +1,5 @@
 import { expect, test, describe } from 'bun:test'
-import { decodeTrack, deathPosition, poseAt, lastPoseAt, trailBetween, lerpYaw, levelOf, chooseBackground, versionMismatch, defaultSelection, teamColour, playerColour, roleColour, clock, type RawTrack } from '../src/replaylogic'
+import { decodeTrack, poseAt, lastPoseAt, trailBetween, lerpYaw, levelOf, chooseBackground, versionMismatch, defaultSelection, teamColour, playerColour, roleColour, clock, type RawTrack } from '../src/replaylogic'
 
 // RFC 12, 3.5: the logic of the replay that is not drawing.
 
@@ -40,7 +40,7 @@ describe('decodeTrack', () => {
   test('deaths are in time order, in units, and an attacker without a position has none', () => {
     const d = decodeTrack(raw())
     expect(d.deaths.map(x => x.victim)).toEqual(['A', 'B'])
-    expect(d.deaths[1]).toMatchObject({ at: [40, 48, 56], from: [8, 16, 24], weapon: 'w' })
+    expect(d.deaths[1]).toMatchObject({ at: [40, 48, 0], from: [8, 16, 24], weapon: 'w' }) // the height 56 is 56 above B's sample before it: the eyes of a spectator, so the feet's 0
     expect(d.deaths[0]!.from).toBeNull()
   })
   test('an empty track has length 0', () => {
@@ -196,21 +196,42 @@ describe('fitLabel', () => {
   })
 })
 
-describe('deathPosition', () => {
-  // A stands at (80, 0) with its feet at height 16 (the track holds units / 8) until 1 000 ms.
-  const segs = decodeTrack({ t: [0, 500, 500], players: [{ id: 'A', segments: [{ from: 0, x: [10, 0, 0], y: [0, 0, 0], z: [2, 0, 0], a: [0, 0, 0] }] }], deaths: [] } as any).players.get('A')!
+describe('the height of a death', () => {
+  // The track holds units / 8. A stands at height 16 (2) for three samples; at 1 000 ms it dies and the sample taken then is
+  // at the height the game reports, which is `rise` units too high (the view of a spectator).
+  const track = (rise: number, over: Partial<RawTrack> = {}): RawTrack => ({
+    t: [0, 400, 300, 300], // 0, 400, 700, 1000 ms
+    players: [{ id: 'A', segments: [{ from: 0, x: [10, 0, 0, 0], y: [0, 0, 0, 0], z: [2, 0, 0, rise / 8], a: [0, 0, 0, 0] }] }],
+    deaths: [{ victim: 'A', attacker: null, t: 1000, vx: 10, vy: 0, vz: 2 + rise / 8, ax: null, ay: null, az: null, weapon: null }],
+    ...over,
+  })
+  const of = (raw: RawTrack) => { const d = decodeTrack(raw); return { death: d.deaths[0]!.at, samples: d.players.get('A')![0]!.z } }
 
-  test('the height is that of the victim\'s feet, not the height of the eyes the game reports for a dead player', () => {
-    expect(deathPosition(segs, { t: 1000, at: [80, 0, 16 + 64] })).toEqual([80, 0, 16])
+  test('a standing victim\'s death and the sample taken with it are put back to the height of their feet', () => {
+    expect(of(track(64))).toEqual({ death: [80, 0, 16], samples: [16, 16, 16, 16] })
   })
-  test('the place across is the one reported', () => {
-    expect(deathPosition(segs, { t: 1000, at: [90, 5, 16 + 64] })).toEqual([90, 5, 16])
+  test('a ducking victim, whose eyes are lower, is corrected too', () => {
+    expect(of(track(24)).death[2]).toBe(16)
+    expect(of(track(32)).samples).toEqual([16, 16, 16, 16])
   })
-  test('a death far above or below the last sample (a fall, a different level) is where it was reported', () => {
-    expect(deathPosition(segs, { t: 1000, at: [80, 0, 16 + 300] })).toEqual([80, 0, 316])
+  test('a death that is already at the height of the feet is left alone', () => {
+    expect(of(track(0))).toEqual({ death: [80, 0, 16], samples: [16, 16, 16, 16] })
+    expect(of(track(8)).death[2]).toBe(24) // a step, not eyes
   })
-  test('a victim with no sample before the death is where it was reported', () => {
-    expect(deathPosition([], { t: 1000, at: [1, 2, 3] })).toEqual([1, 2, 3])
-    expect(deathPosition(segs, { t: -5, at: [1, 2, 3] })).toEqual([1, 2, 3])
+  test('a fall or a drop is what the game said', () => {
+    expect(of(track(160)).death[2]).toBe(176)
+    expect(of(track(-64)).death[2]).toBe(-48)
+  })
+  test('the samples before the death are not touched, and the place across is the one reported', () => {
+    const raw = track(64)
+    raw.deaths[0]!.vx = 11; raw.deaths[0]!.vy = 3
+    const r = of(raw)
+    expect(r.death).toEqual([88, 24, 16])
+    expect(r.samples.slice(0, 3)).toEqual([16, 16, 16])
+  })
+  test('a victim with nothing sampled before the death, or a death that is not at a sample, is as reported', () => {
+    expect(of(track(64, { t: [1000, 0, 0, 0] })).death[2]).toBe(80)
+    const later = track(64); later.deaths[0]!.t = 1100 // no sample at the death: the one before it is the high one, so there is no rise to take off
+    expect(of(later).death[2]).toBe(80)
   })
 })
