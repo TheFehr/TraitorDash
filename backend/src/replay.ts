@@ -1,7 +1,7 @@
 /// <reference lib="dom" />
 import {
   WebGLRenderer, OrthographicCamera, Box3, Vector3, Color, Group, Mesh, MeshStandardMaterial, MeshBasicMaterial,
-  SphereGeometry, RingGeometry, DoubleSide, ConeGeometry, BoxGeometry, InstancedMesh, Matrix4, Object3D, Plane, Sprite,
+  SphereGeometry, CylinderGeometry, RingGeometry, DoubleSide, ConeGeometry, BoxGeometry, InstancedMesh, Matrix4, Object3D, Plane, Sprite,
   SpriteMaterial, CanvasTexture, BufferGeometry, Float32BufferAttribute, Line, LineSegments, LineBasicMaterial, Raycaster,
   type Camera, type MeshStandardMaterial as StdMat,
 } from 'three'
@@ -538,11 +538,31 @@ async function start(root: HTMLElement) {
     world.add(group, trail, corpse)
     markers.set(id, { group, pin, label, ring, trail, corpse, deadPin, segs: data.players.get(id) ?? [], body, lying, colour, looks })
   }
-  const killGeo = new BufferGeometry()
-  killGeo.setAttribute('position', new Float32BufferAttribute(new Float32Array(6), 3))
-  const killLine = new Line(killGeo, new LineBasicMaterial({ color: 0xfacc15 }))
-  killLine.frustumCulled = false; killLine.visible = false
-  world.add(killLine)
+  // The shot: a line of the width of a few pixels (a `Line` is one pixel wide in WebGL, which is too faint to see), as a thin
+  // bright beam with a wider faint one around it, drawn over the map so a wall does not hide where the shot came from.
+  const beamGeo = new CylinderGeometry(1, 1, 1, 8, 1, true)
+  const beamPart = (radius: number, opacity: number) => {
+    const m = new Mesh(beamGeo, new MeshBasicMaterial({ color: 0xfacc15, transparent: true, opacity, depthTest: false, depthWrite: false }))
+    m.userData.radius = radius; m.renderOrder = 9; m.frustumCulled = false
+    return m
+  }
+  const killBeam = new Group()
+  killBeam.add(beamPart(2.2, 1), beamPart(6, 0.28))
+  killBeam.visible = false
+  world.add(killBeam)
+  const up = new Vector3(0, 1, 0), along = new Vector3(), middle = new Vector3()
+  /** Stretches the beam from `a` to `b` (Source's coordinates, in the group of the world). */
+  const aimBeam = (beam: Group, a: Vector3, b: Vector3) => {
+    along.copy(b).sub(a)
+    const length = along.length()
+    if (length < 1e-3) { beam.visible = false; return }
+    middle.copy(a).add(b).multiplyScalar(0.5)
+    for (const part of beam.children) {
+      part.position.copy(middle)
+      part.quaternion.setFromUnitVectors(up, along.clone().divideScalar(length))
+      part.scale.set(part.userData.radius, length, part.userData.radius)
+    }
+  }
 
   // A revival is a ring where the player comes back and, when the reviver is known, a line from the
   // reviver to them, for a moment. The gap in the trail stays a gap.
@@ -656,7 +676,8 @@ async function start(root: HTMLElement) {
       const lv = p && levels.length > 0 && bg.kind !== 'none' ? levelOf(levels, p.z) : 0
       const above = typeof upTo === 'number' && lv > upTo
       const dim = typeof upTo === 'number' && lv > 0 && lv < upTo
-      m.group.visible = p !== null && !above
+      // a dead player is the body where they fell, not also the figure of their last sample (the two are both there at the moment of death)
+      m.group.visible = p !== null && !above && currentDeath(data.deaths, data.events, id, ms) === null
       ;(m.label.material as SpriteMaterial).opacity = dim ? 0.35 : 1
       ;(m.pin.material as SpriteMaterial).opacity = dim ? 0.35 : 1
       if (p) {
@@ -707,8 +728,8 @@ async function start(root: HTMLElement) {
     }
     // the line between victim and attacker while a kill is fresh
     const kill = data.deaths.find(d => d.from && ms >= d.t && ms <= d.t + KILL_LINE_MS)
-    killLine.visible = !!kill
-    if (kill?.from) killLine.geometry.setAttribute('position', new Float32BufferAttribute([kill.from[0], kill.from[1], kill.from[2] + 48, kill.at[0], kill.at[1], kill.at[2] + 48], 3))
+    killBeam.visible = !!kill?.from
+    if (kill?.from) aimBeam(killBeam, new Vector3(kill.from[0], kill.from[1], kill.from[2] + 48), new Vector3(kill.at[0], kill.at[1], kill.at[2] + 48))
 
     // the selected player's level, when following it
     const sel = selected ? lastPoseAt(data.players.get(selected) ?? [], ms) : null
