@@ -12,6 +12,7 @@ import { validateTrack, MAX_TRACK_BYTES } from '../services/tracks'
 import { refreshWorkshopText } from '../services/workshopText'
 import { NONCE, signResponse } from '../services/signing'
 import { FINGERPRINT, NAME, ROUND_ID, STEAM_ID, STEAM_ID64, WSID } from '../services/validators'
+import { bridgeSetting, checkSettingValue, cleanReport, formatSettingCommand } from '../services/bridgeSettings'
 import { makeGameKey, KEY_TTL_SECONDS } from '../services/gameKey'
 
 type Variables = {
@@ -70,6 +71,7 @@ const getServer = async (c: any, next: any) => {
 api.use('/servers', requireSession)
 api.use('/servers/*', requireSession)
 api.use('/save/*', requireSession)
+api.use('/bridge-settings/*', requireSession)
 
 // Token responses must never be cached: the plaintext token is shown exactly once.
 const serverManager = (c: any, newToken?: { serverId: string, token: string }, pairing?: { serverId: string, command: string, token?: string }) => {
@@ -281,6 +283,16 @@ api.post('/v1/values', getServer, async (c) => {
   Store.setConVarValues(server.id, entries)
   Store.updateHeartbeat(server.id)
   return c.json({ success: true, stored: entries.length })
+})
+
+// The bridge reports what its own settings are now (RFC 23). Only names on the list with a value that passes are kept.
+api.post('/v1/settings', getServer, async (c) => {
+  const server = c.get('server')
+  const report = cleanReport(await c.req.json().catch(() => null))
+  if (!report) return c.json({ error: 'expected { format: 1, settings: {...} }' }, 400)
+  Store.setBridgeSettings(server.id, report.settings, report.saved)
+  Store.updateHeartbeat(server.id)
+  return c.json({ success: true, stored: Object.keys(report.settings).length })
 })
 
 // The bridge reports one finished round: who played which role, who won, who died.
@@ -688,6 +700,40 @@ api.post('/save/:serverId/:role', async (c) => {
   }
 
   return c.json({ success: true, commands_staged: stagedCount })
+})
+
+// An admin changes the bridge's own settings (RFC 23): one staged `setting` command for each, all or none, through the same signed
+// channel as the role settings. Only names on the list; the bridge checks them again.
+api.post('/bridge-settings/:serverId', async (c) => {
+  const serverId = c.req.param('serverId')
+  if (!Store.getServers().some((s: any) => s.id === serverId)) return c.json({ error: 'Unknown server' }, 404)
+  const body = await c.req.parseBody()
+
+  const accepted: Array<[string, string]> = []
+  const rejected: Record<string, string> = {}
+  for (const [name, raw] of Object.entries(body)) {
+    if (!bridgeSetting(name)) { rejected[name.slice(0, 80)] = 'not a setting the dashboard may change'; continue }
+    const checked = checkSettingValue(name, raw)
+    if ('error' in checked) rejected[name] = checked.error
+    else accepted.push([name, checked.value])
+  }
+
+  // The longest time between samples may not be under the shortest, counting what the server runs with for the one not sent.
+  const reported = Store.getBridgeSettings(serverId)?.values ?? {}
+  const value = (name: string) => accepted.find(a => a[0] === name)?.[1] ?? reported[name]?.value ?? bridgeSetting(name)!.default
+  if (Object.keys(rejected).length === 0 && accepted.some(a => a[0].startsWith('traitordash_track_interval_'))
+      && Number(value('traitordash_track_interval_max')) < Number(value('traitordash_track_interval_min'))) {
+    rejected.traitordash_track_interval_max = 'must not be under the shortest time'
+  }
+
+  if (Object.keys(rejected).length > 0) {
+    console.warn(`[API] Rejected bridge settings for ${serverId}: ${Object.keys(rejected).join(', ')}`)
+    return c.json({ error: `Invalid: ${Object.keys(rejected).join(', ')}`, rejected }, 400)
+  }
+
+  for (const [name, v] of accepted) Store.stageCommand(serverId, 'setting', formatSettingCommand(name, v))
+  if (accepted.length > 0) Store.audit(serverId, c.get('adminId'), 'SAVE_BRIDGE_SETTINGS', accepted.map(([n, v]) => `${n}=${v}`).join(', '))
+  return c.json({ success: true, commands_staged: accepted.length })
 })
 
 /** Who the bridge's token belongs to (RFC 15, 4.5): the server's id, which the public role pages' addresses contain. Nothing else. */

@@ -208,6 +208,7 @@ export class Store {
     db.run('DELETE FROM commands WHERE server_id = ?', [id])
     db.run('DELETE FROM authorized_admins WHERE server_id = ?', [id])
     db.run('DELETE FROM convar_values WHERE server_id = ?', [id])
+    db.run('DELETE FROM bridge_settings WHERE server_id = ?', [id])
     db.run('DELETE FROM lang_files WHERE server_id = ?', [id])
     db.run('DELETE FROM deaths WHERE server_id = ?', [id])
     db.run('DELETE FROM round_revives WHERE server_id = ?', [id])
@@ -825,6 +826,25 @@ export class Store {
         upsert.run(serverId, e.name, e.role ?? null, e.present ? 1 : 0, e.value ?? null, e.default ?? null, e.min ?? null, e.max ?? null, now)
       }
     })()
+  }
+
+  /** The bridge's own settings as reported (RFC 23): replaces what was reported before. */
+  static setBridgeSettings(serverId: string, settings: Record<string, string>, saved: Record<string, string>) {
+    const now = new Date().toISOString()
+    db.transaction(() => {
+      db.run('DELETE FROM bridge_settings WHERE server_id = ?', [serverId])
+      const insert = db.prepare('INSERT INTO bridge_settings (server_id, name, value, saved, reported_at) VALUES (?, ?, ?, ?, ?)')
+      for (const [name, value] of Object.entries(settings)) insert.run(serverId, name, value, saved[name] ?? null, now)
+    })()
+  }
+
+  /** What the bridge last reported: name -> value (and the value its file holds when that differs), or null when it never reported. */
+  static getBridgeSettings(serverId: string): { reportedAt: string, values: Record<string, { value: string, saved: string | null }> } | null {
+    const rows = db.prepare('SELECT name, value, saved, reported_at FROM bridge_settings WHERE server_id = ?').all(serverId) as any[]
+    if (rows.length === 0) return null
+    const values: Record<string, { value: string, saved: string | null }> = {}
+    for (const r of rows) values[r.name] = { value: r.value, saved: r.saved }
+    return { reportedAt: rows[0].reported_at, values }
   }
 
   /** Every reported ConVar for a server, keyed by ConVar name. */

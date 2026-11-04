@@ -477,7 +477,21 @@ export const migrations: Array<(db: Database) => void> = [
         }
       } catch { /* an unreadable track gives nothing */ }
     }
-  }
+  },
+  // v27 (RFC 23): the bridge's own settings as the game server reports them, and where its configuration file holds another value.
+  (db) => {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS bridge_settings (
+        server_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        value TEXT NOT NULL,
+        saved TEXT,
+        reported_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (server_id, name),
+        FOREIGN KEY (server_id) REFERENCES servers(id)
+      )
+    `)
+  },
 ]
 
 /** Brings `db` up to the latest schema, in one transaction. */

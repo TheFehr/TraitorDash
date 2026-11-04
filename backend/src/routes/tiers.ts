@@ -48,10 +48,12 @@ export const TIERS: Record<string, Tier> = {
   'POST /api/servers/:id/pairing-code': 'admin',
   'DELETE /api/servers/:id': 'admin',
   'POST /api/save/:serverId/:role': 'admin',
+  'POST /api/bridge-settings/:serverId': 'admin',
 
   'POST /api/ingest': 'bridge',
   'POST /api/v1/lang': 'bridge',
   'POST /api/v1/values': 'bridge',
+  'POST /api/v1/settings': 'bridge',
   'POST /api/v1/round': 'bridge',
   'POST /api/v1/track': 'bridge',
   'POST /api/v1/maps': 'bridge',
