@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the deployable backend tarball: compiled CSS/JS, a build.json that says which commit
+# Builds the deployable backend tarball: compiled JS, a build.json that says which commit
 # it is, no node_modules (the egg runs `bun install`), no tests, no databases, no .env.
 # Usage: scripts/package.sh <output-dir>      (run from backend/; needs bun and git)
 set -euo pipefail

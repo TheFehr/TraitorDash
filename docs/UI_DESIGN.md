@@ -11,7 +11,7 @@ This document serves as the technical and aesthetic blueprint for the TraitorDas
 
 -   **Backend & Logic:** [Bun](https://bun.sh/) + [Hono](https://hono.dev/)
 -   **Frontend Interactivity:** [Alpine.js](https://alpinejs.dev/) (Client-side state) + [HTMX](https://htmx.org/) (Server-side partials)
--   **Styling:** [Tailwind CSS v4](https://tailwindcss.com/)
+-   **Styling:** one inline stylesheet written by hand (the case-file look of [RFC 17](./rfcs/RFC-017.md)); Tailwind was dropped because the game's built-in browser (Chrome 86) cannot read its output
 -   **Typography:** Inter / System Sans
 -   **Theme:** Dark mode first (Slate/Gray 900 background) with high-contrast Red/Orange accents.
 

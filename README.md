@@ -49,7 +49,7 @@ How they talk (always initiated by the game server, over HTTPS):
 ```bash
 cd backend
 bun install
-bun run build            # Tailwind CSS + the htmx/Alpine bundle
+bun run build            # the htmx/Alpine bundle and the map and replay scripts
 SESSION_SECRET=$(openssl rand -hex 32) \
 ADMIN_STEAM_IDS=76561198000000000 \
 BASE_URL=http://localhost:3000 \
@@ -125,7 +125,7 @@ CI runs exactly these two. A [husky](https://typicode.github.io/husky/) pre-comm
 -   **Backend:** [Bun](https://bun.sh/) + [Hono](https://hono.dev/) (TypeScript)
 -   **Lua VM:** [Fengari](https://fengari.io/) (Headless extraction)
 -   **Database:** `bun:sqlite`
--   **Frontend:** [HTMX](https://htmx.org/) + [Alpine.js](https://alpinejs.dev/) + [Tailwind CSS](https://tailwindcss.com/)
+-   **Frontend:** [HTMX](https://htmx.org/) + [Alpine.js](https://alpinejs.dev/) + one inline stylesheet (no CSS build step; RFC 17)
 -   **Auth:** Steam OpenID
 
 ---

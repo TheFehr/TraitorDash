@@ -5,21 +5,17 @@
   "private": true,
   "scripts": {
     "dev": "bun run --hot src/index.tsx",
-    "watch:css": "tailwindcss -i src/style.css -o src/public/style.css --watch",
     "watch:js": "bun build src/frontend.ts --outdir src/public --watch & bun build src/confirm.ts --outdir src/public --watch & bun build src/mapview.ts --outdir src/public --format=iife --watch & bun build src/replay.ts --outdir src/public --format=iife --watch",
-    "build:css": "tailwindcss -i src/style.css -o src/public/style.css",
     "build:js": "bun build src/frontend.ts --outdir src/public --minify && bun build src/confirm.ts --outdir src/public --minify && bun build src/mapview.ts --outdir src/public --minify --format=iife && bun build src/replay.ts --outdir src/public --minify --format=iife && bun run scripts/oldbrowsers.ts src/public/frontend.js src/public/confirm.js src/public/mapview.js src/public/replay.js",
-    "build": "bun run build:css && bun run build:js",
+    "build": "bun run build:js",
     "source-hash": "bun run scripts/source-hash.ts",
     "prepare": "cd .. && husky backend/.husky || true"
   },
   "devDependencies": {
-    "@tailwindcss/cli": "^4.3.0",
     "@types/bun": "^1.3.13",
     "@types/three": "0.186.0",
     "gltf-validator": "2.0.0-dev.3.10",
     "husky": "^9.1.7",
-    "tailwindcss": "^4.3.0",
     "three": "0.186.1"
   },
   "peerDependencies": {
