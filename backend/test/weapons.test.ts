@@ -213,13 +213,13 @@ describe('killzones', () => {
     expect(stats.getKillzones(serverId, 'ttt_a', undefined, 'nothing').deaths).toBe(0)
   })
 
-  test('the picture: one square for each, the busiest first, well formed, with nothing that can run or load', async () => {
+  test('the picture: a blob for each square, the busiest first, well formed, with nothing that can run or load', async () => {
     await sendOk(deaths([[0, 0, 0], [10, 10, 0], [300, 300, 0]]))
     const sq = kz.squaresOf(stats.getKillzones(serverId, 'ttt_a').cells)
     expect(sq.map((s: any) => s.n)).toEqual([2, 1])
     expect(kz.hottest(sq)[0]).toEqual({ x: 64, y: 64, n: 2 })
     const svg = kz.renderKillzonesSvg(sq, 'a "map" <x>')!
-    expect((svg.match(/<rect /g) ?? []).length).toBe(2)
+    expect((svg.match(/<circle /g) ?? []).length).toBe(2)
     expect(svg).toContain('2 deaths'); expect(svg).toContain('1 death<')
     expect(svg).not.toMatch(/<script|<image|href=|xlink|onload|<foreignObject/i)
     expect(svg).toContain('a &quot;map&quot; &lt;x&gt;')
@@ -234,15 +234,36 @@ describe('killzones', () => {
     expect(levels.length).toBe(2)
     const low = kz.squaresOf(cells, (z: number) => storeyOf(z) === 0)
     expect(low.map((s: any) => s.n)).toEqual([1])
-    const withFloor = kz.renderKillzonesSvg(low, 'ttt_a', { grid, level: 1 })!
+    const withFloor = kz.renderKillzonesSvg(low, 'ttt_a', kz.baseOfPlan(grid, 1))!
     const without = kz.renderKillzonesSvg(low, 'ttt_a')!
-    expect(withFloor).toContain('fill="#2b2b2b"'); expect(without).not.toContain('#2b2b2b')
+    expect(withFloor).toContain('fill="#34343a"'); expect(without).not.toContain('#34343a')
+  })
+
+  test('the map itself, flattened: a floor and a wall for each storey, drawn under the deaths', async () => {
+    const { flatten, storeyAt } = await import('../src/maps/topdown')
+    const { surfacesToGlb } = await import('../src/maps/meshGlb')
+    const floor = (z: number) => [0, 0, z, 256, 0, z, 256, 256, z, 0, 0, z, 256, 256, z, 0, 256, z]
+    const wall = [0, 0, 0, 256, 0, 0, 256, 0, 100, 0, 0, 0, 256, 0, 100, 0, 0, 100]
+    const { glb } = (await surfacesToGlb({ floors: [...floor(0), ...floor(300)], walls: wall, fingerprint: 'ab'.repeat(32), version: 20, revision: 1 }, { map: 'ttt_a' }))!
+    const flat = (await flatten(glb))!
+    expect(flat.layers.map(l => l.index)).toEqual([1, 2])
+    const count = (l: any, v: number) => l.cells.reduce((n: number, c: number) => n + (c === v ? 1 : 0), 0)
+    expect(count(flat.layers[0], 1)).toBeGreaterThan(200) // the floor of 256 by 256 in cells of 16
+    expect(count(flat.layers[0], 2)).toBeGreaterThan(10)  // the wall along its south edge
+    expect(count(flat.layers[1], 2)).toBe(0)              // the upper storey has none
+    expect(storeyAt(flat.layers, 5)).toBe(1); expect(storeyAt(flat.layers, 310)).toBe(2)
+    const base = kz.baseOfMap(flat, 2)
+    expect(base.cells.some((c: number) => c === 1)).toBe(true); expect(base.cells.some((c: number) => c === 2)).toBe(false)
+    const svg = kz.renderKillzonesSvg([{ bx: 0, by: 0, n: 3 }], 'ttt_a', base)!
+    expect(svg).toContain('fill="#34343a"'); expect(svg).not.toContain('#6a6a72')
+    expect(kz.renderKillzonesSvg([{ bx: 0, by: 0, n: 3 }], 'ttt_a', kz.baseOfMap(flat, 1))).toContain('#6a6a72')
+    expect(await flatten(new Uint8Array([1, 2, 3]))).toBeNull() // not a mesh
   })
 
   test('more than 10,000 squares draw the busiest 10,000', () => {
     const sq = Array.from({ length: 10_050 }, (_, i) => ({ bx: i, by: 0, n: 10_050 - i }))
     const svg = kz.renderKillzonesSvg(sq, 'm')!
-    expect((svg.match(/<rect /g) ?? []).length).toBe(10_000)
+    expect((svg.match(/<circle /g) ?? []).length).toBe(10_000)
   })
 })
 
@@ -298,22 +319,56 @@ describe('the pages', () => {
     expect(r.text).toContain('data-no-killzones'); expect(r.text).not.toContain('<svg')
   })
 
-  test('a guest gets no floor and no storeys; an admin with a plan gets both', async () => {
-    await sendOk(round({ deaths: [{ victim: B, attacker: A, weapon: 'w', x: 10, y: 10, z: 5 }, { victim: C, attacker: A, weapon: 'w', x: 10, y: 10, z: 305 }], damage: [] }))
+  const storeMesh = async () => {
+    const { surfacesToGlb } = await import('../src/maps/meshGlb')
+    const FP = 'ab'.repeat(32)
+    const floor = (z: number) => [0, 0, z, 256, 0, z, 256, 256, z, 0, 0, z, 256, 256, z, 0, 256, z]
+    const { glb } = (await surfacesToGlb({ floors: [...floor(0), ...floor(300)], walls: [], fingerprint: FP, version: 20, revision: 1 }, { map: 'ttt_a' }))!
+    Store.setMaps(serverId, { current: null, next: null, gamemode: 'terrortown', pattern: null, poolBasis: null, configSource: null, voteAddon: false,
+      maps: [{ name: 'ttt_a', size: 1, fingerprint: FP, matchesGamemode: true, inCycle: null, onCooldown: null, isCurrent: false, inVotePool: true, votable: true }] })
+    Store.setGeometryRequested(serverId, 'ttt_a', true, null)
+    Store.startGeometry('ttt_a', FP)
+    Store.finishGeometry('ttt_a', FP, { mesh: glb, info: { vertices: 8, triangles: 4, levels: 2 } })
+  }
+  const upDown = () => sendOk(round({ deaths: [{ victim: B, attacker: A, weapon: 'w', x: 10, y: 10, z: 5 }, { victim: C, attacker: A, weapon: 'w', x: 10, y: 10, z: 305 }], damage: [] }))
+
+  test('the map is drawn under the deaths for a signed-in visitor, in the window too, and not for an anonymous one', async () => {
+    process.env.OPEN_SIGNIN = '1'; process.env.MAP_GEOMETRY = '1'
+    await upDown(); await storeMesh()
+    const path = `/servers/${serverId}/maps/ttt_a/rounds`
+    for (const q of ['', '?embed=1']) {
+      const anon = await text(path + q)
+      expect(anon.text).not.toContain('#34343a'); expect(anon.text).not.toContain('level=2'); expect(anon.text).toContain('2 deaths in 1 round')
+      expect(anon.text).toContain('Signed-in visitors')
+      const user = await text(path + q, USER)
+      expect(user.text).toContain('#34343a'); expect(user.text).toContain('level=2'); expect(user.text).toContain('the 3D view shows')
+    }
+    expect((await text(path + '?level=1', USER)).text).toContain('1 death in 1 round')
+    expect((await text(path + '?level=9', USER)).text).toContain('2 deaths in 1 round')
+    // opening it is logged like a view of the 3D map
+    expect(db.query("SELECT COUNT(*) n FROM audit_log WHERE action = 'VIEW_MESH' AND server_id = ?").get(serverId).n).toBeGreaterThan(0)
+  })
+
+  test('with the 3D views switched off the map is not drawn, whoever looks', async () => {
+    process.env.OPEN_SIGNIN = '1'; process.env.MAP_GEOMETRY = '1'
+    await upDown(); await storeMesh()
+    process.env.MAP_GEOMETRY = '0'
+    expect((await text(`/servers/${serverId}/maps/ttt_a/rounds`, USER)).text).not.toContain('#34343a')
+    process.env.MAP_GEOMETRY = '1'
+  })
+
+  test('an admin with a plan and no map gets the floor plan and its storeys; the window shows none of it to an admin', async () => {
+    process.env.OPEN_SIGNIN = '1'; process.env.MAP_GEOMETRY = '1'
+    await upDown()
     Store.setMapPlan(serverId, {
       map: 'ttt_a', fingerprint: null, cell: 64, nx: 30, ny: 2, seeds: 1, traces: null, seconds: null, floorCells: 60, crouchFloors: 0,
       grid: { cell: 64, minx: 0, miny: 0, nx: 30, ny: 2, zmin: 0, zmax: 400, rows: [Array(30).fill('0').join('|'), Array(30).fill('300').join('|')] },
     })
     const path = `/servers/${serverId}/maps/ttt_a/rounds`
-    for (const as of [null, USER]) {
-      const g = await text(path + '?level=1', as)
-      expect(g.text).not.toContain('#2b2b2b'); expect(g.text).not.toContain('level=2'); expect(g.text).toContain('2 deaths in 1 round')
-    }
+    expect((await text(path, USER)).text).not.toContain('#34343a') // a plan is for admins
     const a = await text(path, ADMIN)
-    expect(a.text).toContain('#2b2b2b'); expect(a.text).toContain('level=2')
+    expect(a.text).toContain('#34343a'); expect(a.text).toContain('level=2'); expect(a.text).toContain('floor plan is drawn for admins')
     expect((await text(path + '?level=1', ADMIN)).text).toContain('1 death in 1 round')
-    expect((await text(path + '?level=9', ADMIN)).text).toContain('2 deaths in 1 round')
-    // the window shows no admin extras, whoever looks
-    expect((await text(path + '?embed=1', ADMIN)).text).not.toContain('#2b2b2b')
+    expect((await text(path + '?embed=1', ADMIN)).text).not.toContain('#34343a')
   })
 })

@@ -19,7 +19,8 @@ import { buildRoleView, listRoles, parsePlayers, publicRoles, publicRoleSettings
 import { RoleListPage, RolePage, RoleNotFound } from './components/RolePublic'
 import { HomePage } from './components/HomePage'
 import { MapsPage, MapFilePage, MapViewPage, nextOf, type KillzonesView } from './components/MapPages'
-import { renderKillzonesSvg, squaresOf, hottest, storeysOf } from './services/killzones'
+import { renderKillzonesSvg, squaresOf, hottest, storeysOf, baseOfMap, baseOfPlan } from './services/killzones'
+import { flattened, storeyAt } from './maps/topdown'
 import { NAME } from './services/validators'
 import { geometryEnabled, kickGeometryQueue, setGeometryFetcher, setStockModels } from './services/mapgeometry'
 import { gameContent, gameContentEnabled } from './services/gameContent'
@@ -32,7 +33,7 @@ import { RoleListPartial } from './components/Sidebar'
 import { checkHealth, features, sourceHash } from './services/version'
 import { StatsPage, RoundPage, PlayerPage } from './components/StatsPages'
 import { NotFound } from './components/CaseFile'
-import { adminOf, link } from './components/kit'
+import { adminOf, link, type Ctx } from './components/kit'
 import { ctxOf, isEmbed, limited, respond, pageLimiter, pageHeaders } from './services/pages'
 import { renderPlanSvg, planLevels } from './services/mapplan'
 import * as stats from './services/stats'
@@ -330,23 +331,33 @@ app.get('/servers/:serverId/maps/:map', async (c) => {
 })
 
 /**
- * The killzone picture and its numbers (RFC 21, 4.4). The floor under it, and the choice of storey, are an admin's:
- * a floor plan is admin-only (RFC 10), so a guest's picture holds no more than the deaths do. `weapon` and `level` are
+ * The killzone picture and its numbers (RFC 21, 4.4). Under the deaths goes the map's own geometry, flattened, for a
+ * signed-in visitor (that includes a player in the game, whom the server vouches for, RFC 16; it is logged like a 3D
+ * view), else an admin's floor plan, else nothing: an anonymous visitor sees the deaths only. `weapon` and `level` are
  * checked before they are used; one that does not fit is ignored.
  */
-function killzonesOf(serverId: string, map: string, admin: boolean, weaponAsked?: string, levelAsked?: string): KillzonesView {
+async function killzonesOf(serverId: string, map: string, ctx: Ctx, weaponAsked?: string, levelAsked?: string): Promise<KillzonesView> {
   const weapon = weaponAsked && NAME.test(weaponAsked) ? weaponAsked : null
   const k = stats.getKillzones(serverId, map, undefined, weapon)
-  const planJson = admin ? Store.getMapPlan(serverId, map) : null
-  const grid = planJson ? JSON.parse(planJson) : null
-  const storeys = grid ? storeysOf(grid) : null
-  let level = levelAsked !== undefined && SMALL_INT.test(levelAsked) ? Number(levelAsked) : undefined
-  if (!storeys || level === undefined || level < 1 || level > storeys.levels.length) level = undefined
-  const squares = squaresOf(k.cells, level && storeys ? z => storeys.storeyOf(z) === level - 1 : undefined)
-  const svg = renderKillzonesSvg(squares, map, grid ? { grid, level } : undefined)
+  const asked = levelAsked !== undefined && SMALL_INT.test(levelAsked) ? Number(levelAsked) : undefined
+
+  const mesh = ctx.viewer && geometryEnabled() ? Store.getMesh(serverId, map) : null
+  const flat = mesh ? await flattened(mesh) : null
+  const plan = !flat && adminOf(ctx) ? Store.getMapPlan(serverId, map) : null
+  const grid = plan ? JSON.parse(plan) : null
+  const storeys = !flat && grid ? storeysOf(grid) : null
+
+  const levels = flat ? flat.layers.length : storeys?.levels.length
+  const level = asked !== undefined && levels !== undefined && asked >= 1 && asked <= levels ? asked : undefined
+  const pick = level === undefined ? undefined
+    : flat ? (z: number) => storeyAt(flat.layers, z) === level
+    : storeys ? (z: number) => storeys.storeyOf(z) === level - 1 : undefined
+  const squares = squaresOf(k.cells, pick)
+  const base = flat ? baseOfMap(flat, level) : grid ? baseOfPlan(grid, level) : undefined
+  if (flat && ctx.viewer) Store.logView(serverId, ctx.viewer.steamId, 'VIEW_MESH', map)
   return {
-    svg, deaths: squares.reduce((n, s) => n + s.n, 0), rounds: k.rounds, hot: hottest(squares), weapons: k.weapons, weapon,
-    level, levels: storeys?.levels.length, floor: !!grid,
+    svg: renderKillzonesSvg(squares, map, base), deaths: squares.reduce((n, s) => n + s.n, 0), rounds: k.rounds, hot: hottest(squares), weapons: k.weapons, weapon,
+    level, levels, under: flat ? 'map' : grid ? 'plan' : null,
   }
 }
 
@@ -366,7 +377,7 @@ app.get('/servers/:serverId/maps/:map/rounds', async (c) => {
   const has3d = geometryEnabled() && Store.getGeometryStates(serverId).get(name)?.status === 'parsed'
   const hasPlan = adminOf(ctx) && Store.getMapPlans(serverId).some(p => p.map === name)
   return respond(c, ctx, <MapFilePage ctx={ctx} server={server} name={name} map={map} state={state} activity={activity} has3d={has3d} hasPlan={hasPlan} viewLogDays={viewLogDays()}
-    killzones={killzonesOf(serverId, name, adminOf(ctx), c.req.query('weapon'), c.req.query('level'))} />)
+    killzones={await killzonesOf(serverId, name, ctx, c.req.query('weapon'), c.req.query('level'))} />)
 })
 
 /** A stored floor plan drawn as a picture (RFC 10, 4.5). Admins only; nothing in it can run or load anything. */

@@ -172,9 +172,10 @@ export interface KillzonesView {
   hot: { x: number, y: number, n: number }[]
   weapons: { weapon: string, n: number }[]
   weapon: string | null
-  /** An admin with a floor plan may pick a storey; `levels` is how many there are. */
+  /** Storeys can be picked when the map or the plan is under the deaths; `levels` is how many there are. */
   level?: number, levels?: number
-  floor: boolean
+  /** What is drawn under the deaths: the map's own geometry (signed-in visitors), an admin's floor plan, or nothing. */
+  under: 'map' | 'plan' | null
 }
 
 /** What the rounds on one map say, and the way to its own view. */
@@ -254,7 +255,7 @@ export const Killzones = ({ ctx, serverId, name, k }: { ctx: Ctx, serverId: stri
             <a class={k.weapon === null ? 'on' : ''} href={to({ level: k.level })}>All</a>
             {k.weapons.slice(0, 8).map(w => <a class={k.weapon === w.weapon ? 'on' : ''} href={to({ weapon: w.weapon, level: k.level })} title={w.weapon}>{weaponName(w.weapon)} <span class="dim">{w.n}</span></a>)}
           </div>
-          <p class="foot dark">{k.floor ? 'The floor is drawn for admins only.' : 'The floor of the map is not shown.'} Squares are 128 units wide. Only deaths since the game server was updated are counted, and they name nobody.</p>
+          <p class="foot dark">{k.under === 'map' ? 'The outline is the map as the 3D view shows it, flattened.' : k.under === 'plan' ? 'The floor plan is drawn for admins.' : ctx.viewer ? 'This map has no geometry to draw under the deaths yet.' : 'Signed-in visitors, and players in the game, see the map under the deaths.'} Squares are 128 units wide. Only deaths since the game server was updated are counted, and they name nobody.</p>
         </>
       )}
     </div>
