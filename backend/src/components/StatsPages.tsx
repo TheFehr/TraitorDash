@@ -55,7 +55,7 @@ export interface TracksInfo {
 
 /** The retention limits of a server's position tracks, how much room is used, and where to change them (RFC 12, 3.4). Admins only. */
 export const TracksCard = ({ serverId, t }: { serverId: string, t: TracksInfo }) => (
-  <section data-tracks class="f" style="--c:#9ca3af;margin-top:1rem">
+  <section data-tracks class="f c-gray mt1">
     <h2 class="ft">Position tracks</h2>
     <p data-tracks-usage style="margin:.3rem 0">
       {t.count} {t.count === 1 ? 'track' : 'tracks'}, {mb(t.bytes)} MB used of {t.limits.count} tracks / {t.limits.mb} MB
@@ -143,11 +143,11 @@ export const StatsPage = (p: StatsPageProps) => {
             <Num label="Last round" value={<When iso={p.overview.lastRound} now={ctx.now} />} />
           </div>
           <div class="pair">
-            <div class="f" style="--c:#22c55e">
+            <div class="f c-green">
               <h2 class="ft">Who wins</h2>
               {p.overview.results.slice(0, 8).map(r => <Bar label={teamLabel(r.name)} part={r.n} whole={p.overview.rounds} colour={teamHex(r.name, ctx)} title={`${r.n} of ${p.overview.rounds} rounds`} />)}
             </div>
-            <div class="f" style="--c:#dc2626">
+            <div class="f c-red">
               <h2 class="ft">Best roles</h2>
               {bestRoles(p.roles).length === 0
                 ? <span>Not enough rounds yet.</span>
@@ -166,7 +166,7 @@ export const StatsPage = (p: StatsPageProps) => {
       {p.overview.rounds > 0 && p.view === 'leaders' && (
         <>
           <Pills label="Sort" current={p.sort} items={SORTS.map(s => ({ key: s, label: SORT_LABELS[s], href: link(ctx, path, { ...k, view: 'leaders', sort: s === 'rounds' ? undefined : s }) }))} />
-          <div class="f" style="--c:#dc2626;margin-top:1rem">
+          <div class="f c-red mt1">
             <div class="scrollx">
               <table class="log">
                 <tr><th>#</th><th>Player</th><th class="r">Rounds</th><th class="r">Wins</th><th class="r">Win %</th><th class="r">Kills</th><th class="r">Deaths</th><th class="r">K/D</th></tr>
@@ -210,12 +210,12 @@ const perHit = (damage: number, hits: number) => (hits > 0 ? (damage / hits).toF
 export const WeaponTable = ({ stats, serverId, ctx }: { stats: WeaponStats, serverId: string, ctx: Ctx }) => {
   const { rows, totalDamage, rounds } = stats
   if (rows.length === 0) {
-    return <div class="f" style="--c:#9ca3af" data-no-weapons><h2 class="ft">No weapon data yet</h2><span>Weapons are counted from the rounds reported by an updated game server. {rounds.total} {rounds.total === 1 ? 'round has' : 'rounds have'} been played so far.</span></div>
+    return <div class="f c-gray" data-no-weapons><h2 class="ft">No weapon data yet</h2><span>Weapons are counted from the rounds reported by an updated game server. {rounds.total} {rounds.total === 1 ? 'round has' : 'rounds have'} been played so far.</span></div>
   }
   const top = Math.max(1, ...rows.map(r => r.damage))
   return (
     <>
-      <div class="f" style="--c:#dc2626;margin-top:1rem" data-weapons>
+      <div class="f c-red mt1" data-weapons>
         <h2 class="ft">Most damage by weapon</h2>
         <div class="scrollx">
           <table class="log">
@@ -244,7 +244,7 @@ export const WeaponTable = ({ stats, serverId, ctx }: { stats: WeaponStats, serv
 
 /** A player's weapons (RFC 21, 4.3). */
 export const PlayerWeapons = ({ rows }: { rows: WeaponRow[] }) => (
-  <div class="f" style="--c:#dc2626;margin-top:1.2rem" data-player-weapons>
+  <div class="f c-red mt12" data-player-weapons>
     <h2 class="ft">Weapons</h2>
     <div class="scrollx">
       <table class="log">
@@ -267,7 +267,7 @@ export const RoundsTable = ({ ctx, serverId, rounds, tracked, bots }: { ctx: Ctx
   const pick = admin && rounds.length > 0
   const withTapes = tracked.size > 0
   const table = (
-    <div class="f" style="--c:#dc2626;margin-top:1rem">
+    <div class="f c-red mt1">
       <div class="scrollx">
         <table class="log">
           <tr>{pick && <th></th>}<th>When</th><th>Map</th><th>Result</th><th class="r">Players</th><th class="r">Deaths</th><th class="r">Length</th>{withTapes && <th class="r">Replay</th>}</tr>
@@ -395,7 +395,7 @@ export const PlayerPage = ({ ctx, server, player, by = 'end', bots, weapons }: P
     <Shell title={`${player.nick} | ${server.name}`} embed={ctx.embed} viewer={ctx.viewer}>
       <Crumbs><ServerName ctx={ctx} server={server} /> / <a href={link(ctx, `${here(id)}/stats`, { view: 'leaders', bots })}>Round stats</a></Crumbs>
       <h1>{player.nick}</h1>
-      <p class="muted" style="margin:0">{player.steamId}</p>
+      <p class="muted m0">{player.steamId}</p>
       {!ctx.embed && <Sections serverId={id} admin={adminOf(ctx)} />}
       <div class="nums">
         <Num label="Rounds" value={player.rounds} />
@@ -409,7 +409,7 @@ export const PlayerPage = ({ ctx, server, player, by = 'end', bots, weapons }: P
       <ByToggle ctx={ctx} path={path} by={by} params={{ bots }} />
       <div class="pair"><WinTable title="By role" rows={player.roles} empty="No role data." /></div>
       {weapons && weapons.length > 0 && <PlayerWeapons rows={weapons} />}
-      <div class="f" style="--c:#dc2626;margin-top:1.2rem">
+      <div class="f c-red mt12">
         <h2 class="ft">Recent rounds</h2>
         <div class="scrollx">
           <table class="log">

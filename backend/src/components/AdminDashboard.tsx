@@ -19,7 +19,7 @@ export const AdminDashboard = ({ servers }: { servers: any[] }) => (
         )
       })}
       {servers.length === 0 && (
-        <a href="/servers" class="pn" style="--c:#6b6455">
+        <a href="/servers" class="pn c-edge">
           <h2 class="ft">Connect a server</h2>
           <p class="muted">No server is connected yet. Add one and pair it from here.</p>
         </a>

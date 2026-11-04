@@ -58,7 +58,7 @@ export const ServerManager = ({ servers, newToken, pairing }: { servers: any[], 
         </div>
       )}
 
-      <section class="pn" style="--c:#e9b44c">
+      <section class="pn">
         <h2 class="ft">Manage servers</h2>
         <div class="scrollx">
           <table class="data">
@@ -123,7 +123,7 @@ export const ServerManager = ({ servers, newToken, pairing }: { servers: any[], 
         </div>
       </section>
 
-      <section class="pn" style="--c:#a78bfa">
+      <section class="pn c-violet">
         <h2 class="ft">Add new server</h2>
         <form hx-post="/api/servers" hx-target="#server-manager" hx-swap="outerHTML" class="add">
           <input type="text" class="dk" name="name" placeholder="Server Name (e.g. TTT2 West #1)" aria-label="Server name" required />

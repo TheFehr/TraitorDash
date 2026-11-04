@@ -74,7 +74,7 @@ export const RoleListPage = ({ server, roles, query, embed, admin, viewer, playe
           })}
         </div>
       )}
-      {admin && !embed && <p class="muted" style="margin-top:1.2rem">You can change role settings from the <a href={`/servers/${server.id}`} style="text-decoration:underline">server's admin page</a>.</p>}
+      {admin && !embed && <p class="muted mt12">You can change role settings from the <a href={`/servers/${server.id}`} class="ul">server's admin page</a>.</p>}
     </Shell>
   )
 }
@@ -130,7 +130,7 @@ export const RolePage = ({ server, role, embed, admin, viewer, players = null }:
           </>
         )}
       </article>
-      {admin && !embed && <p style="margin-top:1rem"><a href={`/servers/${server.id}/roles/${encodeURIComponent(role.name)}/config`} style="text-decoration:underline">Edit settings</a></p>}
+      {admin && !embed && <p class="mt1"><a href={`/servers/${server.id}/roles/${encodeURIComponent(role.name)}/config`} class="ul">Edit settings</a></p>}
     </Shell>
   )
 }

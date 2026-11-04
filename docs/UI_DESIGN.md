@@ -17,6 +17,18 @@ This document serves as the technical and aesthetic blueprint for the TraitorDas
 
 ---
 
+## 2b. The stylesheet and its class vocabulary
+
+All CSS is in `backend/src/components/styles.ts`: `PUBLIC_CSS` (every page) and `ADMIN_CSS` (added on the admin pages, which only adds or overrides). Nothing a 2020 browser lacks: no `@layer`, no `inset`, no `oklch`/`color-mix` without a plain fallback.
+
+-   **Palette.** Colours are variables on `:root`, named by use: `--ink` / `--ink2` (text on paper), `--paper`, `--desk` / `--night` (dark grounds), `--muted`, `--soft`, `--mist` (text on dark), `--dim` (quiet text on paper), `--rule` / `--edge` / `--line` (borders and rules), `--good` / `--warn` / `--bad` / `--blush` / `--amber` / `--deep` (signals). Use a variable; add a new one only when a colour is used in three places. The two font stacks are `--mono` and `--cond`.
+-   **Panels.** `.f` is a card on paper (public pages), `.pn` the same card dark (admin pages). They share one set of rules; the tab colour is `--c`, set with a helper class (`c-gray`, `c-red`, `c-green`, `c-violet`, `c-mint`, `c-blue`, `c-edge`) or inline for a colour that comes from data (a role's own colour).
+-   **Pills.** `.pill.ok|wait|mute` has one definition; the surface decides the colours through `--st-ok`, `--st-wait`, `--st-mute` (paper sets darker ones). Do not write a pill colour per page.
+-   **Helpers.** `mt1`, `mt12`, `mt6` (margin-top), `m0`, `ml6`, `mb6`, `ul`. They win over the card rules. A margin used once stays an inline `style`; a margin used three times becomes a helper.
+-   **Scripts.** `replay.ts`, `mapview.ts` and the canvas views build their lists in the browser with these same class names (`tog`, `lnk`, `prow`, `pdot`, `tick`); they cannot share JSX, only the names.
+
+---
+
 ## 3. Feature Audit Matrix
 
 | View / Feature | implementation Status | Type | Technical Integration |

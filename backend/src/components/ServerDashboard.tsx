@@ -125,7 +125,7 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
       <div class="head">
         <div>
           <h1>{server.name}</h1>
-          <p class="muted" style="margin:0 0 .6rem">Server role registry</p>
+          <p class="muted mb6">Server role registry</p>
           <Sections serverId={server.id} />
           <p style="margin:.6rem 0 0"><a href={`/servers/${server.id}/views`} data-view-log>👁 View log</a> <span class="muted">who opened replays and 3D maps</span></p>
         </div>
@@ -181,12 +181,12 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
           </div>
         )}
 
-        <p x-show="shown() === 0" x-cloak="true" class="muted" style="text-align:center;padding:2rem;border:2px dashed #3a342a;margin:0">
+        <p x-show="shown() === 0" x-cloak="true" class="muted m0" style="text-align:center;padding:2rem;border:2px dashed #3a342a">
           No roles match these filters.
         </p>
 
         {sortedGroups.length === 0 ? (
-          <div class="pn" style="--c:#6b6455">
+          <div class="pn c-edge">
             <h2 class="ft">No roles detected for this server</h2>
             <p class="muted">Make sure the TraitorLink bridge is running on the game server.</p>
           </div>
@@ -214,7 +214,7 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
                     class={`pn tile${role.enabled ? '' : ' off'}`}
                   >
                     <div style="min-width:0">
-                      <strong class="ft" style="font-size:1.1rem;margin:0;border:0">
+                      <strong class="ft m0" style="font-size:1.1rem;border:0">
                         {role.name}
                         {!role.enabled && <span class="pill mute" style="margin-left:.5rem">disabled</span>}
                       </strong>

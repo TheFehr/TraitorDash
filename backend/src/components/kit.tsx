@@ -71,7 +71,7 @@ export const rateClass = (part: number, whole: number): string => (whole === 0 ?
 
 /** Teams or roles with how they did. */
 export const WinTable = ({ title, rows, empty }: { title: string, rows: WinRow[], empty: string }) => (
-  <div class="f" style="--c:#9ca3af">
+  <div class="f c-gray">
     <h2 class="ft">{title}</h2>
     {rows.length === 0 ? <span>{empty}</span> : (
       <div class="scrollx">

@@ -33,13 +33,13 @@ export const ReplayPage = ({ ctx, server, round, hasTrack, src, pinned, here, pi
       <h1>Round replay</h1>
       <p class="muted" style="margin:.1rem 0 .8rem">
         {round.map ? prettyMap(round.map) : 'unknown map'} · {teamLabel(round.result)} · {duration(round.duration)}
-        {pinned && <span data-pinned class="pill ok" style="margin-left:.6rem">Pinned</span>}
+        {pinned && <span data-pinned class="pill ok ml6">Pinned</span>}
       </p>
 
       {!hasTrack ? (
-        <div data-no-track class="f" style="--c:#9ca3af">
+        <div data-no-track class="f c-gray">
           There is no recorded track for this round. Tracks are recorded only when the game server has position tracking on, and older ones are removed to keep room.
-          <p style="margin:.6rem 0 0"><a href={link(ctx, `/servers/${id}/stats`, { view: 'rounds', bots })} style="text-decoration:underline">Back to the round stats</a></p>
+          <p style="margin:.6rem 0 0"><a href={link(ctx, `/servers/${id}/stats`, { view: 'rounds', bots })} class="ul">Back to the round stats</a></p>
         </div>
       ) : (
         <div data-replay data-src={src} data-viewer={ctx.viewer?.steamId ?? ''} class="replay">
@@ -79,16 +79,16 @@ export const ReplayPage = ({ ctx, server, round, hasTrack, src, pinned, here, pi
             </p>
           </div>
           <aside>
-            <section class="f" style="--c:#22c55e"><h2 class="ft">Players</h2><div data-players class="list"></div></section>
-            <section class="f" style="--c:#a78bfa">
+            <section class="f c-green"><h2 class="ft">Players</h2><div data-players class="list"></div></section>
+            <section class="f c-violet">
               <h2 class="ft">Selected player</h2>
               <p data-selected-role style="margin:.2rem 0"></p>
               <ol data-player-events class="list"></ol>
             </section>
-            <section data-revives-wrap hidden class="f" style="--c:#34d399"><h2 class="ft">Revivals</h2><ol data-revives class="list"></ol></section>
-            <section class="f" style="--c:#dc2626"><h2 class="ft">Deaths</h2><ol data-deaths class="list"></ol></section>
+            <section data-revives-wrap hidden class="f c-mint"><h2 class="ft">Revivals</h2><ol data-revives class="list"></ol></section>
+            <section class="f c-red"><h2 class="ft">Deaths</h2><ol data-deaths class="list"></ol></section>
             {admin && (
-              <section class="f" style="--c:#9ca3af">
+              <section class="f c-gray">
                 <form method="post" action={`/servers/${id}/rounds/${encodeURIComponent(round.id)}/pin`}>
                   <input type="hidden" name="pin" value={pinned ? '0' : '1'} />
                   <input type="hidden" name="next" value={here} />

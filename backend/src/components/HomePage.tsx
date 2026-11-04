@@ -5,8 +5,8 @@ import { isServerOnline } from '../services/ServerUtils'
 /** The front door for visitors who are not admins: the servers, whether they are up, and where to read about them (RFC 17). */
 export const HomePage = ({ ctx, servers }: { ctx: Ctx, servers: { id: string, name: string, last_seen: string | null }[] }) => (
   <Shell title="TraitorDash" embed={false} viewer={ctx.viewer}>
-    <h1 style="font-size:2.4rem;margin-top:1rem">TraitorDash</h1>
-    <p class="muted" style="margin:0 0 .6rem">Live TTT2 server network</p>
+    <h1 class="mt1" style="font-size:2.4rem">TraitorDash</h1>
+    <p class="muted mb6">Live TTT2 server network</p>
     {servers.length === 0 && <div class="f"><h2 class="ft">No servers yet</h2><span>No server has registered yet.</span></div>}
     <div class="g wide">
       {servers.map(server => {

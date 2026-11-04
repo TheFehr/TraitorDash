@@ -92,7 +92,7 @@ export const ViewLogPage = ({ steamId, server, log, now }: { steamId: string, se
       )}
       {(log.rows.length > 0 || log.accounts.length > 0) && (
         <>
-          <div class="f" style="--c:#2563eb;margin-top:1rem">
+          <div class="f c-blue mt1">
             <h2 class="ft">Accounts</h2>
             <div class="scrollx">
               <table class="log" data-view-accounts>
@@ -107,7 +107,7 @@ export const ViewLogPage = ({ steamId, server, log, now }: { steamId: string, se
               </table>
             </div>
           </div>
-          {log.rows.length > 0 && <div class="f" style="--c:#dc2626;margin-top:1rem">
+          {log.rows.length > 0 && <div class="f c-red mt1">
             <h2 class="ft">Newest views</h2>
             <div class="scrollx">
               <table class="log" data-view-rows>

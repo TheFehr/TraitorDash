@@ -208,7 +208,7 @@ export const MapFilePage = ({ ctx, server, name, map, state, activity, has3d, ha
         {has3d && (
           <p style="margin:1rem 0 0">
             {ctx.viewer
-              ? <><a class="btn" href={view}>View in 3D</a>{viewLogDays > 0 && <span class="dim" style="margin-left:.6rem">Opening it is logged with your SteamID64 for {viewLogDays} days.</span>}</>
+              ? <><a class="btn" href={view}>View in 3D</a>{viewLogDays > 0 && <span class="dim ml6">Opening it is logged with your SteamID64 for {viewLogDays} days.</span>}</>
               : ctx.signinOpen && !ctx.embed
                 ? <a class="btn" href={signinUrl(mapPath(id, name))}>Sign in to view in 3D</a>
                 : <span class="dim">This map has a 3D view. It opens for signed-in visitors.</span>}
@@ -232,7 +232,7 @@ export const Killzones = ({ ctx, serverId, name, k }: { ctx: Ctx, serverId: stri
   const noDeaths = 'No deaths with a position on this map yet. They are recorded since the game server was updated.'
   const to = (p: { weapon?: string | null, level?: number | null }) => link(ctx, path, { weapon: p.weapon ?? undefined, level: p.level ?? undefined })
   return (
-    <div class="f" style="--c:#dc2626;margin-top:1.2rem" data-killzones>
+    <div class="f c-red mt12" data-killzones>
       <h2 class="ft">Killzones</h2>
       {k.svg === null && !filtered ? (
         <p class="none" data-no-killzones>{noDeaths}</p>
@@ -257,12 +257,12 @@ export const Killzones = ({ ctx, serverId, name, k }: { ctx: Ctx, serverId: stri
             </>
           )}
           {k.levels && k.levels > 1 && (
-            <div class="bar" style="margin-top:.6rem"><span>Level</span>
+            <div class="bar mt6"><span>Level</span>
               <a class={k.level === undefined ? 'on' : ''} href={to({ weapon: k.weapon })}>All</a>
               {Array.from({ length: k.levels }, (_, i) => i + 1).map(l => <a class={k.level === l ? 'on' : ''} href={to({ weapon: k.weapon, level: l })}>{l}</a>)}
             </div>
           )}
-          <div class="bar" style="margin-top:.6rem"><span>Weapon</span>
+          <div class="bar mt6"><span>Weapon</span>
             <a class={k.weapon === null ? 'on' : ''} href={to({ level: k.level })}>All</a>
             {k.weapons.slice(0, 8).map(w => <a class={k.weapon === w.weapon ? 'on' : ''} href={to({ weapon: w.weapon, level: k.level })} title={w.weapon}>{weaponName(w.weapon)} <span class="dim">{w.n}</span></a>)}
           </div>
@@ -278,7 +278,7 @@ export const SCALE = `linear-gradient(to right, ${[0, 1, 2, 3, 4, 5, 6].map(i =>
 
 /** What the colours and marks in the floor-plan pictures mean. */
 export const PlanLegend = ({ cells }: { cells: number[] }) => (
-  <div class="f" style="--c:#9ca3af" data-legend="plans">
+  <div class="f c-gray" data-legend="plans">
     <h2 class="ft">How to read these pictures</h2>
     <div class="scale" style={`background:${SCALE}`}></div>
     <div class="ends"><span>lowest floor of the level</span><span>highest floor of the level</span></div>
@@ -318,7 +318,7 @@ export const MapViewPage = ({ ctx, server, map, name, next, plan, geometry }: Ma
       </p>
 
       {admin && geometry && (
-        <div class="f" style="--c:#9ca3af;margin-top:1.2rem">
+        <div class="f c-gray mt12">
           <h2 class="ft">Exact geometry</h2>
           {!geometry.requested
             ? <p>Off. Turning it on makes the backend fetch this map's file from the Steam Workshop once and keep a simplified 3D mesh of its floors and walls. The file itself is deleted afterwards.</p>
@@ -345,7 +345,7 @@ export const MapViewPage = ({ ctx, server, map, name, next, plan, geometry }: Ma
       )}
 
       {hasView && geometry?.info && (
-        <div class="f" style="--c:#22c55e;margin-top:1.2rem">
+        <div class="f c-green mt12">
           <h2 class="ft">3D view</h2>
           <div data-mapview data-src={`${mapPath(id, name)}/mesh.glb`} data-storeys={geometry.info.storeys === false ? '0' : '1'}>
             <div class="view">
@@ -384,15 +384,15 @@ export const MapViewPage = ({ ctx, server, map, name, next, plan, geometry }: Ma
       )}
 
       {admin && (
-        <div style="margin-top:1.2rem">
+        <div class="mt12">
           <h2>Floor plan</h2>
           {plan === null ? (
-            <div class="f" style="--c:#9ca3af">
+            <div class="f c-gray">
               No floor plan yet. Run <code>traitordash_mapscan</code> in the server console while this map is running; the result appears here within a few seconds.
             </div>
           ) : (
             <>
-              <p class="foot" style="margin:0 0 .6rem">
+              <p class="foot mb6">
                 {plan.floorCells} floor cells, {plan.crouchFloors} crouch-only {planOutdated(plan, map ?? undefined) && <i class="pill wait">Outdated</i>} scanned <When iso={plan.scannedAt} now={ctx.now} />
                 {' · '}<a href={`${mapPath(id, name)}/plan.svg`}>All floors</a> · <a href={`${mapPath(id, name)}/plan.json`}>JSON</a>
               </p>
