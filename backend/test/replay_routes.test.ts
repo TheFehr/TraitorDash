@@ -144,7 +144,7 @@ describe('track.json', () => {
     const r = await data(id)
     const etag = r.headers.get('etag')!
     expect(etag).toMatch(/^W\/"[0-9a-f]+"$/)
-    expect(r.headers.get('cache-control')).toBe('private, max-age=3600')
+    expect(r.headers.get('cache-control')).toBe('private, no-cache') // revalidated each time: the payload names the model and the code's version, so it changes with a deployment
     expect(r.headers.get('vary')).toMatch(/Accept-Encoding/)
     const again = await data(id, USER, '', { headers: { 'If-None-Match': etag } })
     expect(again.status).toBe(304)

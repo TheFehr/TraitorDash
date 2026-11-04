@@ -6,6 +6,10 @@ import type { LevelRange } from '../replaylogic'
 import { roleColour } from '../teamColours'
 import { chooseBackground, versionMismatch, type BackgroundKind } from '../replaylogic'
 import { playerModelEnabled } from './playermodel'
+import { sourceHash } from './version'
+
+/** Raise when what the payload holds changes in a way the ETag's other parts do not show, so the copies in browsers are replaced. */
+const PAYLOAD_FORMAT = 2
 
 /**
  * What the replay page needs about one round, in one JSON document (RFC 12, 3.5): the round's header
@@ -87,11 +91,11 @@ export function buildReplay(serverId: string, roundId: string, o?: StatsOptions)
     track: stored.track,
     trackInfo: { truncated: stored.meta.truncated, degraded: stored.meta.degraded, fingerprint: stored.meta.fingerprint, pinned: stored.meta.pinned },
     background,
-    ...(playerModelEnabled() ? { playerModel: `/servers/${serverId}/playermodel.glb` } : {}),
+    ...(playerModelEnabled() ? { playerModel: `/servers/${serverId}/playermodel.glb?v=${sourceHash()}` } : {}),
   }
   // A track is immutable; what can change is what is drawn behind it, and the pin.
   const etag = 'W/"' + createHash('sha1').update(JSON.stringify([
-    stored.meta.createdAt, stored.meta.bytes, stored.meta.pinned, !!o?.bots, kind, meshFingerprint, planMeta?.scannedAt ?? null, background.mismatch, colours, !!payload.playerModel,
+    stored.meta.createdAt, stored.meta.bytes, stored.meta.pinned, !!o?.bots, kind, meshFingerprint, planMeta?.scannedAt ?? null, background.mismatch, colours, payload.playerModel ?? null, PAYLOAD_FORMAT,
   ])).digest('hex').slice(0, 20) + '"'
   return { payload, etag }
 }

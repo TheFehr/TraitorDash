@@ -499,7 +499,8 @@ app.get('/servers/:serverId/rounds/:roundId/track.json', gated('track'), async (
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ETag: found.etag,
-    'Cache-Control': 'private, max-age=3600',
+    // asked again each time (an ETag answers with a few bytes): the payload names the player model and so changes with the code, not only with the round
+    'Cache-Control': 'private, no-cache',
     Vary: 'Accept-Encoding, Cookie',
     'X-Content-Type-Options': 'nosniff',
   }

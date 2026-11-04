@@ -2,12 +2,13 @@
 import {
   WebGLRenderer, OrthographicCamera, Box3, Vector3, Color, Group, Mesh, MeshStandardMaterial, MeshBasicMaterial,
   SphereGeometry, CylinderGeometry, RingGeometry, DoubleSide, ConeGeometry, BoxGeometry, InstancedMesh, Matrix4, Object3D, Plane, Sprite,
-  SpriteMaterial, CanvasTexture, BufferGeometry, Float32BufferAttribute, Line, LineSegments, LineBasicMaterial, Raycaster, AnimationMixer, type AnimationAction, type AnimationClip,
+  SpriteMaterial, CanvasTexture, BufferGeometry, Float32BufferAttribute, Line, LineSegments, LineBasicMaterial, Raycaster, AnimationMixer, BufferAttribute, type Material, type AnimationAction, type AnimationClip,
   type Camera, type MeshStandardMaterial as StdMat,
 } from 'three'
 import { hex } from './teamColours'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { clone as cloneRig } from 'three/examples/jsm/utils/SkeletonUtils.js'
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { startFlat } from './replayflat'
 import { applyColouring, offerBrowser, heightColours, levelColour, makeCamera, makeRenderer, makeScene, prepareMovable, prepareProps, prepareWater, savedColouring, boxWithout, type Painted } from './sceneKit'
@@ -38,11 +39,14 @@ interface Payload {
 const LEVEL_NAME = /^level-(\d+)$/
 const CUT_ABOVE = 128
 const TRAIL_MS = 4000
+const TRAIL_POINTS = 256 // the most points of a trail drawn (a sample every 0.1 s at the fastest, for four seconds, is 40)
 const KILL_LINE_MS = 2500
 const REVIVE_MARK_MS = 2500
 const MAX_REVIVE_MARKS = 64
 const SPEEDS = [1, 2, 4, 8]
 
+/** Writes text into an element only when it differs: a write is work for the page even if nothing changes. */
+const setText = (e: Element, t: string) => { if (e.textContent !== t) e.textContent = t }
 const el = <T extends HTMLElement>(root: HTMLElement, sel: string) => root.querySelector<T>(sel)
 const text = (s: string, tag = 'span', cls = '') => { const e = document.createElement(tag); e.textContent = s; if (cls) e.className = cls; return e }
 
@@ -224,11 +228,14 @@ async function start(root: HTMLElement) {
     playBtn.setAttribute('aria-pressed', String(playing))
     if (playing) { last = performance.now(); requestAnimationFrame(loop) }
   }
+  // While it plays, the picture is made at most thirty times a second (the rate of the animations): time goes on at the real
+  // rate, but each picture costs the same, so a phone that can make thirty of them keeps up where it would stutter at sixty.
+  let drawn = -1e9
   const loop = (now: number) => {
     if (!playing) return
     ms = Math.min(data.length, ms + (now - last) * speed)
     last = now
-    hooks.paint()
+    if (now - drawn >= 30 || ms >= data.length) { drawn = now; hooks.paint() }
     if (ms >= data.length) { setPlaying(false); return }
     requestAnimationFrame(loop)
   }
@@ -310,6 +317,23 @@ async function start(root: HTMLElement) {
   world.rotation.x = -Math.PI / 2
   scene.add(world)
 
+  /** Draws `meshes` (props placed in the map) as one mesh for each material, in the place they are; the ones given are hidden. A set that cannot be put together (different attributes) is left as it is. */
+  const mergeDrawn = (root: Object3D, meshes: Mesh[]) => {
+    const byMaterial = new Map<Material, Mesh[]>()
+    for (const m of meshes) { const list = byMaterial.get(m.material as Material); if (list) list.push(m); else byMaterial.set(m.material as Material, [m]) }
+    for (const [material, list] of byMaterial) {
+      if (list.length < 2) continue
+      const parts = list.map(m => { const g = m.geometry.clone(); g.applyMatrix4(m.matrixWorld); return g })
+      const merged = mergeGeometries(parts, false)
+      parts.forEach(g => g.dispose())
+      if (!merged) continue
+      const one = new Mesh(merged, material)
+      one.name = 'props-merged'
+      root.add(one)
+      for (const m of list) m.visible = false
+    }
+  }
+
   // ---- the background
   const cut = new Plane(new Vector3(0, -1, 0), 1e9)
   const levelNodes: { index: number, node: Object3D }[] = []
@@ -347,7 +371,8 @@ async function start(root: HTMLElement) {
         painted.push({ mesh, wall: isWall, level: l.index })
       })
       prepareWater(model, cut)
-      occluders.push(...painted.map(p => p.mesh as Mesh), ...prepareProps(model, cut).solid)
+      const props = prepareProps(model, cut)
+      occluders.push(...painted.map(p => p.mesh as Mesh), ...props.solid) // (the props stay as they are for the camera to be stopped by; what is drawn is below)
       prepareMovable(model, cut)
       // Parts apart from the map (RFC 18, 4.4) are not drawn in the replay.
       const apart = model.getObjectByName('detached')
@@ -355,6 +380,11 @@ async function start(root: HTMLElement) {
       heightColours(painted)
       applyColouring(painted, savedColouring(), levelNodes.length)
       scene.add(model)
+      model.updateMatrixWorld(true)
+      // Hundreds of props are hundreds of draw calls, which is what a phone is slowest at: the props of one material are drawn as one mesh
+      // (the separate ones stay, unseen, for the camera). Then nothing of the map moves, so its matrices are not worked out again each frame.
+      for (const list of [props.solid, props.foliage]) mergeDrawn(model, list)
+      model.traverse(o => { o.matrixAutoUpdate = false })
       const b = boxWithout(model, ['detached']) // in three's Y-up
       // back to Source's Z-up: (x, y, z) three = (x, z, -y) Source
       finish(new Box3(new Vector3(b.min.x, -b.max.z, b.min.y), new Vector3(b.max.x, -b.min.z, b.max.y)))
@@ -540,6 +570,8 @@ async function start(root: HTMLElement) {
   interface Marker {
     group: Group, pin: Sprite, label: Sprite, ring: Mesh, trail: Line, corpse: Group, deadPin: Sprite, segs: Segment[]
     body: Group, lying: Group, arrow: Mesh, path: Path, colour: number, looks: Map<number, Look>
+    /** When the skeleton was last posed, in ms of the round (it is done thirty times a second, the rate of the animations). */
+    posedAt: number
   }
   const markers = new Map<string, Marker>()
   const PIN = 0.03, LABEL_H = 0.036
@@ -562,7 +594,9 @@ async function start(root: HTMLElement) {
     const label = screenSprite(look.label, LABEL_H * 4, LABEL_H); label.position.z = real ? real.height + 12 : 86; label.center.set(0.5, -0.55)
     group.add(arrow, ring, pin, label)
 
-    const trail = new Line(new BufferGeometry(), new LineBasicMaterial({ color: colour, transparent: true, opacity: 0.6 }))
+    const trailGeo = new BufferGeometry()
+    trailGeo.setAttribute('position', new BufferAttribute(new Float32Array(TRAIL_POINTS * 3), 3))
+    const trail = new Line(trailGeo, new LineBasicMaterial({ color: colour, transparent: true, opacity: 0.6 }))
     trail.frustumCulled = false
 
     // Where a player died: their body lies there, with a cross over it.
@@ -578,7 +612,7 @@ async function start(root: HTMLElement) {
 
     world.add(group, trail, corpse)
     poseRig(lying, STILL, 0, 0) // a body is the standing pose, lying down
-    markers.set(id, { group, pin, label, ring, trail, corpse, deadPin, segs: data.players.get(id) ?? [], body, lying, arrow, path: pathOf(data.players.get(id) ?? []), colour, looks })
+    markers.set(id, { group, pin, label, ring, trail, corpse, deadPin, segs: data.players.get(id) ?? [], body, lying, arrow, path: pathOf(data.players.get(id) ?? []), colour, looks, posedAt: -1e9 })
   }
   // The shot: a line of the width of a few pixels (a `Line` is one pixel wide in WebGL, which is too faint to see), as a thin
   // bright beam with a wider faint one around it, drawn over the map so a wall does not hide where the shot came from.
@@ -680,7 +714,7 @@ async function start(root: HTMLElement) {
     if (far < 1e-3) return
     const dir = to.divideScalar(far)
     const now = performance.now()
-    if (now - castAt > 50) { // looking costs a few milliseconds on a big map: not every frame (the answer changes slowly)
+    if (now - castAt > 120) { // looking costs a few milliseconds on a big map: not every frame (the answer changes slowly)
       castAt = now
       ray.set(from, dir)
       ray.near = 0; ray.far = far
@@ -712,7 +746,7 @@ async function start(root: HTMLElement) {
       }
       const look = lookOf(m, id, m.colour)
       const chip = chips.get(id)
-      if (chip) chip.role.textContent = st.role ? (st.was.length ? `${st.role} (was ${st.was[0]})` : st.role) : ''
+      if (chip) setText(chip.role, st.role ? (st.was.length ? `${st.role} (was ${st.was[0]})` : st.role) : '')
       const p = poseAt(m.segs, ms)
       // A player on a level above the one shown would float in the air; one below is hidden by the floor, so its name is dimmed.
       const lv = p && levels.length > 0 && bg.kind !== 'none' ? levelOf(levels, p.z) : 0
@@ -731,7 +765,7 @@ async function start(root: HTMLElement) {
           const turn = facing(look, v.heading, v.speed)
           m.group.rotation.z = turn
           m.arrow.rotation.z = look - turn // the arrow on the ground still says where the player looks
-          poseRig(m.body, clipWeights(v.speed, (moveAt(m.segs, ms) & MOVE.crouching) !== 0), distanceAt(m.path, ms), ms)
+          if (Math.abs(ms - m.posedAt) >= 33) { m.posedAt = ms; poseRig(m.body, clipWeights(v.speed, (moveAt(m.segs, ms) & MOVE.crouching) !== 0), distanceAt(m.path, ms), ms) }
         } else m.group.rotation.z = look
       }
       // from above the bodies are specks, so the pin itself points the way the player faces
@@ -753,9 +787,12 @@ async function start(root: HTMLElement) {
         m.corpse.rotation.z = last ? (last.yaw / 256) * Math.PI * 2 : 0
       }
       const trail = trailBetween(m.segs, ms - TRAIL_MS, ms)
-      const pts = trail.length >= 6 ? trail : []
-      m.trail.geometry.setAttribute('position', new Float32BufferAttribute(pts, 3))
-      m.trail.visible = pts.length > 0 && !death
+      const count = trail.length >= 6 ? Math.min(trail.length / 3, TRAIL_POINTS) : 0
+      const attr = m.trail.geometry.getAttribute('position') as BufferAttribute
+      for (let i = 0; i < count * 3; i++) attr.array[i] = trail[i]!
+      attr.needsUpdate = true
+      m.trail.geometry.setDrawRange(0, count)
+      m.trail.visible = count > 0 && !death
       const row = rows.get(id)
       if (row) {
         row.classList.toggle('sel', isSel)
@@ -774,7 +811,7 @@ async function start(root: HTMLElement) {
     const panel = el(root, '[data-selected-role]')
     if (panel) {
       const st = selected ? stateOf(selected, ms) : null
-      panel.textContent = selected && st ? `${nick(selected)}: ${st.role ?? 'role unknown'}${st.was.length ? ' (was ' + st.was.join(', ') + ')' : ''}${st.team ? ', ' + st.team : ''}` : ''
+      setText(panel, selected && st ? `${nick(selected)}: ${st.role ?? 'role unknown'}${st.was.length ? ' (was ' + st.was.join(', ') + ')' : ''}${st.team ? ', ' + st.team : ''}` : '')
     }
     // the line between victim and attacker while a kill is fresh
     const kill = data.deaths.find(d => d.from && ms >= d.t && ms <= d.t + KILL_LINE_MS)
@@ -799,7 +836,7 @@ async function start(root: HTMLElement) {
       persp.lookAt(tmp)
     }
     scrub.value = String(ms)
-    timeEl.textContent = `${clock(ms)} / ${clock(data.length)}`
+    setText(timeEl, `${clock(ms)} / ${clock(data.length)}`)
     render()
   }
   function changed() { hooks.paint() }
@@ -832,7 +869,7 @@ async function start(root: HTMLElement) {
   changed()
 
   // for tests and for debugging in the page
-  ;(root as any).__replay = { seek, get ms() { return ms }, select: (id: string) => { selected = id; changed() }, setCam, setPlaying, setTheater }
+  ;(root as any).__replay = { seek, get ms() { return ms }, select: (id: string) => { selected = id; changed() }, setCam, setPlaying, setTheater, drawn: () => ({ ...renderer.info.render, geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, programs: renderer.info.programs?.length ?? 0 }) }
 }
 
 document.querySelectorAll<HTMLElement>('[data-replay]').forEach(r => { start(r) })

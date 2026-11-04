@@ -260,7 +260,7 @@ describe('the 3D view on the map page', () => {
     const html = await page()
     expect(html).toContain('data-mapview')
     expect(html).toContain(`data-src="/servers/${serverId}/maps/ttt_a/mesh.glb"`)
-    expect(html).toContain('src="/public/mapview.js"')
+    expect(html).toMatch(/src="\/public\/mapview\.js\?v=[0-9a-f]+"/)
     expect(html.match(/data-level="\d+"/g)).toHaveLength(1) // this map has one level
     expect(html).toContain('data-level="all"')
   })

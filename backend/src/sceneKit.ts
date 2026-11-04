@@ -9,11 +9,12 @@ import {
 /** The dark background of the drawing: the canvas's own colour in the page stylesheet (#14110e). */
 export const BACKGROUND = 0x14110e
 
-/** A renderer on the canvas, with clipping on (the level cutaway) and the pixel ratio capped at 2. Throws without WebGL. */
+/** A renderer on the canvas, with clipping on (the level cutaway) and the pixel ratio capped (2, or 1.5 on a touch screen). Throws without WebGL. */
 export function makeRenderer(canvas: HTMLCanvasElement): WebGLRenderer {
   const renderer = new WebGLRenderer({ canvas, antialias: true })
   renderer.localClippingEnabled = true
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
+  // A phone's screen has three or more pixels for each of the page's: drawing all of them is what makes it slow, so a touch screen gets at most one and a half
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, navigator.maxTouchPoints > 0 ? 1.5 : 2))
   return renderer
 }
 

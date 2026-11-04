@@ -1,6 +1,10 @@
 import { FAVICON, LOGO_EMOJI } from './brand'
 import { ADMIN_CSS, PUBLIC_CSS } from './styles'
 import { sectionsOf, type Section } from './SectionLinks'
+import { sourceHash } from '../services/version'
+
+/** A script of this site with the version of the code in its address: the files are served for a week without asking again, so a new build has to have a new address or browsers keep running the old one. */
+const script = (src: string) => `${src}?v=${sourceHash()}`
 
 // The shell of the public, read-only pages with the case-file look (RFC 15, RFC 16). One shell for the normal and the embedded layout: no
 // script, an inline stylesheet, nothing from the site's own bundle, so the strict
@@ -57,8 +61,8 @@ export const Shell = ({ title, embed, children, viewer, scripts = [], admin = fa
       {!embed && <SiteHeader viewer={viewer} wide={admin} />}
       <main class={admin ? 'w wide' : 'w'}>{children}</main>
       {/* htmx and Alpine come from our own bundle (frontend.ts, versions locked by bun.lock), not a CDN: a third-party script on an admin page can do anything the admin can. */}
-      {admin && <script defer src="/public/frontend.js"></script>}
-      {scripts.map(src => <script defer src={src}></script>)}
+      {admin && <script defer src={script('/public/frontend.js')}></script>}
+      {scripts.map(src => <script defer src={script(src)}></script>)}
     </body>
   </html>
 )

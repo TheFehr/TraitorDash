@@ -148,10 +148,20 @@ describe('the replay payload', () => {
     return id
   }
 
+  test('the ETag follows the address of the model, so a browser that has the payload of an older build asks again', () => {
+    const id = round()
+    const first = replay.buildReplay(serverId, id)
+    expect(first.etag).toBe(replay.buildReplay(serverId, id).etag)
+    const was = process.env.GAME_CONTENT
+    process.env.GAME_CONTENT = '0'
+    expect(replay.buildReplay(serverId, id).etag).not.toBe(first.etag)
+    process.env.GAME_CONTENT = was
+  })
+
   test('names where the model is when the game\'s files are on, and not otherwise', () => {
     const id = round()
     const on = replay.buildReplay(serverId, id)
-    expect(on.payload.playerModel).toBe(`/servers/${serverId}/playermodel.glb`)
+    expect(on.payload.playerModel).toMatch(new RegExp(`^/servers/${serverId}/playermodel\\.glb\\?v=[0-9a-f]+$`))
     process.env.GAME_CONTENT = '0'
     const off = replay.buildReplay(serverId, id)
     expect(off.payload.playerModel).toBeUndefined()
