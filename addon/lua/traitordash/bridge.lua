@@ -928,6 +928,10 @@ function TraitorDash.Poll()
                                     else
                                         print("[TraitorDash] WARNING: Refused a ConVar command: " .. tostring(cmd.payload):sub(1, 80))
                                     end
+                                elseif cmd.type == "setting" then
+                                    -- one of the bridge's own settings (RFC 23): checked against the list in settings.lua, which refuses the rest
+                                    if TraitorDash.HandleSettingCommand then TraitorDash.HandleSettingCommand(cmd.payload)
+                                    else print("[TraitorDash] WARNING: Refused a setting command (settings.lua is not loaded)") end
                                 elseif cmd.type == "sync" then
                                     print("[TraitorDash] Internal: Force Sync Triggered via API")
                                     TraitorDash.Sync(true)
@@ -987,6 +991,7 @@ function TraitorDash.Init()
     TraitorDash.Initialized = true
     print("[TraitorDash] Bridge Initialized. Source: " .. debug.getinfo(TraitorDash.Init).source)
     if TraitorDash.ReportConfig then TraitorDash.ReportConfig() end
+    if TraitorDash.StartSettings then TraitorDash.StartSettings() end -- what the dashboard set, applied over server.cfg (RFC 23)
     
     -- Start poller immediately
     TraitorDash.Poll()

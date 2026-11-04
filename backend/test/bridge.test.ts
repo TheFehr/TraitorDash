@@ -239,12 +239,12 @@ describe('Init', () => {
 
   test('polls at once, then every 10 seconds, and queues the first sync for 5 seconds out', () => {
     expect(init('TraitorDash.Init()')).toBe(
-      'PlayerDisconnected:TraitorDash_AdminCache,TTT2FinishedLoading:TD_Init,Initialize:TD_Init / create TraitorDash_Poller 10 0,simple 5 / 1')
+      'PlayerDisconnected:TraitorDash_AdminCache,TTT2FinishedLoading:TD_Init,Initialize:TD_Init / simple 5,simple 8,create TraitorDash_ReportSettingsEvery 600 0,create TraitorDash_Poller 10 0,simple 5 / 1')
   })
 
   test('a second Init (both hooks fire) changes nothing', () => {
     expect(init('TraitorDash.Init() TraitorDash.Init()')).toBe(
-      'PlayerDisconnected:TraitorDash_AdminCache,TTT2FinishedLoading:TD_Init,Initialize:TD_Init / create TraitorDash_Poller 10 0,simple 5 / 1')
+      'PlayerDisconnected:TraitorDash_AdminCache,TTT2FinishedLoading:TD_Init,Initialize:TD_Init / simple 5,simple 8,create TraitorDash_ReportSettingsEvery 600 0,create TraitorDash_Poller 10 0,simple 5 / 1')
   })
 
   test('when TTT2 has already loaded as the bridge loads, it starts at load time', () => {

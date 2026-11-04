@@ -20,6 +20,8 @@ export const UTIL = read('util.lua')
 // roleaddons.lua is loaded after maps.lua, as bridge.lua includes it.
 export const ROLEADDONS = fs.existsSync(path.join(dir, 'roleaddons.lua')) ? read('roleaddons.lua') : ''
 export const BRIDGE = read('bridge.lua')
+// settings.lua (RFC 23) is loaded after the bridge, as the loader in autorun does.
+export const SETTINGS = fs.existsSync(path.join(dir, 'settings.lua')) ? read('settings.lua') : ''
 
 import { createHash } from 'node:crypto'
 // util.SHA256 as GMod has it: a string in, lowercase hex out.
@@ -127,7 +129,7 @@ export function run(script: string, before = ''): { applied: string[], set: stri
     if (lauxlib.luaL_dostring(L, to_luastring(c)) !== lua.LUA_OK) throw new Error(to_jsstring(lua.lua_tostring(L, -1)))
   }
   try {
-    go(PRELUDE); go(UTIL); go(before); go(COMMANDS); go(CONFIG); go(PAIRING); go(MAPSCAN); go(MAPS); go(ROLEADDONS); go(BRIDGE); go(script)
+    go(PRELUDE); go(UTIL); go(before); go(COMMANDS); go(CONFIG); go(PAIRING); go(MAPSCAN); go(MAPS); go(ROLEADDONS); go(BRIDGE); go(SETTINGS); go(script)
     go('OUT = table.concat(APPLIED, "|") .. "#" .. table.concat(SET, "|")')
     lua.lua_getglobal(L, to_luastring('OUT'))
     const [applied = '', set = ''] = to_jsstring(lua.lua_tostring(L, -1)).split('#')

@@ -37,6 +37,10 @@ if SERVER then
     local ok, err = pcall(include, "traitordash/stats.lua")
     if not ok then print("[TraitorDash] Stats tracker failed to load: " .. tostring(err)) end
 
+    -- The bridge's own settings that the dashboard may change (RFC 23): loaded after the files that create their ConVars.
+    local okSet, errSet = pcall(include, "traitordash/settings.lua")
+    if not okSet then print("[TraitorDash] Settings failed to load; the dashboard cannot change them: " .. tostring(errSet)) end
+
     -- Console-only bot scenario for exercising position tracking (see the file header).
     local okTt, errTt = pcall(include, "traitordash/track_test.lua")
     if not okTt then print("[TraitorDash] Track test scenario failed to load: " .. tostring(errTt)) end
