@@ -29,7 +29,7 @@ import { helperAvailable, workshopFetcher } from './services/workshop'
 import { sameOrigin } from './middleware/csrf'
 
 // Components
-import { AdminHomePage, ServersPage, ServerPage, RoleConfigPage, ViewLogPage } from './components/AdminPages'
+import { AdminHomePage, ServersPage, ServerPage, RoleConfigPage, ViewLogPage, BridgeSettingsPage } from './components/AdminPages'
 import { RoleListPartial } from './components/Sidebar'
 import { checkHealth, features, sourceHash } from './services/version'
 import { StatsPage, RoundPage, PlayerPage } from './components/StatsPages'
@@ -653,6 +653,19 @@ app.get('/servers/:serverId/roles/:roleName/config', async (c) => {
   if (!server || !schema) return c.redirect('/')
   
   return c.html(<RoleConfigPage steamId={steamId as string} server={server} roleName={roleName} roles={roles} schema={schema} live={Store.getConVarValues(serverId)} />)
+})
+
+// The bridge's own settings (RFC 23): admins only.
+app.get('/servers/:serverId/bridge', async (c) => {
+  const steamId = await getAdminId(c)
+  if (!steamId) return c.redirect('/')
+  const serverId = c.req.param('serverId')
+  const server = Store.getServerById(serverId)
+  if (!server) return c.redirect('/')
+  const got = Store.getBridgeSettings(serverId)
+  c.header('Cache-Control', 'no-store')
+  return c.html(<BridgeSettingsPage steamId={steamId as string} server={server} roles={getRolesWithState(serverId)}
+    state={{ reportedAt: got?.reportedAt ?? null, values: got?.values ?? {}, pending: Store.pendingBridgeSettings(serverId) }} />)
 })
 
 // Pelican hands the allocated port over as SERVER_PORT.

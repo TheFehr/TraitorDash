@@ -49,6 +49,8 @@ export const TIERS: Record<string, Tier> = {
   'DELETE /api/servers/:id': 'admin',
   'POST /api/save/:serverId/:role': 'admin',
   'POST /api/bridge-settings/:serverId': 'admin',
+  'GET /api/bridge-settings/:serverId': 'admin',
+  'GET /servers/:serverId/bridge': 'admin',
 
   'POST /api/ingest': 'bridge',
   'POST /api/v1/lang': 'bridge',

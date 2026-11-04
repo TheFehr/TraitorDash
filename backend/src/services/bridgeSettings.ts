@@ -30,7 +30,7 @@ export const BRIDGE_SETTINGS: BridgeSetting[] = [
     explain: 'Rounds in which bots played are normally left out of the statistics. On records them too, which is useful for testing and clutters the history on a live server.' },
   { name: 'traitordash_track', kind: 'bool', default: '0', group: 'Position tracking', applies: 'next round',
     label: 'Record positions for the replay',
-    explain: 'Samples where every player is, aims and shoots, which is what the round replay is made of. A round takes some space in the database (about a few hundred kilobytes) and the server a little time at each sample. Off means rounds have no replay.' },
+    explain: 'Samples where every player is, aims and shoots, which is what the round replay is made of. Every round with tracking takes space in the dashboard database, and each sample takes the game server a little time. Off means rounds have no replay.' },
   { name: 'traitordash_track_interval_min', kind: 'number', default: '0.2', min: 0.1, max: 2, unit: 's', group: 'Position tracking', applies: 'at once',
     label: 'Shortest time between samples',
     explain: 'How often positions are sampled while players move. A lower number makes a smoother replay and a bigger track, and costs the game server a little more at each sample. The default (0.2 s) is five samples a second; 0.1 s is ten.' },

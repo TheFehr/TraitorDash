@@ -702,6 +702,15 @@ api.post('/save/:serverId/:role', async (c) => {
   return c.json({ success: true, commands_staged: stagedCount })
 })
 
+// What the bridge runs with and what is still on its way (RFC 23): the settings page asks while it waits for a change to show.
+api.get('/bridge-settings/:serverId', (c) => {
+  const serverId = c.req.param('serverId')
+  if (!Store.getServers().some((s: any) => s.id === serverId)) return c.json({ error: 'Unknown server' }, 404)
+  c.header('Cache-Control', 'no-store')
+  const got = Store.getBridgeSettings(serverId)
+  return c.json({ reportedAt: got?.reportedAt ?? null, values: got?.values ?? {}, pending: Store.pendingBridgeSettings(serverId) })
+})
+
 // An admin changes the bridge's own settings (RFC 23): one staged `setting` command for each, all or none, through the same signed
 // channel as the role settings. Only names on the list; the bridge checks them again.
 api.post('/bridge-settings/:serverId', async (c) => {

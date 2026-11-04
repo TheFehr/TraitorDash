@@ -5,6 +5,7 @@ import { ServerDashboard } from './ServerDashboard'
 import { ServerManager } from './ServerManager'
 import { RoleConfigForm } from './RoleConfigForm'
 import { Sidebar } from './Sidebar'
+import { BridgeSettingsForm, type BridgeSettingsState } from './BridgeSettingsForm'
 import type { LiveConVar } from '../services/Store'
 import { When } from './kit'
 import { prettyMap } from '../mapName'
@@ -51,6 +52,19 @@ export const RoleConfigPage = ({ steamId, server, roleName, roles, schema, live 
           {' · '}<a href={`/servers/${server.id}/roles/${encodeURIComponent(roleName)}`}>Public page</a>
         </Crumbs>
         <RoleConfigForm serverId={server.id} role={roleName} schema={schema} live={live} />
+      </div>
+    </div>
+  </Admin>
+)
+
+/** The bridge's own settings (RFC 23), for admins. */
+export const BridgeSettingsPage = ({ steamId, server, roles, state }: { steamId: string, server: { id: string, name: string }, roles: any[], state: BridgeSettingsState }) => (
+  <Admin title={`Bridge settings | ${server.name}`} steamId={steamId}>
+    <div class="lay">
+      <Sidebar serverId={server.id} roles={roles} />
+      <div>
+        <Crumbs><a href="/">Dashboard</a> / <a href={`/servers/${server.id}`}>{server.name}</a> / Bridge settings</Crumbs>
+        <BridgeSettingsForm serverId={server.id} state={state} />
       </div>
     </div>
   </Admin>

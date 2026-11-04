@@ -838,6 +838,12 @@ export class Store {
     })()
   }
 
+  /** Names of the bridge settings whose commands are still waiting for the game server (RFC 23). */
+  static pendingBridgeSettings(serverId: string): string[] {
+    const rows = db.prepare("SELECT args FROM commands WHERE server_id = ? AND command = 'setting'").all(serverId) as any[]
+    return [...new Set(rows.map(r => String(r.args).split(' ')[0]!))]
+  }
+
   /** What the bridge last reported: name -> value (and the value its file holds when that differs), or null when it never reported. */
   static getBridgeSettings(serverId: string): { reportedAt: string, values: Record<string, { value: string, saved: string | null }> } | null {
     const rows = db.prepare('SELECT name, value, saved, reported_at FROM bridge_settings WHERE server_id = ?').all(serverId) as any[]
