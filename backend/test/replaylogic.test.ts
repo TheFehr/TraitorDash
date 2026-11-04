@@ -1,5 +1,5 @@
 import { expect, test, describe } from 'bun:test'
-import { decodeTrack, poseAt, lastPoseAt, trailBetween, lerpYaw, levelOf, chooseBackground, versionMismatch, defaultSelection, teamColour, playerColour, roleColour, clock, type RawTrack } from '../src/replaylogic'
+import { clipWeights, decodeTrack, distanceAt, facing, lerpAngle, moveAt, pathOf, velocityAt, SPEEDS, poseAt, lastPoseAt, trailBetween, lerpYaw, levelOf, chooseBackground, versionMismatch, defaultSelection, teamColour, playerColour, roleColour, clock, type RawTrack } from '../src/replaylogic'
 
 // RFC 12, 3.5: the logic of the replay that is not drawing.
 
@@ -233,5 +233,91 @@ describe('the height of a death', () => {
     expect(of(track(64, { t: [1000, 0, 0, 0] })).death[2]).toBe(80)
     const later = track(64); later.deaths[0]!.t = 1100 // no sample at the death: the one before it is the high one, so there is no rise to take off
     expect(of(later).death[2]).toBe(80)
+  })
+})
+
+describe('how a player moves', () => {
+  // A runs along x at 200 units a second (a sample every 200 ms, 40 units apart), then stands; its samples carry the bits of how it moves.
+  const runner = () => decodeTrack({
+    t: [0, 200, 200, 200, 200, 200],
+    players: [{ id: 'A', segments: [{ from: 0, x: [0, 5, 5, 5, 0, 0], y: [0, 0, 0, 0, 0, 0], z: [0, 0, 0, 0, 0, 0], a: [0, 0, 0, 0, 0, 0], s: [0, 0, 1, 1, 2, 0] }] }],
+    deaths: [],
+  } as any).players.get('A')!
+
+  test('the bits of the sample at or before a time, and 0 where there is no sample (or no bits recorded)', () => {
+    const segs = runner()
+    expect(moveAt(segs, 0)).toBe(0)
+    expect(moveAt(segs, 399)).toBe(0) // the third sample is at 400
+    expect(moveAt(segs, 400)).toBe(1)
+    expect(moveAt(segs, 700)).toBe(1)
+    expect(moveAt(segs, 900)).toBe(2)
+    expect(moveAt(segs, 1000)).toBe(0)
+    expect(moveAt(segs, 5000)).toBe(0)
+    expect(moveAt(segs, -5)).toBe(0)
+    expect(moveAt(decodeTrack({ t: [0, 200], players: [{ id: 'A', segments: [{ from: 0, x: [0, 1], y: [0, 0], z: [0, 0], a: [0, 0] }] }], deaths: [] }).players.get('A')!, 100)).toBe(0)
+  })
+
+  test('the speed and the way a player goes, from a moment before and after', () => {
+    const segs = runner()
+    const v = velocityAt(segs, 400) // in the middle of the run
+    expect(v.speed).toBeCloseTo(200, 0)
+    expect(v.heading).toBeCloseTo(0, 5)
+    expect(velocityAt(segs, 1000).speed).toBeCloseTo(0, 5) // stood still from the sample at 600 on
+  })
+
+  test('at the ends of a segment the speed is taken from the side there is', () => {
+    const segs = runner()
+    expect(velocityAt(segs, 0).speed).toBeCloseTo(200, 0)
+    expect(velocityAt(segs, 1000).speed).toBeLessThan(5)
+    expect(velocityAt([], 100)).toEqual({ speed: 0, heading: 0 })
+  })
+
+  test('the distance gone is the length of the path, a straight line between samples, and a gap adds nothing', () => {
+    const segs = runner()
+    const path = pathOf(segs)
+    expect(distanceAt(path, 0)).toBe(0)
+    expect(distanceAt(path, 200)).toBeCloseTo(40, 5)
+    expect(distanceAt(path, 300)).toBeCloseTo(60, 5) // half way between 40 and 80
+    expect(distanceAt(path, 1000)).toBeCloseTo(120, 5)
+    expect(distanceAt(path, 99_999)).toBeCloseTo(120, 5)
+    expect(distanceAt(path, -5)).toBe(0)
+    const gap = pathOf(decodeTrack({ t: [0, 200, 200, 200], players: [{ id: 'A', segments: [
+      { from: 0, x: [0, 5], y: [0, 0], z: [0, 0], a: [0, 0] }, { from: 2, x: [100, 5], y: [0, 0], z: [0, 0], a: [0, 0] }] }], deaths: [] }).players.get('A')!)
+    expect(gap.d.at(-1)).toBeCloseTo(80, 5) // two 40-unit walks; the jump between the segments is not one
+  })
+})
+
+describe('which clip is shown', () => {
+  const sum = (w: Record<string, number>) => Object.values(w).reduce((a, b) => a + b, 0)
+  test('standing still is idle, a walk is the walk clip, a run the run clip, and the speeds between are blends of two', () => {
+    expect(clipWeights(0, false)).toEqual({ idle: 1, walk: 0, run: 0, cidle: 0, cwalk: 0 })
+    expect(clipWeights(SPEEDS.walk + 10, false).walk).toBe(1)
+    expect(clipWeights(130, false).walk).toBe(1)
+    expect(clipWeights(250, false).run).toBe(1)
+    const slow = clipWeights((SPEEDS.still + SPEEDS.walk) / 2, false)
+    expect(slow.idle).toBeCloseTo(0.5, 5); expect(slow.walk).toBeCloseTo(0.5, 5)
+    const quick = clipWeights((SPEEDS.run + SPEEDS.runFull) / 2, false)
+    expect(quick.walk).toBeCloseTo(0.5, 5); expect(quick.run).toBeCloseTo(0.5, 5)
+  })
+  test('a crouching player has the crouch clips', () => {
+    expect(clipWeights(0, true)).toEqual({ idle: 0, walk: 0, run: 0, cidle: 1, cwalk: 0 })
+    expect(clipWeights(120, true)).toEqual({ idle: 0, walk: 0, run: 0, cidle: 0, cwalk: 1 })
+  })
+  test('the weights always add up to one', () => {
+    for (let v = 0; v <= 400; v += 7) for (const c of [false, true]) expect(sum(clipWeights(v, c))).toBeCloseTo(1, 9)
+  })
+})
+
+describe('which way the body faces', () => {
+  test('an angle is turned the short way round', () => {
+    expect(lerpAngle(0.1, 0.3, 0.5)).toBeCloseTo(0.2, 9)
+    expect(lerpAngle(3, -3, 0.5)).toBeCloseTo(3 + 0.5 * (2 * Math.PI - 6), 9) // across the back, not through zero
+    expect(lerpAngle(1, 1, 0.7)).toBeCloseTo(1, 9)
+  })
+  test('the body follows the player\'s look when still and the direction of the walk when going', () => {
+    expect(facing(1, 2, 0)).toBeCloseTo(1, 9)
+    expect(facing(1, 2, 100)).toBeCloseTo(2, 9)
+    const half = facing(1, 2, 45)
+    expect(half).toBeGreaterThan(1); expect(half).toBeLessThan(2)
   })
 })

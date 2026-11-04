@@ -2,16 +2,17 @@
 import {
   WebGLRenderer, OrthographicCamera, Box3, Vector3, Color, Group, Mesh, MeshStandardMaterial, MeshBasicMaterial,
   SphereGeometry, CylinderGeometry, RingGeometry, DoubleSide, ConeGeometry, BoxGeometry, InstancedMesh, Matrix4, Object3D, Plane, Sprite,
-  SpriteMaterial, CanvasTexture, BufferGeometry, Float32BufferAttribute, Line, LineSegments, LineBasicMaterial, Raycaster,
+  SpriteMaterial, CanvasTexture, BufferGeometry, Float32BufferAttribute, Line, LineSegments, LineBasicMaterial, Raycaster, AnimationMixer, type AnimationAction, type AnimationClip,
   type Camera, type MeshStandardMaterial as StdMat,
 } from 'three'
 import { hex } from './teamColours'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { clone as cloneRig } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { startFlat } from './replayflat'
 import { applyColouring, offerBrowser, heightColours, levelColour, makeCamera, makeRenderer, makeScene, prepareMovable, prepareProps, prepareWater, savedColouring, boxWithout, type Painted } from './sceneKit'
 import {
-  decodeTrack, poseAt, lastPoseAt, trailBetween, levelOf, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose, fitLabel,
+  decodeTrack, poseAt, lastPoseAt, clipWeights, distanceAt, facing, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, trailBetween, levelOf, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose, fitLabel,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
 } from './replaylogic'
 
@@ -402,19 +403,28 @@ async function start(root: HTMLElement) {
     finish(box)
   }
 
-  // ---- the players' model (RFC 22): the game's own, posed, drawn in the team's colour; the box figure below is the fallback
+  // ---- the players' model (RFC 22): the game's own, in the team's colour. Moving when the backend sends clips (a skeleton that is
+  // posed from how the player moves), still when it sends a pose; the box figure below is the fallback.
   let real: { geometry: BufferGeometry, height: number, back: number, thick: number } | null = null
+  let moving: { scene: Object3D, clips: Map<string, AnimationClip>, strides: Map<string, number> } | null = null
   if (payload.playerModel) {
     try {
       const buf = await fetch(payload.playerModel, { credentials: 'same-origin' }).then(r => { if (!r.ok) throw new Error(String(r.status)); return r.arrayBuffer() })
-      const model = await new Promise<Object3D>((ok, fail) => new GLTFLoader().parse(buf, '', g => ok(g.scene), fail))
+      const gltf = await new Promise<{ scene: Object3D, animations: AnimationClip[], parser: { json: any } }>((ok, fail) => new GLTFLoader().parse(buf, '', g => ok(g as any), fail))
       let geometry: BufferGeometry | null = null
-      model.traverse(o => { if (!geometry && (o as Mesh).isMesh) geometry = (o as Mesh).geometry })
+      gltf.scene.traverse(o => { if (!geometry && (o as Mesh).isMesh) geometry = (o as Mesh).geometry })
       if (geometry) {
-        // the vertices are in Source's coordinates, facing +x with the feet on the floor, as the world group below wants them
+        // the vertices are in Source's coordinates, facing +x, as the world group below wants them
         const g: BufferGeometry = geometry
         g.computeBoundingBox()
-        real = { geometry: g, height: g.boundingBox!.max.z, back: -g.boundingBox!.min.x, thick: g.boundingBox!.max.x - g.boundingBox!.min.x }
+        const height = Number(gltf.parser.json?.extras?.height) || g.boundingBox!.max.z
+        real = { geometry: g, height, back: -g.boundingBox!.min.x, thick: g.boundingBox!.max.x - g.boundingBox!.min.x }
+        const names = ['idle', 'walk', 'run', 'cidle', 'cwalk']
+        const clips = new Map(gltf.animations.filter(c => names.includes(c.name)).map(c => [c.name, c] as const))
+        if (clips.size === names.length) {
+          const strides = new Map<string, number>((gltf.parser.json?.animations ?? []).map((a: any) => [a.name, Number(a.extras?.stride) || 0] as const))
+          moving = { scene: gltf.scene, clips, strides }
+        }
       }
     } catch { /* the boxes it is */ }
   }
@@ -437,6 +447,20 @@ async function start(root: HTMLElement) {
 
   /** A person standing at the origin facing +x, in the team's colour; `dim` for a body that lies where its player died. */
   const figure = (colour: number, dim: boolean) => {
+    if (moving) {
+      const g = new Group()
+      const cloth = new MeshStandardMaterial({ color: dim ? new Color(colour).multiplyScalar(0.45).getHex() : colour, metalness: 0, roughness: 0.8, side: DoubleSide })
+      const body = cloneRig(moving.scene) as Object3D // the skeleton and its skin, copied, so each player has their own
+      body.getObjectByName('z-up')?.quaternion.set(0, 0, 0, 1) // this world is Source's already (Z up)
+      body.traverse(o => { if ((o as Mesh).isMesh) { (o as Mesh).material = cloth; o.frustumCulled = false } })
+      g.add(body)
+      const mixer = new AnimationMixer(body)
+      const actions = new Map<string, AnimationAction>()
+      for (const [name, clip] of moving.clips) { const a = mixer.clipAction(clip); a.play(); a.setEffectiveWeight(0); actions.set(name, a) }
+      g.userData.cloth = cloth // so a change of team can repaint it
+      g.userData.rig = { mixer, actions }
+      return g
+    }
     if (real) {
       const g = new Group()
       const cloth = new MeshStandardMaterial({ color: dim ? new Color(colour).multiplyScalar(0.45).getHex() : colour, metalness: 0, roughness: 0.8, side: DoubleSide })
@@ -495,10 +519,27 @@ async function start(root: HTMLElement) {
     g.fillStyle = hex(colour); g.fillText(fit.text, 128, 32)
   })
 
+  /** Poses a figure's skeleton: how much of each clip (`weights`), and how far into each (the walks by the distance gone, so a foot does not slide; the two idles by the time). */
+  const poseRig = (g: Group, weights: Record<ClipName, number>, distance: number, ms: number) => {
+    const rig = g.userData.rig as { mixer: AnimationMixer, actions: Map<string, AnimationAction> } | undefined
+    if (!rig || !moving) return
+    for (const [name, action] of rig.actions) {
+      const w = weights[name as ClipName] ?? 0
+      action.setEffectiveWeight(w)
+      action.enabled = w > 0
+      if (w <= 0) continue
+      const clip = moving.clips.get(name)!, stride = moving.strides.get(name) ?? 0
+      const cycle = stride > 0 ? (distance / stride) % 1 : ((ms / 1000) / clip.duration) % 1
+      action.time = cycle * clip.duration
+    }
+    rig.mixer.update(0)
+  }
+  const STILL: Record<ClipName, number> = { idle: 1, walk: 0, run: 0, cidle: 0, cwalk: 0 }
+
   interface Look { plain: CanvasTexture, pointer: CanvasTexture, cross: CanvasTexture, label: CanvasTexture }
   interface Marker {
     group: Group, pin: Sprite, label: Sprite, ring: Mesh, trail: Line, corpse: Group, deadPin: Sprite, segs: Segment[]
-    body: Group, lying: Group, colour: number, looks: Map<number, Look>
+    body: Group, lying: Group, arrow: Mesh, path: Path, colour: number, looks: Map<number, Look>
   }
   const markers = new Map<string, Marker>()
   const PIN = 0.03, LABEL_H = 0.036
@@ -536,7 +577,8 @@ async function start(root: HTMLElement) {
     corpse.visible = false
 
     world.add(group, trail, corpse)
-    markers.set(id, { group, pin, label, ring, trail, corpse, deadPin, segs: data.players.get(id) ?? [], body, lying, colour, looks })
+    poseRig(lying, STILL, 0, 0) // a body is the standing pose, lying down
+    markers.set(id, { group, pin, label, ring, trail, corpse, deadPin, segs: data.players.get(id) ?? [], body, lying, arrow, path: pathOf(data.players.get(id) ?? []), colour, looks })
   }
   // The shot: a line of the width of a few pixels (a `Line` is one pixel wide in WebGL, which is too faint to see), as a thin
   // bright beam with a wider faint one around it, drawn over the map so a wall does not hide where the shot came from.
@@ -682,7 +724,15 @@ async function start(root: HTMLElement) {
       ;(m.pin.material as SpriteMaterial).opacity = dim ? 0.35 : 1
       if (p) {
         m.group.position.set(p.x, p.y, p.z)
-        m.group.rotation.z = (p.yaw / 256) * Math.PI * 2
+        const look = (p.yaw / 256) * Math.PI * 2
+        if (moving) {
+          // the body walks where the player goes and looks where they look; its pose is picked by how fast and how they move
+          const v = velocityAt(m.segs, ms)
+          const turn = facing(look, v.heading, v.speed)
+          m.group.rotation.z = turn
+          m.arrow.rotation.z = look - turn // the arrow on the ground still says where the player looks
+          poseRig(m.body, clipWeights(v.speed, (moveAt(m.segs, ms) & MOVE.crouching) !== 0), distanceAt(m.path, ms), ms)
+        } else m.group.rotation.z = look
       }
       // from above the bodies are specks, so the pin itself points the way the player faces
       const pinMat = m.pin.material as SpriteMaterial

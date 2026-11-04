@@ -13,6 +13,9 @@
 --   * the buffers are capped (players, ticks, bytes); a track that reaches a cap is sent truncated
 --   * nothing is sent while the round runs; a failed upload is dropped: no queue, no retry
 --
+-- Besides the position and the view yaw, each sample says how the player moves, as a number of bits `s`: 1 crouching, 2 in the air,
+-- 4 in water (the replay animates a player from it). A player the game cannot ask (a call that is not there) counts as 0.
+--
 -- Encoding (as recorded and as sent): one shared list `t` of tick times in whole milliseconds since
 -- the round began, stored as differences; per player and segment `x`, `y`, `z` in units / 8 and the
 -- view yaw `a` as 0-255, each the first absolute value and then differences to the previous sample.
@@ -34,7 +37,7 @@ local MAX_DEATHS = 512
 local MAX_EVENTS = 1024         -- revivals and role changes (RFC 14, 4.3)
 local MAX_BYTES = 8 * 1024 * 1024
 local SAFE_BYTES = 7 * 1024 * 1024 -- the size estimate at which recording stops, a margin below the cap
-local BYTES_PER_SAMPLE = 16
+local BYTES_PER_SAMPLE = 18
 local RING = 10                  -- ticks the average cost is taken over
 local STEP_MAX = 60000           -- the longest step between two ticks the backend accepts, ms
 
@@ -66,6 +69,18 @@ local function Pos(ply, at)
     return Floor(p.x / 8), Floor(p.y / 8), Floor(p.z / 8), math.floor((a.y % 360) / 360 * 256) % 256
 end
 
+-- How the player moves, as bits (see the top of this file). Each question is asked on its own, so one that does not exist costs only its bit.
+local function State(ply)
+    local s = 0
+    local ok, v = pcall(ply.Crouching, ply)
+    if ok and v then s = s + 1 end
+    ok, v = pcall(ply.IsOnGround, ply)
+    if ok and v == false then s = s + 2 end
+    ok, v = pcall(ply.WaterLevel, ply)
+    if ok and type(v) == "number" and v >= 2 then s = s + 4 end
+    return s
+end
+
 local function RemoveTimer()
     if timer.Exists and timer.Exists(TIMER) then timer.Remove(TIMER) end
 end
@@ -87,16 +102,17 @@ local function AddTick(r, now)
     return #r.t
 end
 
-local function Push(r, p, idx, x, y, z, a)
+local function Push(r, p, idx, x, y, z, a, st)
     local c = p.cur
     if not c then
         if #p.segs >= MAX_SEGMENTS then return end
-        c = { from = idx - 1, x = {}, y = {}, z = {}, a = {}, lx = 0, ly = 0, lz = 0, la = 0 }
+        c = { from = idx - 1, x = {}, y = {}, z = {}, a = {}, s = {}, lx = 0, ly = 0, lz = 0, la = 0 }
         p.cur = c
         p.segs[#p.segs + 1] = c
     end
     local n = #c.x + 1
     c.x[n], c.y[n], c.z[n], c.a[n] = x - c.lx, y - c.ly, z - c.lz, a - c.la
+    c.s[n] = st or 0
     c.lx, c.ly, c.lz, c.la = x, y, z, a
     r.samples = r.samples + 1
 end
@@ -128,7 +144,8 @@ local function SampleAll(r, now, also)
                 p.awaiting, p.sawDead = false, false
                 AddEvent(r, now, { p = sid, k = "revive" })
             end
-            Push(r, p, idx, Pos(ply, sid == also and r.deathAt or nil))
+            local x, y, z, a = Pos(ply, sid == also and r.deathAt or nil)
+            Push(r, p, idx, x, y, z, a, State(ply))
         else
             p.cur = nil -- not alive now: the segment ends here (a revived player starts a new one)
             if p.awaiting then p.sawDead = true end
@@ -329,7 +346,7 @@ function Track.Finish(roundId)
         local p = r.players[sid]
         if #p.segs > 0 then
             local segs = {}
-            for i, c in ipairs(p.segs) do segs[i] = { from = c.from, x = c.x, y = c.y, z = c.z, a = c.a } end
+            for i, c in ipairs(p.segs) do segs[i] = { from = c.from, x = c.x, y = c.y, z = c.z, a = c.a, s = c.s } end
             players[#players + 1] = { id = sid, segments = segs }
         end
     end

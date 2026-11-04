@@ -467,13 +467,14 @@ app.get('/servers/:serverId/maps/:map/mesh.glb', gated('mesh'), async (c) => {
 })
 
 /**
- * The player model of the replay (RFC 22): one neutral stock model, posed, as a GLB. For signed-in users like the map's
+ * The player model of the replay (RFC 22): one neutral stock model as a GLB, with its walking, running and crouching clips (or, with ?pose=, still). For signed-in users like the map's
  * mesh. 404 when the game's files are not switched on or the model could not be built; the replay then draws its box figure.
  */
 app.get('/servers/:serverId/playermodel.glb', gated('mesh'), async (c) => {
   if (!Store.getServerById(c.req.param('serverId'))) return c.text('Not found', 404)
-  const pose = c.req.query('pose') ?? 'stand'
-  if (!isPose(pose)) return c.text('Not found', 404)
+  // Moving by default; `?pose=stand|crouch` is the still model of one pose
+  const pose = c.req.query('pose') ?? 'moving'
+  if (pose !== 'moving' && !isPose(pose)) return c.text('Not found', 404)
   const glb = await playerModel(pose)
   if (!glb) return c.text('Not found', 404)
   return c.body(glb as Uint8Array<ArrayBuffer>, 200, {

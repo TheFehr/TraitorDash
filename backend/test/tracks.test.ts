@@ -34,6 +34,22 @@ describe('validateTrack', () => {
     }
   })
 
+  test('how the player moves (s: crouching 1, in the air 2, in water 4) is kept when it is there, and a track without it is fine', () => {
+    const withS = good(); (withS.players[0]!.segments[0] as any).s = [0, 1, 1, 5]
+    const r = validateTrack(withS, round)
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.track.players[0]!.segments[0]!.s).toEqual([0, 1, 1, 5])
+    const without = validateTrack(good(), round)
+    expect(without.ok && 's' in without.track.players[0]!.segments[0]!).toBe(false)
+  })
+
+  test('s must be whole numbers from 0 to 7, one for each position', () => {
+    for (const bad of [[0, 1, 1], [0, 1, 1, 8], [0, 1, 1, -1], [0, 1, 1, 1.5], 'x', null]) {
+      const body = good(); (body.players[0]!.segments[0] as any).s = bad
+      refused(body, /s must be/)
+    }
+  })
+
   test('a track without a fingerprint, flags or deaths is fine', () => {
     const { fingerprint, truncated, degraded, deaths, ...rest } = good()
     const r = validateTrack(rest, round)

@@ -4,7 +4,7 @@
 // tests import it.
 
 /** What the backend stores: tick times as differences, per player segments with first-value-then-differences. */
-export interface RawSegment { from: number, x: number[], y: number[], z: number[], a: number[] }
+export interface RawSegment { from: number, x: number[], y: number[], z: number[], a: number[], /** How the player moves, for each sample, as bits: 1 crouching, 2 in the air, 4 in water; absent in older tracks. */ s?: number[] }
 export interface RawTrack {
   t: number[]
   players: { id: string, segments: RawSegment[] }[]
@@ -15,7 +15,7 @@ export interface RawTrack {
 export interface TrackEvent { t: number, p: string, k: 'revive' | 'role', role?: string, team?: string, by?: string, how?: string, why?: string }
 
 /** One run of consecutive samples of one player, in Source units and degrees-in-256ths, at real times. */
-export interface Segment { t: number[], x: number[], y: number[], z: number[], a: number[] }
+export interface Segment { t: number[], x: number[], y: number[], z: number[], a: number[], /** As `RawSegment.s`; zeros for a track without it. */ s: number[] }
 export interface Decoded {
   /** Times in ms since the round began, for every tick. */
   times: number[]
@@ -72,6 +72,7 @@ export function decodeTrack(raw: RawTrack): Decoded {
         t: times.slice(s.from, s.from + n),
         x: cumulative(s.x).map(v => v * UNITS), y: cumulative(s.y).map(v => v * UNITS), z: cumulative(s.z).map(v => v * UNITS),
         a: cumulative(s.a),
+        s: s.s ?? s.x.map(() => 0),
       })
     }
     players.set(p.id, segs)
@@ -266,4 +267,94 @@ export function fitLabel(text: string, width: (s: string, px: number) => number,
   let cut = text
   while (cut.length > 1 && width(cut + '…', minPx) > maxW) cut = cut.slice(0, -1)
   return { text: cut + '…', px: minPx }
+}
+
+// ---- how a player moves (RFC 22, stage 3): which clip of the model is shown, and how far into it
+
+/** The bits of `Segment.s`. */
+export const MOVE = { crouching: 1, airborne: 2, swimming: 4 }
+
+/** The bits of how the player moves at `ms`: those of the sample at or before it in the segment that holds it; 0 where there is none. */
+export function moveAt(segments: Segment[], ms: number): number {
+  let best = 0
+  for (const s of segments) {
+    if (s.t[0]! > ms) break
+    if (ms > s.t[s.t.length - 1]!) continue
+    let a = 0, b = s.t.length - 1
+    while (a < b) { const m = (a + b + 1) >> 1; if (s.t[m]! <= ms) a = m; else b = m - 1 }
+    best = s.s[a] ?? 0
+  }
+  return best
+}
+
+/**
+ * How fast a player goes at `ms` in units a second across the ground, and in which direction (radians, Source's: 0 along +x,
+ * counter-clockwise), from where they were a moment before and after (`window` ms each way, shortened at the ends of a segment).
+ */
+export function velocityAt(segments: Segment[], ms: number, window = 150): { speed: number, heading: number } {
+  const before = poseAt(segments, ms - window) ?? poseAt(segments, ms)
+  const after = poseAt(segments, ms + window) ?? poseAt(segments, ms)
+  if (!before || !after) return { speed: 0, heading: 0 }
+  // the time actually spanned: a pose is null outside the segment, so the end that is missing is `ms` itself
+  const t0 = poseAt(segments, ms - window) ? ms - window : ms, t1 = poseAt(segments, ms + window) ? ms + window : ms
+  const dt = (t1 - t0) / 1000
+  if (dt <= 0) return { speed: 0, heading: 0 }
+  const dx = after.x - before.x, dy = after.y - before.y
+  return { speed: Math.hypot(dx, dy) / dt, heading: Math.atan2(dy, dx) }
+}
+
+/** How far along the ground a player has gone by each sample, summed over all their segments (a gap adds nothing). */
+export interface Path { t: number[], d: number[] }
+export function pathOf(segments: Segment[]): Path {
+  const t: number[] = [], d: number[] = []
+  let at = 0
+  for (const s of segments) {
+    for (let i = 0; i < s.t.length; i++) {
+      if (i > 0) at += Math.hypot(s.x[i]! - s.x[i - 1]!, s.y[i]! - s.y[i - 1]!)
+      t.push(s.t[i]!); d.push(at)
+    }
+  }
+  return { t, d }
+}
+/** The distance gone by `ms`, between the samples as a straight line. */
+export function distanceAt(path: Path, ms: number): number {
+  const { t, d } = path
+  if (t.length === 0 || ms <= t[0]!) return 0
+  if (ms >= t[t.length - 1]!) return d[d.length - 1]!
+  let a = 0, b = t.length - 1
+  while (a < b) { const m = (a + b + 1) >> 1; if (t[m]! <= ms) a = m; else b = m - 1 }
+  const span = t[a + 1]! - t[a]!
+  return d[a]! + (d[a + 1]! - d[a]!) * (span > 0 ? (ms - t[a]!) / span : 0)
+}
+
+export type ClipName = 'idle' | 'walk' | 'run' | 'cidle' | 'cwalk'
+/** Where the speeds change over from one clip to the next, in units a second (a real round: walking is 120 to 150, running about 200, sprinting 300). */
+export const SPEEDS = { still: 12, walk: 45, run: 150, runFull: 190, crouchWalk: 40 }
+
+/** How much of each clip to show, summing to 1: a player standing still is idle, walking and running are blended into each other by speed, and a crouching player has the two crouch clips. */
+export function clipWeights(speed: number, crouching: boolean): Record<ClipName, number> {
+  const ramp = (v: number, from: number, to: number) => Math.min(1, Math.max(0, (v - from) / (to - from)))
+  const w: Record<ClipName, number> = { idle: 0, walk: 0, run: 0, cidle: 0, cwalk: 0 }
+  if (crouching) {
+    const moving = ramp(speed, SPEEDS.still, SPEEDS.crouchWalk)
+    w.cwalk = moving; w.cidle = 1 - moving
+    return w
+  }
+  const walking = ramp(speed, SPEEDS.still, SPEEDS.walk), running = ramp(speed, SPEEDS.run, SPEEDS.runFull)
+  w.idle = 1 - walking
+  w.walk = walking * (1 - running)
+  w.run = walking * running
+  return w
+}
+
+/** The angle halfway (`f` of the way) from `a` to `b` the short way round, radians. */
+export const lerpAngle = (a: number, b: number, f: number) => {
+  let d = ((b - a) % (2 * Math.PI) + 3 * Math.PI) % (2 * Math.PI) - Math.PI
+  if (d < -Math.PI) d += 2 * Math.PI
+  return a + d * f
+}
+
+/** Which way the body faces: where it goes when it goes somewhere, else where the player looks, turning over between the two as the speed picks up. */
+export function facing(look: number, heading: number, speed: number): number {
+  return lerpAngle(look, heading, Math.min(1, Math.max(0, (speed - 25) / 40)))
 }

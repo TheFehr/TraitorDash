@@ -1,9 +1,11 @@
 import { modelBase, gameContentEnabled, type GameContentSource } from './gameContent'
 import { geometryEnabled } from './mapgeometry'
 import { readPosedModel, POSES, type Pose } from '../maps/posedmodel'
-import { playerModelGlb } from '../maps/modelGlb'
+import { readAnimatedModel } from '../maps/animatedmodel'
+import { animatedModelGlb, playerModelGlb } from '../maps/modelGlb'
 
-// RFC 22, 4.1: the player model of the replay as a posed glTF file. One neutral stock model for everyone (the operator's
+// RFC 22, 4.1: the player model of the replay as a glTF file: moving (the skeleton, its skin and the clips of walking, running and
+// crouching) or in one pose. One neutral stock model for everyone (the operator's
 // setting `PLAYER_MODEL`, a Counter-Strike: Source terrorist by default), read from the game's own files like the props of a
 // map are, together with the shared animation set its poses come from. Built once for each pose and kept in memory.
 
@@ -26,21 +28,33 @@ const built = new Map<string, Promise<Uint8Array | null>>()
 /** The place the game's files come from (set at start; null in a test that has none). Forgets what was built. */
 export const setPlayerModelContent = (c: GameContentSource | null) => { content = c; built.clear() }
 
-async function build(pose: Pose): Promise<Uint8Array | null> {
+/** The files of the model and of the animation set, or null (with the reason in the log) when the game does not have them. */
+async function files() {
   if (!content) return null
   const name = playerModelName()
   const models = await content.models([name])
-  const files = models.models.get(name)
-  if (!files) { console.warn(`[PlayerModel] ${name}: ${models.error ?? 'the game does not have it'}`); return null }
+  const model = models.models.get(name)
+  if (!model) { console.warn(`[PlayerModel] ${name}: ${models.error ?? 'the game does not have it'}`); return null }
   const anm = await content.animations(ANIMATION_SET)
   if (!anm.files) { console.warn(`[PlayerModel] ${ANIMATION_SET}: ${anm.error ?? 'the game does not have it'}`); return null }
-  const mesh = readPosedModel(files, anm.files, pose)
-  if (!mesh) { console.warn(`[PlayerModel] ${name} could not be posed`); return null }
-  return await playerModelGlb(mesh, `${name} (${pose})`)
+  return { name, model, anm: anm.files }
+}
+
+async function build(pose: Pose | 'moving'): Promise<Uint8Array | null> {
+  const f = await files()
+  if (!f) return null
+  if (pose === 'moving') {
+    const mesh = readAnimatedModel(f.model, f.anm)
+    if (!mesh) { console.warn(`[PlayerModel] ${f.name} could not be animated`); return null }
+    return await animatedModelGlb(mesh, `${f.name} (moving)`)
+  }
+  const mesh = readPosedModel(f.model, f.anm, pose)
+  if (!mesh) { console.warn(`[PlayerModel] ${f.name} could not be posed`); return null }
+  return await playerModelGlb(mesh, `${f.name} (${pose})`)
 }
 
 /** The model in a pose as a GLB, or null when it is not available. A failure is not remembered, so a later request tries again. */
-export async function playerModel(pose: Pose): Promise<Uint8Array | null> {
+export async function playerModel(pose: Pose | 'moving'): Promise<Uint8Array | null> {
   if (!playerModelEnabled()) return null
   const key = `${playerModelName()}|${pose}`
   let p = built.get(key)

@@ -73,7 +73,7 @@ describe('reviveSource and revivePose', () => {
     expect(reviveSource('role:haunter')).toBe('role: haunter')
   })
   test('the pose is the first sample at or after the revival, only when it is close', () => {
-    const seg: Segment = { t: [1000, 5000, 5500], x: [1, 2, 3], y: [0, 0, 0], z: [0, 0, 0], a: [0, 10, 20] }
+    const seg: Segment = { t: [1000, 5000, 5500], x: [1, 2, 3], y: [0, 0, 0], z: [0, 0, 0], a: [0, 10, 20], s: [0, 0, 0] }
     expect(revivePose([seg], 4000)).toMatchObject({ x: 2, yaw: 10 })
     expect(revivePose([seg], 5600)).toBeNull()
     expect(revivePose([seg], 1500)).toBeNull() // next sample is 3.5 s away

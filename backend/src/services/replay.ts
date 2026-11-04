@@ -87,7 +87,7 @@ export function buildReplay(serverId: string, roundId: string, o?: StatsOptions)
     track: stored.track,
     trackInfo: { truncated: stored.meta.truncated, degraded: stored.meta.degraded, fingerprint: stored.meta.fingerprint, pinned: stored.meta.pinned },
     background,
-    ...(playerModelEnabled() ? { playerModel: `/servers/${serverId}/playermodel.glb?pose=stand` } : {}),
+    ...(playerModelEnabled() ? { playerModel: `/servers/${serverId}/playermodel.glb` } : {}),
   }
   // A track is immutable; what can change is what is drawn behind it, and the pin.
   const etag = 'W/"' + createHash('sha1').update(JSON.stringify([

@@ -19,7 +19,8 @@ const POS_STEP_MAX = 2 * POS_MAX
 const TICK_STEP_MAX = 60_000 // a tick is at most a minute after the last
 const TIME_MAX = 6 * 60 * 60 * 1000 // a round of at most six hours, in ms
 
-export interface TrackSegment { from: number, x: number[], y: number[], z: number[], a: number[] }
+/** `s` (absent in tracks from an older game server): for each sample how the player moves, as bits: 1 crouching, 2 in the air, 4 in water. */
+export interface TrackSegment { from: number, x: number[], y: number[], z: number[], a: number[], s?: number[] }
 export interface TrackPlayer { id: string, segments: TrackSegment[] }
 export interface TrackDeath {
   victim: string, attacker: string | null, t: number
@@ -113,7 +114,13 @@ export function validateTrack(body: unknown, round: { roundId: string, map: stri
       if (!y || !z || !a) return no('the arrays of a segment must be whole numbers in range and of the same length')
       if (!rebuilds(x, -POS_MAX, POS_MAX) || !rebuilds(y, -POS_MAX, POS_MAX) || !rebuilds(z, -POS_MAX, POS_MAX)) return no('a position is outside the map')
       if (!rebuilds(a, 0, 255)) return no('a view angle is outside 0-255')
-      segments.push({ from: s.from, x, y, z, a })
+      let moves: number[] | undefined
+      if (s.s !== undefined) {
+        const m = ints(s.s, x.length, x.length, 0, 7)
+        if (!m) return no('s must be whole numbers from 0 to 7, as many as there are positions')
+        moves = m
+      }
+      segments.push(moves ? { from: s.from, x, y, z, a, s: moves } : { from: s.from, x, y, z, a })
       next = s.from + x.length
     }
     players.push({ id: p.id, segments })

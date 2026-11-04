@@ -260,6 +260,24 @@ describe('track.lua: recording', () => {
     expect(r.out.left).toBe(true)
   })
 
+  test('each sample says how the player moves: crouching, in the air, in water; a player the game cannot ask counts as 0', () => {
+    const r = play(`
+      Begin()
+      function B:Crouching() return self.crouch end
+      function B:IsOnGround() return not self.air end
+      function B:WaterLevel() return self.water or 0 end
+      B.crouch = true; Run(1)
+      B.crouch = false; B.air = true; Run(1)
+      B.air = false; B.water = 3; Run(1)
+      B.crouch = true; B.air = true; B.water = 0; Run(1)
+      B.crouch = false; B.air = false; B.water = 1; Run(1) -- up to the ankles is not swimming
+      Fire("TTTEndRound", WIN_TRAITOR); Accept(1)
+    `)
+    const t = trackOf(r)
+    expect(segOf(t, B).s.slice(-5)).toEqual([1, 2, 4, 3, 0])
+    expect(segOf(t, A).s.every((x: number) => x === 0)).toBe(true) // Alice has none of those calls
+  })
+
   test('a death by the world has no attacker position; an unknown victim is ignored', () => {
     const r = play(`
       Begin()

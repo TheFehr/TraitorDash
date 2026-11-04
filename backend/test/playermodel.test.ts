@@ -23,9 +23,12 @@ const model = () => buildRigged({
   vertices: [[0, 0, 0], [5, 0, 10], [0, 5, 20]], tris: [0, 1, 2],
   weights: [[{ bone: 0, weight: 1 }], [{ bone: 1, weight: 1 }], [{ bone: 1, weight: 1 }]],
 })
+const spine = { bone: 1, flags: 0x02, data: quat48(0, 0, Math.SQRT1_2) }
+const loop = (name: string, move?: [number, number, number]) => ({ name, animations: [{ numFrames: 3, ...(move ? { move } : {}), entries: [spine] }] })
 const animations = buildAnimationSet([{ name: 'Bip01_Pelvis', parent: -1 }, { name: 'Bip01_Spine', parent: 0, pos: [0, 0, 10] }], [
-  { name: 'idle_all_01', entries: [{ bone: 1, flags: 0x02, data: quat48(0, 0, Math.SQRT1_2) }] },
+  { name: 'idle_all_01', entries: [spine] },
   { name: 'cidle_all', entries: [{ bone: 1, flags: 0x08, data: eulerPointer([null, null, [1571]]) }] },
+  loop('walk_all', [80, 0, 0]), loop('run_all_01', [126, 0, 0]), loop('cwalk_all', [60, 0, 0]),
 ])
 
 /** A stand-in for the game's files: asked for what it is told to have; counts the questions. */
@@ -58,7 +61,7 @@ const get = async (path: string, as: string | null = USER) =>
 const url = (q = '') => `/servers/${serverId}/playermodel.glb${q}`
 
 describe('the route', () => {
-  test('serves a posed model as a binary glTF to a signed-in visitor, cached privately', async () => {
+  test('serves the moving model (a skin and its clips) as a binary glTF to a signed-in visitor, cached privately', async () => {
     pm.setPlayerModelContent(content().source)
     const r = await get(url())
     expect(r.status).toBe(200)
@@ -67,6 +70,13 @@ describe('the route', () => {
     expect(r.headers.get('x-content-type-options')).toBe('nosniff')
     const bytes = new Uint8Array(await r.arrayBuffer())
     expect(Buffer.from(bytes.subarray(0, 4)).toString()).toBe('glTF')
+    const json = (b: Uint8Array) => JSON.parse(Buffer.from(b.subarray(20, 20 + new DataView(b.buffer, b.byteOffset).getUint32(12, true))).toString())
+    expect(json(bytes).animations.map((a: any) => a.name)).toEqual(['idle', 'walk', 'run', 'cidle', 'cwalk'])
+    expect(json(bytes).skins).toHaveLength(1)
+    // ?pose= is one pose of it, still: no skin and no clips
+    const still = new Uint8Array(await (await get(url('?pose=stand'))).arrayBuffer())
+    expect(json(still).animations).toBeUndefined()
+    expect(json(still).skins).toBeUndefined()
   })
 
   test('an anonymous visitor is asked to sign in, an unknown server, pose or a switched-off setting is a 404', async () => {
@@ -74,7 +84,7 @@ describe('the route', () => {
     expect((await get(url(), null)).status).toBe(401)
     expect((await get('/servers/nope/playermodel.glb')).status).toBe(404)
     expect((await get(url('?pose=flying'))).status).toBe(404)
-    expect((await get(url('?pose=crouch'))).status).toBe(200) // the second pose is there for stage 3
+    expect((await get(url('?pose=crouch'))).status).toBe(200) // one pose of it, still
     process.env.GAME_CONTENT = '0'
     expect((await get(url())).status).toBe(404)
     process.env.GAME_CONTENT = '1'; process.env.MAP_GEOMETRY = '0'
@@ -84,11 +94,14 @@ describe('the route', () => {
   test('is built once for each pose and kept', async () => {
     const c = content()
     pm.setPlayerModelContent(c.source)
-    await get(url()); await get(url()); await get(url('?pose=stand'))
+    await get(url()); await get(url()); await get(url('?pose=moving'))
     expect(c.calls.models).toHaveLength(1)
     expect(c.calls.animations).toEqual(['models/m_anm.mdl'])
-    await get(url('?pose=crouch'))
+    await get(url('?pose=stand'))
+    await get(url('?pose=stand'))
     expect(c.calls.models).toHaveLength(2)
+    await get(url('?pose=crouch'))
+    expect(c.calls.models).toHaveLength(3)
   })
 
   test('a failure is a 404 and is not remembered', async () => {
@@ -138,7 +151,7 @@ describe('the replay payload', () => {
   test('names where the model is when the game\'s files are on, and not otherwise', () => {
     const id = round()
     const on = replay.buildReplay(serverId, id)
-    expect(on.payload.playerModel).toBe(`/servers/${serverId}/playermodel.glb?pose=stand`)
+    expect(on.payload.playerModel).toBe(`/servers/${serverId}/playermodel.glb`)
     process.env.GAME_CONTENT = '0'
     const off = replay.buildReplay(serverId, id)
     expect(off.payload.playerModel).toBeUndefined()
