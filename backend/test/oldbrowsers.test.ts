@@ -17,6 +17,9 @@ describe('class static blocks', () => {
     const b = make(lowerStaticBlocks('class Pe{static{Pe.prototype.isVector2=true}constructor(e){this.x=e}}'))
     expect([a.isVector2, a.x]).toEqual([b.isVector2, b.x])
   })
+  test('a class the minifier named with a dollar sign is found too', () => {
+    expect(lowerStaticBlocks('class $e{static{$e.prototype.isMatrix3=!0}constructor(){}}')).toBe('class $e{static __isMatrix3=($e.prototype.isMatrix3=!0);constructor(){}}')
+  })
   test('written with spaces and a semicolon (an unminified bundle) it is found too', () => {
     expect(lowerStaticBlocks('class A { static { A.prototype.isA = true; } }')).toBe('class A { static __isA=(A.prototype.isA=true); }')
   })

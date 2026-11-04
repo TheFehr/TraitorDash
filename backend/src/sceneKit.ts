@@ -31,6 +31,22 @@ export function makeScene(): Scene {
 /** The perspective camera both views use. */
 export const makeCamera = (): PerspectiveCamera => new PerspectiveCamera(40, 1, 1, 200000)
 
+/** In the game, a button that opens this page in the player's own browser (the Lua part gives the page `traitordash.open`); nothing elsewhere. Placed after `after`. */
+export function offerBrowser(root: HTMLElement, label: string, after: Element | null): HTMLButtonElement | null {
+  const open = (window as any).traitordash?.open
+  if (typeof open !== 'function') return null
+  const url = new URL(location.href)
+  url.searchParams.delete('embed')
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.dataset.openInBrowser = ''
+  button.textContent = label
+  button.addEventListener('click', () => open(url.pathname))
+  after?.after(button)
+  button.style.margin = '0 1.2rem 1.2rem'
+  return button
+}
+
 /**
  * What a page shows when the browser has no WebGL (the game's built-in browser has it switched off, so the 3D map and the
  * replay cannot be drawn in the game's window): the controls that would do nothing go away, and the message says where to
@@ -46,14 +62,7 @@ export function explainNoWebGL(root: HTMLElement, say: (t: string) => void, what
   const open = (window as any).traitordash?.open
   if (typeof open === 'function') {
     say(`This browser cannot draw ${what}: WebGL is not available in the game's window.${hint ? ` ${hint}` : ''}`)
-    const button = document.createElement('button')
-    button.type = 'button'
-    button.dataset.openInBrowser = ''
-    button.textContent = 'Open in your browser'
-    button.addEventListener('click', () => open(url.pathname))
-    const status = root.querySelector('[data-status]')
-    status?.after(button)
-    button.style.margin = '0 1.2rem 1.2rem'
+    offerBrowser(root, 'Open in your browser', root.querySelector('[data-status]'))
     return
   }
   say(`This browser cannot draw ${what}: WebGL is not available in it. Open this page in your normal browser: ${url.host}${url.pathname}${hint ? ` ${hint}` : ''}`)

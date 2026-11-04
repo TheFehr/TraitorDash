@@ -8,7 +8,7 @@
 
 /** `static{A.prototype.isB=!0}` as `static __isB=(A.prototype.isB=!0);`. */
 export function lowerStaticBlocks(js: string): string {
-  return js.replace(/static\s*\{\s*(\w+)\.prototype\.(\w+)\s*=\s*(!0|true)\s*;?\s*\}/g, 'static __$2=($1.prototype.$2=$3);')
+  return js.replace(/static\s*\{\s*([\w$]+)\.prototype\.([\w$]+)\s*=\s*(!0|true)\s*;?\s*\}/g, 'static __$2=($1.prototype.$2=$3);')
 }
 
 /** What is left in a bundle that Chrome 86 cannot parse, as a list of problems; empty when none. */

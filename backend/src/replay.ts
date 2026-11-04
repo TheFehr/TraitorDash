@@ -8,7 +8,8 @@ import {
 import { hex } from './teamColours'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { applyColouring, explainNoWebGL, heightColours, levelColour, makeCamera, makeRenderer, makeScene, prepareMovable, prepareProps, prepareWater, savedColouring, boxWithout, type Painted } from './sceneKit'
+import { startFlat } from './replayflat'
+import { applyColouring, offerBrowser, heightColours, levelColour, makeCamera, makeRenderer, makeScene, prepareMovable, prepareProps, prepareWater, savedColouring, boxWithout, type Painted } from './sceneKit'
 import {
   decodeTrack, poseAt, lastPoseAt, trailBetween, levelOf, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose, fitLabel,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
@@ -77,6 +78,8 @@ async function start(root: HTMLElement) {
   let camMode: 'orbit' | 'top' | 'follow' = 'orbit'
   let followLevel = true
   let upTo: number | 'all' = 'all'
+  // What the drawing behind the page does when something changes: the WebGL scene or the flat canvas sets these.
+  const hooks = { paint: () => {}, level: () => {}, walls: (_on: boolean) => {}, resize: () => {} }
 
   // ---- the page's own parts that do not need WebGL: the round's deaths, the player list, the notes
   const notes = el(root, '[data-notes]')
@@ -190,12 +193,102 @@ async function start(root: HTMLElement) {
   }
   const timeEl = el(root, '[data-time]')!
 
+  // ---- the controls that both drawings share; each drawing says what they do
+  const markLevels = () => root.querySelectorAll<HTMLElement>('[data-level]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.level === String(upTo))))
+  const levelBar = el(root, '[data-levels]')
+  if (levelBar && levels.length > 0 && payload.background.kind !== 'none') {
+    for (const l of levels) {
+      const b = text(String(l.index), 'button', 'tog') as HTMLButtonElement
+      b.type = 'button'; b.dataset.level = String(l.index)
+      b.addEventListener('click', () => { upTo = l.index; followLevel = false; syncFollowBox(); hooks.level() })
+      levelBar.append(b)
+    }
+    const all = text('All', 'button', 'tog') as HTMLButtonElement
+    all.type = 'button'; all.dataset.level = 'all'
+    all.addEventListener('click', () => { upTo = 'all'; followLevel = false; syncFollowBox(); hooks.level() })
+    levelBar.append(all)
+  } else levelBar?.closest('[data-levels-wrap]')?.setAttribute('hidden', '')
+  const followBox = el<HTMLInputElement>(root, '[data-follow-level]')
+  const syncFollowBox = () => { if (followBox) followBox.checked = followLevel }
+  followBox?.addEventListener('change', () => { followLevel = followBox.checked; changed() })
+  el<HTMLInputElement>(root, '[data-walls]')?.addEventListener('change', e => hooks.walls((e.target as HTMLInputElement).checked))
+
+  // ---- controls
+  const playBtn = el<HTMLButtonElement>(root, '[data-play]')!
+  const setPlaying = (p: boolean) => {
+    playing = p && data.length > 0
+    playBtn.textContent = playing ? 'Pause' : (ms >= data.length ? 'Replay' : 'Play')
+    playBtn.setAttribute('aria-pressed', String(playing))
+    if (playing) { last = performance.now(); requestAnimationFrame(loop) }
+  }
+  const loop = (now: number) => {
+    if (!playing) return
+    ms = Math.min(data.length, ms + (now - last) * speed)
+    last = now
+    hooks.paint()
+    if (ms >= data.length) { setPlaying(false); return }
+    requestAnimationFrame(loop)
+  }
+  playBtn.addEventListener('click', () => { if (!playing && ms >= data.length) ms = 0; setPlaying(!playing) })
+  scrub.addEventListener('input', () => { ms = Number(scrub.value); setPlaying(playing); changed() })
+  root.querySelectorAll<HTMLElement>('[data-speed]').forEach(b => b.addEventListener('click', () => {
+    speed = SPEEDS.includes(Number(b.dataset.speed)) ? Number(b.dataset.speed) : 1
+    root.querySelectorAll<HTMLElement>('[data-speed]').forEach(x => x.setAttribute('aria-pressed', String(x === b)))
+  }))
+  // Theater: the replay fills the window (the page around it is 56 rem wide). T toggles, Esc leaves.
+  const theaterBtn = el(root, '[data-theater]')
+  const setTheater = (on: boolean) => {
+    root.classList.toggle('theater', on)
+    document.documentElement.classList.toggle('theater', on)
+    theaterBtn?.setAttribute('aria-pressed', String(on))
+    if (on) window.scrollTo(0, 0)
+    hooks.resize()
+  }
+  theaterBtn?.addEventListener('click', () => setTheater(!root.classList.contains('theater')))
+  document.addEventListener('keydown', e => {
+    const t = e.target as HTMLElement | null
+    if (e.ctrlKey || e.metaKey || e.altKey || (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) && (t as HTMLInputElement).type !== 'range')) return
+    if (e.key === 'Escape' && root.classList.contains('theater')) setTheater(false)
+    else if (e.key === 't' || e.key === 'T') setTheater(!root.classList.contains('theater'))
+  })
+  root.querySelectorAll<HTMLElement>('[data-speed]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.speed === '1')))
+
   // ---- WebGL: a browser without it gets the lists above and this message
   let renderer: WebGLRenderer
   try {
     renderer = makeRenderer(canvas)
   } catch {
-    explainNoWebGL(root, say, 'the replay', 'The lists beside it still work.')
+    // No WebGL (the game's window): the replay is drawn from above on a plain canvas instead (RFC 19).
+    await startFlat({
+      root, canvas, say, background: payload.background, data, ids, levels, revivals, nick,
+      colourOf: (id, at) => colourOf(id, at), ms: () => ms, selected: () => selected, upTo: () => upTo, followLevel: () => followLevel,
+      setUpTo: n => { upTo = n; markLevels() }, markLevels,
+      lists: () => {
+        for (const id of ids) {
+          const st = stateOf(id, ms), chip = chips.get(id), row = rows.get(id)
+          if (chip) { chip.dot.style.background = hex(colourOf(id, ms)); chip.role.textContent = st.role ? (st.was.length ? `${st.role} (was ${st.was[0]})` : st.role) : '' }
+          row?.classList.toggle('sel', id === selected)
+          row?.classList.toggle('dead', !!currentDeath(data.deaths, data.events, id, ms))
+        }
+        listEvents()
+        const panel = el(root, '[data-selected-role]')
+        if (panel) {
+          const st = selected ? stateOf(selected, ms) : null
+          panel.textContent = selected && st ? `${nick(selected)}: ${st.role ?? 'role unknown'}${st.was.length ? ' (was ' + st.was.join(', ') + ')' : ''}${st.team ? ', ' + st.team : ''}` : ''
+        }
+        scrub.value = String(ms)
+        timeEl.textContent = `${clock(ms)} / ${clock(data.length)}`
+      },
+      hooks,
+    })
+    const bgNote = el(root, '[data-background]')
+    offerBrowser(root, 'Open in your browser for the 3D view', bgNote)
+    if (bgNote) bgNote.textContent += ' A view from above: the 3D view needs WebGL, which the game\'s window does not have.'
+    setPlaying(false)
+    root.dataset.ready = '1'
+    root.dataset.flat = '1'
+    ;(root as any).__replay = { seek, get ms() { return ms }, select: (id: string) => { selected = id; changed() }, setPlaying }
+    changed()
     return
   }
   const scene = makeScene()
@@ -483,29 +576,8 @@ async function start(root: HTMLElement) {
     const top = typeof upTo === 'number' ? levels.find(l => l.index === upTo) : undefined
     for (const l of levelNodes) l.node.visible = upTo === 'all' || l.index <= upTo
     cut.constant = upTo === 'all' || !top ? 1e9 : top.hi + CUT_ABOVE
-    root.querySelectorAll<HTMLElement>('[data-level]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.level === String(upTo))))
+    markLevels()
   }
-  const levelBar = el(root, '[data-levels]')
-  if (levelBar && levels.length > 0 && bg.kind !== 'none') {
-    for (const l of levels) {
-      const b = text(String(l.index), 'button', 'tog') as HTMLButtonElement
-      b.type = 'button'; b.dataset.level = String(l.index)
-      b.addEventListener('click', () => { upTo = l.index; followLevel = false; syncFollowBox(); showLevels(); render() })
-      levelBar.append(b)
-    }
-    const all = text('All', 'button', 'tog') as HTMLButtonElement
-    all.type = 'button'; all.dataset.level = 'all'
-    all.addEventListener('click', () => { upTo = 'all'; followLevel = false; syncFollowBox(); showLevels(); render() })
-    levelBar.append(all)
-  } else levelBar?.closest('[data-levels-wrap]')?.setAttribute('hidden', '')
-  const followBox = el<HTMLInputElement>(root, '[data-follow-level]')
-  const syncFollowBox = () => { if (followBox) followBox.checked = followLevel }
-  followBox?.addEventListener('change', () => { followLevel = followBox.checked; changed() })
-  el<HTMLInputElement>(root, '[data-walls]')?.addEventListener('change', e => {
-    for (const m of wallMeshes) m.visible = (e.target as HTMLInputElement).checked
-    render()
-  })
-
   // ---- what is shown at time `ms`
   const tmp = new Vector3()
   // Pins and names are the same size on the screen. A perspective camera does that by itself
@@ -608,30 +680,12 @@ async function start(root: HTMLElement) {
     timeEl.textContent = `${clock(ms)} / ${clock(data.length)}`
     render()
   }
-  function changed() { apply() }
+  function changed() { hooks.paint() }
+  hooks.paint = apply
+  hooks.level = () => { showLevels(); render() }
+  hooks.walls = on => { for (const m of wallMeshes) m.visible = on; render() }
+  hooks.resize = resize
 
-  // ---- controls
-  const playBtn = el<HTMLButtonElement>(root, '[data-play]')!
-  const setPlaying = (p: boolean) => {
-    playing = p && data.length > 0
-    playBtn.textContent = playing ? 'Pause' : (ms >= data.length ? 'Replay' : 'Play')
-    playBtn.setAttribute('aria-pressed', String(playing))
-    if (playing) { last = performance.now(); requestAnimationFrame(loop) }
-  }
-  const loop = (now: number) => {
-    if (!playing) return
-    ms = Math.min(data.length, ms + (now - last) * speed)
-    last = now
-    apply()
-    if (ms >= data.length) { setPlaying(false); return }
-    requestAnimationFrame(loop)
-  }
-  playBtn.addEventListener('click', () => { if (!playing && ms >= data.length) ms = 0; setPlaying(!playing) })
-  scrub.addEventListener('input', () => { ms = Number(scrub.value); setPlaying(playing); changed() })
-  root.querySelectorAll<HTMLElement>('[data-speed]').forEach(b => b.addEventListener('click', () => {
-    speed = SPEEDS.includes(Number(b.dataset.speed)) ? Number(b.dataset.speed) : 1
-    root.querySelectorAll<HTMLElement>('[data-speed]').forEach(x => x.setAttribute('aria-pressed', String(x === b)))
-  }))
   const setCam = (mode: 'orbit' | 'top' | 'follow') => {
     if (camMode === 'orbit' && mode !== 'orbit') saved = { pos: persp.position.clone(), target: orbit.target.clone() }
     if (mode === 'orbit' && saved) { persp.position.copy(saved.pos); orbit.target.copy(saved.target) }
@@ -644,22 +698,6 @@ async function start(root: HTMLElement) {
     changed()
   }
   root.querySelectorAll<HTMLElement>('[data-cam]').forEach(b => b.addEventListener('click', () => setCam((b.dataset.cam as any) ?? 'orbit')))
-  // Theater: the replay fills the window (the page around it is 56 rem wide). T toggles, Esc leaves.
-  const theaterBtn = el(root, '[data-theater]')
-  const setTheater = (on: boolean) => {
-    root.classList.toggle('theater', on)
-    document.documentElement.classList.toggle('theater', on)
-    theaterBtn?.setAttribute('aria-pressed', String(on))
-    if (on) window.scrollTo(0, 0)
-    resize()
-  }
-  theaterBtn?.addEventListener('click', () => setTheater(!root.classList.contains('theater')))
-  document.addEventListener('keydown', e => {
-    const t = e.target as HTMLElement | null
-    if (e.ctrlKey || e.metaKey || e.altKey || (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) && (t as HTMLInputElement).type !== 'range')) return
-    if (e.key === 'Escape' && root.classList.contains('theater')) setTheater(false)
-    else if (e.key === 't' || e.key === 'T') setTheater(!root.classList.contains('theater'))
-  })
   root.querySelectorAll<HTMLElement>('[data-speed]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.speed === '1')))
   frame()
   setCam(selected ? 'follow' : 'orbit') // opens on the selected player, as RFC 12 says
