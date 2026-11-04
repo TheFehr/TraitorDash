@@ -111,6 +111,17 @@ export function lastPoseAt(segments: Segment[], ms: number): Pose | null {
   return best
 }
 
+/**
+ * Where a death is. The game reports the victim's position after they have become a spectator, whose view sits at the height
+ * of their eyes (seen on a real round: the bodies hung in the air), so the height is the one of the victim's last sample (their
+ * feet) when that is within `NEAR` units of the reported one, else the reported one. The place across is as reported.
+ */
+export const DEATH_NEAR = 100
+export function deathPosition(segments: Segment[], d: { t: number, at: [number, number, number] }): [number, number, number] {
+  const last = lastPoseAt(segments, d.t)
+  return last && Math.abs(last.z - d.at[2]) <= DEATH_NEAR ? [d.at[0], d.at[1], last.z] : d.at
+}
+
 /** The path a player took during [from, to] ms, as flat x,y,z triples (the samples inside, and the interpolated ends). */
 export function trailBetween(segments: Segment[], from: number, to: number): number[] {
   const out: number[] = []

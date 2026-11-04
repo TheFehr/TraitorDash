@@ -1,5 +1,5 @@
 import { expect, test, describe } from 'bun:test'
-import { decodeTrack, poseAt, lastPoseAt, trailBetween, lerpYaw, levelOf, chooseBackground, versionMismatch, defaultSelection, teamColour, playerColour, roleColour, clock, type RawTrack } from '../src/replaylogic'
+import { decodeTrack, deathPosition, poseAt, lastPoseAt, trailBetween, lerpYaw, levelOf, chooseBackground, versionMismatch, defaultSelection, teamColour, playerColour, roleColour, clock, type RawTrack } from '../src/replaylogic'
 
 // RFC 12, 3.5: the logic of the replay that is not drawing.
 
@@ -193,5 +193,24 @@ describe('fitLabel', () => {
   test('nothing and one character are handled', () => {
     expect(fitLabel('', width)).toEqual({ text: '', px: 30 })
     expect(fitLabel('W', () => 999)).toEqual({ text: 'W…', px: 18 })
+  })
+})
+
+describe('deathPosition', () => {
+  // A stands at (80, 0) with its feet at height 16 (the track holds units / 8) until 1 000 ms.
+  const segs = decodeTrack({ t: [0, 500, 500], players: [{ id: 'A', segments: [{ from: 0, x: [10, 0, 0], y: [0, 0, 0], z: [2, 0, 0], a: [0, 0, 0] }] }], deaths: [] } as any).players.get('A')!
+
+  test('the height is that of the victim\'s feet, not the height of the eyes the game reports for a dead player', () => {
+    expect(deathPosition(segs, { t: 1000, at: [80, 0, 16 + 64] })).toEqual([80, 0, 16])
+  })
+  test('the place across is the one reported', () => {
+    expect(deathPosition(segs, { t: 1000, at: [90, 5, 16 + 64] })).toEqual([90, 5, 16])
+  })
+  test('a death far above or below the last sample (a fall, a different level) is where it was reported', () => {
+    expect(deathPosition(segs, { t: 1000, at: [80, 0, 16 + 300] })).toEqual([80, 0, 316])
+  })
+  test('a victim with no sample before the death is where it was reported', () => {
+    expect(deathPosition([], { t: 1000, at: [1, 2, 3] })).toEqual([1, 2, 3])
+    expect(deathPosition(segs, { t: -5, at: [1, 2, 3] })).toEqual([1, 2, 3])
   })
 })

@@ -11,7 +11,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { startFlat } from './replayflat'
 import { applyColouring, offerBrowser, heightColours, levelColour, makeCamera, makeRenderer, makeScene, prepareMovable, prepareProps, prepareWater, savedColouring, boxWithout, type Painted } from './sceneKit'
 import {
-  decodeTrack, poseAt, lastPoseAt, trailBetween, levelOf, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose, fitLabel,
+  decodeTrack, deathPosition, poseAt, lastPoseAt, trailBetween, levelOf, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose, fitLabel,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
 } from './replaylogic'
 
@@ -143,6 +143,8 @@ async function start(root: HTMLElement) {
     }
     if (mine.length === 0) eventsEl.append(text(data.events.length === 0 && !payload.track.events ? 'No role changes or revivals recorded for this track.' : 'No role changes or revivals.', 'li', 'dim'))
   }
+
+  const deathAt = (d: { victim: string, t: number, at: [number, number, number] }) => deathPosition(data.players.get(d.victim) ?? [], d)
 
   const deathsEl = el(root, '[data-deaths]')
   const seek = (t: number) => { ms = Math.max(0, Math.min(data.length, t)); changed() }
@@ -402,7 +404,7 @@ async function start(root: HTMLElement) {
   }
 
   // ---- the players' model (RFC 22): the game's own, posed, drawn in the team's colour; the box figure below is the fallback
-  let real: { geometry: BufferGeometry, height: number, back: number } | null = null
+  let real: { geometry: BufferGeometry, height: number, back: number, thick: number } | null = null
   if (payload.playerModel) {
     try {
       const buf = await fetch(payload.playerModel, { credentials: 'same-origin' }).then(r => { if (!r.ok) throw new Error(String(r.status)); return r.arrayBuffer() })
@@ -413,7 +415,7 @@ async function start(root: HTMLElement) {
         // the vertices are in Source's coordinates, facing +x with the feet on the floor, as the world group below wants them
         const g: BufferGeometry = geometry
         g.computeBoundingBox()
-        real = { geometry: g, height: g.boundingBox!.max.z, back: -g.boundingBox!.min.x }
+        real = { geometry: g, height: g.boundingBox!.max.z, back: -g.boundingBox!.min.x, thick: g.boundingBox!.max.x - g.boundingBox!.min.x }
       }
     } catch { /* the boxes it is */ }
   }
@@ -528,7 +530,9 @@ async function start(root: HTMLElement) {
     const lying = figure(colour, true)
     lying.rotation.y = -Math.PI / 2 // onto its back, head towards -x
     lying.position.z = real ? real.back : 9 // so the back lies on the floor
-    const deadPin = screenSprite(look.cross, PIN, PIN); deadPin.position.z = real ? real.height * 0.7 : 50
+    const deadPin = screenSprite(look.cross, PIN, PIN)
+    if (real) deadPin.position.set(-real.height / 2, 0, real.thick + 14) // over the middle of the body, which lies along -x from where it died
+    else deadPin.position.z = 50
     corpse.add(lying, deadPin)
     corpse.visible = false
 
@@ -650,10 +654,10 @@ async function start(root: HTMLElement) {
       const isSel = id === selected
       m.ring.visible = isSel // the selected player is marked on the ground, not by a bigger body
       const death = currentDeath(data.deaths, data.events, id, ms) // a revived player is not dead any more
-      const deathLevel = death && levels.length > 0 && bg.kind !== 'none' ? levelOf(levels, death.at[2]) : 0
+      const deathLevel = death && levels.length > 0 && bg.kind !== 'none' ? levelOf(levels, deathAt(death)[2]) : 0
       m.corpse.visible = !!death && !(typeof upTo === 'number' && deathLevel > upTo)
       if (death) {
-        m.corpse.position.set(death.at[0], death.at[1], death.at[2])
+        m.corpse.position.set(...deathAt(death))
         const last = lastPoseAt(m.segs, death.t)
         m.corpse.rotation.z = last ? (last.yaw / 256) * Math.PI * 2 : 0
       }
@@ -684,7 +688,7 @@ async function start(root: HTMLElement) {
     // the line between victim and attacker while a kill is fresh
     const kill = data.deaths.find(d => d.from && ms >= d.t && ms <= d.t + KILL_LINE_MS)
     killLine.visible = !!kill
-    if (kill?.from) killLine.geometry.setAttribute('position', new Float32BufferAttribute([...kill.from, ...kill.at], 3))
+    if (kill?.from) killLine.geometry.setAttribute('position', new Float32BufferAttribute([kill.from[0], kill.from[1], kill.from[2] + 48, deathAt(kill)[0], deathAt(kill)[1], deathAt(kill)[2] + 48], 3))
 
     // the selected player's level, when following it
     const sel = selected ? lastPoseAt(data.players.get(selected) ?? [], ms) : null
