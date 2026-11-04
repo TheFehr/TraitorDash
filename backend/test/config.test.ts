@@ -27,6 +27,19 @@ const printed = (script: string): string[] => {
   return r ? r.split('\n') : []
 }
 
+describe('the file version', () => {
+  test('version 1 and a file without a version are read the same', () => {
+    expect(flat(`${NO_CONVARS} ${withConfig({ version: 1, url: 'https://file.example', token: 'filetoken' })}`)).toBe('https://file.example|filetoken|file|file|file')
+    expect(flat(`${NO_CONVARS} ${withConfig({ url: 'https://file.example', token: 'filetoken' })}`)).toBe('https://file.example|filetoken|file|file|file')
+  })
+
+  test('a version this bridge does not know is not guessed at: the ConVars are used and it says so', () => {
+    const cfg = withConfig({ version: 2, url: 'https://file.example', token: 'filetoken' })
+    expect(flat(cfg)).toBe('https://td.test|tok|convar|convar|convar')
+    expect(printed(`${cfg} TraitorDash.GetConfig()`).join('\n')).toContain('version 2')
+  })
+})
+
 describe('where the configuration comes from', () => {
   test('ConVars only: today\'s behaviour is unchanged', () => {
     expect(flat('')).toBe('https://td.test|tok|convar|convar|convar')

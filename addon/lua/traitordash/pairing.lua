@@ -45,7 +45,7 @@ local function Finish(base, body)
         return
     end
 
-    local json = util.TableToJSON({ url = base, token = token })
+    local json = util.TableToJSON({ version = 1, url = base, token = token })
     file.Write(CONFIG_PATH, json)
     if file.Read(CONFIG_PATH, "DATA") ~= json then
         Say("The new token could not be saved to data/" .. CONFIG_PATH .. ". Open the dashboard and use 'Regen token' for this server, then set it up by hand.")

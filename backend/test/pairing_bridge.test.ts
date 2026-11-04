@@ -13,8 +13,8 @@ const SETUP = `
   util.JSONToTable = JSON_DECODE
   util.TableToJSON = function(t)
     LAST_PAYLOAD = t
-    local keys = {} for k in pairs(t) do if type(t[k]) == "string" then keys[#keys + 1] = k end end table.sort(keys)
-    local parts = {} for _, k in ipairs(keys) do parts[#parts + 1] = string.format('"%s":"%s"', k, t[k]) end
+    local keys = {} for k in pairs(t) do if type(t[k]) == "string" or type(t[k]) == "number" then keys[#keys + 1] = k end end table.sort(keys)
+    local parts = {} for _, k in ipairs(keys) do parts[#parts + 1] = (type(t[k]) == "number" and string.format('"%s":%d', k, t[k]) or string.format('"%s":"%s"', k, t[k])) end
     return "{" .. table.concat(parts, ",") .. "}"
   end
   SYNCS, POLLS = 0, 0
@@ -133,7 +133,7 @@ describe('traitordash_connect: the request', () => {
 describe('traitordash_connect: a good answer', () => {
   test('writes url and token to config.json, reloads, and starts the sync', () => {
     const r = answered(200, ANSWER)
-    expect(r.config).toEqual({ url: 'https://dash.example', token: TOKEN })
+    expect(r.config).toEqual({ version: 1, url: 'https://dash.example', token: TOKEN })
     expect(r.syncs).toBe(1)
     expect(r.printed.join('\n')).toContain('Connected as «Main». Syncing roles')
     noSecret(r)

@@ -1,6 +1,6 @@
 -- TraitorDash: where the bridge finds the backend URL and its API token (RFC 8).
 --
--- 1. data/traitordash/config.json   { "url": "https://...", "token": "..." }
+-- 1. data/traitordash/config.json   { "version": 1, "url": "https://...", "token": "..." }
 -- 2. otherwise the ConVars traitordash_url / traitordash_token (server.cfg)
 --
 -- Each setting is decided on its own, and the file wins. The file is read once (at first use and
@@ -38,6 +38,12 @@ local function LoadFile()
     local okParse, parsed = pcall(util.JSONToTable, raw)
     if not okParse or type(parsed) ~= "table" then
         print("[TraitorDash] data/" .. CONFIG_PATH .. " is not valid JSON; using server.cfg values.")
+        return
+    end
+
+    -- A file without "version" is version 1 (the first files had none). A format this bridge does not know is not guessed at.
+    if parsed.version ~= nil and parsed.version ~= 1 then
+        print("[TraitorDash] data/" .. CONFIG_PATH .. " has version " .. tostring(parsed.version) .. ", which this bridge does not know; using server.cfg values. Update the bridge.")
         return
     end
 
