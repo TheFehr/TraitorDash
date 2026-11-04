@@ -2,7 +2,7 @@
 import {
   WebGLRenderer, OrthographicCamera, Box3, Vector3, Color, Group, Mesh, MeshStandardMaterial, MeshBasicMaterial,
   SphereGeometry, CylinderGeometry, RingGeometry, DoubleSide, ConeGeometry, BoxGeometry, InstancedMesh, Matrix4, Object3D, Plane, Sprite,
-  SpriteMaterial, CanvasTexture, BufferGeometry, Float32BufferAttribute, Line, LineSegments, LineBasicMaterial, Raycaster, AnimationMixer, BufferAttribute, type Material, type AnimationAction, type AnimationClip,
+  SpriteMaterial, CanvasTexture, BufferGeometry, Float32BufferAttribute, Line, LineSegments, LineBasicMaterial, AnimationMixer, BufferAttribute, type Material, type AnimationAction, type AnimationClip,
   type Camera, type MeshStandardMaterial as StdMat,
 } from 'three'
 import { hex } from './teamColours'
@@ -13,7 +13,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { startFlat } from './replayflat'
 import { applyColouring, offerBrowser, heightColours, levelColour, makeCamera, makeRenderer, makeScene, prepareMovable, prepareProps, prepareWater, savedColouring, boxWithout, type Painted } from './sceneKit'
 import {
-  decodeTrack, poseAt, lastPoseAt, clipWeights, distanceAt, facing, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, trailBetween, levelOf, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose, fitLabel,
+  decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, distanceAt, facing, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, trailBetween, levelOf, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose, fitLabel,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
 } from './replaylogic'
 
@@ -228,14 +228,22 @@ async function start(root: HTMLElement) {
     playBtn.setAttribute('aria-pressed', String(playing))
     if (playing) { last = performance.now(); requestAnimationFrame(loop) }
   }
-  // While it plays, the picture is made at most thirty times a second (the rate of the animations): time goes on at the real
-  // rate, but each picture costs the same, so a phone that can make thirty of them keeps up where it would stutter at sixty.
-  let drawn = -1e9
+  // While it plays, a picture is made for every frame the screen asks for, as long as that is cheap enough (the work a picture costs
+  // the page, not counting the graphics card, stays under a limit); a device that cannot is given thirty a second, which it keeps up with
+  // where it would stutter at sixty. Time goes on at the real rate either way.
+  let drawn = -1e9, cost = 4, slow = false
   const loop = (now: number) => {
     if (!playing) return
     ms = Math.min(data.length, ms + (now - last) * speed)
     last = now
-    if (now - drawn >= 30 || ms >= data.length) { drawn = now; hooks.paint() }
+    if (!slow || now - drawn >= 30 || ms >= data.length) {
+      drawn = now
+      const t0 = performance.now()
+      hooks.paint()
+      cost = cost * 0.9 + Math.min(performance.now() - t0, 25) * 0.1 // (a first picture that has to compile its shaders is not what a picture costs)
+      if (cost > 9) slow = true
+      else if (cost < 6) slow = false
+    }
     if (ms >= data.length) { setPlaying(false); return }
     requestAnimationFrame(loop)
   }
@@ -317,16 +325,65 @@ async function start(root: HTMLElement) {
   world.rotation.x = -Math.PI / 2
   scene.add(world)
 
+  // ---- seeing through what is between the camera and the player (the follow camera)
+  // The camera sits behind the player, and whatever is on the way (a wall, a building, a tree) would hide them. Instead of pulling the
+  // camera forward, what is in a cone from the camera to the player's head is faded out, with a screen-door pattern so nothing has to be
+  // sorted. A prop is faded as a whole, by where its middle is (every prop knows its middle and its size); a wall by each pixel; a floor
+  // only where it is above the line of sight (a ceiling, from where the camera is). Nothing is faded beyond the player.
+  const lineOfSight = { uCam: { value: new Vector3() }, uHead: { value: new Vector3() } }
+  const CUT_GLSL = `
+    uniform vec3 uCam;
+    uniform vec3 uHead;
+    // 1 where a thing at p (of size r) is in the way of the line of sight from uCam to uHead, 0 where it is not; ceiling: only above the line
+    float cutAt(vec3 p, float r, float ceiling) {
+      vec3 ab = uHead - uCam;
+      float l2 = dot(ab, ab);
+      if (l2 < 1.0) return 0.0;
+      float t = dot(p - uCam, ab) / l2;
+      if (t < -0.05 || t > 0.92) return 0.0;
+      vec3 q = uCam + ab * clamp(t, 0.0, 1.0);
+      float radius = 70.0 + 330.0 * (1.0 - t);
+      if (ceiling > 0.5) { if (p.y < q.y + 10.0) return 0.0; radius *= 0.8; }
+      float d = distance(p, q) - r * 0.5;
+      return 1.0 - smoothstep(radius * 0.75, radius, d);
+    }
+    float screenDoor(vec2 f) { return fract(52.9829189 * fract(dot(f, vec2(0.06711056, 0.00583715)))); }`
+  /** Makes a material fade what is on the line of sight: 'prop' (whole objects, from `aObject` = the middle and size), 'wall' or 'floor' (each pixel). */
+  function seeThrough(material: Material, kind: 'prop' | 'wall' | 'floor') {
+    material.customProgramCacheKey = () => `seethrough-${kind}`
+    material.onBeforeCompile = shader => {
+      shader.uniforms.uCam = lineOfSight.uCam
+      shader.uniforms.uHead = lineOfSight.uHead
+      const piece = kind === 'prop' ? 'varying float vCut;' : 'varying vec3 vWorldC;'
+      shader.vertexShader = shader.vertexShader
+        .replace('void main() {', `${CUT_GLSL}\n${kind === 'prop' ? 'attribute vec4 aObject;' : ''}\n${piece}\nvoid main() {`)
+        .replace('#include <begin_vertex>', `#include <begin_vertex>\n${kind === 'prop' ? 'vCut = cutAt(aObject.xyz, aObject.w, 0.0);' : 'vWorldC = (modelMatrix * vec4(transformed, 1.0)).xyz;'}`)
+      const test = kind === 'prop' ? 'vCut' : `cutAt(vWorldC, 0.0, ${kind === 'floor' ? '1.0' : '0.0'})`
+      shader.fragmentShader = shader.fragmentShader
+        .replace('void main() {', `${CUT_GLSL}\n${piece}\nvoid main() {`)
+        .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>\n{ float c = ${test}; if (c > 0.0 && screenDoor(gl_FragCoord.xy) < c) discard; }`)
+    }
+  }
+
   /** Draws `meshes` (props placed in the map) as one mesh for each material, in the place they are; the ones given are hidden. A set that cannot be put together (different attributes) is left as it is. */
   const mergeDrawn = (root: Object3D, meshes: Mesh[]) => {
     const byMaterial = new Map<Material, Mesh[]>()
     for (const m of meshes) { const list = byMaterial.get(m.material as Material); if (list) list.push(m); else byMaterial.set(m.material as Material, [m]) }
     for (const [material, list] of byMaterial) {
       if (list.length < 2) continue
-      const parts = list.map(m => { const g = m.geometry.clone(); g.applyMatrix4(m.matrixWorld); return g })
+      const parts = list.map(m => {
+        const g = m.geometry.clone(); g.applyMatrix4(m.matrixWorld)
+        // every vertex of a prop knows where the prop's middle is and how big it is, so a prop can be faded as one
+        g.computeBoundingSphere()
+        const c = g.boundingSphere!, n = g.getAttribute('position').count, a = new Float32Array(n * 4)
+        for (let i = 0; i < n; i++) a.set([c.center.x, c.center.y, c.center.z, c.radius], i * 4)
+        g.setAttribute('aObject', new BufferAttribute(a, 4))
+        return g
+      })
       const merged = mergeGeometries(parts, false)
       parts.forEach(g => g.dispose())
       if (!merged) continue
+      seeThrough(material, 'prop') // (only a material that is drawn merged has the attribute it needs)
       const one = new Mesh(merged, material)
       one.name = 'props-merged'
       root.add(one)
@@ -338,7 +395,6 @@ async function start(root: HTMLElement) {
   const cut = new Plane(new Vector3(0, -1, 0), 1e9)
   const levelNodes: { index: number, node: Object3D }[] = []
   const wallMeshes: Mesh[] = []
-  const occluders: Mesh[] = [] // what the follow camera must not go through: the floors and walls of the levels and the solid props
   let bounds = new Box3(new Vector3(-512, -512, -64), new Vector3(512, 512, 256)) // Source coordinates
 
   const finish = (b: Box3) => { bounds = b }
@@ -367,12 +423,12 @@ async function start(root: HTMLElement) {
         mesh.material.clippingPlanes = [cut]
         mesh.material.metalness = 0
         mesh.material.roughness = 1
+        seeThrough(mesh.material, isWall ? 'wall' : 'floor')
         if (isWall) wallMeshes.push(mesh)
         painted.push({ mesh, wall: isWall, level: l.index })
       })
       prepareWater(model, cut)
       const props = prepareProps(model, cut)
-      occluders.push(...painted.map(p => p.mesh as Mesh), ...props.solid) // (the props stay as they are for the camera to be stopped by; what is drawn is below)
       prepareMovable(model, cut)
       // Parts apart from the map (RFC 18, 4.4) are not drawn in the replay.
       const apart = model.getObjectByName('detached')
@@ -703,26 +759,7 @@ async function start(root: HTMLElement) {
     cut.constant = upTo === 'all' || !top ? 1e9 : top.hi + CUT_ABOVE
     markLevels()
   }
-  // The follow camera stops at what is in its way: a wall of the map or a building would otherwise fill the screen (the camera
-  // sits 300 units behind the player and goes through the outer wall when the player walks along it).
-  const ray = new Raycaster()
-  let reach = 1, castAt = -1e9 // how much of the way back the camera may go, and when that was last looked at
-  const keepInside = (from: Vector3) => {
-    if (occluders.length === 0) return
-    const to = persp.position.clone().sub(from)
-    const far = to.length()
-    if (far < 1e-3) return
-    const dir = to.divideScalar(far)
-    const now = performance.now()
-    if (now - castAt > 120) { // looking costs a few milliseconds on a big map: not every frame (the answer changes slowly)
-      castAt = now
-      ray.set(from, dir)
-      ray.near = 0; ray.far = far
-      const hit = ray.intersectObjects(occluders, false)[0]
-      reach = hit ? Math.max(hit.distance - 24, 40) / far : 1
-    }
-    persp.position.copy(from).addScaledVector(dir, far * Math.min(reach, 1))
-  }
+  const follow = { x: 0, y: 0, z: 0, yaw: 0, at: 0, ms: 0, who: null as string | null } // where the follow camera is settled
 
   // ---- what is shown at time `ms`
   const tmp = new Vector3()
@@ -765,7 +802,7 @@ async function start(root: HTMLElement) {
           const turn = facing(look, v.heading, v.speed)
           m.group.rotation.z = turn
           m.arrow.rotation.z = look - turn // the arrow on the ground still says where the player looks
-          if (Math.abs(ms - m.posedAt) >= 33) { m.posedAt = ms; poseRig(m.body, clipWeights(v.speed, (moveAt(m.segs, ms) & MOVE.crouching) !== 0), distanceAt(m.path, ms), ms) }
+          if (Math.abs(ms - m.posedAt) >= (slow ? 33 : 12)) { m.posedAt = ms; poseRig(m.body, clipWeights(v.speed, (moveAt(m.segs, ms) & MOVE.crouching) !== 0), distanceAt(m.path, ms), ms) }
         } else m.group.rotation.z = look
       }
       // from above the bodies are specks, so the pin itself points the way the player faces
@@ -824,17 +861,27 @@ async function start(root: HTMLElement) {
       const lv = levelOf(levels, sel.z)
       if (lv !== upTo) { upTo = lv; showLevels() }
     }
-    // follow camera: behind and above, looking where the player looks
-    if (camMode === 'follow' && sel) {
-      const a = (sel.yaw / 256) * Math.PI * 2
-      const px = sel.x, py = sel.y, pz = sel.z
-      const dx = Math.cos(a), dy = Math.sin(a)
+    // follow camera: behind and above, looking where the player looks. It follows the player's place between the samples (not the
+    // last sample, which changes five times a second) and settles into it, so it glides; a jump in time puts it straight there.
+    const mine = selected ? (poseAt(data.players.get(selected) ?? [], ms) ?? sel) : null
+    if (camMode === 'follow' && mine) {
+      const a = (mine.yaw / 256) * Math.PI * 2
+      const now = performance.now(), dt = now - follow.at
+      const glide = playing && follow.who === selected && ms >= follow.ms && ms - follow.ms < 600 && dt < 250
+      if (glide) {
+        follow.x = damp(follow.x, mine.x, dt, 70); follow.y = damp(follow.y, mine.y, dt, 70); follow.z = damp(follow.z, mine.z, dt, 120)
+        follow.yaw = dampAngle(follow.yaw, a, dt, 200)
+      } else { follow.x = mine.x; follow.y = mine.y; follow.z = mine.z; follow.yaw = a }
+      follow.at = now; follow.ms = ms; follow.who = selected
+      const px = follow.x, py = follow.y, pz = follow.z
+      const dx = Math.cos(follow.yaw), dy = Math.sin(follow.yaw)
       // Source (x, y, z) -> three (x, z, -y)
       persp.position.set(px - dx * 300, pz + 170, -(py - dy * 300))
-      keepInside(new Vector3(px, pz + 64, -py))
+      lineOfSight.uCam.value.copy(persp.position)
+      lineOfSight.uHead.value.set(px, pz + 64, -py)
       tmp.set(px + dx * 90, pz + 50, -(py + dy * 90))
       persp.lookAt(tmp)
-    }
+    } else lineOfSight.uHead.value.copy(lineOfSight.uCam.value) // no line of sight, nothing is faded
     scrub.value = String(ms)
     setText(timeEl, `${clock(ms)} / ${clock(data.length)}`)
     render()
@@ -869,7 +916,7 @@ async function start(root: HTMLElement) {
   changed()
 
   // for tests and for debugging in the page
-  ;(root as any).__replay = { seek, get ms() { return ms }, select: (id: string) => { selected = id; changed() }, setCam, setPlaying, setTheater, drawn: () => ({ ...renderer.info.render, geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, programs: renderer.info.programs?.length ?? 0 }) }
+  ;(root as any).__replay = { seek, get ms() { return ms }, select: (id: string) => { selected = id; changed() }, setCam, setPlaying, setTheater, camera: () => [...persp.position.toArray(), follow.x, follow.y, follow.yaw], drawn: () => ({ ...renderer.info.render, geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, programs: renderer.info.programs?.length ?? 0 }) }
 }
 
 document.querySelectorAll<HTMLElement>('[data-replay]').forEach(r => { start(r) })

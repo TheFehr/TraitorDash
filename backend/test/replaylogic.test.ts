@@ -1,5 +1,5 @@
 import { expect, test, describe } from 'bun:test'
-import { clipWeights, decodeTrack, distanceAt, facing, lerpAngle, moveAt, pathOf, velocityAt, SPEEDS, poseAt, lastPoseAt, trailBetween, lerpYaw, levelOf, chooseBackground, versionMismatch, defaultSelection, teamColour, playerColour, roleColour, clock, type RawTrack } from '../src/replaylogic'
+import { clipWeights, damp, dampAngle, decodeTrack, distanceAt, facing, lerpAngle, moveAt, pathOf, velocityAt, SPEEDS, poseAt, lastPoseAt, trailBetween, lerpYaw, levelOf, chooseBackground, versionMismatch, defaultSelection, teamColour, playerColour, roleColour, clock, type RawTrack } from '../src/replaylogic'
 
 // RFC 12, 3.5: the logic of the replay that is not drawing.
 
@@ -319,5 +319,26 @@ describe('which way the body faces', () => {
     expect(facing(1, 2, 100)).toBeCloseTo(2, 9)
     const half = facing(1, 2, 45)
     expect(half).toBeGreaterThan(1); expect(half).toBeLessThan(2)
+  })
+})
+
+describe('damping (the follow camera)', () => {
+  test('covers the same fraction of the way in the same time, however it is cut into frames', () => {
+    let one = 0
+    one = damp(one, 100, 100, 80)
+    let ten = 0
+    for (let i = 0; i < 10; i++) ten = damp(ten, 100, 10, 80)
+    expect(one).toBeCloseTo(ten, 9)
+    expect(one).toBeCloseTo(100 * (1 - Math.exp(-100 / 80)), 9)
+  })
+  test('stays where it is when no time has passed, and gets there in the end', () => {
+    expect(damp(5, 100, 0, 80)).toBe(5)
+    expect(damp(5, 100, -10, 80)).toBe(5)
+    expect(damp(0, 100, 10_000, 80)).toBeCloseTo(100, 6)
+  })
+  test('an angle goes the short way round', () => {
+    const a = dampAngle(3.0, -3.0, 100, 100) // 3 to -3 is a short step across pi, not six radians back
+    expect(a).toBeGreaterThan(3.0)
+    expect(dampAngle(0.2, 0.2, 100, 100)).toBeCloseTo(0.2, 9)
   })
 })

@@ -358,3 +358,10 @@ export const lerpAngle = (a: number, b: number, f: number) => {
 export function facing(look: number, heading: number, speed: number): number {
   return lerpAngle(look, heading, Math.min(1, Math.max(0, (speed - 25) / 40)))
 }
+
+// ---- the follow camera
+
+/** `current` moved towards `target` the way a spring that is not springy does: in `dtMs` it covers `1 - e^(-dt/tau)` of the way, whatever the frame rate. */
+export const damp = (current: number, target: number, dtMs: number, tauMs: number) => current + (target - current) * (1 - Math.exp(-Math.max(0, dtMs) / tauMs))
+/** The same for an angle in radians, the short way round. */
+export const dampAngle = (current: number, target: number, dtMs: number, tauMs: number) => lerpAngle(current, target, 1 - Math.exp(-Math.max(0, dtMs) / tauMs))
