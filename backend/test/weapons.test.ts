@@ -239,6 +239,21 @@ describe('killzones', () => {
     expect(withFloor).toContain('fill="#34343a"'); expect(without).not.toContain('#34343a')
   })
 
+  test('storeys that overlap in height: a death belongs to the storey with a floor under it, not the highest that starts below', async () => {
+    // Cape Town: storey 1 spans -256..58, storey 3 spans -60..804 (it holds low ground too), a death at -64 stands on storey 1.
+    const { NO_FLOOR, storeyAt } = await import('../src/maps/topdown')
+    const mk = (index: number, lo: number, hi: number, at: [number, number, number][]) => {
+      const zs = new Int16Array(16).fill(NO_FLOOR); const cells = new Uint8Array(16)
+      for (const [i, j, z] of at) { zs[j * 4 + i] = z; cells[j * 4 + i] = 1 }
+      return { index, lo, hi, cells, zs }
+    }
+    const top = { cell: 32, minx: 0, miny: 0, nx: 4, ny: 4, layers: [mk(1, -256, 58, [[1, 1, -64]]), mk(2, -160, 259, [[1, 1, 128]]), mk(3, -60, 804, [[2, 2, 400]])] }
+    expect(storeyAt(top, 48, 48, -64, 16)).toBe(1)   // on storey 1's floor
+    expect(storeyAt(top, 48, 48, 128, 16)).toBe(2)   // the same place, a floor above
+    expect(storeyAt(top, 80, 80, 400, 16)).toBe(3)
+    expect(storeyAt(top, 112, 16, -64, 16)).toBe(3)  // no floor near: falls back to the heights (-60 - 96 <= -64)
+  })
+
   test('the map itself, flattened: a floor and a wall for each storey, drawn under the deaths', async () => {
     const { flatten, storeyAt } = await import('../src/maps/topdown')
     const { surfacesToGlb } = await import('../src/maps/meshGlb')
@@ -251,7 +266,8 @@ describe('killzones', () => {
     expect(count(flat.layers[0], 1)).toBeGreaterThan(200) // the floor of 256 by 256 in cells of 16
     expect(count(flat.layers[0], 2)).toBeGreaterThan(10)  // the wall along its south edge
     expect(count(flat.layers[1], 2)).toBe(0)              // the upper storey has none
-    expect(storeyAt(flat.layers, 5)).toBe(1); expect(storeyAt(flat.layers, 310)).toBe(2)
+    expect(storeyAt(flat, 128, 128, 5)).toBe(1); expect(storeyAt(flat, 128, 128, 310)).toBe(2)
+    expect(storeyAt(flat, 9000, 9000, 310)).toBe(2) // nothing under it: by the heights the storeys start at
     const base = kz.baseOfMap(flat, 2)
     expect(base.cells.some((c: number) => c === 1)).toBe(true); expect(base.cells.some((c: number) => c === 2)).toBe(false)
     const svg = kz.renderKillzonesSvg([{ bx: 0, by: 0, n: 3 }], 'ttt_a', base)!

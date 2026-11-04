@@ -12,15 +12,21 @@ export interface Layer {
   index: number, lo: number, hi: number
   /** `nx` by `ny` cells, row `j` is the row from `miny + j * cell` north; EMPTY, FLOOR or WALL. */
   cells: Uint8Array
+  /** For each cell with a floor, the height of its highest floor in this storey; NO_FLOOR where there is none. */
+  zs: Int16Array
 }
+export const NO_FLOOR = -32768
 export interface TopDown { cell: number, minx: number, miny: number, nx: number, ny: number, layers: Layer[] }
 
 const MAX_CELLS_ACROSS = 360 // the longer side of the map is cut into at most this many cells
 const MIN_CELL = 16
 
+/** Keeps the highest floor height seen in a cell. */
+const up = (zs: Int16Array, k: number, z: number) => { const v = Math.max(-32767, Math.min(32767, Math.round(z))); if (v > zs[k]!) zs[k] = v }
+
 /** Marks the cells whose middle is inside the triangle, and the one around its centre (a triangle smaller than a cell). */
-function fill(cells: Uint8Array, nx: number, ny: number, minx: number, miny: number, cell: number, a: number[], mark: number) {
-  const [ax, ay, bx, by, cx, cy] = a as [number, number, number, number, number, number]
+function fill(cells: Uint8Array, zs: Int16Array | null, nx: number, ny: number, minx: number, miny: number, cell: number, a: number[], mark: number) {
+  const [ax, ay, az, bx, by, bz, cx, cy, cz] = a as [number, number, number, number, number, number, number, number, number]
   const i0 = Math.max(0, Math.floor((Math.min(ax, bx, cx) - minx) / cell)), i1 = Math.min(nx - 1, Math.floor((Math.max(ax, bx, cx) - minx) / cell))
   const j0 = Math.max(0, Math.floor((Math.min(ay, by, cy) - miny) / cell)), j1 = Math.min(ny - 1, Math.floor((Math.max(ay, by, cy) - miny) / cell))
   const area = (bx - ax) * (cy - ay) - (cx - ax) * (by - ay)
@@ -31,12 +37,12 @@ function fill(cells: Uint8Array, nx: number, ny: number, minx: number, miny: num
         const px = minx + (i + 0.5) * cell
         const w0 = ((bx - px) * (cy - py) - (cx - px) * (by - py)) / area
         const w1 = ((cx - px) * (ay - py) - (ax - px) * (cy - py)) / area
-        if (w0 >= 0 && w1 >= 0 && w0 + w1 <= 1) { const k = j * nx + i; if (cells[k]! < mark) cells[k] = mark }
+        if (w0 >= 0 && w1 >= 0 && w0 + w1 <= 1) { const k = j * nx + i; if (cells[k]! < mark) cells[k] = mark; if (zs) up(zs, k, w0 * az + w1 * bz + (1 - w0 - w1) * cz) }
       }
     }
   }
   const mi = Math.floor(((ax + bx + cx) / 3 - minx) / cell), mj = Math.floor(((ay + by + cy) / 3 - miny) / cell)
-  if (mi >= 0 && mi < nx && mj >= 0 && mj < ny) { const k = mj * nx + mi; if (cells[k]! < mark) cells[k] = mark }
+  if (mi >= 0 && mi < nx && mj >= 0 && mj < ny) { const k = mj * nx + mi; if (cells[k]! < mark) cells[k] = mark; if (zs) up(zs, k, (az + bz + cz) / 3) }
 }
 
 /** The cells a wall's edges cross: a wall is a vertical face, so from above it is a line. */
@@ -64,9 +70,9 @@ export async function flatten(glb: Uint8Array): Promise<TopDown | null> {
       const pos = prim.getAttribute('POSITION')?.getArray() as Float32Array | null | undefined
       const idx = prim.getIndices()?.getArray()
       if (!pos || !idx) continue
-      const tri = new Float32Array(idx.length * 2) // x and y of every corner of every triangle
-      for (let n = 0; n < idx.length; n++) { tri[n * 2] = pos[idx[n]! * 3]!; tri[n * 2 + 1] = pos[idx[n]! * 3 + 1]! }
-      for (let n = 0; n < tri.length; n += 2) {
+      const tri = new Float32Array(idx.length * 3) // x, y and z of every corner of every triangle
+      for (let n = 0; n < idx.length; n++) { tri[n * 3] = pos[idx[n]! * 3]!; tri[n * 3 + 1] = pos[idx[n]! * 3 + 1]!; tri[n * 3 + 2] = pos[idx[n]! * 3 + 2]! }
+      for (let n = 0; n < tri.length; n += 3) {
         minx = Math.min(minx, tri[n]!); maxx = Math.max(maxx, tri[n]!); miny = Math.min(miny, tri[n + 1]!); maxy = Math.max(maxy, tri[n + 1]!)
       }
       ;(prim.getMaterial()?.getName() === 'wall' ? lv.walls : lv.floors).push(tri)
@@ -82,21 +88,40 @@ export async function flatten(glb: Uint8Array): Promise<TopDown | null> {
   const nx = Math.ceil((maxx - minx) / cell) + 1, ny = Math.ceil((maxy - miny) / cell) + 1
   const layers: Layer[] = levels.map(lv => {
     const cells = new Uint8Array(nx * ny)
-    for (const tri of lv.floors) for (let n = 0; n + 5 < tri.length; n += 6) fill(cells, nx, ny, minx, miny, cell, [tri[n]!, tri[n + 1]!, tri[n + 2]!, tri[n + 3]!, tri[n + 4]!, tri[n + 5]!], FLOOR)
+    const zs = new Int16Array(nx * ny).fill(NO_FLOOR)
+    for (const tri of lv.floors) for (let n = 0; n + 8 < tri.length; n += 9) fill(cells, zs, nx, ny, minx, miny, cell, Array.from(tri.subarray(n, n + 9)), FLOOR)
     for (const tri of lv.walls) {
-      for (let n = 0; n + 5 < tri.length; n += 6) {
-        line(cells, nx, ny, minx, miny, cell, tri[n]!, tri[n + 1]!, tri[n + 2]!, tri[n + 3]!)
-        line(cells, nx, ny, minx, miny, cell, tri[n + 2]!, tri[n + 3]!, tri[n + 4]!, tri[n + 5]!)
-        line(cells, nx, ny, minx, miny, cell, tri[n + 4]!, tri[n + 5]!, tri[n]!, tri[n + 1]!)
+      for (let n = 0; n + 8 < tri.length; n += 9) {
+        line(cells, nx, ny, minx, miny, cell, tri[n]!, tri[n + 1]!, tri[n + 3]!, tri[n + 4]!)
+        line(cells, nx, ny, minx, miny, cell, tri[n + 3]!, tri[n + 4]!, tri[n + 6]!, tri[n + 7]!)
+        line(cells, nx, ny, minx, miny, cell, tri[n + 6]!, tri[n + 7]!, tri[n]!, tri[n + 1]!)
       }
     }
-    return { index: lv.index, lo: lv.lo, hi: lv.hi, cells }
+    return { index: lv.index, lo: lv.lo, hi: lv.hi, cells, zs }
   })
   return { cell, minx, miny, nx, ny, layers }
 }
 
-/** The storey a height belongs to: the highest one whose floors start at or below it (a little slack for feet on a floor). */
-export function storeyAt(layers: { index: number, lo: number }[], z: number): number {
+/**
+ * The storey a death at (x, y, z) belongs to: the one with a floor under that spot closest to the height. Storeys overlap in
+ * height (a hillside and the street at its foot are one storey each), so the heights a storey spans say little; the floor at
+ * the place does. `half` is the half width of the square around the spot that is looked at (a killzone square). Where no
+ * storey has a floor there, the highest storey that starts at or below the height (a little slack for feet on a floor).
+ */
+export function storeyAt(top: Pick<TopDown, 'cell' | 'minx' | 'miny' | 'nx' | 'ny' | 'layers'>, x: number, y: number, z: number, half = 64): number {
+  const { cell, minx, miny, nx, ny, layers } = top
+  const i0 = Math.max(0, Math.floor((x - half - minx) / cell)), i1 = Math.min(nx - 1, Math.floor((x + half - 1 - minx) / cell))
+  const j0 = Math.max(0, Math.floor((y - half - miny) / cell)), j1 = Math.min(ny - 1, Math.floor((y + half - 1 - miny) / cell))
+  let best = -1, gap = Infinity
+  for (const l of layers) {
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      const h = l.zs[j * nx + i]!
+      if (h === NO_FLOOR) continue
+      const d = Math.abs(h - z)
+      if (d < gap) { gap = d; best = l.index }
+    }
+  }
+  if (best >= 0) return best
   let pick = layers[0]?.index ?? 1
   for (const l of layers) if (l.lo - 96 <= z) pick = l.index
   return pick

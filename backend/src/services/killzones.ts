@@ -16,11 +16,11 @@ const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replac
 
 export interface Square { bx: number, by: number, n: number }
 
-/** The deaths of `cells` summed into squares; with `pick` only those at heights it accepts. */
-export function squaresOf(cells: Killzones['cells'], pick?: (z: number) => boolean): Square[] {
+/** The deaths of `cells` summed into squares; with `pick` only those it accepts, given the height and the middle of the square. */
+export function squaresOf(cells: Killzones['cells'], pick?: (z: number, x: number, y: number) => boolean): Square[] {
   const by = new Map<string, Square>()
   for (const c of cells) {
-    if (pick && !pick(c.bz * KILLZONE_BAND + KILLZONE_BAND / 2)) continue
+    if (pick && !pick(c.bz * KILLZONE_BAND + KILLZONE_BAND / 2, (c.bx + 0.5) * KILLZONE_CELL, (c.by + 0.5) * KILLZONE_CELL)) continue
     const key = `${c.bx},${c.by}`
     const s = by.get(key)
     if (s) s.n += c.n

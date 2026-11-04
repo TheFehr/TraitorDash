@@ -368,7 +368,7 @@ async function killzonesOf(serverId: string, map: string, ctx: Ctx, weaponAsked?
   const levels = flat ? flat.layers.length : storeys?.levels.length
   const level = asked !== undefined && levels !== undefined && asked >= 1 && asked <= levels ? asked : undefined
   const pick = level === undefined ? undefined
-    : flat ? (z: number) => storeyAt(flat.layers, z) === level
+    : flat ? (z: number, x: number, y: number) => storeyAt(flat, x, y, z) === level
     : storeys ? (z: number) => storeys.storeyOf(z) === level - 1 : undefined
   const squares = squaresOf(k.cells, pick)
   const base = flat ? baseOfMap(flat, level) : grid ? baseOfPlan(grid, level) : undefined
