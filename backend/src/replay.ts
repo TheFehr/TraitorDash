@@ -30,6 +30,8 @@ interface Payload {
   track: any
   trackInfo: { truncated: boolean, degraded: boolean, fingerprint: string | null, pinned: boolean }
   background: { kind: 'mesh' | 'plan' | 'none', meshUrl?: string, plan?: any, levels: LevelRange[], mismatch: boolean }
+  /** Where the players' model (posed, one for everyone) is, when the backend can build it (RFC 22). */
+  playerModel?: string
 }
 
 const LEVEL_NAME = /^level-(\d+)$/
@@ -399,6 +401,23 @@ async function start(root: HTMLElement) {
     finish(box)
   }
 
+  // ---- the players' model (RFC 22): the game's own, posed, drawn in the team's colour; the box figure below is the fallback
+  let real: { geometry: BufferGeometry, height: number, back: number } | null = null
+  if (payload.playerModel) {
+    try {
+      const buf = await fetch(payload.playerModel, { credentials: 'same-origin' }).then(r => { if (!r.ok) throw new Error(String(r.status)); return r.arrayBuffer() })
+      const model = await new Promise<Object3D>((ok, fail) => new GLTFLoader().parse(buf, '', g => ok(g.scene), fail))
+      let geometry: BufferGeometry | null = null
+      model.traverse(o => { if (!geometry && (o as Mesh).isMesh) geometry = (o as Mesh).geometry })
+      if (geometry) {
+        // the vertices are in Source's coordinates, facing +x with the feet on the floor, as the world group below wants them
+        const g: BufferGeometry = geometry
+        g.computeBoundingBox()
+        real = { geometry: g, height: g.boundingBox!.max.z, back: -g.boundingBox!.min.x }
+      }
+    } catch { /* the boxes it is */ }
+  }
+
   // ---- markers
   // A player is drawn at the size of a Source player: a box 32 wide and 72 tall, the eyes at 64. It is
   // never enlarged to be seen; what keeps a player findable from far away is a pin and a name that
@@ -417,6 +436,13 @@ async function start(root: HTMLElement) {
 
   /** A person standing at the origin facing +x, in the team's colour; `dim` for a body that lies where its player died. */
   const figure = (colour: number, dim: boolean) => {
+    if (real) {
+      const g = new Group()
+      const cloth = new MeshStandardMaterial({ color: dim ? new Color(colour).multiplyScalar(0.45).getHex() : colour, metalness: 0, roughness: 0.8, side: DoubleSide })
+      g.add(new Mesh(real.geometry, cloth))
+      g.userData.cloth = cloth // so a change of team can repaint it
+      return g
+    }
     const g = new Group()
     const cloth = matte(dim ? new Color(colour).multiplyScalar(0.45).getHex() : colour)
     const legs = matte(dim ? 0x1c2230 : LEGS), skin = matte(dim ? 0x8a7660 : SKIN)
@@ -490,8 +516,8 @@ async function start(root: HTMLElement) {
     const ring = new Mesh(ringGeo, new MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, side: DoubleSide })); ring.position.z = 1.5; ring.visible = false
     const looks = new Map<number, Look>()
     const look = lookOf({ looks }, id, colour)
-    const pin = screenSprite(look.plain, PIN, PIN); pin.position.z = 86
-    const label = screenSprite(look.label, LABEL_H * 4, LABEL_H); label.position.z = 86; label.center.set(0.5, -0.55)
+    const pin = screenSprite(look.plain, PIN, PIN); pin.position.z = real ? real.height + 12 : 86
+    const label = screenSprite(look.label, LABEL_H * 4, LABEL_H); label.position.z = real ? real.height + 12 : 86; label.center.set(0.5, -0.55)
     group.add(arrow, ring, pin, label)
 
     const trail = new Line(new BufferGeometry(), new LineBasicMaterial({ color: colour, transparent: true, opacity: 0.6 }))
@@ -501,8 +527,8 @@ async function start(root: HTMLElement) {
     const corpse = new Group()
     const lying = figure(colour, true)
     lying.rotation.y = -Math.PI / 2 // onto its back, head towards -x
-    lying.position.z = 9
-    const deadPin = screenSprite(look.cross, PIN, PIN); deadPin.position.z = 50
+    lying.position.z = real ? real.back : 9 // so the back lies on the floor
+    const deadPin = screenSprite(look.cross, PIN, PIN); deadPin.position.z = real ? real.height * 0.7 : 50
     corpse.add(lying, deadPin)
     corpse.visible = false
 

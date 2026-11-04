@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rename, rm, stat, statfs, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { ModelFiles } from '../maps/model'
+import type { AnimationFiles } from '../maps/posedmodel'
 import type { StockModels } from '../maps/propset'
 import { readVpkFile, readVpkIndex, vpkArchiveName, type VpkEntry, type VpkIndex } from '../maps/vpk'
 import { fileSource } from '../maps/fileSource'
@@ -35,6 +36,9 @@ export interface GameContentOptions {
 }
 
 const EXTENSIONS = ['mdl', 'vvd', 'dx90.vtx'] as const
+/** What a set of shared animations is made of: the model file with the sequences and the file with the frames they point to (RFC 22). */
+const ANIMATION_EXTENSIONS = ['mdl', 'ani'] as const
+type Files = Record<string, Uint8Array>
 const MODEL_NAME = /^models\/[a-z0-9_\-/. ]+\.mdl$/
 const MAX_FILE = 16 * 1024 * 1024
 
@@ -49,7 +53,13 @@ const cacheKey = (base: string) => createHash('sha1').update(base).digest('hex')
 export class GameContentError extends Error {}
 
 /** The model source for `buildPropSet`: cached files first, then the archives that hold the rest. Throws `GameContentError` when a download fails; models already cached are not lost. */
-export function gameContent(opts: GameContentOptions = {}): { models: StockModels, root: string } {
+/** What the game's files are asked for: models, and the animation sets they include. */
+export interface GameContentSource {
+  models: StockModels
+  animations: (name: string) => Promise<{ files: AnimationFiles | null, error?: string }>
+}
+
+export function gameContent(opts: GameContentOptions = {}): GameContentSource & { root: string } {
   const binary = opts.binary ?? helperPath()
   const root = opts.root ?? process.env.GAME_CONTENT_DIR ?? join(process.cwd(), '.game-content')
   const sources = opts.sources ?? GAME_SOURCES
@@ -100,19 +110,20 @@ export function gameContent(opts: GameContentOptions = {}): { models: StockModel
     }
   }
 
-  const cached = async (base: string): Promise<ModelFiles | null> => {
-    const [mdl, vvd, vtx] = await Promise.all(EXTENSIONS.map(async e => { const f = Bun.file(modelPath(base, e)); return (await f.exists()) ? new Uint8Array(await f.arrayBuffer()) : null }))
-    return mdl && vvd && vtx ? { mdl, vvd, vtx } : null
+  const cached = async (base: string, exts: readonly string[]): Promise<Files | null> => {
+    const got = await Promise.all(exts.map(async e => { const f = Bun.file(modelPath(base, e)); return (await f.exists()) ? new Uint8Array(await f.arrayBuffer()) : null }))
+    return got.every(x => x) ? Object.fromEntries(exts.map((e, i) => [e, got[i]!])) : null
   }
 
-  async function run(names: string[]): Promise<{ models: Map<string, ModelFiles>, error?: string }> {
-    const result = new Map<string, ModelFiles>()
+  /** The files of each named model (or animation set: `exts` says which files make it), from the cache or the archives that hold them. */
+  async function run(names: string[], exts: readonly string[]): Promise<{ models: Map<string, Files>, error?: string }> {
+    const result = new Map<string, Files>()
     let error: string | undefined
     const need = new Map<string, string[]>() // base -> the names that map to it
     for (const name of names) {
       const base = modelBase(name)
       if (!base) continue
-      const files = await cached(base)
+      const files = await cached(base, exts)
       if (files) { result.set(name, files); continue }
       need.set(base, [...(need.get(base) ?? []), name])
     }
@@ -124,13 +135,13 @@ export function gameContent(opts: GameContentOptions = {}): { models: StockModel
     const complete: string[] = []
     for (const base of need.keys()) {
       const found: { source: number, ext: string, entry: VpkEntry }[] = []
-      for (const ext of EXTENSIONS) {
+      for (const ext of exts) {
         for (let i = 0; i < sources.length; i++) {
           const entry = indexes[i]?.get(`${base}.${ext}`)
           if (entry) { found.push({ source: i, ext, entry }); break }
         }
       }
-      if (found.length !== EXTENSIONS.length) continue // the game does not have it (or not all of it)
+      if (found.length !== exts.length) continue // the game does not have it (or not all of it)
       complete.push(base)
       for (const f of found) {
         const key = `${f.source}/${f.entry.archive}`
@@ -163,7 +174,7 @@ export function gameContent(opts: GameContentOptions = {}): { models: StockModel
     } catch (e) { error ??= e instanceof Error ? e.message : 'The game content could not be fetched.' }
 
     for (const base of complete) {
-      const files = await cached(base)
+      const files = await cached(base, exts)
       if (files) for (const name of need.get(base)!) result.set(name, files)
     }
     return { models: result, error }
@@ -178,10 +189,20 @@ export function gameContent(opts: GameContentOptions = {}): { models: StockModel
 
   // One request at a time: two would download the same archive twice.
   let chain: Promise<unknown> = Promise.resolve()
-  const models: StockModels = names => {
-    const next = chain.then(() => run(names))
+  const queued = (names: string[], exts: readonly string[]) => {
+    const next = chain.then(() => run(names, exts))
     chain = next.catch(() => {})
-    return next.catch(e => ({ models: new Map<string, ModelFiles>(), error: e instanceof Error ? e.message : 'The game content could not be read.' }))
+    return next.catch(e => ({ models: new Map<string, Files>(), error: e instanceof Error ? e.message : 'The game content could not be read.' }))
   }
-  return { models, root }
+  const models: StockModels = async names => {
+    const answer = await queued(names, EXTENSIONS)
+    return { models: new Map([...answer.models].map(([name, f]) => [name, { mdl: f.mdl!, vvd: f.vvd!, vtx: f['dx90.vtx']! }])), error: answer.error }
+  }
+  /** The animation set of a name like `models/m_anm.mdl` (RFC 22): its model file and its frames. Null, with the reason, when the game does not have it or it could not be fetched. */
+  const animations = async (name: string): Promise<{ files: AnimationFiles | null, error?: string }> => {
+    const answer = await queued([name], ANIMATION_EXTENSIONS)
+    const f = answer.models.get(name)
+    return { files: f ? { mdl: f.mdl!, ani: f.ani! } : null, error: answer.error }
+  }
+  return { models, animations, root }
 }

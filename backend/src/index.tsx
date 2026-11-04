@@ -24,6 +24,7 @@ import { flattened, storeyAt } from './maps/topdown'
 import { NAME } from './services/validators'
 import { geometryEnabled, kickGeometryQueue, setGeometryFetcher, setStockModels } from './services/mapgeometry'
 import { gameContent, gameContentEnabled } from './services/gameContent'
+import { isPose, playerModel, setPlayerModelContent } from './services/playermodel'
 import { helperAvailable, workshopFetcher } from './services/workshop'
 import { sameOrigin } from './middleware/csrf'
 
@@ -466,6 +467,24 @@ app.get('/servers/:serverId/maps/:map/mesh.glb', gated('mesh'), async (c) => {
 })
 
 /**
+ * The player model of the replay (RFC 22): one neutral stock model, posed, as a GLB. For signed-in users like the map's
+ * mesh. 404 when the game's files are not switched on or the model could not be built; the replay then draws its box figure.
+ */
+app.get('/servers/:serverId/playermodel.glb', gated('mesh'), async (c) => {
+  if (!Store.getServerById(c.req.param('serverId'))) return c.text('Not found', 404)
+  const pose = c.req.query('pose') ?? 'stand'
+  if (!isPose(pose)) return c.text('Not found', 404)
+  const glb = await playerModel(pose)
+  if (!glb) return c.text('Not found', 404)
+  return c.body(glb as Uint8Array<ArrayBuffer>, 200, {
+    'Content-Type': 'model/gltf-binary',
+    'X-Content-Type-Options': 'nosniff',
+    'Content-Security-Policy': "default-src 'none'",
+    'Cache-Control': 'private, max-age=86400',
+  })
+})
+
+/**
  * The data of one round's replay (RFC 12, 3.5): its players, its track and the best background for
  * its map, as one JSON document. For signed-in users (RFC 13), counted per account, logged once an
  * hour per user and round. A track never changes, so the answer carries an ETag and is cached by
@@ -651,6 +670,7 @@ if (import.meta.main) {
     if (gameContentEnabled()) {
       const content = gameContent()
       setStockModels(content.models)
+      setPlayerModelContent(content)
       console.log(`[Geometry] The game's own models are fetched on demand into ${content.root}.`)
     }
     helperAvailable().then(ok => console.log(ok

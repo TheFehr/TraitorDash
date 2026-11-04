@@ -79,7 +79,7 @@ while read -r f; do [ -z "$f" ] && continue; mkdir -p "$OUT/$(dirname "$f")"; cp
     dir = mkdtempSync(join(tmpdir(), 'gc-test-'))
     fix = join(dir, 'fix'); log = join(dir, 'log'); root = join(dir, 'root'); scratch = join(dir, 'scratch')
     for (const d of [fix, log, scratch]) mkdirSync(d, { recursive: true })
-    const misc = buildVpk(modelFiles('models/props_c17/crate', crate))
+    const misc = buildVpk([...modelFiles('models/props_c17/crate', crate), { name: 'models/m_anm.mdl', data: Buffer.from('sequences'), archive: 0 }, { name: 'models/m_anm.ani', data: Buffer.from('frames'), archive: 0 }])
     put('4020', 'sourceengine/hl2_misc_dir.vpk', misc.dir)
     put('4020', 'sourceengine/hl2_misc_000.vpk', misc.archives.get(0)!)
     const css = buildVpk(modelFiles('models/props/cs_office/drum', drum, 3))
@@ -118,6 +118,28 @@ while read -r f; do [ -z "$f" ] && continue; mkdir -p "$OUT/$(dirname "$f")"; cp
     expect([...answer.models.keys()]).toEqual(['models/props_c17/crate.mdl'])
     expect(answer.error).toBeTruthy()
     expect(existsSync(join(root, 'models'))).toBe(true)
+  })
+
+  test('an animation set (RFC 22: a model file and its frames, no vertices) is fetched once and kept', async () => {
+    const first = await content().animations('models/m_anm.mdl')
+    expect(first.error).toBeUndefined()
+    expect(Buffer.from(first.files!.mdl).toString()).toBe('sequences')
+    expect(Buffer.from(first.files!.ani).toString()).toBe('frames')
+    const before = calls().length
+    expect((await content().animations('models/M_ANM.mdl')).files).not.toBeNull() // from the cache, also after a restart
+    expect(calls()).toHaveLength(before)
+    expect(readdirSync(scratch)).toEqual([])
+  })
+
+  test('an animation set the game does not have, a name that is not a model path and a failed download give no files', async () => {
+    expect((await content().animations('models/f_anm.mdl')).files).toBeNull()
+    expect((await content().animations('../x.mdl')).files).toBeNull()
+    writeFileSync(join(fix, 'fail'), '')
+    const rm_ = join(root, 'models')
+    if (existsSync(rm_)) rmSync(rm_, { recursive: true, force: true })
+    const failed = await content({ root: join(dir, 'root2') }).animations('models/m_anm.mdl')
+    expect(failed.files).toBeNull()
+    expect(failed.error).toBeTruthy()
   })
 
   test('an archive larger than the limit is not fetched', async () => {

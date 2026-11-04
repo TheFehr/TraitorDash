@@ -5,6 +5,7 @@ import { planLevels } from './mapplan'
 import type { LevelRange } from '../replaylogic'
 import { roleColour } from '../teamColours'
 import { chooseBackground, versionMismatch, type BackgroundKind } from '../replaylogic'
+import { playerModelEnabled } from './playermodel'
 
 /**
  * What the replay page needs about one round, in one JSON document (RFC 12, 3.5): the round's header
@@ -20,6 +21,8 @@ export interface ReplayPayload {
   revives: { victim: string, reviver: string | null, how: string | null, why: string | null, at: number | null }[]
   track: unknown
   trackInfo: { truncated: boolean, degraded: boolean, fingerprint: string | null, pinned: boolean }
+  /** Where to load the players' model from (RFC 22), when this backend can build it; the replay draws boxes without it. */
+  playerModel?: string
   background: {
     kind: BackgroundKind
     /** The mesh to load, for kind "mesh". */
@@ -84,10 +87,11 @@ export function buildReplay(serverId: string, roundId: string, o?: StatsOptions)
     track: stored.track,
     trackInfo: { truncated: stored.meta.truncated, degraded: stored.meta.degraded, fingerprint: stored.meta.fingerprint, pinned: stored.meta.pinned },
     background,
+    ...(playerModelEnabled() ? { playerModel: `/servers/${serverId}/playermodel.glb?pose=stand` } : {}),
   }
   // A track is immutable; what can change is what is drawn behind it, and the pin.
   const etag = 'W/"' + createHash('sha1').update(JSON.stringify([
-    stored.meta.createdAt, stored.meta.bytes, stored.meta.pinned, !!o?.bots, kind, meshFingerprint, planMeta?.scannedAt ?? null, background.mismatch, colours,
+    stored.meta.createdAt, stored.meta.bytes, stored.meta.pinned, !!o?.bots, kind, meshFingerprint, planMeta?.scannedAt ?? null, background.mismatch, colours, !!payload.playerModel,
   ])).digest('hex').slice(0, 20) + '"'
   return { payload, etag }
 }
