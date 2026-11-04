@@ -66,7 +66,8 @@ export type Colouring = 'plain' | 'height' | 'levels'
 export const COLOURINGS: Colouring[] = ['plain', 'height', 'levels']
 const PLAIN = { floor: 0xcfc6b0, wall: 0xa59d8c }
 const LEVELS_WALL = 0x9999a6
-const HEIGHT_LOW = new Color(0x6f8fa8), HEIGHT_HIGH = new Color(0xd9a066), HEIGHT_TINT = 0.35
+// Height runs deep blue, teal, yellow (not orange: orange is the parts that move). Mostly the colour, a little of the surface's own.
+const HEIGHT_STOPS = [new Color(0x2f4b8f), new Color(0x2fa39a), new Color(0xf0dc5a)], HEIGHT_TINT = 0.85
 const STORE_KEY = 'traitordash.mapcolour'
 
 /** One hue per level, low to high, so the storeys can be told apart. */
@@ -84,17 +85,29 @@ export interface Painted { mesh: Mesh<BufferGeometry, MeshStandardMaterial>, wal
 
 /** Vertex colours for the Height colouring: the plain colour of the surface tinted by its height over the whole map. Heights are Source's (Z up, before the root node turns the model). */
 export function heightColours(painted: Painted[]): void {
-  let zMin = Infinity, zMax = -Infinity
-  for (const p of painted) { const pos = p.mesh.geometry.getAttribute('position'); for (let i = 0; i < pos.count; i++) { zMin = Math.min(zMin, pos.getZ(i)); zMax = Math.max(zMax, pos.getZ(i)) } }
-  const c = new Color()
+  // The range is the middle 96% of the heights, so a spire or a pit does not squeeze everything else into one colour.
+  let lo = Infinity, hi = -Infinity
+  for (const p of painted) { const pos = p.mesh.geometry.getAttribute('position'); for (let i = 0; i < pos.count; i++) { lo = Math.min(lo, pos.getZ(i)); hi = Math.max(hi, pos.getZ(i)) } }
+  let zMin = lo, zMax = hi
+  if (hi > lo) {
+    const BINS = 512, bins = new Float64Array(BINS)
+    let total = 0
+    for (const p of painted) { const pos = p.mesh.geometry.getAttribute('position'); for (let i = 0; i < pos.count; i++) { bins[Math.min(BINS - 1, Math.floor(((pos.getZ(i) - lo) / (hi - lo)) * BINS))]! += 1; total++ } }
+    let acc = 0, a = 0, b = BINS - 1
+    for (let k = 0; k < BINS; k++) { acc += bins[k]!; if (acc >= total * 0.02) { a = k; break } }
+    acc = 0
+    for (let k = BINS - 1; k >= 0; k--) { acc += bins[k]!; if (acc >= total * 0.02) { b = k + 1; break } }
+    if (b > a) { zMin = lo + (a / BINS) * (hi - lo); zMax = lo + (b / BINS) * (hi - lo) }
+  }
+  const c = new Color(), tint = new Color()
+  const ramp = (t: number, out: Color) => { const x = t * (HEIGHT_STOPS.length - 1), k = Math.min(HEIGHT_STOPS.length - 2, Math.floor(x)); return out.copy(HEIGHT_STOPS[k]!).lerp(HEIGHT_STOPS[k + 1]!, x - k) }
   for (const p of painted) {
     const pos = p.mesh.geometry.getAttribute('position')
     const base = new Color(p.wall ? PLAIN.wall : PLAIN.floor)
     const out = new Float32Array(pos.count * 3)
     for (let i = 0; i < pos.count; i++) {
       const t = zMax > zMin ? Math.min(1, Math.max(0, (pos.getZ(i) - zMin) / (zMax - zMin))) : 0.5
-      c.copy(HEIGHT_LOW).lerp(HEIGHT_HIGH, t)
-      c.copy(base).lerp(c, HEIGHT_TINT)
+      c.copy(base).lerp(ramp(t, tint), HEIGHT_TINT)
       out[i * 3] = c.r; out[i * 3 + 1] = c.g; out[i * 3 + 2] = c.b
     }
     p.mesh.geometry.setAttribute('color', new BufferAttribute(out, 3))
