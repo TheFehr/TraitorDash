@@ -67,9 +67,9 @@ export function storeysOf(plan: MapPlan['grid']) {
  * died, so a corridor reads as a hot stripe and a spawn as a spot. Returns null when there is nothing to draw.
  */
 export function renderKillzonesSvg(squares: Square[], map: string, base?: Base): string | null {
-  if (squares.length === 0) return null
+  if (squares.length === 0 && !base) return null
   const shown = squares.slice(0, MAX_BLOBS)
-  const max = shown[0]!.n
+  const max = shown[0]?.n ?? 0
 
   // The frame, in world units: what is drawn of the base, and the deaths, with a margin.
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
@@ -84,6 +84,7 @@ export function renderKillzonesSvg(squares: Square[], map: string, base?: Base):
       y0 = Math.min(y0, base.miny + j * base.cell); y1 = Math.max(y1, base.miny + (j + 1) * base.cell)
     }
   }
+  if (!Number.isFinite(x0)) return null // no deaths and a base with nothing in it
   const margin = KILLZONE_CELL
   x0 -= margin; y0 -= margin; x1 += margin; y1 += margin
   const k = TARGET / (x1 - x0) // pixels in a world unit
@@ -124,7 +125,7 @@ export function renderKillzonesSvg(squares: Square[], map: string, base?: Base):
 
   const wide = Math.max(w, 200)
   const bar = 120
-  const legend =
+  const legend = max === 0 ? '' :
     `<defs><linearGradient id="kzl" x1="0" x2="1" y1="0" y2="0">${[0, 1, 2, 3, 4].map(i => `<stop offset="${i / 4}" stop-color="${heat(i / 4)}"/>`).join('')}</linearGradient></defs>` +
     `<path d="M4 ${h + 6}h${bar}v6h-${bar}z" fill="url(#kzl)"/>` +
     `<text x="4" y="${h + 24}" fill="#ccc" font-family="sans-serif" font-size="9">1</text>` +

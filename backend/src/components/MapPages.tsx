@@ -228,22 +228,27 @@ export const MapFilePage = ({ ctx, server, name, map, state, activity, has3d, ha
 /** Where players die on this map: the picture, its numbers and filters that are plain links (RFC 21, 4.4). */
 export const Killzones = ({ ctx, serverId, name, k }: { ctx: Ctx, serverId: string, name: string, k: KillzonesView }) => {
   const path = `${mapPath(serverId, name)}/rounds`
+  const filtered = k.weapon !== null || k.level !== undefined
+  const noDeaths = 'No deaths with a position on this map yet. They are recorded since the game server was updated.'
   const to = (p: { weapon?: string | null, level?: number | null }) => link(ctx, path, { weapon: p.weapon ?? undefined, level: p.level ?? undefined })
   return (
     <div class="f" style="--c:#dc2626;margin-top:1.2rem" data-killzones>
       <h2 class="ft">Killzones</h2>
-      {k.svg === null && k.weapon === null && k.level === undefined ? (
-        <p class="none" data-no-killzones>No deaths with a position on this map yet. They are recorded since the game server was updated.</p>
+      {k.svg === null && !filtered ? (
+        <p class="none" data-no-killzones>{noDeaths}</p>
       ) : (
         <>
-          {k.svg === null ? (
-            <p class="none" data-no-killzones>No deaths with a position match this filter. Pick another level or weapon below.</p>
+          {k.deaths === 0 ? (
+            <>
+              <p class="none" data-no-killzones>{filtered ? 'No deaths with a position match this filter. Pick another level or weapon below.' : noDeaths}</p>
+              {k.svg !== null && <div data-killzone-picture>{raw(k.svg)}</div>}
+            </>
           ) : (
             <>
               <p class="file" style="margin:.2rem 0 .6rem">
                 {k.deaths} {k.deaths === 1 ? 'death' : 'deaths'} in {k.rounds} {k.rounds === 1 ? 'round' : 'rounds'}{k.weapon ? <> by <b>{weaponName(k.weapon)}</b></> : ''}. From above, north is up; a brighter, redder square is where more players died.
               </p>
-              <div data-killzone-picture>{raw(k.svg)}</div>
+              <div data-killzone-picture>{raw(k.svg!)}</div>
               {k.hot.length > 0 && (
                 <ol class="list" data-hottest>
                   {k.hot.map(h => <li>{h.n} {h.n === 1 ? 'death' : 'deaths'} around <span class="dim">x {h.x}, y {h.y}</span></li>)}
