@@ -32,6 +32,7 @@ export const TIERS: Record<string, Tier> = {
   'GET /servers': 'admin',
   'GET /servers/:serverId': 'admin',
   'GET /servers/:serverId/roles/:roleName/config': 'admin',
+  'GET /servers/:serverId/views': 'admin',
   'GET /servers/:serverId/maps/:map/plan.svg': 'admin',
   'GET /servers/:serverId/maps/:map/plan.json': 'admin',
   'POST /servers/:serverId/maps/:map/geometry': 'admin',

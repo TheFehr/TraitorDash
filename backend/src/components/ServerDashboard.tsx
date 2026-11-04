@@ -125,6 +125,7 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
           <h1>{server.name}</h1>
           <p class="muted" style="margin:0 0 .6rem">Server role registry</p>
           <Sections serverId={server.id} />
+          <p style="margin:.6rem 0 0"><a href={`/servers/${server.id}/views`} data-view-log>👁 View log</a> <span class="muted">who opened replays and 3D maps</span></p>
         </div>
         <div class={`status ${isOnline ? 'on' : ''}`}>
           <i></i>

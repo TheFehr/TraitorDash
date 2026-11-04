@@ -176,6 +176,25 @@ export class Store {
     return true
   }
 
+  /**
+   * The view log of one server for the admin page (RFC 13, 6.3): the newest rows, and for each account how
+   * often it opened what. `steamId` narrows both to one account, `action` to replays or maps.
+   */
+  static getViews(serverId: string, o: { steamId?: string, action?: 'VIEW_REPLAY' | 'VIEW_MESH', limit?: number } = {}) {
+    const where = ["server_id = ?", o.action ? 'action = ?' : "action IN ('VIEW_REPLAY', 'VIEW_MESH')"]
+    const args: (string | number)[] = [serverId]
+    if (o.action) args.push(o.action)
+    const accounts = db.prepare(
+      `SELECT steam_id AS steamId, COUNT(*) AS views, COUNT(DISTINCT details) AS things, MAX(timestamp) AS last
+       FROM audit_log WHERE ${where.join(' AND ')} AND steam_id IS NOT NULL GROUP BY steam_id ORDER BY views DESC, last DESC LIMIT 50`
+    ).all(...args) as { steamId: string, views: number, things: number, last: string }[]
+    if (o.steamId) { where.push('steam_id = ?'); args.push(o.steamId) }
+    const rows = db.prepare(
+      `SELECT steam_id AS steamId, action, details AS what, timestamp FROM audit_log WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT ?`
+    ).all(...args, Math.min(Math.max(o.limit ?? 200, 1), 500)) as { steamId: string, action: 'VIEW_REPLAY' | 'VIEW_MESH', what: string, timestamp: string }[]
+    return { accounts, rows }
+  }
+
   /** Removes view rows older than `days` (RFC 13, 6.3). With 0 the log is off and the rows are removed too. */
   static cleanupViewLog(days: number = viewLogDays()): number {
     const r = days <= 0

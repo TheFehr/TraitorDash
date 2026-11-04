@@ -28,7 +28,7 @@ import { helperAvailable, workshopFetcher } from './services/workshop'
 import { sameOrigin } from './middleware/csrf'
 
 // Components
-import { AdminHomePage, ServersPage, ServerPage, RoleConfigPage } from './components/AdminPages'
+import { AdminHomePage, ServersPage, ServerPage, RoleConfigPage, ViewLogPage } from './components/AdminPages'
 import { RoleListPartial } from './components/Sidebar'
 import { checkHealth, features, sourceHash } from './services/version'
 import { StatsPage, RoundPage, PlayerPage } from './components/StatsPages'
@@ -37,7 +37,7 @@ import { adminOf, link, type Ctx } from './components/kit'
 import { ctxOf, isEmbed, limited, respond, pageLimiter, pageHeaders } from './services/pages'
 import { renderPlanSvg, planLevels } from './services/mapplan'
 import * as stats from './services/stats'
-import { ROUND_ID, SMALL_INT } from './services/validators'
+import { ROUND_ID, SMALL_INT, STEAM_ID } from './services/validators'
 
 export const app = new Hono<{ Variables: { session: Session } }>()
 
@@ -149,6 +149,23 @@ app.get('/servers/:serverId', async (c) => {
   const roles = getRolesWithState(serverId)
 
   return c.html(<ServerPage steamId={steamId as string} server={server} roles={roles} />)
+})
+
+/** Who opened which replay or 3D map (RFC 13, 6.3). Admins only. */
+app.get('/servers/:serverId/views', async (c) => {
+  const steamId = await getAdminId(c)
+  if (!steamId) return c.redirect('/')
+  const found = serverOf(c)
+  if (!found) return c.redirect('/')
+  const { serverId, server } = found
+  const player = c.req.query('player')
+  const what = c.req.query('what')
+  const who = player && STEAM_ID.test(player) ? player : null
+  const action = what === 'replay' ? 'VIEW_REPLAY' as const : what === 'map' ? 'VIEW_MESH' as const : null
+  const log = Store.getViews(serverId, { steamId: who ?? undefined, action: action ?? undefined })
+  c.header('Cache-Control', 'no-store')
+  return c.html(<ViewLogPage steamId={steamId as string} server={server} now={Date.now()}
+    log={{ ...log, days: viewLogDays(), steamId: who, action }} />)
 })
 
 /** Role name to `#rrggbb`, for the dots and bars. */
