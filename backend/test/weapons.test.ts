@@ -345,6 +345,10 @@ describe('the pages', () => {
     }
     expect((await text(path + '?level=1', USER)).text).toContain('1 death in 1 round')
     expect((await text(path + '?level=9', USER)).text).toContain('2 deaths in 1 round')
+    // a filter that matches nothing keeps the filters, so it can be taken off again
+    const none = (await text(path + '?weapon=weapon_nothing', USER)).text
+    expect(none).toContain('data-no-killzones'); expect(none).toContain('level=2')
+    expect(none).toContain('href="'+path+'"'); expect(none).toContain('match this filter')
     // opening it is logged like a view of the 3D map
     expect(db.query("SELECT COUNT(*) n FROM audit_log WHERE action = 'VIEW_MESH' AND server_id = ?").get(serverId).n).toBeGreaterThan(0)
   })
