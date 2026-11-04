@@ -1,4 +1,4 @@
-import { expect, test, describe, beforeAll, beforeEach } from 'bun:test'
+import { expect, test, describe, beforeAll, beforeEach, afterAll } from 'bun:test'
 import { serializeSigned } from 'hono/utils/cookie'
 
 const SECRET = 'test-secret-test-secret-test-secret-0'
@@ -8,6 +8,8 @@ process.env.ADMIN_STEAM_IDS = '76561198000000000'
 process.env.OPEN_SIGNIN = '1'
 
 // RFC 13, 6.3: the admin page for the view log.
+// All test files share one process, so what is set in the environment is taken away again.
+afterAll(() => { delete process.env.OPEN_SIGNIN })
 
 let app: any, Store: any
 const ADMIN = '76561198000000000', U1 = '76561198000000041', U2 = '76561198000000042'

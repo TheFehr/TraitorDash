@@ -1,4 +1,4 @@
-import { expect, test, describe, beforeAll, afterEach } from 'bun:test'
+import { expect, test, describe, beforeAll, beforeEach, afterEach } from 'bun:test'
 import { serializeSigned } from 'hono/utils/cookie'
 
 const SECRET = 'test-secret-test-secret-test-secret-0'
@@ -19,6 +19,8 @@ beforeAll(async () => {
   const res = await auth.request('/steam')
   REALM = new URL(res.headers.get('location')!).searchParams.get('openid.realm')!
 })
+// Open sign-in turns every Steam account into a visitor; these tests are about the allow-list, whatever another file left in the environment.
+beforeEach(() => { delete process.env.OPEN_SIGNIN })
 afterEach(() => { globalThis.fetch = realFetch })
 
 const steam = (verdict: string | Error) => {

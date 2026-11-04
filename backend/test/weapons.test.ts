@@ -1,6 +1,9 @@
-import { expect, test, describe, beforeAll, beforeEach } from 'bun:test'
+import { expect, test, describe, beforeAll, beforeEach, afterAll } from 'bun:test'
 import { Database } from 'bun:sqlite'
 import { serializeSigned } from 'hono/utils/cookie'
+
+// All test files share one process, so what the tests set in the environment is taken away again.
+afterAll(() => { delete process.env.OPEN_SIGNIN; delete process.env.MAP_GEOMETRY })
 
 const SECRET = 'test-secret-test-secret-test-secret-0'
 process.env.TRAITORDASH_DB = ':memory:'
