@@ -75,7 +75,7 @@ export const ReplayPage = ({ ctx, server, round, hasTrack, src, pinned, here, pi
             <p data-background class="foot"></p>
             <div data-notes></div>
             <p data-disclaimer class="foot dark">
-              Simplified map: this shows where players were and when, not what they could see. Doors, glass, props and ceilings are not in it, so it cannot tell who could see whom.
+              Simplified map: this shows where players were and when, not what they could see. Doors and ceilings are not in it, and glass and props only roughly, so it cannot tell who could see whom.
             </p>
           </div>
           <aside>

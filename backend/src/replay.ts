@@ -2,7 +2,7 @@
 import {
   WebGLRenderer, OrthographicCamera, Box3, Vector3, Color, Group, Mesh, MeshStandardMaterial, MeshBasicMaterial,
   SphereGeometry, RingGeometry, DoubleSide, ConeGeometry, BoxGeometry, InstancedMesh, Matrix4, Object3D, Plane, Sprite,
-  SpriteMaterial, CanvasTexture, BufferGeometry, Float32BufferAttribute, Line, LineSegments, LineBasicMaterial,
+  SpriteMaterial, CanvasTexture, BufferGeometry, Float32BufferAttribute, Line, LineSegments, LineBasicMaterial, Raycaster,
   type Camera, type MeshStandardMaterial as StdMat,
 } from 'three'
 import { hex } from './teamColours'
@@ -313,6 +313,7 @@ async function start(root: HTMLElement) {
   const cut = new Plane(new Vector3(0, -1, 0), 1e9)
   const levelNodes: { index: number, node: Object3D }[] = []
   const wallMeshes: Mesh[] = []
+  const occluders: Mesh[] = [] // what the follow camera must not go through: the floors and walls of the levels and the solid props
   let bounds = new Box3(new Vector3(-512, -512, -64), new Vector3(512, 512, 256)) // Source coordinates
 
   const finish = (b: Box3) => { bounds = b }
@@ -345,7 +346,7 @@ async function start(root: HTMLElement) {
         painted.push({ mesh, wall: isWall, level: l.index })
       })
       prepareWater(model, cut)
-      prepareProps(model, cut)
+      occluders.push(...painted.map(p => p.mesh as Mesh), ...prepareProps(model, cut).solid)
       prepareMovable(model, cut)
       // Parts apart from the map (RFC 18, 4.4) are not drawn in the replay.
       const apart = model.getObjectByName('detached')
@@ -606,6 +607,27 @@ async function start(root: HTMLElement) {
     cut.constant = upTo === 'all' || !top ? 1e9 : top.hi + CUT_ABOVE
     markLevels()
   }
+  // The follow camera stops at what is in its way: a wall of the map or a building would otherwise fill the screen (the camera
+  // sits 300 units behind the player and goes through the outer wall when the player walks along it).
+  const ray = new Raycaster()
+  let reach = 1, castAt = -1e9 // how much of the way back the camera may go, and when that was last looked at
+  const keepInside = (from: Vector3) => {
+    if (occluders.length === 0) return
+    const to = persp.position.clone().sub(from)
+    const far = to.length()
+    if (far < 1e-3) return
+    const dir = to.divideScalar(far)
+    const now = performance.now()
+    if (now - castAt > 50) { // looking costs a few milliseconds on a big map: not every frame (the answer changes slowly)
+      castAt = now
+      ray.set(from, dir)
+      ray.near = 0; ray.far = far
+      const hit = ray.intersectObjects(occluders, false)[0]
+      reach = hit ? Math.max(hit.distance - 24, 40) / far : 1
+    }
+    persp.position.copy(from).addScaledVector(dir, far * Math.min(reach, 1))
+  }
+
   // ---- what is shown at time `ms`
   const tmp = new Vector3()
   // Pins and names are the same size on the screen. A perspective camera does that by itself
@@ -701,6 +723,7 @@ async function start(root: HTMLElement) {
       const dx = Math.cos(a), dy = Math.sin(a)
       // Source (x, y, z) -> three (x, z, -y)
       persp.position.set(px - dx * 300, pz + 170, -(py - dy * 300))
+      keepInside(new Vector3(px, pz + 64, -py))
       tmp.set(px + dx * 90, pz + 50, -(py + dy * 90))
       persp.lookAt(tmp)
     }
