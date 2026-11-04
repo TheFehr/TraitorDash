@@ -164,8 +164,9 @@ app.get('/servers/:serverId/views', async (c) => {
   const action = what === 'replay' ? 'VIEW_REPLAY' as const : what === 'map' ? 'VIEW_MESH' as const : null
   const log = Store.getViews(serverId, { steamId: who ?? undefined, action: action ?? undefined })
   c.header('Cache-Control', 'no-store')
-  return c.html(<ViewLogPage steamId={steamId as string} server={server} now={Date.now()}
-    log={{ ...log, days: viewLogDays(), steamId: who, action }} />)
+  // With the doctype: without it the browser's quirks mode gives a table the page's pale text colour on the cream card.
+  return c.html('<!DOCTYPE html>' + (<ViewLogPage steamId={steamId as string} server={server} now={Date.now()}
+    log={{ ...log, days: viewLogDays(), steamId: who, action }} />).toString())
 })
 
 /** Role name to `#rrggbb`, for the dots and bars. */

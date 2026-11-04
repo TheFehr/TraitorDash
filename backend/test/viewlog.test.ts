@@ -45,6 +45,8 @@ describe('the view log page', () => {
     const r = await get(`/servers/${serverId}/views`, ADMIN)
     expect(r.status).toBe(200)
     const t = await r.text()
+    // a page without a doctype is in quirks mode, where a table takes the page's pale text colour onto the cream card
+    expect(t.startsWith('<!DOCTYPE html>')).toBe(true)
     expect(t).toContain('data-view-accounts'); expect(t).toContain('data-view-rows')
     expect(t).toContain(U1)
     expect(t).toContain(`/servers/${serverId}/rounds/round-0001`)

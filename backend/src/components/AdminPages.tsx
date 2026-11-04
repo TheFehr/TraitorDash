@@ -96,12 +96,12 @@ export const ViewLogPage = ({ steamId, server, log, now }: { steamId: string, se
             <h2 class="ft">Accounts</h2>
             <div class="scrollx">
               <table class="log" data-view-accounts>
-                <tr><th>Account</th><th class="r">Views</th><th class="r">Different</th><th>Last</th></tr>
+                <tr><th>Account</th><th class="r">Views</th><th class="r">Different</th><th style="padding-left:1.2rem">Last</th></tr>
                 {log.accounts.map(a => (
                   <tr>
                     <td><a href={to({ player: a.steamId, action: log.action === 'VIEW_REPLAY' ? 'replay' : log.action === 'VIEW_MESH' ? 'map' : null })}>{a.steamId}</a></td>
                     <td class="r">{a.views}</td><td class="r">{a.things}</td>
-                    <td><When iso={iso(a.last)} now={now} /></td>
+                    <td style="padding-left:1.2rem"><When iso={iso(a.last)} now={now} /></td>
                   </tr>
                 ))}
               </table>
