@@ -248,3 +248,113 @@ export function getMapActivity(serverId: string, o?: StatsOptions): Map<string, 
 
 export const getDeathCount = (serverId: string, roundId: string): number =>
   (db.prepare('SELECT COUNT(*) AS n FROM deaths WHERE server_id = ? AND round_id = ?').get(serverId, roundId) as { n: number }).n
+
+// ---- weapons and killzones (RFC 21) ---------------------------------------------------------------------------
+
+export interface WeaponRow {
+  weapon: string
+  /** Damage to other teams' players, and to one's own team (kept apart; only the first is ranked). */
+  damage: number, friendlyDamage: number, hits: number
+  kills: number, deaths: number, players: number, rounds: number
+}
+export const WEAPON_SORTS = ['damage', 'kills', 'hits'] as const
+export type WeaponSort = (typeof WEAPON_SORTS)[number]
+export const parseWeaponSort = (v: string | undefined | null): WeaponSort => (WEAPON_SORTS as readonly string[]).includes(v ?? '') ? (v as WeaponSort) : 'damage'
+
+const notBotCol = (col: string, o?: StatsOptions) => (o?.bots ? '1=1' : `${col} NOT LIKE '${BOT_PREFIX}%'`)
+
+/** Rows of two queries, put together by weapon. */
+function mergeWeapons(damage: any[], kills: any[], deaths: any[]): Map<string, WeaponRow> {
+  const by = new Map<string, WeaponRow>()
+  const row = (w: string) => {
+    let r = by.get(w)
+    if (!r) by.set(w, r = { weapon: w, damage: 0, friendlyDamage: 0, hits: 0, kills: 0, deaths: 0, players: 0, rounds: 0 })
+    return r
+  }
+  for (const d of damage) { const r = row(d.weapon); r.damage = d.damage ?? 0; r.friendlyDamage = d.friendly ?? 0; r.hits = d.hits ?? 0; r.players = d.players; r.rounds = d.rounds }
+  for (const k of kills) row(k.weapon).kills = k.n
+  for (const d of deaths) row(d.weapon).deaths = d.n
+  return by
+}
+
+export interface WeaponStats {
+  rows: WeaponRow[]
+  /** Damage to other teams, summed over every weapon (what the shares are of). */
+  totalDamage: number
+  /** How many rounds have weapon data, and how many rounds there are. */
+  rounds: { withData: number, total: number }
+}
+
+/** Damage, hits, kills and deaths for each weapon the server has seen (RFC 21, 4.3), most first. */
+export function getWeaponStats(serverId: string, o?: StatsOptions, sort: WeaponSort = 'damage', limit = 50): WeaponStats {
+  const damage = db.prepare(`
+    SELECT rd.weapon AS weapon, SUM(CASE WHEN rd.friendly = 0 THEN rd.damage END) AS damage, SUM(CASE WHEN rd.friendly = 1 THEN rd.damage END) AS friendly,
+           SUM(CASE WHEN rd.friendly = 0 THEN rd.hits END) AS hits, COUNT(DISTINCT rd.steam_id) AS players, COUNT(DISTINCT rd.round_id) AS rounds
+    FROM round_damage rd WHERE rd.server_id = ? AND ${notBotCol('rd.steam_id', o)} GROUP BY rd.weapon
+  `).all(serverId)
+  const kills = db.prepare(`
+    SELECT d.weapon AS weapon, COUNT(*) AS n FROM deaths d
+    WHERE d.server_id = ? AND d.weapon IS NOT NULL AND d.attacker_steam_id IS NOT NULL AND ${notBotCol('d.attacker_steam_id', o)} GROUP BY d.weapon
+  `).all(serverId)
+  const deaths = db.prepare(`
+    SELECT d.weapon AS weapon, COUNT(*) AS n FROM deaths d
+    WHERE d.server_id = ? AND d.weapon IS NOT NULL AND ${notBotCol('d.victim_steam_id', o)} GROUP BY d.weapon
+  `).all(serverId)
+  const all = [...mergeWeapons(damage, kills, deaths).values()]
+  const key = (r: WeaponRow) => (sort === 'kills' ? r.kills : sort === 'hits' ? r.hits : r.damage)
+  all.sort((a, b) => key(b) - key(a) || b.damage - a.damage || b.kills - a.kills || a.weapon.localeCompare(b.weapon))
+  const withData = (db.prepare(`
+    SELECT COUNT(*) AS n FROM rounds r WHERE r.server_id = ? AND ${roundHasPlayers(o)} AND (
+      EXISTS (SELECT 1 FROM round_damage rd WHERE rd.server_id = r.server_id AND rd.round_id = r.round_id)
+      OR EXISTS (SELECT 1 FROM deaths d WHERE d.server_id = r.server_id AND d.round_id = r.round_id AND d.weapon IS NOT NULL))
+  `).get(serverId) as { n: number }).n
+  const total = (db.prepare(`SELECT COUNT(*) AS n FROM rounds r WHERE r.server_id = ? AND ${roundHasPlayers(o)}`).get(serverId) as { n: number }).n
+  return { rows: all.slice(0, limit), totalDamage: all.reduce((n, r) => n + r.damage, 0), rounds: { withData, total } }
+}
+
+/** The same for one player: damage and kills with each weapon, and how often it killed them. */
+export function getPlayerWeapons(serverId: string, steamId: string, limit = 30): WeaponRow[] {
+  const damage = db.prepare(`
+    SELECT rd.weapon AS weapon, SUM(CASE WHEN rd.friendly = 0 THEN rd.damage END) AS damage, SUM(CASE WHEN rd.friendly = 1 THEN rd.damage END) AS friendly,
+           SUM(CASE WHEN rd.friendly = 0 THEN rd.hits END) AS hits, 1 AS players, COUNT(DISTINCT rd.round_id) AS rounds
+    FROM round_damage rd WHERE rd.server_id = ? AND rd.steam_id = ? GROUP BY rd.weapon
+  `).all(serverId, steamId)
+  const kills = db.prepare(`
+    SELECT d.weapon AS weapon, COUNT(*) AS n FROM deaths d WHERE d.server_id = ? AND d.weapon IS NOT NULL AND d.attacker_steam_id = ? GROUP BY d.weapon
+  `).all(serverId, steamId)
+  const deaths = db.prepare(`
+    SELECT d.weapon AS weapon, COUNT(*) AS n FROM deaths d WHERE d.server_id = ? AND d.weapon IS NOT NULL AND d.victim_steam_id = ? GROUP BY d.weapon
+  `).all(serverId, steamId)
+  return [...mergeWeapons(damage, kills, deaths).values()]
+    .sort((a, b) => b.damage - a.damage || b.kills - a.kills || b.deaths - a.deaths || a.weapon.localeCompare(b.weapon))
+    .slice(0, limit)
+}
+
+/** The size of a killzone square, in world units (RFC 21, 4.4). */
+export const KILLZONE_CELL = 128
+/** The height bands the deaths are kept in, finer than the squares so a storey can be told from the next. */
+export const KILLZONE_BAND = 32
+
+export interface Killzones {
+  /** Deaths summed by square (`bx`, `by`: the position divided by KILLZONE_CELL, rounded down) and by height band (`bz`, in KILLZONE_BAND units). */
+  cells: { bx: number, by: number, bz: number, n: number }[]
+  deaths: number, rounds: number
+  /** The weapons that killed on this map, most first, for the filter links. */
+  weapons: { weapon: string, n: number }[]
+}
+
+/** Where the victims died on one map (RFC 21, 4.4), with the position known; `weapon` limits it to one weapon. */
+export function getKillzones(serverId: string, map: string, o?: StatsOptions, weapon?: string | null): Killzones {
+  const floor = (col: string, size: number) => `((${col} - (((${col} % ${size}) + ${size}) % ${size})) / ${size})`
+  const base = `FROM deaths d JOIN rounds r ON r.server_id = d.server_id AND r.round_id = d.round_id
+    WHERE d.server_id = ? AND r.map = ? AND d.x IS NOT NULL AND ${notBotCol('d.victim_steam_id', o)}`
+  const cells = db.prepare(`
+    SELECT ${floor('d.x', KILLZONE_CELL)} AS bx, ${floor('d.y', KILLZONE_CELL)} AS by, ${floor('d.z', KILLZONE_BAND)} AS bz, COUNT(*) AS n ${base} ${weapon ? 'AND d.weapon = ?' : ''}
+    GROUP BY bx, by, bz
+  `).all(...(weapon ? [serverId, map, weapon] : [serverId, map])) as Killzones['cells']
+  const totals = db.prepare(`SELECT COUNT(*) AS deaths, COUNT(DISTINCT d.round_id) AS rounds ${base} ${weapon ? 'AND d.weapon = ?' : ''}`)
+    .get(...(weapon ? [serverId, map, weapon] : [serverId, map])) as { deaths: number, rounds: number }
+  const weapons = db.prepare(`SELECT COALESCE(d.weapon, '') AS weapon, COUNT(*) AS n ${base} AND d.weapon IS NOT NULL GROUP BY d.weapon ORDER BY n DESC, d.weapon LIMIT 30`)
+    .all(serverId, map) as Killzones['weapons']
+  return { cells, ...totals, weapons }
+}

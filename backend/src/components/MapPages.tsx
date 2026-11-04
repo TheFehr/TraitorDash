@@ -5,6 +5,8 @@ import { duration, mapSize } from '../format'
 import { teamLabel } from '../teamColours'
 import { prettyMap } from '../mapName'
 import { heightColour, type Level } from '../services/mapplan'
+import { raw } from 'hono/html'
+import { weaponName } from '../weaponName'
 import type { MapActivity } from '../services/stats'
 import type { MapPlanMeta, MapRow, MapsState } from '../services/Store'
 import type { GeometryInfo } from '../services/mapgeometry'
@@ -159,10 +161,24 @@ export interface MapFileProps {
   /** An admin's map may also have a floor plan. */
   hasPlan?: boolean
   viewLogDays?: number
+  /** Where the deaths on this map are (RFC 21, 4.4). */
+  killzones?: KillzonesView
+}
+
+/** The picture and what goes beside it. `svg` is made by the backend from numbers (services/killzones.ts). */
+export interface KillzonesView {
+  svg: string | null
+  deaths: number, rounds: number
+  hot: { x: number, y: number, n: number }[]
+  weapons: { weapon: string, n: number }[]
+  weapon: string | null
+  /** An admin with a floor plan may pick a storey; `levels` is how many there are. */
+  level?: number, levels?: number
+  floor: boolean
 }
 
 /** What the rounds on one map say, and the way to its own view. */
-export const MapFilePage = ({ ctx, server, name, map, state, activity, has3d, hasPlan, viewLogDays = 0 }: MapFileProps) => {
+export const MapFilePage = ({ ctx, server, name, map, state, activity, has3d, hasPlan, viewLogDays = 0, killzones }: MapFileProps) => {
   const id = server.id
   const admin = adminOf(ctx)
   const next = nextOf(state)
@@ -202,8 +218,46 @@ export const MapFilePage = ({ ctx, server, name, map, state, activity, has3d, ha
         )}
         {!admin && <p class="foot dark">The floor plan is on the website, for admins.</p>}
       </div>
+      {killzones && <Killzones ctx={ctx} serverId={id} name={name} k={killzones} />}
       <Who ctx={ctx} />
     </Shell>
+  )
+}
+
+/** Where players die on this map: the picture, its numbers and filters that are plain links (RFC 21, 4.4). */
+export const Killzones = ({ ctx, serverId, name, k }: { ctx: Ctx, serverId: string, name: string, k: KillzonesView }) => {
+  const path = `${mapPath(serverId, name)}/rounds`
+  const to = (p: { weapon?: string | null, level?: number | null }) => link(ctx, path, { weapon: p.weapon ?? undefined, level: p.level ?? undefined })
+  return (
+    <div class="f" style="--c:#dc2626;margin-top:1.2rem" data-killzones>
+      <h2 class="ft">Killzones</h2>
+      {k.svg === null ? (
+        <p class="none" data-no-killzones>No deaths with a position on this map yet. They are recorded since the game server was updated.</p>
+      ) : (
+        <>
+          <p class="file" style="margin:.2rem 0 .6rem">
+            {k.deaths} {k.deaths === 1 ? 'death' : 'deaths'} in {k.rounds} {k.rounds === 1 ? 'round' : 'rounds'}{k.weapon ? <> by <b>{weaponName(k.weapon)}</b></> : ''}. From above, north is up; a brighter, redder square is where more players died.
+          </p>
+          <div data-killzone-picture>{raw(k.svg)}</div>
+          {k.hot.length > 0 && (
+            <ol class="list" data-hottest>
+              {k.hot.map(h => <li>{h.n} {h.n === 1 ? 'death' : 'deaths'} around <span class="dim">x {h.x}, y {h.y}</span></li>)}
+            </ol>
+          )}
+          {k.levels && k.levels > 1 && (
+            <div class="bar" style="margin-top:.6rem"><span>Level</span>
+              <a class={k.level === undefined ? 'on' : ''} href={to({ weapon: k.weapon })}>All</a>
+              {Array.from({ length: k.levels }, (_, i) => i + 1).map(l => <a class={k.level === l ? 'on' : ''} href={to({ weapon: k.weapon, level: l })}>{l}</a>)}
+            </div>
+          )}
+          <div class="bar" style="margin-top:.6rem"><span>Weapon</span>
+            <a class={k.weapon === null ? 'on' : ''} href={to({ level: k.level })}>All</a>
+            {k.weapons.slice(0, 8).map(w => <a class={k.weapon === w.weapon ? 'on' : ''} href={to({ weapon: w.weapon, level: k.level })} title={w.weapon}>{weaponName(w.weapon)} <span class="dim">{w.n}</span></a>)}
+          </div>
+          <p class="foot dark">{k.floor ? 'The floor is drawn for admins only.' : 'The floor of the map is not shown.'} Squares are 128 units wide. Only deaths since the game server was updated are counted, and they name nobody.</p>
+        </>
+      )}
+    </div>
   )
 }
 

@@ -425,6 +425,58 @@ export const migrations: Array<(db: Database) => void> = [
   (db) => {
     if (!db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='map_geometry'").get()) return
     db.run('ALTER TABLE map_geometry ADD COLUMN version INTEGER NOT NULL DEFAULT 1')
+  },
+  // v25 (RFC 21): what a death was done with and where the victim stood (NULL for rounds from before), and the damage
+  // each player did with each weapon in a round, summed.
+  (db) => {
+    db.run('ALTER TABLE deaths ADD COLUMN weapon TEXT')
+    db.run('ALTER TABLE deaths ADD COLUMN x INTEGER')
+    db.run('ALTER TABLE deaths ADD COLUMN y INTEGER')
+    db.run('ALTER TABLE deaths ADD COLUMN z INTEGER')
+    db.run(`
+      CREATE TABLE IF NOT EXISTS round_damage (
+        server_id TEXT NOT NULL,
+        round_id  TEXT NOT NULL,
+        steam_id  TEXT NOT NULL,
+        weapon    TEXT NOT NULL,
+        friendly  INTEGER NOT NULL DEFAULT 0,
+        damage    INTEGER NOT NULL DEFAULT 0,
+        hits      INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (server_id, round_id, steam_id, weapon, friendly),
+        FOREIGN KEY (server_id, round_id) REFERENCES rounds(server_id, round_id)
+      )
+    `)
+    db.run('CREATE INDEX IF NOT EXISTS idx_round_damage_player ON round_damage (server_id, steam_id)')
+    db.run('CREATE INDEX IF NOT EXISTS idx_deaths_round ON deaths (server_id, round_id)')
+  },
+  // v26 (RFC 21, 4.2): the position tracks already hold the weapon and the place of each death (RFC 12), so the deaths of
+  // the rounds that still have a track get them now. A track's death is matched to the death row of the same victim
+  // nearest in time (within 3 s, one row for each); positions in a track are in steps of 8 units. A track that does not
+  // read is skipped; nothing here can fail the migration.
+  (db) => {
+    if (!db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='round_tracks'").get()) return
+    const tracks = db.query('SELECT server_id, round_id, data FROM round_tracks').all() as { server_id: string, round_id: string, data: string }[]
+    const rows = db.prepare('SELECT id, victim_steam_id AS victim, at_seconds AS at FROM deaths WHERE server_id = ? AND round_id = ? AND weapon IS NULL AND x IS NULL')
+    const set = db.prepare('UPDATE deaths SET weapon = ?, x = ?, y = ?, z = ? WHERE id = ?')
+    for (const t of tracks) {
+      try {
+        const parsed = JSON.parse(t.data)
+        if (!Array.isArray(parsed?.deaths)) continue
+        const free = rows.all(t.server_id, t.round_id) as { id: number, victim: string, at: number | null }[]
+        const sorted = [...parsed.deaths].sort((a: any, b: any) => a.t - b.t)
+        for (const d of sorted) {
+          if (typeof d?.victim !== 'string' || !Number.isFinite(d.t) || ![d.vx, d.vy, d.vz].every(Number.isFinite)) continue
+          let best = -1, gap = 3.0001
+          free.forEach((r, i) => {
+            const g = r.victim === d.victim && r.at !== null ? Math.abs(r.at - d.t / 1000) : Infinity
+            if (g < gap) { gap = g; best = i }
+          })
+          if (best < 0) continue
+          const [row] = free.splice(best, 1)
+          set.run(typeof d.weapon === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(d.weapon) ? d.weapon : null, Math.round(d.vx * 8), Math.round(d.vy * 8), Math.round(d.vz * 8), row!.id)
+        }
+      } catch { /* an unreadable track gives nothing */ }
+    }
   }
 ]
 

@@ -188,6 +188,9 @@ main>p .pill.ok{color:#4ade80}main>p .pill.wait{color:#fbbf24}main>p .pill.mute{
 h2+.f,h2+.plans,h2+p+.f{margin-top:1.1rem}
 .f .sections{margin:.6rem 0 0}
 .f .sections a{color:#2a2418;border-color:#5f5846}
+.f .bar{color:#4a4334}
+.f .bar a{color:#2a2418;border-color:#5f5846}
+.f .bar a.on{background:#2a2418;color:#e9dfc4;border-color:#2a2418}
 .f .sections a:hover{color:#2a2418;border-color:#2a2418}
 .f .sections a[aria-current],.f .sections a[aria-current]:hover{background:#2a2418;color:#e9dfc4;border-color:#2a2418}
 .replay{display:grid;grid-template-columns:minmax(0,1fr) 17rem;gap:1.2rem}

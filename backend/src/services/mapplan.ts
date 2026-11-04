@@ -101,7 +101,7 @@ type Cells = Floor[][][]
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
-const parseRows = (grid: Grid): Cells =>
+export const parseRows = (grid: Grid): Cells =>
   grid.rows.map(r => r.split('|').map(c => (c === '' ? [] : c.split(',').map(f => ({ z: parseInt(f, 10), crouch: f.endsWith('c') })))))
 
 /**

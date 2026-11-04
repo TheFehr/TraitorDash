@@ -4,7 +4,8 @@ import { signinUrl } from '../middleware/session'
 import { clock, duration, kd, mb, pct } from '../format'
 import { teamLabel } from '../teamColours'
 import { prettyMap } from '../mapName'
-import { SORTS, type FirstBlood, type LeaderRow, type PlayerDetail, type RecentRound, type ReplayRound, type SortKey, type WinRow } from '../services/stats'
+import { SORTS, WEAPON_SORTS, type FirstBlood, type LeaderRow, type PlayerDetail, type RecentRound, type ReplayRound, type SortKey, type WeaponRow, type WeaponSort, type WeaponStats, type WinRow } from '../services/stats'
+import { weaponName } from '../weaponName'
 
 // Round stats, one round and one player (RFC 16, RFC 17): the same pages on the website and in the
 // game's window. What differs is `ctx`: the website has a header and, for an admin, the controls that
@@ -16,10 +17,12 @@ const here = (serverId: string) => `/servers/${serverId}`
 interface Keep { bots?: boolean, by?: 'start' | 'end' }
 const keep = (k: Keep) => ({ bots: k.bots, by: k.by === 'start' ? 'start' : undefined })
 
-type View = 'overview' | 'leaders' | 'rounds'
+type View = 'overview' | 'leaders' | 'weapons' | 'rounds'
 const VIEWS: { key: View, label: string }[] = [
-  { key: 'overview', label: 'Overview' }, { key: 'leaders', label: 'Leaderboard' }, { key: 'rounds', label: 'Rounds' },
+  { key: 'overview', label: 'Overview' }, { key: 'leaders', label: 'Leaderboard' }, { key: 'weapons', label: 'Weapons' }, { key: 'rounds', label: 'Rounds' },
 ]
+
+const WEAPON_SORT_LABELS: Record<WeaponSort, string> = { damage: 'Damage', kills: 'Kills', hits: 'Hits' }
 
 const SORT_LABELS: Record<SortKey, string> = { rounds: 'Rounds', wins: 'Wins', winrate: 'Win %', kills: 'Kills', kd: 'K/D' }
 
@@ -100,6 +103,9 @@ export interface StatsPageProps {
   roles: WinRow[]
   coverage?: { withEnd: number, total: number }
   leaders: LeaderRow[]
+  /** The Weapons tab (RFC 21) and how it is sorted. */
+  weapons?: WeaponStats
+  weaponSort?: WeaponSort
   rounds: RecentRound[]
   /** Rounds that have a stored replay, and whether one is pinned. */
   tracked: Map<string, { pinned: boolean }>
@@ -179,6 +185,13 @@ export const StatsPage = (p: StatsPageProps) => {
         </>
       )}
 
+      {p.overview.rounds > 0 && p.view === 'weapons' && p.weapons && (
+        <>
+          <Pills label="Sort" current={p.weaponSort ?? 'damage'} items={WEAPON_SORTS.map(s => ({ key: s, label: WEAPON_SORT_LABELS[s], href: link(ctx, path, { ...k, view: 'weapons', sort: s === 'damage' ? undefined : s }) }))} />
+          <WeaponTable ctx={ctx} serverId={id} stats={p.weapons} />
+        </>
+      )}
+
       {p.overview.rounds > 0 && p.view === 'rounds' && (
         <>
           <RoundsTable ctx={ctx} serverId={id} rounds={p.rounds} tracked={p.tracked} bots={p.bots} />
@@ -189,6 +202,64 @@ export const StatsPage = (p: StatsPageProps) => {
     </Shell>
   )
 }
+
+const dmg = (n: number) => n.toLocaleString('en-US')
+const perHit = (damage: number, hits: number) => (hits > 0 ? (damage / hits).toFixed(1) : '–')
+
+/** The Weapons tab: what each weapon did on this server (RFC 21, 4.3). A table and a bar, no script. */
+export const WeaponTable = ({ stats, serverId, ctx }: { stats: WeaponStats, serverId: string, ctx: Ctx }) => {
+  const { rows, totalDamage, rounds } = stats
+  if (rows.length === 0) {
+    return <div class="f" style="--c:#9ca3af" data-no-weapons><h2 class="ft">No weapon data yet</h2><span>Weapons are counted from the rounds reported by an updated game server. {rounds.total} {rounds.total === 1 ? 'round has' : 'rounds have'} been played so far.</span></div>
+  }
+  const top = Math.max(1, ...rows.map(r => r.damage))
+  return (
+    <>
+      <div class="f" style="--c:#dc2626;margin-top:1rem" data-weapons>
+        <h2 class="ft">Most damage by weapon</h2>
+        <div class="scrollx">
+          <table class="log">
+            <tr><th>Weapon</th><th class="r">Damage</th><th class="r">Share</th><th></th><th class="r">Hits</th><th class="r">Per hit</th><th class="r">Kills</th><th class="r">Deaths</th><th class="r">Players</th><th class="r">Friendly damage</th></tr>
+            {rows.map(r => (
+              <tr data-weapon={r.weapon}>
+                <td title={r.weapon}>{weaponName(r.weapon)}</td>
+                <td class="r">{dmg(r.damage)}</td>
+                <td class="r dim">{pct(r.damage, totalDamage)}</td>
+                <td style="width:20%"><span style={`display:block;height:.55rem;background:#dc2626;width:${Math.round((r.damage / top) * 100)}%`}></span></td>
+                <td class="r">{dmg(r.hits)}</td>
+                <td class="r dim">{perHit(r.damage, r.hits)}</td>
+                <td class="r">{r.kills}</td>
+                <td class="r">{r.deaths}</td>
+                <td class="r">{r.players}</td>
+                <td class="r dim">{r.friendlyDamage > 0 ? dmg(r.friendlyDamage) : '–'}</td>
+              </tr>
+            ))}
+          </table>
+        </div>
+      </div>
+      <p class="foot">From {rounds.withData} of {rounds.total} rounds: weapons are recorded since the game server was updated. Damage is what the game reported for hits on other players, with each hit capped at the victim's health; damage to a player's own team is kept apart. Kills and deaths count what the weapon did, a fall or a trap is the world.</p>
+    </>
+  )
+}
+
+/** A player's weapons (RFC 21, 4.3). */
+export const PlayerWeapons = ({ rows }: { rows: WeaponRow[] }) => (
+  <div class="f" style="--c:#dc2626;margin-top:1.2rem" data-player-weapons>
+    <h2 class="ft">Weapons</h2>
+    <div class="scrollx">
+      <table class="log">
+        <tr><th>Weapon</th><th class="r">Damage</th><th class="r">Hits</th><th class="r">Per hit</th><th class="r">Kills</th><th class="r">Died to it</th><th class="r">Rounds</th></tr>
+        {rows.map(r => (
+          <tr data-weapon={r.weapon}>
+            <td title={r.weapon}>{weaponName(r.weapon)}</td>
+            <td class="r">{dmg(r.damage)}</td><td class="r">{dmg(r.hits)}</td><td class="r dim">{perHit(r.damage, r.hits)}</td>
+            <td class="r">{r.kills}</td><td class="r">{r.deaths}</td><td class="r dim">{r.rounds || '–'}</td>
+          </tr>
+        ))}
+      </table>
+    </div>
+  </div>
+)
 
 /** The latest rounds. An admin can tick rounds and delete them with their replays (RFC 12). */
 export const RoundsTable = ({ ctx, serverId, rounds, tracked, bots }: { ctx: Ctx, serverId: string, rounds: RecentRound[], tracked: Map<string, { pinned: boolean }>, bots?: boolean }) => {
@@ -313,9 +384,11 @@ export interface PlayerPageProps {
   player: PlayerDetail
   by?: 'start' | 'end'
   bots?: boolean
+  /** What the player did with each weapon (RFC 21); none when the server has no weapon data for them. */
+  weapons?: WeaponRow[]
 }
 
-export const PlayerPage = ({ ctx, server, player, by = 'end', bots }: PlayerPageProps) => {
+export const PlayerPage = ({ ctx, server, player, by = 'end', bots, weapons }: PlayerPageProps) => {
   const id = server.id
   const path = `${here(id)}/players/${player.steamId}`
   return (
@@ -335,6 +408,7 @@ export const PlayerPage = ({ ctx, server, player, by = 'end', bots }: PlayerPage
       </div>
       <ByToggle ctx={ctx} path={path} by={by} params={{ bots }} />
       <div class="pair"><WinTable title="By role" rows={player.roles} empty="No role data." /></div>
+      {weapons && weapons.length > 0 && <PlayerWeapons rows={weapons} />}
       <div class="f" style="--c:#dc2626;margin-top:1.2rem">
         <h2 class="ft">Recent rounds</h2>
         <div class="scrollx">

@@ -314,6 +314,7 @@ api.post('/v1/round', getServer, async (c) => {
   if (!Array.isArray(body.players) || body.players.length === 0 || body.players.length > 128) return bad('players must be an array of 1-128 entries')
   if (body.deaths !== undefined && (!Array.isArray(body.deaths) || body.deaths.length > 512)) return bad('deaths must be an array of at most 512 entries')
   if (body.revives !== undefined && (!Array.isArray(body.revives) || body.revives.length > 512)) return bad('revives must be an array of at most 512 entries')
+  if (body.damage !== undefined && (!Array.isArray(body.damage) || body.damage.length > 1024)) return bad('damage must be an array of at most 1024 entries')
 
   const players: RoundReport['players'] = []
   for (const p of body.players) {
@@ -340,7 +341,15 @@ api.post('/v1/round', getServer, async (c) => {
     if (!inRound.has(d.victim)) { dropped++; continue }
     const claimed = typeof d.attacker === 'string' && STEAM_ID.test(d.attacker) ? d.attacker : null
     const attacker = claimed && claimed !== d.victim && inRound.has(claimed) ? claimed : null
-    deaths.push({ victim: d.victim, attacker, at: whole(d.at) })
+    // What it was done with and where the victim stood (RFC 21): unknown, not refused, when they do not fit.
+    const place = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= 32_768 ? Math.round(v) : null)
+    const [x, y, z] = [place(d.x), place(d.y), place(d.z)]
+    const where = x !== null && y !== null && z !== null
+    deaths.push({
+      victim: d.victim, attacker, at: whole(d.at),
+      weapon: typeof d.weapon === 'string' && NAME.test(d.weapon) ? d.weapon : null,
+      x: where ? x : null, y: where ? y : null, z: where ? z : null,
+    })
   }
   if (dropped > 0) console.warn(`[Stats] ${server.name}: ${dropped} death(s) for players not in the round were dropped`)
 
@@ -357,6 +366,18 @@ api.post('/v1/round', getServer, async (c) => {
   }
   if (droppedRevives > 0) console.warn(`[Stats] ${server.name}: ${droppedRevives} revival(s) for players not in the round were dropped`)
 
+  // Damage (RFC 21, 4.1): an entry for an attacker who is not in the round, or with a weapon or a number that does not
+  // fit, is dropped. The same attacker, weapon and kind twice are added up.
+  const damage = new Map<string, NonNullable<RoundReport['damage']>[number]>()
+  for (const m of body.damage ?? []) {
+    const hits = whole(m?.hits), points = whole(m?.damage)
+    if (typeof m?.attacker !== 'string' || !inRound.has(m.attacker) || typeof m.weapon !== 'string' || !NAME.test(m.weapon) || hits === null || points === null) continue
+    const friendly = m.friendly === true
+    const key = `${m.attacker}|${m.weapon}|${friendly}`
+    const e = damage.get(key)
+    if (e) { e.damage += points; e.hits += hits } else damage.set(key, { attacker: m.attacker, weapon: m.weapon, friendly, damage: points, hits })
+  }
+
   const report: RoundReport = {
     roundId: body.round_id,
     map: label(body.map),
@@ -366,6 +387,7 @@ api.post('/v1/round', getServer, async (c) => {
     players,
     deaths,
     revives,
+    damage: [...damage.values()],
   }
 
   const stored = Store.recordRound(server.id, report)

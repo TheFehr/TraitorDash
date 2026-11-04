@@ -20,6 +20,7 @@ local cv_bots = CreateConVar("traitordash_stats_bots", "0", {}, "Also report bot
 local MAX_PLAYERS = 128
 local MAX_DEATHS = 512
 local MAX_REVIVES = 512
+local MAX_DAMAGE = 1024 -- entries of damage for a round: an attacker, a weapon and the kind (RFC 21)
 local NOTE_SECONDS = 30 -- how long a defibrillator attempt may wait for its revival (RFC 14, 4.2)
 
 local round = nil -- the round in progress, or nil
@@ -80,7 +81,7 @@ local function PlayerId(ply)
 end
 
 local function Begin()
-    round = { id = NewRoundId(), startedAt = os.time(), players = {}, deaths = {}, order = {}, revives = {}, notes = {}, settling = {} }
+    round = { id = NewRoundId(), startedAt = os.time(), players = {}, deaths = {}, order = {}, revives = {}, notes = {}, settling = {}, dmg = {}, damage = {} }
     local tracked = {}
 
     for _, ply in ipairs(player.GetAll()) do
@@ -104,6 +105,15 @@ local function Begin()
     if TraitorDash.Track then TraitorDash.Track.Begin(round.id, tracked) end
 end
 
+-- The class of what did the damage: the weapon a player holds when the inflictor is the player (RFC 21, 4.1).
+local function WeaponClass(inflictor, attacker)
+    local ent = inflictor
+    if IsValid(ent) and ent.IsPlayer and ent:IsPlayer() and ent.GetActiveWeapon then ent = ent:GetActiveWeapon() end
+    if not IsValid(ent) and IsValid(attacker) and attacker.GetActiveWeapon then ent = attacker:GetActiveWeapon() end
+    if not IsValid(ent) or not ent.GetClass then return nil end
+    return CleanName(ent:GetClass())
+end
+
 local function Death(victim, inflictor, attacker)
     if not round or #round.deaths >= MAX_DEATHS then return end
     if not IsValid(victim) or not victim:IsPlayer() then return end
@@ -114,13 +124,46 @@ local function Death(victim, inflictor, attacker)
     local asid = nil
     if IsValid(attacker) and attacker:IsPlayer() and attacker ~= victim then asid = PlayerId(attacker) end
 
-    round.deaths[#round.deaths + 1] = { victim = vsid, attacker = asid, at = math.floor(os.time() - round.startedAt) }
+    local death = { victim = vsid, attacker = asid, at = math.floor(os.time() - round.startedAt) }
+    -- What it was done with and where the victim stood (RFC 21, 4.1); a failure here costs only these fields.
+    local okW, weapon = pcall(WeaponClass, inflictor, attacker)
+    death.weapon = okW and weapon or nil
+    local okP, x, y, z = pcall(function() local p = victim:GetPos() return math.floor(p.x + 0.5), math.floor(p.y + 0.5), math.floor(p.z + 0.5) end)
+    if okP then death.x, death.y, death.z = x, y, z end
+    round.deaths[#round.deaths + 1] = death
     round.players[vsid].died = true
     -- A revival that comes with no defibrillator is put down to the role the player died as (RFC 14, 4.2).
     round.players[vsid].dead = true
     round.players[vsid].death_role = CleanName(RoleName(victim))
     if TraitorDash.Track then TraitorDash.Track.Death(victim, inflictor, attacker, vsid, asid) end
     Dbg(string.format("death: %s (%s) <- %s", round.players[vsid].nick, round.players[vsid].role, asid or "world"))
+end
+
+-- A player did damage to another player (RFC 21, 4.1): summed for the round by attacker, weapon and kind. It runs for every
+-- hit, so it allocates nothing once an entry exists: the entries sit in tables inside tables, not under a joined key.
+local function Damage(ent, dmginfo, took)
+    if not round or not took or not IsValid(ent) or not ent:IsPlayer() then return end
+    local attacker = dmginfo:GetAttacker()
+    if not IsValid(attacker) or not attacker:IsPlayer() or attacker == ent then return end
+    local vsid, asid = PlayerId(ent), PlayerId(attacker)
+    if not vsid or not asid or not round.players[vsid] or not round.players[asid] then return end
+    local amount = math.min(dmginfo:GetDamage(), ent:GetMaxHealth())
+    if amount < 0.5 then return end
+    local weapon = WeaponClass(dmginfo:GetInflictor(), attacker) or "unknown"
+    local friendly = ent:GetTeam() == attacker:GetTeam()
+    local byAttacker = round.dmg[asid]
+    if not byAttacker then byAttacker = {} round.dmg[asid] = byAttacker end
+    local byWeapon = byAttacker[weapon]
+    if not byWeapon then byWeapon = {} byAttacker[weapon] = byWeapon end
+    local entry = byWeapon[friendly and 2 or 1]
+    if not entry then
+        if #round.damage >= MAX_DAMAGE then return end
+        entry = { attacker = asid, weapon = weapon, friendly = friendly, damage = 0, hits = 0 }
+        byWeapon[friendly and 2 or 1] = entry
+        round.damage[#round.damage + 1] = entry
+    end
+    entry.damage = entry.damage + amount
+    entry.hits = entry.hits + 1
 end
 
 -- ---- Role changes and revivals (RFC 14) ----
@@ -274,6 +317,7 @@ local function End(rawResult)
         result = result,
         players = players,
         deaths = r.deaths,
+        damage = r.damage,
         revives = r.revives,
     }, track and function() TraitorDash.Track.Upload(track) end or nil)
 end
@@ -281,6 +325,7 @@ end
 hook.Add("TTTPrepareRound", "TraitorDash_StatsReset", Safe("prepare", function() round = nil end))
 hook.Add("TTTBeginRound", "TraitorDash_StatsBegin", Safe("begin", Begin))
 hook.Add("TTT2PostPlayerDeath", "TraitorDash_StatsDeath", Safe("death", Death))
+hook.Add("PostEntityTakeDamage", "TraitorDash_StatsDamage", Safe("damage", Damage))
 hook.Add("TTTEndRound", "TraitorDash_StatsEnd", Safe("end", End))
 hook.Add("TTT2UpdateSubrole", "TraitorDash_StatsRole", Safe("role", RoleHook))
 hook.Add("TTT2UpdateTeam", "TraitorDash_StatsTeam", Safe("team", RoleHook))

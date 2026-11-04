@@ -239,3 +239,98 @@ describe('contract with POST /api/v1/round', () => {
     expect((db.query('SELECT COUNT(*) n FROM deaths WHERE server_id = ?').get(server.id) as any).n).toBe(2)
   })
 })
+
+// RFC 21: what a death was done with and where, and the damage summed for the round. The fake gives players a place and
+// a health, hits are a damage info with an attacker, an inflictor and an amount, and the hook is fired the way the game does.
+const HITS = `
+  for _, p in ipairs({ A, B, C, BOT, SPEC }) do
+    p.pos = { x = 100.4, y = -200.6, z = 8 }
+    function p:GetPos() return self.pos end
+    function p:GetMaxHealth() return 100 end
+  end
+  local W = function(class) return { GetClass = function() return class end } end
+  GUN, SHOTGUN = W("weapon_ttt_m16"), W("weapon_zm_shotgun")
+  A.GetActiveWeapon = function() return GUN end
+  function Hit(victim, attacker, amount, inflictor, took)
+    local info = { GetAttacker = function() return attacker end, GetInflictor = function() return inflictor end, GetDamage = function() return amount end }
+    Fire("PostEntityTakeDamage", victim, info, took ~= false)
+  end
+`
+
+describe('stats.lua: weapons and damage (RFC 21)', () => {
+  const roundOf = (script: string) => play(HITS + `Fire("TTTPrepareRound") Fire("TTTBeginRound")\n${script}\nFire("TTTEndRound", WIN_TRAITOR)`)[0]!.body
+  const entry = (b: any, w: string, friendly = false) => b.damage.find((e: any) => e.weapon === w && !!e.friendly === friendly)
+
+  test('hits are summed for each attacker, weapon and kind; a pellet is a hit', () => {
+    const b = roundOf(`Hit(B, A, 30, A) Hit(B, A, 25.4, GUN) Hit(C, A, 10, SHOTGUN) Hit(C, A, 10, SHOTGUN)`)
+    expect(entry(b, 'weapon_ttt_m16')).toMatchObject({ attacker: '76561198000000001', damage: 55.4, hits: 2 })
+    expect(entry(b, 'weapon_zm_shotgun')).toMatchObject({ damage: 20, hits: 2 })
+    expect(b.damage).toHaveLength(2)
+  })
+
+  test('damage to the own team is kept apart', () => {
+    const b = roundOf(`Hit(B, A, 10, GUN) Hit(A, A, 5, GUN) Hit(C, B, 7, SHOTGUN)`)
+    expect(entry(b, 'weapon_ttt_m16')).toMatchObject({ damage: 10, hits: 1 }) // Alice is a traitor, Bob is not: not friendly
+    expect(entry(b, 'weapon_zm_shotgun', true)).toMatchObject({ attacker: '76561198000000002', damage: 7, friendly: true }) // two innocents
+    expect(entry(b, 'weapon_zm_shotgun', false)).toBeUndefined()
+  })
+
+  test('overkill is capped at the victim\'s health; a hit that was not taken, on a prop or the world, on oneself, on a bot or by a player not in the round adds nothing', () => {
+    const b = roundOf(`
+      Hit(B, A, 250, GUN)
+      Hit(B, A, 10, GUN, false)
+      Hit(B, A, 0.2, GUN)
+      Hit(B, nil, 10, GUN)
+      Hit(A, A, 10, GUN)
+      Hit(BOT, A, 10, GUN)
+      Hit(B, BOT, 10, GUN)
+      Hit(B, SPEC, 10, GUN)
+      Hit({ IsPlayer = function() return false end }, A, 10, GUN)
+    `)
+    expect(b.damage).toHaveLength(1)
+    expect(b.damage[0]).toMatchObject({ weapon: 'weapon_ttt_m16', damage: 100, hits: 1 })
+  })
+
+  test('the weapon comes from the inflictor, the held weapon when that is the player, and "unknown" when there is none', () => {
+    const b = roundOf(`Hit(B, A, 10, A) Hit(C, B, 10, nil)`)
+    expect(entry(b, 'weapon_ttt_m16')).toBeDefined()
+    expect(b.damage.find((e: any) => e.attacker === '76561198000000002').weapon).toBe('unknown')
+  })
+
+  test('a death carries the weapon and the place; a world death has the world as the weapon', () => {
+    const b = roundOf(`
+      B.alive = false; Fire("TTT2PostPlayerDeath", B, GUN, A)
+      C.alive = false; Fire("TTT2PostPlayerDeath", C, W("worldspawn"), nil)
+    `)
+    expect(b.deaths[0]).toMatchObject({ victim: '76561198000000002', attacker: '76561198000000001', weapon: 'weapon_ttt_m16', x: 100, y: -201, z: 8 })
+    expect(b.deaths[1]).toMatchObject({ weapon: 'worldspawn' })
+  })
+
+  test('a death with a player that has no position is still reported, without one', () => {
+    const [sent] = play(`Fire("TTTPrepareRound") Fire("TTTBeginRound") B.alive = false Fire("TTT2PostPlayerDeath", B, nil, A) Fire("TTTEndRound", WIN_TRAITOR)`)
+    expect(sent.body.deaths[0].x).toBeUndefined()
+    expect(sent.body.deaths[0].victim).toBe('76561198000000002')
+  })
+
+  test('at most 1,024 entries; the next one is dropped, the ones there go on adding', () => {
+    const b = roundOf(`
+      for i = 1, 1100 do Hit(B, A, 1, W("w" .. i)) end
+      Hit(B, A, 1, W("w1"))
+    `)
+    expect(b.damage).toHaveLength(1024)
+    expect(entry(b, 'w1')).toMatchObject({ hits: 2 })
+  })
+
+  test('the hook returns nothing, an error in it does not reach the game, and with the stats switched off it does nothing', () => {
+    const r = play(HITS + `
+      Fire("TTTPrepareRound") Fire("TTTBeginRound")
+      local fn
+      OUT = {}
+      Fire("PostEntityTakeDamage", B, nil, true) -- a broken damage info: caught
+      SetCv("traitordash_stats", "0")
+      Hit(B, A, 10, GUN)
+      Fire("TTTEndRound", WIN_TRAITOR)
+    `)
+    expect(r).toHaveLength(0)
+  })
+})

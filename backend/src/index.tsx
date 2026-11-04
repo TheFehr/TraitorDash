@@ -18,7 +18,9 @@ import { createHash } from 'node:crypto'
 import { buildRoleView, listRoles, parsePlayers, publicRoles, publicRoleSettings, roleColour, KNOWN_ROLE_NAME } from './services/roleview'
 import { RoleListPage, RolePage, RoleNotFound } from './components/RolePublic'
 import { HomePage } from './components/HomePage'
-import { MapsPage, MapFilePage, MapViewPage, nextOf } from './components/MapPages'
+import { MapsPage, MapFilePage, MapViewPage, nextOf, type KillzonesView } from './components/MapPages'
+import { renderKillzonesSvg, squaresOf, hottest, storeysOf } from './services/killzones'
+import { NAME } from './services/validators'
 import { geometryEnabled, kickGeometryQueue, setGeometryFetcher, setStockModels } from './services/mapgeometry'
 import { gameContent, gameContentEnabled } from './services/gameContent'
 import { helperAvailable, workshopFetcher } from './services/workshop'
@@ -169,7 +171,8 @@ app.get('/servers/:serverId/stats', async (c) => {
   const sort = stats.SORTS.includes(requested) ? requested : 'rounds'
   // Hidden switch for checking the bot test scenario: ?bots=1 includes bot-only rounds.
   const opts = { bots: c.req.query('bots') === '1', by: stats.parseBy(c.req.query('by')) }
-  const view = ['leaders', 'rounds'].includes(c.req.query('view') ?? '') ? c.req.query('view') as 'leaders' | 'rounds' : 'overview'
+  const view = ['leaders', 'weapons', 'rounds'].includes(c.req.query('view') ?? '') ? c.req.query('view') as 'leaders' | 'weapons' | 'rounds' : 'overview'
+  const weaponSort = stats.parseWeaponSort(c.req.query('sort'))
 
   const recent = stats.getRecentRounds(serverId, opts)
   const admin = adminOf(ctx)
@@ -177,6 +180,7 @@ app.get('/servers/:serverId/stats', async (c) => {
     <StatsPage ctx={ctx} server={server} view={view} sort={sort} bots={opts.bots} by={opts.by}
       overview={stats.getOverview(serverId, opts)} teams={stats.getTeamStats(serverId, opts)} roles={stats.getRoleStats(serverId, opts)}
       coverage={stats.getEndStateCoverage(serverId, opts)} leaders={stats.getLeaderboard(serverId, sort, opts)} rounds={recent}
+      weapons={view === 'weapons' ? stats.getWeaponStats(serverId, opts, weaponSort) : undefined} weaponSort={weaponSort}
       tracked={Store.getTrackedRounds(serverId, recent.map(r => r.roundId))} tracks={admin ? trackInfo(serverId) : undefined} colours={colourMap(serverId)} />,
     { scripts: admin })
 })
@@ -325,6 +329,27 @@ app.get('/servers/:serverId/maps/:map', async (c) => {
     { scripts: hasView })
 })
 
+/**
+ * The killzone picture and its numbers (RFC 21, 4.4). The floor under it, and the choice of storey, are an admin's:
+ * a floor plan is admin-only (RFC 10), so a guest's picture holds no more than the deaths do. `weapon` and `level` are
+ * checked before they are used; one that does not fit is ignored.
+ */
+function killzonesOf(serverId: string, map: string, admin: boolean, weaponAsked?: string, levelAsked?: string): KillzonesView {
+  const weapon = weaponAsked && NAME.test(weaponAsked) ? weaponAsked : null
+  const k = stats.getKillzones(serverId, map, undefined, weapon)
+  const planJson = admin ? Store.getMapPlan(serverId, map) : null
+  const grid = planJson ? JSON.parse(planJson) : null
+  const storeys = grid ? storeysOf(grid) : null
+  let level = levelAsked !== undefined && SMALL_INT.test(levelAsked) ? Number(levelAsked) : undefined
+  if (!storeys || level === undefined || level < 1 || level > storeys.levels.length) level = undefined
+  const squares = squaresOf(k.cells, level && storeys ? z => storeys.storeyOf(z) === level - 1 : undefined)
+  const svg = renderKillzonesSvg(squares, map, grid ? { grid, level } : undefined)
+  return {
+    svg, deaths: squares.reduce((n, s) => n + s.n, 0), rounds: k.rounds, hot: hottest(squares), weapons: k.weapons, weapon,
+    level, levels: storeys?.levels.length, floor: !!grid,
+  }
+}
+
 /** What the rounds on one map say, and the way to its own view (RFC 16, 17). Public, like the stats it is made of. */
 app.get('/servers/:serverId/maps/:map/rounds', async (c) => {
   const found = serverOf(c)
@@ -340,7 +365,8 @@ app.get('/servers/:serverId/maps/:map/rounds', async (c) => {
   if (!map && !activity) return respond(c, ctx, <NotFound what="map" embed={ctx.embed} viewer={ctx.viewer} />, { status: 404 })
   const has3d = geometryEnabled() && Store.getGeometryStates(serverId).get(name)?.status === 'parsed'
   const hasPlan = adminOf(ctx) && Store.getMapPlans(serverId).some(p => p.map === name)
-  return respond(c, ctx, <MapFilePage ctx={ctx} server={server} name={name} map={map} state={state} activity={activity} has3d={has3d} hasPlan={hasPlan} viewLogDays={viewLogDays()} />)
+  return respond(c, ctx, <MapFilePage ctx={ctx} server={server} name={name} map={map} state={state} activity={activity} has3d={has3d} hasPlan={hasPlan} viewLogDays={viewLogDays()}
+    killzones={killzonesOf(serverId, name, adminOf(ctx), c.req.query('weapon'), c.req.query('level'))} />)
 })
 
 /** A stored floor plan drawn as a picture (RFC 10, 4.5). Admins only; nothing in it can run or load anything. */
@@ -490,7 +516,7 @@ app.get('/servers/:serverId/players/:playerId', async (c) => {
   if (!server || !player || (stats.isBotId(player.steamId) && !bots)) return c.redirect(link(ctx, `/servers/${serverId}/stats`))
   const over = limited(c)
   if (over) return over
-  return respond(c, ctx, <PlayerPage ctx={ctx} server={server} player={player} by={by} bots={bots} />)
+  return respond(c, ctx, <PlayerPage ctx={ctx} server={server} player={player} by={by} bots={bots} weapons={stats.getPlayerWeapons(serverId, player.steamId)} />)
 })
 
 /**
