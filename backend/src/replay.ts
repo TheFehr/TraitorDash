@@ -342,7 +342,9 @@ async function start(root: HTMLElement) {
       float l2 = dot(ab, ab);
       if (l2 < 1.0) return 0.0;
       float t = dot(p - uCam, ab) / l2;
-      if (t < -0.05 || t > 0.92) return 0.0;
+      // an object of size r whose middle is behind the camera can still surround it (the camera inside a helicopter), so the lower limit
+      // allows for the size; a pixel (r = 0) keeps the plain limit
+      if (t < -0.05 - r / sqrt(l2) || t > 0.92) return 0.0;
       vec3 q = uCam + ab * clamp(t, 0.0, 1.0);
       float radius = 70.0 + 330.0 * (1.0 - t);
       if (ceiling > 0.5) { if (p.y < q.y + 10.0) return 0.0; radius *= 0.8; }
