@@ -19,7 +19,7 @@ import { buildRoleView, listRoles, parsePlayers, publicRoles, publicRoleSettings
 import { RoleListPage, RolePage, RoleNotFound } from './components/RolePublic'
 import { HomePage } from './components/HomePage'
 import { MapsPage, MapFilePage, MapViewPage, nextOf, type KillzonesView } from './components/MapPages'
-import { renderKillzonesSvg, squaresOf, hottest, storeysOf, baseOfMap, baseOfPlan, rootSizeOf, footprintOfMap, footprintOfPlan } from './services/killzones'
+import { renderKillzonesSvg, squaresOf, hottest, storeysOf, baseOfMap, baseOfPlan, rootSizeOf, footprintOfMap, footprintOfPlan, listedStoreys } from './services/killzones'
 import { flattened, storeyAt } from './maps/topdown'
 import { NAME } from './services/validators'
 import { geometryEnabled, kickGeometryQueue, setGeometryFetcher, setStockModels } from './services/mapgeometry'
@@ -381,17 +381,19 @@ async function killzonesOf(serverId: string, map: string, ctx: Ctx, weaponAsked?
   const grid = plan ? JSON.parse(plan) : null
   const storeys = !flat && grid ? storeysOf(grid) : null
 
-  const levels = flat ? flat.layers.length : storeys?.levels.length
-  const level = asked !== undefined && levels !== undefined && asked >= 1 && asked <= levels ? asked : undefined
+  // the storeys a player can get to (RFC 21, 12): the mesh cuts a storey from every height that has a floor, also a plate under the map
+  const listed = flatAny ? listedStoreys(flatAny, stats.getDeathPoints(serverId, map)) : null
+  const levelList = flat ? listed! : storeys ? storeys.levels.map((_: unknown, i: number) => i + 1) : undefined
+  const level = asked !== undefined && levelList?.includes(asked) ? asked : undefined
   const pick = level === undefined ? undefined
     : flat ? (z: number, x: number, y: number) => storeyAt(flat, x, y, z) === level
     : storeys ? (z: number) => storeys.storeyOf(z) === level - 1 : undefined
   const squares = squaresOf(k.cells, root, pick)
-  const base = flat ? baseOfMap(flat, level) : grid ? baseOfPlan(grid, level) : undefined
+  const base = flat ? baseOfMap(flat, level, listed!) : grid ? baseOfPlan(grid, level) : undefined
   if (flat && ctx.viewer) Store.logView(serverId, ctx.viewer.steamId, 'VIEW_MESH', map)
   return {
     svg: renderKillzonesSvg(squares, map, base), deaths: squares.reduce((n, s) => n + s.n, 0), rounds: k.rounds, hot: hottest(squares), weapons: k.weapons, weapon,
-    level, levels, under: flat ? 'map' : grid ? 'plan' : null,
+    level, levelList, under: flat ? 'map' : grid ? 'plan' : null,
     sizes: squares.length > 0 ? { min: Math.min(...squares.map(q => q.size)), max: Math.max(...squares.map(q => q.size)) } : null,
   }
 }
@@ -509,7 +511,12 @@ app.get('/servers/:serverId/playermodel.glb', gated('mesh'), async (c) => {
  */
 app.get('/servers/:serverId/rounds/:roundId/track.json', gated('track'), async (c) => {
   const serverId = c.req.param('serverId'), roundId = c.req.param('roundId')
-  const found = buildReplay(serverId, roundId, { bots: c.req.query('bots') === '1' })
+  const opts = { bots: c.req.query('bots') === '1' }
+  // the storeys the bar offers are the ones a player can get to (RFC 21, 12)
+  const map = stats.getReplayRound(serverId, roundId, opts)?.map
+  const mesh = map && geometryEnabled() ? Store.getMesh(serverId, map) : null
+  const flat = mesh ? await flattened(mesh) : null
+  const found = buildReplay(serverId, roundId, opts, flat && map ? listedStoreys(flat, stats.getDeathPoints(serverId, map)) : null)
   if (!found) return c.json({ error: 'No track for this round' }, 404)
   Store.logView(serverId, c.get('session').steamId, 'VIEW_REPLAY', roundId)
   const headers: Record<string, string> = {

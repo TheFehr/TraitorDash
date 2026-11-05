@@ -169,4 +169,24 @@ describe('the replay payload', () => {
     expect(off.payload.playerModel).toBeUndefined()
     expect(off.etag).not.toBe(on.etag) // a browser's copy of the payload is not kept across the switch
   })
+
+  test('the storeys a player can get to are named for the bar, with the map\'s mesh, and change the ETag (RFC 21, 12)', async () => {
+    const { surfacesToGlb } = await import('../src/maps/meshGlb')
+    const FP = 'ef'.repeat(32)
+    const floor = (z: number) => [0, 0, z, 256, 0, z, 256, 256, z, 0, 0, z, 256, 256, z, 0, 256, z]
+    const { glb } = (await surfacesToGlb({ floors: [...floor(0), ...floor(-1500)], walls: [], fingerprint: FP, version: 20, revision: 1 }, { map: 'ttt_a' }))!
+    Store.setMaps(serverId, { current: null, next: null, gamemode: 'terrortown', pattern: null, poolBasis: null, configSource: null, voteAddon: false,
+      maps: [{ name: 'ttt_a', size: 1, fingerprint: FP, matchesGamemode: true, inCycle: null, onCooldown: null, isCurrent: false, inVotePool: true, votable: true }] })
+    Store.setGeometryRequested(serverId, 'ttt_a', true, null)
+    Store.startGeometry('ttt_a', FP)
+    Store.finishGeometry('ttt_a', FP, { mesh: glb, info: { vertices: 8, triangles: 4, levels: 2 } })
+    const id = round()
+    const all = replay.buildReplay(serverId, id)
+    expect(all.payload.background.listed).toBeUndefined() // not known: the bar offers every storey
+    expect(all.payload.background.levels).toHaveLength(2)
+    const some = replay.buildReplay(serverId, id, undefined, [2])
+    expect(some.payload.background.listed).toEqual([2])
+    expect(some.payload.background.levels).toHaveLength(2) // the heights of all storeys stay: a player's level is told from them
+    expect(some.etag).not.toBe(all.etag)
+  })
 })

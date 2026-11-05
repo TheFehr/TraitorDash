@@ -32,7 +32,7 @@ interface Payload {
   revives: { victim: string, reviver: string | null, how: string | null, why: string | null, at: number | null }[]
   track: any
   trackInfo: { truncated: boolean, degraded: boolean, fingerprint: string | null, pinned: boolean }
-  background: { kind: 'mesh' | 'plan' | 'none', meshUrl?: string, plan?: any, levels: LevelRange[], mismatch: boolean }
+  background: { kind: 'mesh' | 'plan' | 'none', meshUrl?: string, plan?: any, levels: LevelRange[], listed?: number[], mismatch: boolean }
   /** Where the players' model (posed, one for everyone) is, when the backend can build it (RFC 22). */
   playerModel?: string
 }
@@ -206,6 +206,7 @@ async function start(root: HTMLElement) {
   const levelBar = el(root, '[data-levels]')
   if (levelBar && levels.length > 0 && payload.background.kind !== 'none') {
     for (const l of levels) {
+      if (payload.background.listed && !payload.background.listed.includes(l.index)) continue // not a place a player can get to (RFC 21, 12)
       const b = text(String(l.index), 'button', 'tog') as HTMLButtonElement
       b.type = 'button'; b.dataset.level = String(l.index)
       b.addEventListener('click', () => { upTo = l.index; followLevel = false; syncFollowBox(); hooks.level() })

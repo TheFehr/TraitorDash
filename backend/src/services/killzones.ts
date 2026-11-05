@@ -1,6 +1,6 @@
 import { KILLZONE_BAND, KILLZONE_CELL, type Killzones } from './stats'
 import { parseRows, storeyModel, type MapPlan } from './mapplan'
-import { EMPTY, FLOOR, WALL, type TopDown } from '../maps/topdown'
+import { EMPTY, FLOOR, WALL, reachableStoreys, type TopDown } from '../maps/topdown'
 
 // RFC 21, 4.4: where the deaths on a map are, as a picture from above. Built from numbers and a count, with no script,
 // no reference to anything else and no <image>, so it can sit in a page the in-game browser shows. Under the deaths goes
@@ -95,9 +95,9 @@ const heat = (t: number) => `hsl(${Math.round(55 - 55 * t)} 95% ${Math.round(58 
 /** What is drawn under the deaths: a grid of cells in world units, each a floor, a wall or nothing. */
 export interface Base { cell: number, minx: number, miny: number, nx: number, ny: number, cells: Uint8Array }
 
-/** One storey of the flattened map, or all of them put together when `level` is not given. */
-export function baseOfMap(m: TopDown, level?: number): Base {
-  const layers = level === undefined ? m.layers : m.layers.filter(l => l.index === level)
+/** One storey of the flattened map, or all of them put together when `level` is not given (only those of `only`, the storeys a player can get to, when that is given). */
+export function baseOfMap(m: TopDown, level?: number, only?: number[]): Base {
+  const layers = level === undefined ? (only ? m.layers.filter(l => only.includes(l.index)) : m.layers) : m.layers.filter(l => l.index === level)
   const cells = new Uint8Array(m.nx * m.ny)
   for (const l of layers) for (let i = 0; i < cells.length; i++) if (l.cells[i]! > cells[i]!) cells[i] = l.cells[i]!
   return { cell: m.cell, minx: m.minx, miny: m.miny, nx: m.nx, ny: m.ny, cells }
@@ -110,6 +110,19 @@ export function baseOfPlan(grid: MapPlan['grid'], level?: number): Base {
   const cells = new Uint8Array(grid.nx * grid.ny)
   rows.forEach((row, j) => row.forEach((floors, i) => { if (floors.some(f => level === undefined || storeyOf(f.z) === level - 1)) cells[j * grid.nx + i] = 1 }))
   return { cell: grid.cell, minx: grid.minx, miny: grid.miny, nx: grid.nx, ny: grid.ny, cells }
+}
+
+const listed = new WeakMap<TopDown, { deaths: number, storeys: number[] }>()
+/**
+ * The storeys of a map worth listing (RFC 21, 12): those with a floor a player can get to from the spawn points or from a place someone has
+ * died. A storey that is a plate under the map or a model's underside has none. Kept for each flattened map until a death is added.
+ */
+export function listedStoreys(top: TopDown, deaths: { x: number, y: number, z: number }[]): number[] {
+  const kept = listed.get(top)
+  if (kept && kept.deaths === deaths.length) return kept.storeys
+  const storeys = reachableStoreys(top, [...(top.spawns ?? []), ...deaths])
+  listed.set(top, { deaths: deaths.length, storeys })
+  return storeys
 }
 
 /** The storeys of a plan, and which storey a height belongs to; for an admin who has the plan. */

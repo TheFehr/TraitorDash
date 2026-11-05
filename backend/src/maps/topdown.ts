@@ -16,7 +16,7 @@ export interface Layer {
   zs: Int16Array
 }
 export const NO_FLOOR = -32768
-export interface TopDown { cell: number, minx: number, miny: number, nx: number, ny: number, layers: Layer[] }
+export interface TopDown { cell: number, minx: number, miny: number, nx: number, ny: number, layers: Layer[], /** The map's player spawns, as the mesh carries them (empty for an older mesh). */ spawns?: { x: number, y: number, z: number }[] }
 
 const MAX_CELLS_ACROSS = 360 // the longer side of the map is cut into at most this many cells
 const MIN_CELL = 16
@@ -99,7 +99,80 @@ export async function flatten(glb: Uint8Array): Promise<TopDown | null> {
     }
     return { index: lv.index, lo: lv.lo, hi: lv.hi, cells, zs }
   })
-  return { cell, minx, miny, nx, ny, layers }
+  const spawns = (doc.getRoot().getExtras() as { spawns?: { x?: unknown, y?: unknown, z?: unknown }[] }).spawns
+  return {
+    cell, minx, miny, nx, ny, layers,
+    spawns: Array.isArray(spawns) ? spawns.filter(p => Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z)).map(p => ({ x: Number(p.x), y: Number(p.y), z: Number(p.z) })) : [],
+  }
+}
+
+// ---- where a player can get to (RFC 21, 12). A storey is cut from the mesh by the heights of its floors, and nothing in the mesh says
+// that anyone can stand on it: a flat plate under a map (the ground plane, the bottom of a lake, the underside of a model) is a storey too.
+
+/** The most a player climbs to the next floor (a jump onto a ledge): about the height of a jump; a cell's width is added to it (a slope). */
+export const CLIMB = 56
+/** The most a player drops to a floor below without it being the end of them (a fall of more than this hurts or kills). */
+export const DROP = 260
+/** How far above a floor a place may be and still stand on it (a spawn or a death a little in the air). */
+const ABOVE = 32
+const NEIGHBOURS = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]] as const
+/** A seed higher than this over the floor that would catch it is in the air over a pit, not on a floor. */
+const FALL = 600
+
+/**
+ * The floor cells a player can reach, for each storey: from the places players are known to stand (the spawn points of the map and the places
+ * deaths were recorded, which are given as `seeds`), walking to a neighbouring cell on a floor at most `CLIMB` higher or `DROP` lower,
+ * in the storey or in another one (stairs and ramps between storeys are neighbouring floors at nearly the same height). Walls are
+ * not looked at, so this is generous: a place behind a wall can count as reachable, but a storey that is a plate by itself, or
+ * lies a long way under or over the rest, does not. Ladders, lifts and teleports are not in the mesh; a place a player has died is a seed,
+ * so a storey only they lead to shows as soon as someone dies there.
+ */
+export function reachableCells(top: TopDown, seeds: { x: number, y: number, z: number }[]): Uint8Array[] {
+  const { nx, ny, cell, minx, miny, layers } = top
+  const seen = layers.map(() => new Uint8Array(nx * ny))
+  const queue: number[] = [] // layer * nx * ny + cell
+  const visit = (li: number, k: number) => { if (!seen[li]![k]) { seen[li]![k] = 1; queue.push(li * nx * ny + k) } }
+
+  for (const s of seeds) {
+    const i = Math.floor((s.x - minx) / cell), j = Math.floor((s.y - miny) / cell)
+    if (i < 0 || i >= nx || j < 0 || j >= ny) continue
+    // the floor that catches the seed: the highest at or under it in its own cell, else in a neighbouring one
+    const catching = (ii: number, jj: number): number => {
+      let best = -1, bz = -Infinity
+      if (ii < 0 || ii >= nx || jj < 0 || jj >= ny) return best
+      for (let li = 0; li < layers.length; li++) {
+        const z = layers[li]!.zs[jj * nx + ii]!
+        if (z !== NO_FLOOR && z <= s.z + ABOVE && s.z - z <= FALL && z > bz) { bz = z; best = li * nx * ny + jj * nx + ii }
+      }
+      return best
+    }
+    let best = catching(i, j)
+    for (const [di, dj] of NEIGHBOURS) { if (best >= 0) break; best = catching(i + di, j + dj) }
+    if (best >= 0) visit(Math.floor(best / (nx * ny)), best % (nx * ny))
+  }
+
+  for (let head = 0; head < queue.length; head++) {
+    const li = Math.floor(queue[head]! / (nx * ny)), k = queue[head]! % (nx * ny)
+    const z = layers[li]!.zs[k]!, i = k % nx, j = Math.floor(k / nx)
+    for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+      const ii = i + di, jj = j + dj
+      if (ii < 0 || ii >= nx || jj < 0 || jj >= ny) continue
+      const kk = jj * nx + ii
+      for (let mi = 0; mi < layers.length; mi++) {
+        if (seen[mi]![kk]) continue
+        const h = layers[mi]!.zs[kk]!
+        if (h === NO_FLOOR) continue
+        if (h - z <= CLIMB + cell && z - h <= DROP + cell) visit(mi, kk) // a cell's floor is its highest point: a slope of 45 degrees climbs a cell's width in a cell
+      }
+    }
+  }
+  return seen
+}
+
+/** The storeys (their `index`) that have a floor a player can reach (see `reachableCells`). */
+export function reachableStoreys(top: TopDown, seeds: { x: number, y: number, z: number }[]): number[] {
+  const cells = reachableCells(top, seeds)
+  return top.layers.filter((_, li) => cells[li]!.some(v => v === 1)).map(l => l.index)
 }
 
 /**

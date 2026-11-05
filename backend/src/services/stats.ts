@@ -350,6 +350,14 @@ export interface Killzones {
   weapons: { weapon: string, n: number }[]
 }
 
+/** Where players died on one map, bots included (a place anyone stood is a place that can be reached; RFC 21, 12). The newest 20,000. */
+export function getDeathPoints(serverId: string, map: string): { x: number, y: number, z: number }[] {
+  return db.prepare(`
+    SELECT d.x AS x, d.y AS y, d.z AS z FROM deaths d JOIN rounds r ON r.server_id = d.server_id AND r.round_id = d.round_id
+    WHERE d.server_id = ? AND r.map = ? AND d.x IS NOT NULL AND d.y IS NOT NULL AND d.z IS NOT NULL ORDER BY d.id DESC LIMIT 20000
+  `).all(serverId, map) as { x: number, y: number, z: number }[]
+}
+
 /** Where the victims died on one map (RFC 21, 4.4), with the position known; `weapon` limits it to one weapon. */
 export function getKillzones(serverId: string, map: string, o?: StatsOptions, weapon?: string | null): Killzones {
   const floor = (col: string, size: number) => `((${col} - (((${col} % ${size}) + ${size}) % ${size})) / ${size})`

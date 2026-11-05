@@ -172,8 +172,8 @@ export interface KillzonesView {
   hot: { x: number, y: number, n: number, size: number }[]
   weapons: { weapon: string, n: number }[]
   weapon: string | null
-  /** Storeys can be picked when the map or the plan is under the deaths; `levels` is how many there are. */
-  level?: number, levels?: number
+  /** Storeys can be picked when the map or the plan is under the deaths; `levelList` are the storeys a player can get to (RFC 21, 12). */
+  level?: number, levelList?: number[]
   /** What is drawn under the deaths: the map's own geometry (signed-in visitors), an admin's floor plan, or nothing. */
   under: 'map' | 'plan' | null
   /** The smallest and the largest square drawn, in world units (RFC 21, 11). */
@@ -258,10 +258,10 @@ export const Killzones = ({ ctx, serverId, name, k }: { ctx: Ctx, serverId: stri
               )}
             </>
           )}
-          {k.levels && k.levels > 1 && (
+          {k.levelList && k.levelList.length > 1 && (
             <div class="bar mt6"><span>Level</span>
               <a class={k.level === undefined ? 'on' : ''} href={to({ weapon: k.weapon })}>All</a>
-              {Array.from({ length: k.levels }, (_, i) => i + 1).map(l => <a class={k.level === l ? 'on' : ''} href={to({ weapon: k.weapon, level: l })}>{l}</a>)}
+              {k.levelList.map(l => <a class={k.level === l ? 'on' : ''} href={to({ weapon: k.weapon, level: l })}>{l}</a>)}
             </div>
           )}
           <div class="bar mt6"><span>Weapon</span>

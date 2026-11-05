@@ -35,6 +35,8 @@ export interface ReplayPayload {
     plan?: unknown
     /** The storeys, for choosing a level and cutting the map away. */
     levels: LevelRange[]
+    /** The storeys a player can get to, which are the ones the bar offers; absent when that is not known (RFC 21, 12). */
+    listed?: number[]
     /** The mesh or plan was made for another version of the map than the round ran on. */
     mismatch: boolean
   }
@@ -59,7 +61,7 @@ export function glbLevels(glb: Uint8Array): LevelRange[] {
 }
 
 /** The replay of a round, or null when it has no track or is not shown (an unknown round, a bot-only one without `bots`). */
-export function buildReplay(serverId: string, roundId: string, o?: StatsOptions): { payload: ReplayPayload, etag: string } | null {
+export function buildReplay(serverId: string, roundId: string, o?: StatsOptions, listed?: number[] | null): { payload: ReplayPayload, etag: string } | null {
   const round = getReplayRound(serverId, roundId, o)
   const stored = round && Store.getTrack(serverId, roundId)
   if (!round || !stored) return null
@@ -75,6 +77,7 @@ export function buildReplay(serverId: string, roundId: string, o?: StatsOptions)
   const background: ReplayPayload['background'] = {
     kind,
     levels: mesh ? glbLevels(mesh) : grid ? planLevels(grid).map(l => ({ index: l.index, lo: l.lo, hi: l.hi })) : [],
+    ...(mesh && listed ? { listed } : {}),
     mismatch: versionMismatch(stored.meta.fingerprint, mesh ? meshFingerprint : planMeta?.fingerprint ?? null),
   }
   if (kind === 'mesh') background.meshUrl = `/servers/${serverId}/maps/${encodeURIComponent(map)}/mesh.glb`
@@ -95,7 +98,7 @@ export function buildReplay(serverId: string, roundId: string, o?: StatsOptions)
   }
   // A track is immutable; what can change is what is drawn behind it, and the pin.
   const etag = 'W/"' + createHash('sha1').update(JSON.stringify([
-    stored.meta.createdAt, stored.meta.bytes, stored.meta.pinned, !!o?.bots, kind, meshFingerprint, planMeta?.scannedAt ?? null, background.mismatch, colours, payload.playerModel ?? null, PAYLOAD_FORMAT,
+    stored.meta.createdAt, stored.meta.bytes, stored.meta.pinned, !!o?.bots, kind, meshFingerprint, planMeta?.scannedAt ?? null, background.mismatch, colours, payload.playerModel ?? null, background.listed ?? null, PAYLOAD_FORMAT,
   ])).digest('hex').slice(0, 20) + '"'
   return { payload, etag }
 }

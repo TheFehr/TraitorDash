@@ -372,6 +372,28 @@ describe('the pages', () => {
     expect(db.query("SELECT COUNT(*) n FROM audit_log WHERE action = 'VIEW_MESH' AND server_id = ?").get(serverId).n).toBeGreaterThan(0)
   })
 
+  test('a storey nobody can get to is not offered: a plate under the map is no level, until someone has died on it', async () => {
+    process.env.OPEN_SIGNIN = '1'; process.env.MAP_GEOMETRY = '1'
+    const { surfacesToGlb } = await import('../src/maps/meshGlb')
+    const FP = 'cd'.repeat(32)
+    const floor = (z: number) => [0, 0, z, 256, 0, z, 256, 256, z, 0, 0, z, 256, 256, z, 0, 256, z]
+    const { glb } = (await surfacesToGlb({ floors: [...floor(0), ...floor(300), ...floor(-1500)], walls: [], spawns: [{ class: 'info_player_start', x: 100, y: 100, z: 5 }], fingerprint: FP, version: 20, revision: 1 }, { map: 'ttt_a' }))!
+    Store.setMaps(serverId, { current: null, next: null, gamemode: 'terrortown', pattern: null, poolBasis: null, configSource: null, voteAddon: false,
+      maps: [{ name: 'ttt_a', size: 1, fingerprint: FP, matchesGamemode: true, inCycle: null, onCooldown: null, isCurrent: false, inVotePool: true, votable: true }] })
+    Store.setGeometryRequested(serverId, 'ttt_a', true, null)
+    Store.startGeometry('ttt_a', FP)
+    Store.finishGeometry('ttt_a', FP, { mesh: glb, info: { vertices: 12, triangles: 6, levels: 3 } })
+    await sendOk(round({ deaths: [{ victim: B, attacker: A, weapon: 'w', x: 10, y: 10, z: 5 }, { victim: C, attacker: A, weapon: 'w', x: 10, y: 10, z: 305 }], damage: [] }))
+    const path = `/servers/${serverId}/maps/ttt_a/rounds`
+    const bar = (html: string) => [...html.matchAll(/level=(\d+)/g)].map(m => Number(m[1]))
+    const before = (await text(path, USER)).text
+    expect(new Set(bar(before))).toEqual(new Set([2, 3]))           // the two storeys with a spawn or a death on them; storey 1 is the plate at -1500
+    expect(before).not.toContain('level=1'); expect(before).toContain('2 deaths in 1 round')
+    expect((await text(path + '?level=1', USER)).text).toContain('2 deaths in 1 round') // asking for it anyway is the whole map
+    await sendOk(round({ deaths: [{ victim: B, attacker: A, weapon: 'w', x: 10, y: 10, z: -1495 }], damage: [] }))
+    expect(new Set(bar((await text(path, USER)).text))).toEqual(new Set([1, 2, 3])) // a death on the plate: someone was there
+  })
+
   test('with the 3D views switched off the map is not drawn, whoever looks', async () => {
     process.env.OPEN_SIGNIN = '1'; process.env.MAP_GEOMETRY = '1'
     await upDown(); await storeMesh()
