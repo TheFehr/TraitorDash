@@ -532,8 +532,6 @@ async function start(root: HTMLElement) {
   const headGeo = new SphereGeometry(9, 16, 12)
   const noseGeo = new ConeGeometry(3, 9, 8)
   noseGeo.rotateZ(-Math.PI / 2) // points along +x, where the player faces
-  const groundArrowGeo = new ConeGeometry(7, 26, 10)
-  groundArrowGeo.rotateZ(-Math.PI / 2)
   const ringGeo = new RingGeometry(26, 32, 40)
   const matte = (c: number) => new MeshStandardMaterial({ color: c, metalness: 0, roughness: 0.8 })
   const LEGS = 0x2b3547, SKIN = 0xe2c3a0
@@ -650,7 +648,7 @@ async function start(root: HTMLElement) {
   interface Look { plain: CanvasTexture, pointer: CanvasTexture, cross: CanvasTexture, label: CanvasTexture }
   interface Marker {
     group: Group, pin: Sprite, label: Sprite, ring: Mesh, trail: Line, corpse: Group, deadPin: Sprite, segs: Segment[]
-    body: Group, lying: Group, arrow: Mesh, path: Path, colour: number, looks: Map<number, Look>
+    body: Group, lying: Group, path: Path, colour: number, looks: Map<number, Look>
     /** When the skeleton was last posed, in ms of the round (it is done thirty times a second, the rate of the animations). */
     posedAt: number
   }
@@ -667,13 +665,12 @@ async function start(root: HTMLElement) {
     const group = new Group()
     const body = figure(colour, false)
     group.add(body)
-    const arrow = new Mesh(groundArrowGeo, matte(0xffffff)); arrow.position.set(40, 0, 2)
     const ring = new Mesh(ringGeo, new MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, side: DoubleSide })); ring.position.z = 1.5; ring.visible = false
     const looks = new Map<number, Look>()
     const look = lookOf({ looks }, id, colour)
     const pin = screenSprite(look.plain, PIN, PIN); pin.position.z = real ? real.height + 12 : 86
     const label = screenSprite(look.label, LABEL_H * 4, LABEL_H); label.position.z = real ? real.height + 12 : 86; label.center.set(0.5, -0.55)
-    group.add(arrow, ring, pin, label)
+    group.add(ring, pin, label)
 
     const trailGeo = new BufferGeometry()
     trailGeo.setAttribute('position', new BufferAttribute(new Float32Array(TRAIL_POINTS * 3), 3))
@@ -694,7 +691,7 @@ async function start(root: HTMLElement) {
     corpse.visible = false
 
     world.add(group, trail, corpse)
-    markers.set(id, { group, pin, label, ring, trail, corpse, deadPin, segs: data.players.get(id) ?? [], body, lying, arrow, path: pathOf(data.players.get(id) ?? [], moving?.strides ?? null), colour, looks, posedAt: -1e9 })
+    markers.set(id, { group, pin, label, ring, trail, corpse, deadPin, segs: data.players.get(id) ?? [], body, lying, path: pathOf(data.players.get(id) ?? [], moving?.strides ?? null), colour, looks, posedAt: -1e9 })
   }
   // The shot: a line of the width of a few pixels (a `Line` is one pixel wide in WebGL, which is too faint to see), as a thin
   // bright beam with a wider faint one around it, drawn over the map so a wall does not hide where the shot came from.
@@ -826,7 +823,6 @@ async function start(root: HTMLElement) {
           // the body looks where the player looks, as in the game; its legs walk the way the player goes relative to that (forward, back, sideways)
           const v = velocityAt(m.segs, ms)
           m.group.rotation.z = look
-          m.arrow.rotation.z = 0
           if (Math.abs(ms - m.posedAt) >= (slow ? 33 : 12)) { m.posedAt = ms; poseRig(m.body, clipWeights(v.speed, v.heading - look, (moveAt(m.segs, ms) & MOVE.crouching) !== 0), m.path, ms) }
         } else m.group.rotation.z = look
       }
