@@ -190,6 +190,12 @@ describe('the weapon tables', () => {
     expect(wn.weaponName('weapon_ttt_m16')).toBe('M16')
     expect(wn.weaponName('weapon_zm_shotgun')).toBe('Shotgun')
     expect(wn.weaponName('weapon_ttt2_cool_thing')).toBe('Cool thing')
+    // the tags of weapon packs go, the letters of a gun's model are capitals, a projectile is the thing
+    expect(wn.weaponName('weapon_sp_winchester')).toBe('Winchester'); expect(wn.weaponName('weapon_rp_railgun')).toBe('Railgun')
+    expect(wn.weaponName('weapon_ttt_mp5')).toBe('MP5'); expect(wn.weaponName('weapon_ttt_awp')).toBe('AWP'); expect(wn.weaponName('weapon_ttt_m4a1_s')).toBe('M4A1-S')
+    expect(wn.weaponName('weapon_ttt_ak47')).toBe('AK47'); expect(wn.weaponName('weapon_ttt_fnfalc1')).toBe('FNFALC1')
+    expect(wn.weaponName('ttt_fraggrenade_proj')).toBe('Frag grenade'); expect(wn.weaponName('swep_homingpigeon')).toBe('Homingpigeon')
+    expect(wn.weaponName('env_explosion')).toBe('Explosion'); expect(wn.weaponName('weapon_ttt_galil')).toBe('Galil'); expect(wn.weaponName('weapon_ttt_pump')).toBe('Pump')
     expect(wn.weaponName('worldspawn')).toContain('world')
     expect(wn.weaponName(null)).toBe('Unknown')
   })

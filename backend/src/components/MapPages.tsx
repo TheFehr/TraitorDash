@@ -249,14 +249,18 @@ export const Killzones = ({ ctx, serverId, name, k }: { ctx: Ctx, serverId: stri
       ) : (
         <>
           {k.levelList && k.levelList.length > 1 && (
-            <div class="bar mb6"><span>Level</span>
-              <a class={k.level === undefined ? 'on' : ''} href={to({ weapon: k.weapon })}>All</a>
-              {k.levelList.map(l => <a class={k.level === l ? 'on' : ''} href={to({ weapon: k.weapon, level: l })}>{l}</a>)}
+            <div class="filt"><span>Level</span>
+              <div class="chips">
+                <a class={k.level === undefined ? 'on' : ''} href={to({ weapon: k.weapon })}>All</a>
+                {k.levelList.map(l => <a class={k.level === l ? 'on' : ''} href={to({ weapon: k.weapon, level: l })}>{l}</a>)}
+              </div>
             </div>
           )}
-          <div class="bar mb6"><span>Weapon</span>
-            <a class={k.weapon === null ? 'on' : ''} href={to({ level: k.level })}>All</a>
-            {k.weapons.slice(0, 8).map(w => <a class={k.weapon === w.weapon ? 'on' : ''} href={to({ weapon: w.weapon, level: k.level })} title={w.weapon}>{weaponName(w.weapon)} <span class="dim">{w.n}</span></a>)}
+          <div class="filt"><span>Weapon</span>
+            <div class="chips">
+              <a class={k.weapon === null ? 'on' : ''} href={to({ level: k.level })}>All</a>
+              {k.weapons.slice(0, 8).map(w => <a class={k.weapon === w.weapon ? 'on' : ''} href={to({ weapon: w.weapon, level: k.level })} title={w.weapon}>{weaponName(w.weapon)} <span class="n">{w.n}</span></a>)}
+            </div>
           </div>
           {k.deaths === 0 ? (
             <>

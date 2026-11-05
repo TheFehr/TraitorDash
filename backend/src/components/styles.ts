@@ -134,6 +134,13 @@ main>p.file,main>.foot.dark,.replay .main .foot.dark,main>form>p .dim{color:var(
 h2+.f,h2+.plans,h2+p+.f{margin-top:1.1rem}
 .f .sections{margin:.6rem 0 0}
 .f .sections a{color:var(--ink);border-color:var(--dim)}
+.filt{display:grid;grid-template-columns:4.6rem 1fr;gap:.7rem;align-items:baseline;margin:.7rem 0 0;font-size:.85rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink2)}
+.f .ft+.filt{margin-top:.9rem}.filt+.filt{margin-top:.6rem}.filt+p,.filt+div{margin-top:.9rem}
+.filt .chips{display:flex;flex-wrap:wrap;gap:.45rem .5rem}
+.filt a{border:1px solid var(--dim);padding:.12rem .65rem;color:var(--ink);line-height:1.35;white-space:nowrap}
+.filt a:hover{border-color:var(--ink)}.filt a.on{background:var(--ink);color:var(--paper);border-color:var(--ink);font-weight:800}
+.filt .n{margin-left:.35rem;opacity:.6;font-weight:400}.filt a.on .n{opacity:.75}
+@media (max-width:30rem){.filt{grid-template-columns:1fr;gap:.35rem}}
 .f .bar{color:var(--ink2)}
 .f .bar a{color:var(--ink);border-color:var(--dim)}
 .f .bar a.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
