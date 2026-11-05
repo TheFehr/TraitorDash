@@ -194,16 +194,24 @@ app.get('/servers/:serverId/stats', async (c) => {
   const view = ['leaders', 'weapons', 'rounds'].includes(c.req.query('view') ?? '') ? c.req.query('view') as 'leaders' | 'weapons' | 'rounds' : 'overview'
   const weaponSort = stats.parseWeaponSort(c.req.query('sort'))
 
-  const recent = stats.getRecentRounds(serverId, opts)
+  // the list of rounds is paged (a page a link, so the in-game browser follows it); the overview keeps its few
+  const total = view === 'rounds' ? stats.countRounds(serverId, opts) : 0
+  const pages = Math.max(1, Math.ceil(total / ROUNDS_PER_PAGE))
+  const pageAsked = SMALL_INT.test(c.req.query('page') ?? '') ? Number(c.req.query('page')) : 1
+  const page = Math.min(Math.max(1, pageAsked), pages)
+  const recent = view === 'rounds' ? stats.getRecentRounds(serverId, opts, ROUNDS_PER_PAGE, (page - 1) * ROUNDS_PER_PAGE) : stats.getRecentRounds(serverId, opts)
   const admin = adminOf(ctx)
   return respond(c, ctx,
     <StatsPage ctx={ctx} server={server} view={view} sort={sort} bots={opts.bots} by={opts.by}
       overview={stats.getOverview(serverId, opts)} teams={stats.getTeamStats(serverId, opts)} roles={stats.getRoleStats(serverId, opts)}
+      paging={view === 'rounds' ? { page, pages, total, perPage: ROUNDS_PER_PAGE } : undefined}
       coverage={stats.getEndStateCoverage(serverId, opts)} leaders={stats.getLeaderboard(serverId, sort, opts)} rounds={recent}
       weapons={view === 'weapons' ? stats.getWeaponStats(serverId, opts, weaponSort) : undefined} weaponSort={weaponSort}
       tracked={Store.getTrackedRounds(serverId, recent.map(r => r.roundId))} tracks={admin ? trackInfo(serverId) : undefined} colours={colourMap(serverId)} />,
     { scripts: admin })
 })
+
+const ROUNDS_PER_PAGE = 25
 
 /** What a server keeps of position tracks, for the admin's card (RFC 12, 3.4). */
 const trackInfo = (serverId: string) => {

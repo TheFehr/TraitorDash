@@ -117,14 +117,21 @@ export interface RecentRound {
   receivedAt: string | null, players: number, deaths: number
 }
 
-export function getRecentRounds(serverId: string, o?: StatsOptions, limit = 15): RecentRound[] {
+/** How many rounds the lists of rounds hold (with a player the options count). */
+export function countRounds(serverId: string, o?: StatsOptions): number {
+  const row = db.prepare(`SELECT COUNT(*) AS n FROM rounds r WHERE r.server_id = ? AND ${roundHasPlayers(o)}`).get(serverId) as { n: number }
+  return row.n
+}
+
+/** The newest rounds first; `offset` skips that many (a page of the list of rounds). */
+export function getRecentRounds(serverId: string, o?: StatsOptions, limit = 15, offset = 0): RecentRound[] {
   const rows = db.prepare(`
     SELECT r.round_id AS roundId, r.map, r.result, r.duration, r.received_at AS receivedAt,
            (SELECT COUNT(*) FROM round_players rp WHERE rp.server_id = r.server_id AND rp.round_id = r.round_id AND ${botFilter(o)}) AS players,
            (SELECT COUNT(*) FROM deaths d WHERE d.server_id = r.server_id AND d.round_id = r.round_id) AS deaths
     FROM rounds r WHERE r.server_id = ? AND ${roundHasPlayers(o)}
-    ORDER BY r.received_at DESC, r.rowid DESC LIMIT ?
-  `).all(serverId, limit) as any[]
+    ORDER BY r.received_at DESC, r.rowid DESC LIMIT ? OFFSET ?
+  `).all(serverId, limit, offset) as any[]
   return rows.map(r => ({ ...r, receivedAt: sqliteToIso(r.receivedAt) }))
 }
 

@@ -107,6 +107,8 @@ export interface StatsPageProps {
   weapons?: WeaponStats
   weaponSort?: WeaponSort
   rounds: RecentRound[]
+  /** Which page of the list of rounds this is (the rounds view only). */
+  paging?: { page: number, pages: number, total: number, perPage: number }
   /** Rounds that have a stored replay, and whether one is pinned. */
   tracked: Map<string, { pinned: boolean }>
   /** What the server keeps of position tracks; for admins. */
@@ -195,7 +197,18 @@ export const StatsPage = (p: StatsPageProps) => {
       {p.overview.rounds > 0 && p.view === 'rounds' && (
         <>
           <RoundsTable ctx={ctx} serverId={id} rounds={p.rounds} tracked={p.tracked} bots={p.bots} />
-          <p class="foot">The latest {p.rounds.length} rounds. Open a round to see who played what.</p>
+          {p.paging && p.paging.pages > 1 && (
+            <div class="bar mt6" data-rounds-pages><span>Page</span>
+              {p.paging.page > 1 && <a href={link(ctx, path, { ...k, view: 'rounds', page: p.paging.page - 1 > 1 ? p.paging.page - 1 : undefined })} rel="prev">Newer</a>}
+              <span class="on">{p.paging.page} of {p.paging.pages}</span>
+              {p.paging.page < p.paging.pages && <a href={link(ctx, path, { ...k, view: 'rounds', page: p.paging.page + 1 })} rel="next">Older</a>}
+            </div>
+          )}
+          <p class="foot">
+            {p.paging && p.paging.total > p.rounds.length
+              ? <>Rounds {(p.paging.page - 1) * p.paging.perPage + 1} to {(p.paging.page - 1) * p.paging.perPage + p.rounds.length} of {p.paging.total}, the newest first.</>
+              : <>The latest {p.rounds.length} rounds.</>} Open a round to see who played what.
+          </p>
         </>
       )}
       <Who ctx={ctx} />
