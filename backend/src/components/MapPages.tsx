@@ -81,20 +81,20 @@ export interface MapsPageProps {
   meshStates?: { states: Map<string, { status: string, version: number | null }>, wanted: number, building: string | null }
 }
 
-/** An admin's pill for where a map's 3D mesh stands: its generation when built, "rebuild waiting" or "building" while it is being made again, and why when it is not there. */
-const MeshState = ({ state, wanted, building }: { state: { status: string, version: number | null }, wanted: number, building: boolean }) => {
-  const built = state.status === 'parsed' && state.version !== null
-  const current = built && state.version! >= wanted
-  return (
-    <span data-mesh-state={building ? 'building' : current ? 'current' : state.status}>
-      {building ? <i class="pill wait">3D building…</i>
-        : current ? <i class="pill ok" title="The 3D mesh is the current generation">3D v{state.version}</i>
-        : built ? <i class="pill wait" title="The earlier mesh is shown until the new one is ready">3D v{state.version} · rebuild waiting</i>
-        : state.status === 'failed' ? <i class="pill wait">3D failed</i>
-        : <i class="pill mute">3D {state.status}</i>}
-    </span>
-  )
+/** Where a map's 3D mesh stands, for an admin: its generation when built, "waiting" while it is rebuilt (the earlier one is shown meanwhile), "building" for the one being made now. */
+const meshTag = (meshState: MapsPageProps['meshStates'], map: string): { text: string, tone: 'ok' | 'wait' } | null => {
+  const st = meshState?.states.get(map)
+  if (!st || st.status !== 'parsed' || st.version === null) return null
+  if (meshState!.building === map) return { text: `v${st.version} · building…`, tone: 'wait' }
+  return st.version >= meshState!.wanted ? { text: `v${st.version}`, tone: 'ok' } : { text: `v${st.version} · waiting`, tone: 'wait' }
 }
+
+/** For a map with no mesh yet: why (queued, being built, failed). Shown as a pill of its own, there being no 3D link to carry it. */
+const MeshMissing = ({ status, building }: { status: string, building: boolean }) => (
+  <span data-mesh-state={building ? 'building' : status}>
+    {building ? <i class="pill wait">3D building…</i> : status === 'failed' ? <i class="pill wait">3D failed</i> : <i class="pill mute">3D {status}</i>}
+  </span>
+)
 
 export const MapsPage = ({ ctx, server, state, maps, activity, showAll, plans, meshes, viewLogDays = 0, progress, meshStates }: MapsPageProps) => {
   const id = server.id
@@ -128,6 +128,7 @@ export const MapsPage = ({ ctx, server, state, maps, activity, showAll, plans, m
               {listed.map(m => {
                 const a = activity.get(m.name)
                 const plan = plans?.find(p => p.map === m.name)
+                const tag = admin ? meshTag(meshStates, m.name) : null
                 return (
                   <div class="f card" style={`--c:${tabColour(m)}`}>
                     <h2 class="ft"><a href={link(ctx, `${mapPath(id, m.name)}/rounds`)}>{prettyMap(m.name)}</a></h2>
@@ -138,16 +139,16 @@ export const MapsPage = ({ ctx, server, state, maps, activity, showAll, plans, m
                       : <span class="dim">Not played yet</span>}
                     {/* An admin's 3D view and floor plan are one page: one pill, not two that lead to the same place */}
                     {admin && plan && meshes?.has(m.name) && ctx.viewer
-                      ? <span><a data-3d class="pill ok" href={link(ctx, mapPath(id, m.name))}>3D · Floor plan</a>{planOutdated(plan, m) && <i class="pill wait">Outdated</i>}</span>
+                      ? <span><a data-3d class={`pill ${tag?.tone ?? 'ok'}`} data-mesh-state={tag ? (tag.tone === 'ok' ? 'current' : 'waiting') : undefined} href={link(ctx, mapPath(id, m.name))}>3D · Floor plan{tag && ` · ${tag.text}`}</a>{planOutdated(plan, m) && <i class="pill wait">Outdated</i>}</span>
                       : <>
                         {admin && plan && <span><a class="pill ok" href={mapPath(id, m.name)}>Floor plan</a>{planOutdated(plan, m) && <i class="pill wait">Outdated</i>}</span>}
                         {meshes?.has(m.name) && (ctx.viewer
-                          ? <span><a data-3d class="pill ok" href={link(ctx, mapPath(id, m.name))}>3D</a></span>
+                          ? <span><a data-3d class={`pill ${admin && tag ? tag.tone : 'ok'}`} data-mesh-state={admin && tag ? (tag.tone === 'ok' ? 'current' : 'waiting') : undefined} href={link(ctx, mapPath(id, m.name))}>3D{admin && tag && ` · ${tag.text}`}</a></span>
                           : ctx.signinOpen && !ctx.embed
                             ? <span><a data-3d-signin class="pill mute" href={signinUrl(mapPath(id, m.name))}>3D: sign in</a></span>
                             : <span><i data-3d-locked class="pill mute">3D: sign in</i></span>)}
                       </>}
-                    {admin && meshStates?.states.has(m.name) && <MeshState state={meshStates.states.get(m.name)!} wanted={meshStates.wanted} building={meshStates.building === m.name} />}
+                    {admin && meshStates?.states.has(m.name) && !tag && <MeshMissing status={meshStates.states.get(m.name)!.status} building={meshStates.building === m.name} />}
                   </div>
                 )
               })}
