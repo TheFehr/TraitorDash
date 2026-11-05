@@ -8,7 +8,7 @@ import { RateLimiter } from '../services/rateLimit'
 import { clientAddress } from '../services/gates'
 import { validatePlan, MAX_PLAN_BYTES } from '../services/mapplan'
 import { formatCode } from '../services/pairing'
-import { validateTrack, MAX_TRACK_BYTES } from '../services/tracks'
+import { validateTrack, MAX_TRACK_BYTES, parseLimit } from '../services/tracks'
 import { refreshWorkshopText } from '../services/workshopText'
 import { NONCE, signResponse } from '../services/signing'
 import { FINGERPRINT, NAME, ROUND_ID, STEAM_ID, STEAM_ID64, WSID } from '../services/validators'
@@ -72,6 +72,7 @@ api.use('/servers', requireSession)
 api.use('/servers/*', requireSession)
 api.use('/save/*', requireSession)
 api.use('/bridge-settings/*', requireSession)
+api.use('/track-limits/*', requireSession)
 
 // Token responses must never be cached: the plaintext token is shown exactly once.
 const serverManager = (c: any, newToken?: { serverId: string, token: string }, pairing?: { serverId: string, command: string, token?: string }) => {
@@ -743,6 +744,22 @@ api.post('/bridge-settings/:serverId', async (c) => {
   for (const [name, v] of accepted) Store.stageCommand(serverId, 'setting', formatSettingCommand(name, v))
   if (accepted.length > 0) Store.audit(serverId, c.get('adminId'), 'SAVE_BRIDGE_SETTINGS', accepted.map(([n, v]) => `${n}=${v}`).join(', '))
   return c.json({ success: true, commands_staged: accepted.length })
+})
+
+// How many position tracks a server keeps (RFC 12, 3.4), from the settings page: the same rules and the same audit entry as the form of the
+// stats page, answered as JSON. An empty value is the instance's default; 0 stores nothing.
+api.post('/track-limits/:serverId', async (c) => {
+  const serverId = c.req.param('serverId')
+  if (!Store.getServers().some((s: any) => s.id === serverId)) return c.json({ error: 'Unknown server' }, 404)
+  const body = await c.req.parseBody()
+  const cfg = Store.getTrackConfig()
+  const count = parseLimit(String(body.count ?? ''), cfg.maxCount, 'The number of tracks')
+  const mb = parseLimit(String(body.mb ?? ''), cfg.maxMb, 'The size')
+  if (!count.ok) return c.json({ error: count.error }, 400)
+  if (!mb.ok) return c.json({ error: mb.error }, 400)
+  Store.setTrackLimits(serverId, count.value, mb.value)
+  Store.audit(serverId, c.get('adminId'), 'TRACK_LIMITS_CHANGED', `count=${count.value ?? 'default'} mb=${mb.value ?? 'default'}`)
+  return c.json({ success: true, limits: Store.getTrackLimits(serverId) })
 })
 
 /** Who the bridge's token belongs to (RFC 15, 4.5): the server's id, which the public role pages' addresses contain. Nothing else. */

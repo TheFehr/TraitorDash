@@ -40,16 +40,53 @@ async function tracked() {
 }
 const audit = (action: string) => db.query('SELECT steam_id, details FROM audit_log WHERE server_id = ? AND action = ?').all(serverId, action) as any[]
 
-describe('the limits card', () => {
-  test('an admin sees the usage and the limits on the stats page; a guest sees none of it', async () => {
+describe('the limits: a summary on the stats page, the fields on the settings page', () => {
+  test('an admin sees the usage on the stats page, with the way to the limits; a guest sees none of it', async () => {
     await tracked()
     const html = await (await req(`/servers/${serverId}/stats?view=rounds`)).text()
-    expect(html).toContain('data-tracks')
+    expect(html).toContain('data-tracks-summary')
     expect(html).toMatch(/1 track, 0\.0 MB used of 200 tracks \/ 200 MB/)
-    expect(html).toContain('At most 300 tracks and 300 MB')
+    expect(html).toContain(`href="/servers/${serverId}/settings#replay-storage"`)
+    expect(html).not.toContain('name="count"') // the fields are not here any more
     const guest = await (await req(`/servers/${serverId}/stats?view=rounds`, {}, false)).text()
-    expect(guest).not.toContain('data-tracks')
-    expect(guest).not.toContain('Position tracks')
+    expect(guest).not.toContain('data-tracks-summary')
+    expect(guest).not.toContain('Replays:')
+  })
+
+  test('the settings page has the usage and the two limits as fields, with the server\'s own values and the ceiling', async () => {
+    await tracked()
+    Store.setTrackLimits(serverId, 7, null)
+    const html = await (await req(`/servers/${serverId}/settings`)).text()
+    expect(html).toContain('id="replay-storage"'); expect(html).toContain('Replay storage')
+    expect(html).toMatch(/1 track, 0\.0 MB used of 7 tracks \/ 200 MB/)
+    expect(html).toContain('&quot;storage_count&quot;:&quot;7&quot;'); expect(html).toContain('&quot;storage_mb&quot;:&quot;&quot;') // the form starts from what is set: 7, and the default for the size
+    expect(html).toContain('placeholder="default (7)"'); expect(html).toContain('placeholder="default (200)"')
+    expect(html).toContain('max="300"') // the ceiling of this instance
+    expect(html).toContain('0 stores nothing')
+    expect((await req(`/servers/${serverId}/settings`, {}, false)).status).not.toBe(200) // for admins only
+  })
+
+  test('the page the settings were on (the bridge\'s alone) goes to the page that has them all', async () => {
+    const r = await req(`/servers/${serverId}/bridge`)
+    expect(r.status).toBe(301); expect(r.headers.get('location')).toBe(`/servers/${serverId}/settings`)
+    expect((await req(`/servers/${serverId}/bridge`, {}, false)).status).not.toBe(301) // and for a visitor it is the same as any admin page
+  })
+
+  test('the settings page saves the limits as JSON, with the same rules and audit entry as the form', async () => {
+    const api = (body: string, auth = true, headers: Record<string, string> = {}) => req(`/api/track-limits/${serverId}`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...headers }, body }, auth)
+    const r = await api('count=7&mb=')
+    expect(r.status).toBe(200)
+    expect(await r.json()).toMatchObject({ success: true, limits: { count: 7, mb: 200, own: { count: 7, mb: null } } })
+    expect(audit('TRACK_LIMITS_CHANGED')).toEqual([{ steam_id: ADMIN, details: 'count=7 mb=default' }])
+    expect((await api('count=0&mb=0')).status).toBe(200)
+    for (const body of ['count=301&mb=', 'count=&mb=301', 'count=-1&mb=', 'count=abc&mb=', 'count=1.5&mb=']) {
+      const bad = await api(body)
+      expect(bad.status).toBe(400); expect(await bad.json()).toHaveProperty('error')
+    }
+    expect(Store.getTrackLimits(serverId).own).toEqual({ count: 0, mb: 0 })
+    expect((await api('count=5&mb=', false)).status).toBe(401)
+    expect((await api('count=5&mb=', true, { Origin: 'https://evil.example' })).status).toBe(403)
+    expect((await req(`/api/track-limits/nope`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'count=5&mb=' })).status).toBe(404)
   })
 
   test('saving sets the server\'s own limits, an empty field falls back, and the audit log says who', async () => {
@@ -97,10 +134,11 @@ describe('pinning', () => {
     expect(audit('TRACK_UNPINNED')).toHaveLength(1)
   })
 
-  test('the card counts the pins', async () => {
+  test('the summary and the settings page count the pins', async () => {
     const id = await tracked()
     await form(`/servers/${serverId}/rounds/${id}/pin`, 'pin=1')
-    expect(await (await req(`/servers/${serverId}/stats?view=rounds`)).text()).toMatch(/1 pinned, kept regardless; at most 2/)
+    expect(await (await req(`/servers/${serverId}/stats?view=rounds`)).text()).toMatch(/1 pinned, kept regardless/)
+    expect(await (await req(`/servers/${serverId}/settings`)).text()).toMatch(/1 pinned, kept regardless; at most 2/)
   })
 
   test('at the maximum a pin is refused with a message; a round without a track is 404', async () => {

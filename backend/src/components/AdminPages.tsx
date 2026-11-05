@@ -5,7 +5,8 @@ import { ServerDashboard } from './ServerDashboard'
 import { ServerManager } from './ServerManager'
 import { RoleConfigForm } from './RoleConfigForm'
 import { Sidebar } from './Sidebar'
-import { BridgeSettingsForm, type BridgeSettingsState } from './BridgeSettingsForm'
+import { ServerSettingsForm, type BridgeSettingsState } from './ServerSettingsForm'
+import type { TracksInfo } from './StatsPages'
 import type { LiveConVar } from '../services/Store'
 import { When } from './kit'
 import { prettyMap } from '../mapName'
@@ -57,14 +58,14 @@ export const RoleConfigPage = ({ steamId, server, roleName, roles, schema, live 
   </Admin>
 )
 
-/** The bridge's own settings (RFC 23), for admins. */
-export const BridgeSettingsPage = ({ steamId, server, roles, state }: { steamId: string, server: { id: string, name: string }, roles: any[], state: BridgeSettingsState }) => (
-  <Admin title={`Bridge settings | ${server.name}`} steamId={steamId}>
+/** The settings of a server (RFC 23): the bridge's own and the dashboard's, on one page, for admins. */
+export const ServerSettingsPage = ({ steamId, server, roles, state, storage }: { steamId: string, server: { id: string, name: string }, roles: any[], state: BridgeSettingsState, storage: TracksInfo }) => (
+  <Admin title={`Settings | ${server.name}`} steamId={steamId}>
     <div class="lay">
       <Sidebar serverId={server.id} roles={roles} />
       <div>
-        <Crumbs><a href="/">Dashboard</a> / <a href={`/servers/${server.id}`}>{server.name}</a> / Bridge settings</Crumbs>
-        <BridgeSettingsForm serverId={server.id} state={state} />
+        <Crumbs><a href="/">Dashboard</a> / <a href={`/servers/${server.id}`}>{server.name}</a> / Settings</Crumbs>
+        <ServerSettingsForm serverId={server.id} state={state} storage={storage} />
       </div>
     </div>
   </Admin>

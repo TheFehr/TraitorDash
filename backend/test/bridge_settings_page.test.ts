@@ -30,23 +30,24 @@ const report = (settings: Record<string, string>, saved?: Record<string, string>
 describe('the page', () => {
   test('is for admins: a visitor and a signed-in user are sent away', async () => {
     for (const as of [null, USER]) {
-      const r = await get(`/servers/${server.id}/bridge`, as)
+      const r = await get(`/servers/${server.id}/settings`, as)
       expect([302, 401, 403]).toContain(r.status)
       expect(await r.text()).not.toContain('traitordash_track')
     }
   })
 
   test('says so, and offers nothing to change, when the bridge has not reported', async () => {
-    const t = await (await get(`/servers/${server.id}/bridge`, ADMIN)).text()
+    const t = await (await get(`/servers/${server.id}/settings`, ADMIN)).text()
     expect(t).toContain('data-not-reported')
     for (const s of BRIDGE_SETTINGS) expect(t).toContain(`data-setting="${s.name}"`)
     expect(t.match(/disabled/g)!.length).toBeGreaterThanOrEqual(BRIDGE_SETTINGS.length)
-    expect(t).not.toContain('Reset to default')
+    expect(t).not.toContain("defaults['traitordash_track']") // no way to reset a setting of the bridge; the dashboard's own (replay storage) are not the bridge's and stay
+    expect(t).toContain('data-storage')
   })
 
   test('shows each setting with its words, its range and its default, grouped', async () => {
     await report({ traitordash_track: '1', traitordash_track_interval_min: '0.15' })
-    const t = await (await get(`/servers/${server.id}/bridge`, ADMIN)).text()
+    const t = await (await get(`/servers/${server.id}/settings`, ADMIN)).text()
     expect(t).not.toContain('data-not-reported')
     for (const s of BRIDGE_SETTINGS) { expect(t).toContain(s.label); expect(t).toContain(s.explain.slice(0, 40)) }
     expect(t).toContain('Round stats'); expect(t).toContain('Position tracking')
@@ -60,20 +61,26 @@ describe('the page', () => {
 
   test('says where the configuration file holds another value than the one that runs', async () => {
     await report({ traitordash_track: '0' }, { traitordash_track: '1' })
-    const t = await (await get(`/servers/${server.id}/bridge`, ADMIN)).text()
+    const t = await (await get(`/servers/${server.id}/settings`, ADMIN)).text()
     expect(t).toContain('data-file-differs')
     expect(t).toContain('holds 1')
   })
 
   test('never offers a connection setting', async () => {
     await report({ traitordash_track: '1' })
-    const t = await (await get(`/servers/${server.id}/bridge`, ADMIN)).text()
+    const t = await (await get(`/servers/${server.id}/settings`, ADMIN)).text()
     for (const never of ['traitordash_url', 'traitordash_token', 'traitordash_public_url']) expect(t).not.toContain(never)
+  })
+
+  test('is linked from the list of servers, with a Settings button beside Connect', async () => {
+    const t = await (await get('/servers', ADMIN)).text()
+    expect(t).toContain(`<a href="/servers/${server.id}/settings" class="ab" data-server-settings="true">Settings</a>`)
+    expect(t.indexOf('data-server-settings')).toBeLessThan(t.indexOf('Connect'))
   })
 
   test('is linked from the server page', async () => {
     const t = await (await get(`/servers/${server.id}`, ADMIN)).text()
-    expect(t).toContain(`href="/servers/${server.id}/bridge"`)
+    expect(t).toContain(`href="/servers/${server.id}/settings"`); expect(t).toContain('data-server-settings')
   })
 })
 

@@ -29,7 +29,7 @@ import { helperAvailable, workshopFetcher } from './services/workshop'
 import { sameOrigin } from './middleware/csrf'
 
 // Components
-import { AdminHomePage, ServersPage, ServerPage, RoleConfigPage, ViewLogPage, BridgeSettingsPage } from './components/AdminPages'
+import { AdminHomePage, ServersPage, ServerPage, RoleConfigPage, ViewLogPage, ServerSettingsPage } from './components/AdminPages'
 import { RoleListPartial } from './components/Sidebar'
 import { checkHealth, features, sourceHash } from './services/version'
 import { StatsPage, RoundPage, PlayerPage } from './components/StatsPages'
@@ -679,8 +679,8 @@ app.get('/servers/:serverId/roles/:roleName/config', async (c) => {
   return c.html(<RoleConfigPage steamId={steamId as string} server={server} roleName={roleName} roles={roles} schema={schema} live={Store.getConVarValues(serverId)} />)
 })
 
-// The bridge's own settings (RFC 23): admins only.
-app.get('/servers/:serverId/bridge', async (c) => {
+// The settings of a server (RFC 23): the bridge's own and the dashboard's, on one page. Admins only.
+app.get('/servers/:serverId/settings', async (c) => {
   const steamId = await getAdminId(c)
   if (!steamId) return c.redirect('/')
   const serverId = c.req.param('serverId')
@@ -688,8 +688,13 @@ app.get('/servers/:serverId/bridge', async (c) => {
   if (!server) return c.redirect('/')
   const got = Store.getBridgeSettings(serverId)
   c.header('Cache-Control', 'no-store')
-  return c.html(<BridgeSettingsPage steamId={steamId as string} server={server} roles={getRolesWithState(serverId)}
+  return c.html(<ServerSettingsPage steamId={steamId as string} server={server} roles={getRolesWithState(serverId)} storage={trackInfo(serverId)}
     state={{ reportedAt: got?.reportedAt ?? null, values: got?.values ?? {}, pending: Store.pendingBridgeSettings(serverId) }} />)
+})
+// The page was the bridge's settings alone at first: its old address goes to the page that has them all.
+app.get('/servers/:serverId/bridge', async (c) => {
+  if (!(await getAdminId(c))) return c.redirect('/')
+  return c.redirect(`/servers/${c.req.param('serverId')}/settings`, 301)
 })
 
 // Pelican hands the allocated port over as SERVER_PORT.

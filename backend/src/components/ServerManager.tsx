@@ -87,6 +87,7 @@ export const ServerManager = ({ servers, newToken, pairing }: { servers: any[], 
                     </td>
                     <td class="muted"><Heartbeat lastSeen={server.last_seen} /></td>
                     <td class="r">
+                      <a href={`/servers/${server.id}/settings`} class="ab" data-server-settings>Settings</a>{' '}
                       <button
                         hx-post={`/api/servers/${server.id}/pairing-code`}
                         hx-confirm={isOnline ? `${server.name} is online. Pairing replaces its token, and it stops working until it is paired. Continue?` : undefined}

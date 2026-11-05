@@ -53,34 +53,13 @@ export interface TracksInfo {
   botRounds: number
 }
 
-/** The retention limits of a server's position tracks, how much room is used, and where to change them (RFC 12, 3.4). Admins only. */
-export const TracksCard = ({ serverId, t }: { serverId: string, t: TracksInfo }) => (
-  <section data-tracks class="f c-gray mt1">
-    <h2 class="ft">Position tracks</h2>
-    <p data-tracks-usage style="margin:.3rem 0">
-      {t.count} {t.count === 1 ? 'track' : 'tracks'}, {mb(t.bytes)} MB used of {t.limits.count} tracks / {t.limits.mb} MB
-      {t.pinned > 0 && <span class="dim"> ({t.pinned} pinned, kept regardless; at most {t.ceiling.pinned})</span>}
-    </p>
-    <form method="post" action={`${here(serverId)}/tracks/limits`} class="inline">
-      <label>Keep at most N tracks
-        <input name="count" inputmode="numeric" value={t.limits.own.count ?? ''} placeholder={t.limits.own.count === null ? `default (${t.limits.count})` : 'default'} />
-      </label>
-      <label>... at most M MB
-        <input name="mb" inputmode="numeric" value={t.limits.own.mb ?? ''} placeholder={t.limits.own.mb === null ? `default (${t.limits.mb})` : 'default'} />
-      </label>
-      <button type="submit" class="btn">Save</button>
-    </form>
-    {t.botRounds > 0 && (
-      <form method="post" action={`${here(serverId)}/rounds/delete-bots`} data-delete-bots class="inline"
-        data-confirm={`Delete ${t.botRounds} test ${t.botRounds === 1 ? 'round' : 'rounds'} played only by bots, with their replays? This cannot be undone.`}>
-        <button type="submit" class="btn danger">Delete {t.botRounds} test {t.botRounds === 1 ? 'round' : 'rounds'} (bots only)</button>
-      </form>
-    )}
-    <p class="foot dark">
-      Empty uses the default. At most {t.ceiling.count} tracks and {t.ceiling.mb} MB on this instance. 0 stores nothing: the game server still uploads, the dashboard discards.
-      Pinned tracks are never removed by these limits.
-    </p>
-  </section>
+/** How much room the position tracks use and where their limits are changed: on the settings page (RFC 12, 3.4; RFC 23). Admins only. */
+export const TracksSummary = ({ serverId, t }: { serverId: string, t: TracksInfo }) => (
+  <p data-tracks-summary class="foot mt1" style="margin-bottom:0">
+    Replays: {t.count} {t.count === 1 ? 'track' : 'tracks'}, {mb(t.bytes)} MB used of {t.limits.count} tracks / {t.limits.mb} MB
+    {t.pinned > 0 && <> ({t.pinned} pinned, kept regardless)</>}. <a href={`/servers/${serverId}/settings#replay-storage`}>Change the limits in Settings</a>
+    {t.botRounds > 0 && <>, where the {t.botRounds} test {t.botRounds === 1 ? 'round' : 'rounds'} played only by bots can be deleted</>}.
+  </p>
 )
 
 /** The replay cell of a round: a link for a visitor who may open it, else what they need to. */
@@ -134,7 +113,7 @@ export const StatsPage = (p: StatsPageProps) => {
 
       {p.overview.rounds === 0 && <div class="f"><h2 class="ft">No rounds yet</h2><span>Stats appear here after the first full round is played on this server.</span></div>}
       {/* the card of the tracks is where the rounds are, and where there are no rounds yet to open it from (test rounds by bots only) */}
-      {admin && p.tracks && (p.view === 'rounds' || p.overview.rounds === 0) && <TracksCard serverId={id} t={p.tracks} />}
+      {admin && p.tracks && (p.view === 'rounds' || p.overview.rounds === 0) && <TracksSummary serverId={id} t={p.tracks} />}
 
       {p.overview.rounds > 0 && p.view === 'overview' && (
         <>

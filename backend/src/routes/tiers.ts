@@ -51,6 +51,8 @@ export const TIERS: Record<string, Tier> = {
   'POST /api/bridge-settings/:serverId': 'admin',
   'GET /api/bridge-settings/:serverId': 'admin',
   'GET /servers/:serverId/bridge': 'admin',
+  'GET /servers/:serverId/settings': 'admin',
+  'POST /api/track-limits/:serverId': 'admin',
 
   'POST /api/ingest': 'bridge',
   'POST /api/v1/lang': 'bridge',

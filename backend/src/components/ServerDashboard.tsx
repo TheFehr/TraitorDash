@@ -128,7 +128,7 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
           <p class="muted mb6">Server role registry</p>
           <Sections serverId={server.id} />
           <p style="margin:.6rem 0 0"><a href={`/servers/${server.id}/views`} data-view-log>👁 View log</a> <span class="muted">who opened replays and 3D maps</span></p>
-          <p style="margin:.4rem 0 0"><a href={`/servers/${server.id}/bridge`} data-bridge-settings>⚙ Bridge settings</a> <span class="muted">sampling, statistics and tracking on the game server</span></p>
+          <p style="margin:.4rem 0 0"><a href={`/servers/${server.id}/settings`} data-server-settings>⚙ Settings</a> <span class="muted">sampling, statistics and tracking on the game server, and how many replays are kept</span></p>
         </div>
         <div class={`status ${isOnline ? 'on' : ''}`}>
           <i></i>
