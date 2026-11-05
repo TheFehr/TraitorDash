@@ -356,8 +356,11 @@ async function start(root: HTMLElement) {
       // a floor is faded only where it can hide some of the player: above the line from the camera to their feet (a ledge below the line to the
       // head still hides their legs; one below the line to the feet hides nothing and is what they stand on)
       if (ceiling > 0.5) {
-        float feet = uCam.y + (uHead.y - 64.0 - uCam.y) * clamp(t, 0.0, 1.0);
-        if (p.y < feet + 10.0) return 0.0;
+        // (a ledge that hides their feet lies exactly on the line to the feet, so the test allows a margin below it; the floor they stand
+        // on is kept by a second test, against the height of their feet)
+        float ground = uHead.y - 64.0;
+        float feet = uCam.y + (ground - uCam.y) * clamp(t, 0.0, 1.0);
+        if (p.y < feet - 24.0 || p.y < ground + 16.0) return 0.0;
         radius *= 0.8;
       }
       float d = distance(p, q) - r * 0.5;
