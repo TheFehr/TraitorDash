@@ -3,7 +3,7 @@ import {
   Box3, Vector3, Mesh, MeshStandardMaterial, Plane, type Object3D, type BufferGeometry,
 } from 'three'
 import {
-  applyColouring, leafLook, boxWithout, COLOURINGS, heightColours, makeCamera, makeRenderer, makeScene, makeSpawnMarkers, mapLoader, prepareDetached, prepareMovable, prepareProps, prepareWater, saveColouring, savedColouring,
+  applyColouring, propLook, boxWithout, COLOURINGS, heightColours, makeCamera, makeRenderer, makeScene, makeSpawnMarkers, mapLoader, prepareDetached, prepareMovable, prepareProps, prepareWater, saveColouring, savedColouring,
   type Colouring, type Painted, type SpawnPoint,
 } from './sceneKit'
 import { startMapFlat } from './mapflat'
@@ -114,7 +114,7 @@ function start(root: HTMLElement) {
 
   const colour = (mode: Colouring) => {
     applyColouring(painted, mode, levels.length)
-    leafLook(propMeshes.foliage, mode === 'textured')
+    propLook([...propMeshes.foliage, ...propMeshes.solid], mode === 'textured')
     root.querySelectorAll<HTMLElement>('[data-colour]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.colour === mode)))
     draw()
   }

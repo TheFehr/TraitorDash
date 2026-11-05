@@ -70,7 +70,11 @@ export interface PropSet {
     /** The texture coordinates of `foliage` (u, v for each corner) and the runs of triangles, each with a material of `leafMaterials` (-1: none, drawn grey). */
     foliageUv?: number[]
     foliageRuns?: { material: number, triangles: number }[]
+    /** The same for `solid` (RFC 18, 5): a material of `solidMaterials` for each run (-1: the plain prop colour). */
+    solidUv?: number[]
+    solidRuns?: { material: number, triangles: number }[]
   }[]
+  solidMaterials?: { name: string, texture: number | null, colour: [number, number, number] | null }[]
   /** The materials of the leaves (RFC 18, 4.6): the texture that cuts them out (an index into `leafTextures`), and how it is used. */
   leafMaterials?: { name: string, texture: number, mode: 'mask' | 'blend', alpha: number }[]
   leafTextures?: { name: string, width: number, height: number, png: Uint8Array }[]
@@ -518,6 +522,55 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
       }
       return mat
     }
+    // The solid meshes (RFC 18, 5): a material for each texture or plain colour, shared by all the models that use it; a run with neither is the plain prop colour.
+    const solidMats = new Map<number, ReturnType<typeof doc.createMaterial>>()
+    const solidMaterial = (index: number) => {
+      let mat = solidMats.get(index)
+      if (!mat) {
+        const def = s.props!.solidMaterials![index]!
+        mat = doc.createMaterial('prop').setMetallicFactor(0).setRoughnessFactor(1).setDoubleSided(true).setExtras({ surface: def.texture !== null ? 'texture' : 'colour', material: def.name })
+        if (def.texture !== null) mat.setBaseColorFactor([1, 1, 1, 1]).setBaseColorTexture(textures[def.texture]!)
+        else { const c = def.colour ?? [0.7, 0.7, 0.65]; const lin = (x: number) => (x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4); mat.setBaseColorFactor([lin(c[0]), lin(c[1]), lin(c[2]), 1]) }
+        solidMats.set(index, mat)
+      }
+      return mat
+    }
+    const solidOf = (name: string, model: PropSet['models'][number]) => {
+      if (model.solid.length === 0) return null
+      const runs = model.solidRuns, uvs = model.solidUv, defs = s.props!.solidMaterials
+      const whole = runs && uvs && defs !== undefined && uvs.length === (model.solid.length / 3) * 2 && runs.reduce((n, r) => n + r.triangles, 0) * 9 === model.solid.length
+      if (!whole) return meshOf(name, model.solid, propMat)
+      const groups = new Map<number, { pos: number[], uv: number[] }>()
+      let at = 0
+      for (const r of runs!) {
+        const key = r.material >= 0 && r.material < defs!.length ? r.material : -1
+        const g = groups.get(key) ?? { pos: [], uv: [] }
+        groups.set(key, g)
+        for (let i = at * 9; i < (at + r.triangles) * 9; i++) g.pos.push(model.solid[i]!)
+        for (let i = at * 6; i < (at + r.triangles) * 6; i++) g.uv.push(uvs![i]!)
+        at += r.triangles
+      }
+      const mesh = doc.createMesh(name)
+      let k = 0
+      for (const [material, g] of groups) {
+        const prim = doc.createPrimitive()
+        if (material >= 0 && defs![material]!.texture !== null) {
+          const { positions, uvs: coords, indices } = indexedUv(g.pos, g.uv)
+          prim.setMaterial(solidMaterial(material))
+            .setAttribute('POSITION', doc.createAccessor(`${name}-positions-${k}`).setType('VEC3').setArray(positions).setBuffer(buffer))
+            .setAttribute('TEXCOORD_0', doc.createAccessor(`${name}-uv-${k}`).setType('VEC2').setArray(coords).setBuffer(buffer))
+            .setIndices(doc.createAccessor(`${name}-indices-${k}`).setType('SCALAR').setArray(indices).setBuffer(buffer))
+        } else {
+          const { positions, indices } = indexed(g.pos)
+          prim.setMaterial(material >= 0 ? solidMaterial(material) : propMat)
+            .setAttribute('POSITION', doc.createAccessor(`${name}-positions-${k}`).setType('VEC3').setArray(positions).setBuffer(buffer))
+            .setIndices(doc.createAccessor(`${name}-indices-${k}`).setType('SCALAR').setArray(indices).setBuffer(buffer))
+        }
+        mesh.addPrimitive(prim)
+        k++
+      }
+      return mesh
+    }
     const leavesOf = (name: string, model: PropSet['models'][number]) => {
       if (model.foliage.length === 0) return null
       const runs = model.foliageRuns, uvs = model.foliageUv
@@ -558,7 +611,7 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
       if (!model) throw new RangeError('a placement names a model that is not there')
       let m = meshes.get(pl.model)
       if (!m) {
-        m = { solid: meshOf(`prop:${model.name}`, model.solid, propMat), foliage: leavesOf(`foliage:${model.name}`, model), triangles: (model.solid.length + model.foliage.length) / 9 }
+        m = { solid: solidOf(`prop:${model.name}`, model), foliage: leavesOf(`foliage:${model.name}`, model), triangles: (model.solid.length + model.foliage.length) / 9 }
         meshes.set(pl.model, m)
         info.props.models++
       }

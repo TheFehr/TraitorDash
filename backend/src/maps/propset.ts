@@ -3,7 +3,7 @@ import type { PropSet } from './meshGlb'
 import { readModel, type ModelFiles, type ModelMesh } from './model'
 import { readPak, readPakMember, type Pak } from './pak'
 import { TextureBook } from './texturebook'
-import { parseSeeThrough, type Vmt } from './vmt'
+import { parseMaterial, parseSeeThrough, type Vmt } from './vmt'
 import { encodePng } from './png'
 import { readStaticProps } from './props'
 
@@ -59,9 +59,11 @@ export interface PropReport {
 
 /** The material of a file's text if it is see-through (cut out, translucent or additive), else null: such a model is foliage-like (RFC 18, 4.6). */
 export const parseVmt = parseSeeThrough
+/** A material file's text as the cache of the models keeps it: any material, not only the see-through ones (a solid prop has a texture too). */
+const isSeeThrough = (v: Vmt | null | undefined) => v != null && v.kind !== 'solid'
 
 /** The textures of the leaves: how many, how big (the longer side) and how many bytes of PNG a map may have (RFC 18, 7). */
-export const LEAF_LIMITS = { textures: 24, side: 256, pngBytes: 4 * 1024 * 1024, memberBytes: 24 * 1024 * 1024, /** Textures asked of the game's own files for one map. */ stockTextures: 64, /** Material files (`.vmt`) asked of them: every path a model could have its materials at, most of which do not exist. */ stockMaterials: 600 }
+export const LEAF_LIMITS = { textures: 48, side: 256, /** The longer side of the texture of a solid prop (RFC 18, 5). */ solidSide: 64, pngBytes: 5 * 1024 * 1024, memberBytes: 24 * 1024 * 1024, /** Textures asked of the game's own files for one map. */ stockTextures: 160, /** Material files (`.vmt`) asked of them: every path a model could have its materials at, most of which do not exist. */ stockMaterials: 600 }
 /** How see-through a translucent material is when neither its texture nor the material says (the glass of a window). */
 export const DEFAULT_TRANSLUCENT = 0.4
 
@@ -96,9 +98,9 @@ async function loadModel(src: ByteSource, pak: Pak, files: ModelFiles, foliageCa
     if (foliageCache.has(path)) continue // (the game's own were put there by `buildPropSet`)
     if (!pak.entries.has(path)) { foliageCache.set(path, null); continue }
     const text = await readPakMember(src, pak, path, { maxMemberBytes: 64 * 1024 })
-    foliageCache.set(path, text ? parseVmt(Buffer.from(text).toString('latin1')) : null)
+    foliageCache.set(path, text ? parseMaterial(Buffer.from(text).toString('latin1')) : null)
   }
-  return readModel(files, paths => paths.some(p => foliageCache.get(p) != null), maxTriangles) ?? 'unreadable'
+  return readModel(files, paths => paths.some(p => isSeeThrough(foliageCache.get(p))), maxTriangles) ?? 'unreadable'
 }
 
 /**
@@ -132,6 +134,33 @@ class LeafBook {
     return index
   }
 
+  solidMaterials: NonNullable<PropSet['solidMaterials']> = []
+  private solidIndex = new Map<string, number>()
+  /** The runs of a solid model with a material of `solidMaterials` for each: a small texture, or the average colour of one that did not fit (-1: neither). */
+  async resolveSolid(runs: { paths: string[], triangles: number }[]): Promise<{ material: number, triangles: number }[]> {
+    const out: { material: number, triangles: number }[] = []
+    for (const r of runs) {
+      const vmtPath = r.paths.find(p => this.cache.get(p) != null)
+      const texture = vmtPath ? this.cache.get(vmtPath)!.texture : null
+      let index = -1
+      if (texture) {
+        const known = this.solidIndex.get(texture)
+        if (known !== undefined) index = known
+        else {
+          const got = await this.book.texture(texture, false, LEAF_LIMITS.solidSide)
+          const avg = got ? null : await this.book.average(texture)
+          if (got || avg) {
+            index = this.solidMaterials.length
+            this.solidMaterials.push({ name: texture, texture: got ? got.index : null, colour: avg })
+          }
+          this.solidIndex.set(texture, index)
+        }
+      }
+      out.push({ material: index, triangles: r.triangles })
+    }
+    return out
+  }
+
   /** The runs of a model with a material of this book for each (-1: none). */
   async resolve(runs: { paths: string[], triangles: number }[]): Promise<{ material: number, triangles: number }[]> {
     const out: { material: number, triangles: number }[] = []
@@ -162,7 +191,7 @@ export async function buildPropSet(
   const pak = await readPak(src, header.lumps[40]!)
   const foliageCache = new Map<string, Vmt | null>()
   const leaves = new LeafBook(src, pak, foliageCache)
-  const loaded = new Map<string, { solid: number[], foliage: number[], foliageUv: number[], runs: { paths: string[], triangles: number }[], triangles: number } | null>()
+  const loaded = new Map<string, { solid: number[], foliage: number[], foliageUv: number[], runs: { paths: string[], triangles: number }[], solidUv: number[], solidRuns: { paths: string[], triangles: number }[], triangles: number } | null>()
   const names = [...new Set(near.map(p => p.model))]
   const fromGame = new Set<string>()
   const settle = (name: string, r: Awaited<ReturnType<typeof loadModel>> | 'unavailable') => {
@@ -172,7 +201,7 @@ export async function buildPropSet(
     else {
       if (r.cards > 0) report.cards++
       // A model that is nothing but cards has nothing to draw.
-      loaded.set(name, r.solid.length + r.foliage.length === 0 ? null : { solid: r.solid, foliage: r.foliage, foliageUv: r.foliageUv, runs: r.foliageRuns, triangles: (r.solid.length + r.foliage.length) / 9 })
+      loaded.set(name, r.solid.length + r.foliage.length === 0 ? null : { solid: r.solid, foliage: r.foliage, foliageUv: r.foliageUv, runs: r.foliageRuns, solidUv: r.solidUv, solidRuns: r.solidRuns, triangles: (r.solid.length + r.foliage.length) / 9 })
     }
   }
   // The files of every model first (the map's pack, then the game's own), then the materials they name that the pack does not have (the game's
@@ -197,7 +226,7 @@ export async function buildPropSet(
     for (const f of files.values()) readModel(f, paths => { for (const p of paths) if (!pak.entries.has(p)) wantedVmts.add(p); return false }, limits.maxModelTriangles)
     if (wantedVmts.size > 0) {
       const got = await stockTextures([...wantedVmts].slice(0, LEAF_LIMITS.stockMaterials))
-      for (const [path, bytes] of got.files) foliageCache.set(path, parseVmt(Buffer.from(bytes).toString('latin1')))
+      for (const [path, bytes] of got.files) foliageCache.set(path, parseMaterial(Buffer.from(bytes).toString('latin1')))
       if (got.error) report.stockError ??= got.error
     }
   }
@@ -206,7 +235,7 @@ export async function buildPropSet(
   // The leaves whose texture is not in the pack are the game's own (a bush of Counter-Strike, a window of Half-Life 2): asked for together, one request for the map.
   if (stockTextures) {
     const wanted = new Set<string>()
-    for (const m of loaded.values()) if (m) for (const run of m.runs) {
+    for (const m of loaded.values()) if (m) for (const run of [...m.runs, ...m.solidRuns]) {
       const vmt = run.paths.find(p => foliageCache.get(p) != null)
       const texture = vmt ? foliageCache.get(vmt)!.texture : null
       if (texture && !pak.entries.has(`materials/${texture}.vtf`)) wanted.add(`materials/${texture}.vtf`)
@@ -231,7 +260,8 @@ export async function buildPropSet(
       index.set(p.model, set.models.length)
       const runs = await leaves.resolve(model.runs)
       for (const r of runs) if (r.material < 0) report.leavesWithoutTexture += r.triangles
-      set.models.push({ name: p.model, solid: model.solid, foliage: model.foliage, foliageUv: model.foliageUv, foliageRuns: runs })
+      const solidRuns = await leaves.resolveSolid(model.solidRuns)
+      set.models.push({ name: p.model, solid: model.solid, foliage: model.foliage, foliageUv: model.foliageUv, foliageRuns: runs, solidUv: model.solidUv, solidRuns })
     }
     set.placements.push({ model: index.get(p.model)!, x: p.x, y: p.y, z: p.z, pitch: p.pitch, yaw: p.yaw, roll: p.roll })
     triangles += model.triangles
@@ -240,6 +270,7 @@ export async function buildPropSet(
   report.fromGame = set.models.filter(m => fromGame.has(m.name)).length
   report.foliageModels = set.models.filter(m => m.foliage.length > 0).length
   set.leafMaterials = leaves.materials // (also none: then the leaves are left out, not drawn grey)
+  set.solidMaterials = leaves.solidMaterials
   set.leafTextures = leaves.textures
   report.leafTextures = leaves.textures.length
   report.leafMaterials = leaves.materials.length

@@ -12,7 +12,7 @@ import { clone as cloneRig } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { startFlat } from './replayflat'
-import { applyColouring, leafLook, offerBrowser, heightColours, levelColour, makeCamera, makeRenderer, makeScene, mapLoader, prepareMovable, prepareProps, prepareWater, savedColouring, boxWithout, type Painted } from './sceneKit'
+import { applyColouring, propLook, offerBrowser, heightColours, levelColour, makeCamera, makeRenderer, makeScene, mapLoader, prepareMovable, prepareProps, prepareWater, savedColouring, boxWithout, type Painted } from './sceneKit'
 import {
   decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose, fitLabel,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
@@ -468,7 +468,7 @@ async function start(root: HTMLElement) {
       groundMeshes.push(...painted.filter(q => !q.wall).map(q => q.mesh), ...mergedSolid, ...props.solid.filter(m => m.visible))
       const mergedLeaves = mergeDrawn(model, props.foliage)
       leafMeshes.push(...mergedLeaves, ...props.foliage.filter(m => m.visible)) // the ones that could not be merged stay as they are
-      leafLook(leafMeshes, savedColouring() === 'textured')
+      propLook([...leafMeshes, ...mergedSolid, ...props.solid], savedColouring() === 'textured')
       const leavesBox = el<HTMLInputElement>(root, '[data-leaves]')
       for (const m of leafMeshes) m.visible = !!leavesBox?.checked
       if (leafMeshes.length === 0) leavesBox?.closest('label')?.setAttribute('hidden', '')

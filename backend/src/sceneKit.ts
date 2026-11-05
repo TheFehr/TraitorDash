@@ -174,15 +174,20 @@ function alphaOnly(tex: Texture): Texture {
   return out
 }
 
-/** The leaves of plants (and the glass): with their textures in the Textured view, and as their cut-out shape in a flat colour in the others. */
-export function leafLook(meshes: Mesh[], textured: boolean): void {
+/**
+ * The leaves of plants (and the glass) and the solid props: with their textures in the Textured view; in the others a leaf is its cut-out shape in a
+ * flat colour and a solid prop is the plain prop colour. The look is kept on the material (which many meshes share), not on the mesh.
+ */
+export function propLook(meshes: Mesh[], textured: boolean): void {
   for (const mesh of meshes) {
     const m = mesh.material as MeshStandardMaterial
-    if (!mesh.userData.leaf && m.map) mesh.userData.leaf = { map: m.map, color: m.color.clone() }
-    const own = mesh.userData.leaf as { map: Texture, color: Color } | undefined
+    const leaf = m.name === 'foliage'
+    if (!m.userData.look && m.map) m.userData.look = { map: m.map, color: m.color.clone() }
+    const own = m.userData.look as { map: Texture, color: Color } | undefined
     if (!own) continue
     if (textured) { m.map = own.map; m.alphaMap = null; m.color = own.color.clone() }
-    else { m.map = null; m.alphaMap = alphaOnly(own.map); m.color = new Color(LEAF_COLOUR) }
+    else if (leaf) { m.map = null; m.alphaMap = alphaOnly(own.map); m.color = new Color(LEAF_COLOUR) }
+    else { m.map = null; m.color = new Color().setRGB(0.72, 0.7, 0.63, 'srgb-linear') }
     m.needsUpdate = true
   }
 }

@@ -87,6 +87,13 @@ describe('foliage (a material with a cut-out or a translucent texture)', () => {
     expect(m.foliageRuns.reduce((n, r) => n + r.triangles, 0)).toBe(m.foliage.length / 9)
   })
 
+  test('the solid meshes carry their texture coordinates and runs too (RFC 18, 5)', () => {
+    const m = readModel(buildModel({ ...spec, meshes: [{ material: 0, vertices: [A, B, C], tris: [0, 1, 2], uvs: [[0, 0], [1, 0], [0, 1]] }] }), () => false)!
+    expect(m.solidUv).toEqual([0, 0, 1, 0, 0, 1])
+    expect(m.solidRuns).toEqual([{ paths: ['materials/models/props/tree/trunk.vmt', 'materials/models/props/trunk.vmt'], triangles: 1 }])
+    expect(m.solidUv.length / 6).toBe(m.solid.length / 9)
+  })
+
   test('a mesh that is not foliage, and a card, have no texture coordinates or run in the foliage', () => {
     const huge: [number, number, number][] = [[0, 0, 0], [2400, 0, 0], [0, 1000, 0]]
     const m = readModel(buildModel({ ...spec, meshes: [{ material: 0, vertices: [A, B, C], tris: [0, 1, 2], uvs: [[5, 5], [6, 6], [7, 7]] }, { material: 1, vertices: huge, tris: [0, 1, 2] }] }), p => p.some(x => x.includes('leaves.vmt')))!

@@ -13,6 +13,9 @@ export interface ModelMesh {
   foliageUv: number[]
   /** `foliage` is made of runs of triangles that each have one material: the paths its `.vmt` could be at, and how many triangles. */
   foliageRuns: { paths: string[], triangles: number }[]
+  /** The texture coordinates of `solid` and its runs of triangles by material, as for the foliage (RFC 18, 5). */
+  solidUv: number[]
+  solidRuns: { paths: string[], triangles: number }[]
   /** Foliage meshes left out because they are cards: see `CARD_TRIANGLE_AREA`. */
   cards: number
 }
@@ -122,6 +125,7 @@ function read({ mdl, vvd, vtx }: ModelFiles, isFoliage: (vmtPaths: string[]) => 
   const vtxMeshes = cap(t.getInt32(vtxLod, true), MAX_MESHES), vtxMeshAt = vtxLod + t.getInt32(vtxLod + 4, true)
 
   const solid: number[] = [], foliage: number[] = [], foliageUv: number[] = [], foliageRuns: { paths: string[], triangles: number }[] = []
+  const solidUv: number[] = [], solidRuns: { paths: string[], triangles: number }[] = []
   let triangles = 0, cards = 0
   for (let k = 0; k < Math.min(nMeshes, vtxMeshes); k++) {
     const mesh = meshAt + k * STUDIO_MESH
@@ -150,13 +154,16 @@ function read({ mdl, vvd, vtx }: ModelFiles, isFoliage: (vmtPaths: string[]) => 
             const gv = vertexIndex + vertexOffset + original[local]!
             if (!(gv >= 0 && gv < vertexCount)) return null
             target.push(positions[gv * 3]!, positions[gv * 3 + 1]!, positions[gv * 3 + 2]!)
-            if (isFoliage_) targetUv.push(texcoords[gv * 2]!, texcoords[gv * 2 + 1]!)
+            targetUv.push(texcoords[gv * 2]!, texcoords[gv * 2 + 1]!)
           }
           if (++triangles > maxTriangles) return null
         }
       }
     }
-    if (isFoliage_) {
+    if (!isFoliage_) {
+      for (const x of targetUv) solidUv.push(Number.isFinite(x) ? x : 0)
+      if (targetUv.length > 0) solidRuns.push({ paths: material.paths, triangles: targetUv.length / 6 })
+    } else {
       if (meanArea(target) > CARD_TRIANGLE_AREA) cards++
       else {
         for (const x of target) foliage.push(x)
@@ -165,7 +172,7 @@ function read({ mdl, vvd, vtx }: ModelFiles, isFoliage: (vmtPaths: string[]) => 
       }
     }
   }
-  return triangles === 0 ? null : { solid, foliage, foliageUv, foliageRuns, cards }
+  return triangles === 0 ? null : { solid, foliage, foliageUv, foliageRuns, solidUv, solidRuns, cards }
 }
 
 /** The mean area of the triangles of a soup (x y z per corner). */
