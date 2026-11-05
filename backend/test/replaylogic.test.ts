@@ -57,9 +57,16 @@ describe('poseAt: interpolation uses the real times', () => {
     expect(poseAt(a, 1000)!.x).toBe(120)
   })
   test('uneven ticks are interpolated by time, not by index', () => {
-    const uneven = decodeTrack({ t: [0, 100, 800], players: [{ id: 'A', segments: [{ from: 0, x: [0, 10, 10], y: [0, 0, 0], z: [0, 0, 0], a: [0, 0, 0] }] }], deaths: [] })
-    expect(poseAt(uneven.players.get('A')!, 50)!.x).toBeCloseTo(40) // halfway through the first 100 ms of 80 units
-    expect(poseAt(uneven.players.get('A')!, 500)!.x).toBeCloseTo(120) // halfway through the long 800 ms step
+    // (the track holds each tick as the step from the one before, so these ticks are at 0, 100 and 800 ms) a player at a steady 800 units a second: one straight line, by time
+    const steady = decodeTrack({ t: [0, 100, 700], players: [{ id: 'A', segments: [{ from: 0, x: [0, 10, 70], y: [0, 0, 0], z: [0, 0, 0], a: [0, 0, 0] }] }], deaths: [] }).players.get('A')!
+    expect(poseAt(steady, 50)!.x).toBeCloseTo(40, 6) // halfway through the first 100 ms of 80 units
+    expect(poseAt(steady, 400)!.x).toBeCloseTo(320, 6) // 400 ms at 800 units a second, though it is not the middle of the second step by index
+    // one that stops: it is where it was sampled at each sample and stands still for the whole long step
+    const stops = decodeTrack({ t: [0, 100, 700], players: [{ id: 'A', segments: [{ from: 0, x: [0, 10, 0], y: [0, 0, 0], z: [0, 0, 0], a: [0, 0, 0] }] }], deaths: [] }).players.get('A')!
+    expect(poseAt(stops, 100)!.x).toBeCloseTo(80, 6)
+    expect(poseAt(stops, 500)!.x).toBeCloseTo(80, 6)
+    expect(poseAt(stops, 50)!.x).toBeGreaterThan(40) // it slows down into the stop: further than half the way at half the time
+    expect(poseAt(stops, 50)!.x).toBeLessThan(80)
   })
   test('before the first sample and after the last there is no pose', () => {
     expect(poseAt(a, -1)).toBeNull()
@@ -75,7 +82,86 @@ describe('poseAt: interpolation uses the real times', () => {
     expect(lerpYaw(250, 10, 0.5)).toBeCloseTo(2)
     expect(lerpYaw(10, 250, 0.5)).toBeCloseTo(2)
     expect(lerpYaw(0, 100, 0.5)).toBeCloseTo(50)
-    expect(poseAt(b, 100)!.yaw).toBeCloseTo(255) // 250 -> 4 the short way (through 255, 0), halfway
+    const turn = poseAt(b, 100)!.yaw // 250 -> 4 the short way (through 255, 0), about halfway; never the long way round
+    expect(turn > 250 || turn < 4).toBe(true)
+    expect(Math.min(Math.abs(turn - 255), Math.abs(turn - 255 + 256), Math.abs(turn - 255 - 256))).toBeLessThan(3)
+  })
+})
+
+describe('poseAt: a smooth curve through the samples', () => {
+  // a track holds every number after the first as the step from the one before; positions in eighths of a unit, yaw in 256ths of a turn
+  const one = (t: number[], x: number[], y: number[], a: number[] = x.map(() => 0), z: number[] = x.map(() => 0)) =>
+    decodeTrack({ t, players: [{ id: 'A', segments: [{ from: 0, x, y, z, a }] }], deaths: [] }).players.get('A')!
+  const steps = (v: number[]) => v.map((n, i) => (i ? n - v[i - 1]! : n))
+  const track = (times: number[], xs: number[], ys: number[], yaws?: number[]) => one(steps(times), steps(xs), steps(ys), yaws ? steps(yaws) : undefined)
+  const speed = (segs: any, ms: number, h = 1) => { const a = poseAt(segs, ms - h)!, b = poseAt(segs, ms + h)!; return { x: (b.x - a.x) / (2 * h), y: (b.y - a.y) / (2 * h) } }
+
+  test('it is exactly on every sample', () => {
+    const segs = track([0, 200, 400, 600, 900], [0, 10, 25, 30, 31], [0, 5, 0, -8, -9], [0, 10, 40, 60, 70])
+    for (const [i, t] of [0, 200, 400, 600, 900].entries()) {
+      const p = poseAt(segs, t)!
+      expect(p.x).toBeCloseTo(segs[0]!.x[i]!, 9); expect(p.y).toBeCloseTo(segs[0]!.y[i]!, 9); expect(p.yaw).toBeCloseTo(segs[0]!.a[i]!, 9)
+    }
+  })
+
+  test('a player going at a steady speed in a straight line is on that line, at that speed, at any time', () => {
+    const segs = track([0, 200, 400, 600, 1000], [0, 20, 40, 60, 100], [0, 10, 20, 30, 50]) // 160 units a second along x, 80 along y (x8)
+    for (const t of [10, 100, 199, 250, 530, 777, 990]) {
+      const p = poseAt(segs, t)!
+      expect(p.x).toBeCloseTo(t * 0.8 * 1, 6); expect(p.y).toBeCloseTo(t * 0.4 * 1, 6)
+    }
+  })
+
+  test('there is no change of speed at a sample, where straight lines had one', () => {
+    // going round a bend: samples every 200 ms along a quarter circle of 1,600 units
+    const n = 8, xs: number[] = [], ys: number[] = [], ts: number[] = []
+    for (let i = 0; i <= n; i++) { const a = (i / n) * (Math.PI / 2); ts.push(i * 200); xs.push(Math.round(1600 * Math.sin(a) / 8)); ys.push(Math.round(1600 * (1 - Math.cos(a)) / 8)) }
+    const segs = track(ts, xs, ys)
+    const jump = (at: number, v: (ms: number) => { x: number, y: number }) => { const a = v(at - 3), b = v(at + 3); return Math.hypot(b.x - a.x, b.y - a.y) }
+    const linear = (ms: number) => { // the straight lines it used to be, over the same samples
+      const i = Math.min(Math.floor(ms / 200), n - 1), f = (ms - i * 200) / 200
+      return { x: (xs[i]! + (xs[i + 1]! - xs[i]!) * f) * 8, y: (ys[i]! + (ys[i + 1]! - ys[i]!) * f) * 8 }
+    }
+    for (const at of [400, 600, 800, 1000, 1200]) {
+      const smooth = jump(at, ms => ({ x: speed(segs, ms, 1).x, y: speed(segs, ms, 1).y })) // change of velocity over the two sides of a sample, units per ms
+      const line = jump(at, ms => { const a = linear(ms - 1), b = linear(ms + 1); return { x: (b.x - a.x) / 2, y: (b.y - a.y) / 2 } })
+      expect(line).toBeGreaterThan(0.03) // what straight lines do: a kink in the velocity at every sample
+      expect(smooth).toBeLessThan(line * 0.25) // and the curve: next to none
+    }
+  })
+
+  test('it never goes beyond the two samples it is between, in any direction, also where a player turns round or stops', () => {
+    const segs = track([0, 200, 400, 600, 1400, 1600], [0, 40, 0, 0, 30, 30], [0, 0, 20, 21, 21, -5], [0, 10, 50, 70, 70, 200])
+    for (let i = 0; i + 1 < segs[0]!.t.length; i++) {
+      for (const k of ['x', 'y', 'z'] as const) {
+        const lo = Math.min(segs[0]![k][i]!, segs[0]![k][i + 1]!), hi = Math.max(segs[0]![k][i]!, segs[0]![k][i + 1]!)
+        for (let f = 0; f <= 1; f += 0.05) {
+          const v = poseAt(segs, segs[0]!.t[i]! + (segs[0]!.t[i + 1]! - segs[0]!.t[i]!) * f)![k]
+          expect(v).toBeGreaterThanOrEqual(lo - 1e-9); expect(v).toBeLessThanOrEqual(hi + 1e-9)
+        }
+      }
+    }
+  })
+
+  test('the view direction turns the short way and smoothly across 0, never the long way round', () => {
+    const segs = track([0, 200, 400, 600, 800], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0], [250, 254, 2, 6, 10]) // turning through 0 (as 250, 254, 258, 262, 266)
+    for (let t = 0; t <= 800; t += 10) {
+      const y = poseAt(segs, t)!.yaw
+      expect(y >= 249.9 || y <= 10.1).toBe(true) // never through the middle of the circle
+    }
+    let last = poseAt(segs, 0)!.yaw
+    for (let t = 10; t <= 800; t += 10) { // one way only: no step back
+      const y = poseAt(segs, t)!.yaw
+      expect((((y - last) % 256) + 256) % 256).toBeLessThan(10)
+      last = y
+    }
+    expect(poseAt(segs, 400)!.yaw).toBeCloseTo(2, 9)
+  })
+
+  test('two samples at the same time, one sample and a long still step give a pose and no NaN', () => {
+    const twins = one([0, 0, 200], [0, 5, 5], [0, 0, 0])
+    for (const t of [0, 100, 200]) { const p = poseAt(twins, t); expect(p).not.toBeNull(); expect(Number.isFinite(p!.x + p!.y + p!.z + p!.yaw)).toBe(true) }
+    expect(poseAt(one([0], [3], [4]), 0)).toMatchObject({ x: 24, y: 32 })
   })
 })
 
@@ -259,7 +345,7 @@ describe('how a player moves', () => {
 
   test('the speed and the way a player goes, from a moment before and after', () => {
     const segs = runner()
-    const v = velocityAt(segs, 400) // in the middle of the run
+    const v = velocityAt(segs, 200) // in the run, where it goes at a steady speed on both sides
     expect(v.speed).toBeCloseTo(200, 0)
     expect(v.heading).toBeCloseTo(0, 5)
     expect(velocityAt(segs, 1000).speed).toBeCloseTo(0, 5) // stood still from the sample at 600 on

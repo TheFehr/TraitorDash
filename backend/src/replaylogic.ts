@@ -99,10 +99,35 @@ export const lerpYaw = (a: number, b: number, f: number) => {
 }
 
 /**
- * Where a player is at time `ms`: interpolated between the two samples around it by their real
- * times. null when the player has no sample there: before their first, after their last, or in a
- * gap between two segments (a skipped tick, a death and a revival). A gap is a gap, never a
- * straight line across it.
+ * The slope of a curve through samples (t, v) at sample `i`, for a monotone cubic (Fritsch and Carlson's PCHIP): the harmonic mean of the
+ * two slopes round it where they point the same way (the curve is steepest where it should be and has no overshoot), 0 at a turning point,
+ * and the slope of the one interval at the ends. `t` may be unevenly spaced, as ours is (the interval grows when nothing happens).
+ */
+function slopeAt(t: number[], v: (i: number) => number, i: number): number {
+  const n = t.length
+  const d = (j: number) => { const h = t[j + 1]! - t[j]!; return h > 0 ? (v(j + 1) - v(j)) / h : 0 }
+  if (i <= 0) return n > 1 ? d(0) : 0
+  if (i >= n - 1) return d(n - 2)
+  const d0 = d(i - 1), d1 = d(i)
+  if (d0 * d1 <= 0) return 0
+  const h0 = t[i]! - t[i - 1]!, h1 = t[i + 1]! - t[i]!
+  const w0 = 2 * h1 + h0, w1 = h1 + 2 * h0
+  return (w0 + w1) / (w0 / d0 + w1 / d1)
+}
+
+/** The value at fraction `f` of the interval from sample `a` to `a + 1` of a cubic through them with the given slopes (per ms) at both ends. */
+function hermite(p0: number, p1: number, m0: number, m1: number, span: number, f: number): number {
+  const f2 = f * f, f3 = f2 * f
+  return (2 * f3 - 3 * f2 + 1) * p0 + (f3 - 2 * f2 + f) * span * m0 + (-2 * f3 + 3 * f2) * p1 + (f3 - f2) * span * m1
+}
+
+/**
+ * Where a player is at time `ms`: on a smooth curve through the samples around it, at their real times. The position moves the way a
+ * player does, without the change of speed and direction at every sample that straight lines have (5 of them a second at the default
+ * rate, which made the replay look like it stuttered); the curve passes exactly through each sample and never goes beyond the samples on
+ * either side of it, so it cannot cut a corner through a wall further than the player's own steps did. The view direction is smoothed the
+ * same way, turning the short way round. null when the player has no sample there: before their first, after their last, or in a gap
+ * between two segments (a skipped tick, a death and a revival). A gap is a gap, never a curve across it.
  */
 export function poseAt(segments: Segment[], ms: number): Pose | null {
   // The segment that contains ms (they are in time order and do not overlap).
@@ -120,11 +145,22 @@ export function poseAt(segments: Segment[], ms: number): Pose | null {
   while (a < b) { const m = (a + b + 1) >> 1; if (seg.t[m]! <= ms) a = m; else b = m - 1 }
   if (a === seg.t.length - 1) return { x: seg.x[a]!, y: seg.y[a]!, z: seg.z[a]!, yaw: seg.a[a]! }
   const span = seg.t[a + 1]! - seg.t[a]!
-  const f = span > 0 ? (ms - seg.t[a]!) / span : 0
-  return {
-    x: seg.x[a]! + (seg.x[a + 1]! - seg.x[a]!) * f, y: seg.y[a]! + (seg.y[a + 1]! - seg.y[a]!) * f, z: seg.z[a]! + (seg.z[a + 1]! - seg.z[a]!) * f,
-    yaw: lerpYaw(seg.a[a]!, seg.a[a + 1]!, f),
+  if (!(span > 0)) return { x: seg.x[a]!, y: seg.y[a]!, z: seg.z[a]!, yaw: seg.a[a]! }
+  const f = (ms - seg.t[a]!) / span
+  const t = seg.t
+  const along = (v: number[]) => hermite(v[a]!, v[a + 1]!, slopeAt(t, i => v[i]!, a), slopeAt(t, i => v[i]!, a + 1), span, f)
+  // the view direction as one continuous angle (each step the short way round) so that a turn across 0 is not a spin
+  const yaw0 = seg.a[a]!
+  const unwrapped = (i: number): number => {
+    let y = yaw0
+    if (i > a) for (let j = a; j < i; j++) { let d = ((seg.a[j + 1]! - seg.a[j]!) % 256 + 256) % 256; if (d > 128) d -= 256; y += d }
+    else for (let j = a; j > i; j--) { let d = ((seg.a[j]! - seg.a[j - 1]!) % 256 + 256) % 256; if (d > 128) d -= 256; y -= d }
+    return y
   }
+  // slopes need the neighbours of a and a + 1: the unwrapped angle is built from a, so it is the same series for all of them
+  const yawSeries = (i: number) => unwrapped(Math.min(Math.max(i, 0), t.length - 1))
+  const yaw = hermite(yawSeries(a), yawSeries(a + 1), slopeAt(t, yawSeries, a), slopeAt(t, yawSeries, a + 1), span, f)
+  return { x: along(seg.x), y: along(seg.y), z: along(seg.z), yaw: ((yaw % 256) + 256) % 256 }
 }
 
 /** The last pose of a player at or before `ms` (a trail's end, or where to put a body); null before their first sample. */
