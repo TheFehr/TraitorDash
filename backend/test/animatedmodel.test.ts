@@ -1,6 +1,7 @@
 import { expect, test, describe } from 'bun:test'
 import validator from 'gltf-validator'
-import { CLIPS, readAnimatedModel, type ClipSpec } from '../src/maps/animatedmodel'
+import { DIRECTIONS as VIEWER_DIRECTIONS } from '../src/replaylogic'
+import { CLIPS, DIRECTIONS, readAnimatedModel, type ClipSpec } from '../src/maps/animatedmodel'
 import { animatedModelGlb } from '../src/maps/modelGlb'
 import { buildAnimationSet, buildRigged, eulerPointer, run, type BoneSpec } from './helpers/rig_builder'
 
@@ -31,7 +32,7 @@ const angles = (clip: { tracks: { bone: number, quat: Float32Array }[] }) => {
   const q = clip.tracks.find(t => t.bone === 1)!.quat
   return Array.from({ length: q.length / 4 }, (_, k) => 2 * Math.atan2(q[k * 4 + 2]!, q[k * 4 + 3]!))
 }
-const only = (name: string, every = 1): ClipSpec[] => [{ name, sequence: name, every }]
+const only = (name: string, every = 1, direction?: number): ClipSpec[] => [{ name, sequence: name, every, direction }]
 const near = (got: number[], want: number[], eps = 0.002) => { expect(got.length).toBe(want.length); want.forEach((w, i) => expect(Math.abs(got[i]! - w)).toBeLessThan(eps)) }
 
 describe('the frames of a clip', () => {
@@ -84,13 +85,25 @@ describe('which animation, how long, how far', () => {
     expect(clip.duration).toBeCloseTo(1, 5) // 30 steps of 1/30 s
   })
 
+  test('a clip for a direction takes the animation that moves that way, and gives null where the sequence has none', () => {
+    const at = (direction: number) => readAnimatedModel(model(), walk(), 20_000, only('walk_all', 1, direction))
+    near(angles(at(0)!.clips[0]!).slice(0, 1), [0.222]) // ahead
+    near(angles(at(4)!.clips[0]!).slice(0, 1), [0.111]) // back
+    near(angles(at(2)!.clips[0]!).slice(0, 1), [0.333]) // to the left (+y)
+    expect(at(2)!.clips[0]!.stride).toBeCloseTo(45, 3)
+    expect(at(6)).toBeNull() // nothing walks to the right in this set
+    expect(at(1)).toBeNull() // nor diagonally
+  })
+
   test('a sequence that does not move has stride 0', () => {
     const set = buildAnimationSet(setBones, [{ name: 'idle_all_01', animations: [{ numFrames: 3, entries: [turn([run([1, 2, 3])])] }] }])
     expect(readAnimatedModel(model(), set, 20_000, only('idle_all_01'))!.clips[0]!.stride).toBe(0)
   })
 
-  test('the standard clips are idle, walk, run, crouch and crouch-walk, and a set without one of them gives null', () => {
-    expect(CLIPS.map(c => c.name)).toEqual(['idle', 'walk', 'run', 'cidle', 'cwalk'])
+  test('the standard clips are the two idles and, for walking, running and crouch-walking, one for each of eight directions; a set without one of them gives null', () => {
+    expect(CLIPS.map(c => c.name)).toEqual(['idle', 'cidle', ...['walk', 'run', 'cwalk'].flatMap(g => ['f', 'fl', 'l', 'bl', 'b', 'br', 'r', 'fr'].map(d => `${g}_${d}`))])
+    expect([...DIRECTIONS]).toEqual([...VIEWER_DIRECTIONS]) // the viewer picks the clips by these names
+    expect(CLIPS.filter(c => c.name.startsWith('run_')).map(c => c.direction)).toEqual([0, 1, 2, 3, 4, 5, 6, 7])
     expect(readAnimatedModel(model(), walk())).toBeNull()
   })
 })

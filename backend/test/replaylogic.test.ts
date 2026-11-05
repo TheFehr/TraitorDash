@@ -1,5 +1,5 @@
 import { expect, test, describe } from 'bun:test'
-import { clipWeights, damp, dampAngle, decodeTrack, distanceAt, facing, lerpAngle, moveAt, pathOf, velocityAt, SPEEDS, poseAt, lastPoseAt, trailBetween, lerpYaw, levelOf, chooseBackground, versionMismatch, defaultSelection, teamColour, playerColour, roleColour, clock, type RawTrack } from '../src/replaylogic'
+import { clipWeights, damp, dampAngle, decodeTrack, cyclesAt, sectorOf, DIRECTIONS, distanceAt, lerpAngle, moveAt, pathOf, velocityAt, SPEEDS, poseAt, lastPoseAt, trailBetween, lerpYaw, levelOf, chooseBackground, versionMismatch, defaultSelection, teamColour, playerColour, roleColour, clock, type RawTrack } from '../src/replaylogic'
 
 // RFC 12, 3.5: the logic of the replay that is not drawing.
 
@@ -289,36 +289,66 @@ describe('how a player moves', () => {
 
 describe('which clip is shown', () => {
   const sum = (w: Record<string, number>) => Object.values(w).reduce((a, b) => a + b, 0)
+  const only = (w: Record<string, number>) => Object.fromEntries(Object.entries(w).filter(([, v]) => v > 1e-9))
   test('standing still is idle, a walk is the walk clip, a run the run clip, and the speeds between are blends of two', () => {
-    expect(clipWeights(0, false)).toEqual({ idle: 1, walk: 0, run: 0, cidle: 0, cwalk: 0 })
-    expect(clipWeights(SPEEDS.walk + 10, false).walk).toBe(1)
-    expect(clipWeights(130, false).walk).toBe(1)
-    expect(clipWeights(250, false).run).toBe(1)
-    const slow = clipWeights((SPEEDS.still + SPEEDS.walk) / 2, false)
-    expect(slow.idle).toBeCloseTo(0.5, 5); expect(slow.walk).toBeCloseTo(0.5, 5)
-    const quick = clipWeights((SPEEDS.run + SPEEDS.runFull) / 2, false)
-    expect(quick.walk).toBeCloseTo(0.5, 5); expect(quick.run).toBeCloseTo(0.5, 5)
+    expect(only(clipWeights(0, 0, false))).toEqual({ idle: 1 })
+    expect(only(clipWeights(SPEEDS.walk + 10, 0, false))).toEqual({ walk_f: 1 })
+    expect(only(clipWeights(130, 0, false))).toEqual({ walk_f: 1 })
+    expect(only(clipWeights(250, 0, false))).toEqual({ run_f: 1 })
+    const slow = clipWeights((SPEEDS.still + SPEEDS.walk) / 2, 0, false)
+    expect(slow.idle).toBeCloseTo(0.5, 5); expect(slow.walk_f).toBeCloseTo(0.5, 5)
+    const quick = clipWeights((SPEEDS.run + SPEEDS.runFull) / 2, 0, false)
+    expect(quick.walk_f).toBeCloseTo(0.5, 5); expect(quick.run_f).toBeCloseTo(0.5, 5)
   })
   test('a crouching player has the crouch clips', () => {
-    expect(clipWeights(0, true)).toEqual({ idle: 0, walk: 0, run: 0, cidle: 1, cwalk: 0 })
-    expect(clipWeights(120, true)).toEqual({ idle: 0, walk: 0, run: 0, cidle: 0, cwalk: 1 })
+    expect(only(clipWeights(0, 0, true))).toEqual({ cidle: 1 })
+    expect(only(clipWeights(120, 0, true))).toEqual({ cwalk_f: 1 })
   })
-  test('the weights always add up to one', () => {
-    for (let v = 0; v <= 400; v += 7) for (const c of [false, true]) expect(sum(clipWeights(v, c))).toBeCloseTo(1, 9)
+  test('the gait is shown in the direction the player goes relative to where they look: backwards, to the side, and between', () => {
+    expect(only(clipWeights(120, Math.PI, false))).toEqual({ walk_b: 1 })
+    expect(only(clipWeights(120, Math.PI / 2, false))).toEqual({ walk_l: 1 }) // +y is to the left
+    expect(only(clipWeights(120, -Math.PI / 2, false))).toEqual({ walk_r: 1 })
+    expect(only(clipWeights(250, -Math.PI / 4, false))).toEqual({ run_fr: 1 })
+    expect(only(clipWeights(120, 3 * Math.PI, true))).toEqual({ cwalk_b: 1 }) // any number of turns
+    const between = clipWeights(120, Math.PI / 8, false)
+    expect(between.walk_f).toBeCloseTo(0.5, 9); expect(between.walk_fl).toBeCloseTo(0.5, 9)
+    const wrap = clipWeights(120, -Math.PI / 8, false) // from forward-right across the front to forward
+    expect(wrap.walk_f).toBeCloseTo(0.5, 9); expect(wrap.walk_fr).toBeCloseTo(0.5, 9)
+  })
+  test('the weights always add up to one, in every direction', () => {
+    for (let v = 0; v <= 400; v += 7) for (const c of [false, true]) for (let r = -7; r <= 7; r += 0.37) expect(sum(clipWeights(v, r, c))).toBeCloseTo(1, 9)
+  })
+  test('the directions are the eight of the model, counter-clockwise from ahead', () => {
+    expect([...DIRECTIONS]).toEqual(['f', 'fl', 'l', 'bl', 'b', 'br', 'r', 'fr'])
+    expect(sectorOf(0)).toEqual({ a: 0, b: 1, f: 0 })
+    expect(sectorOf(-0.01).a).toBe(7)
   })
 })
 
-describe('which way the body faces', () => {
+describe('the cycles of a walk', () => {
+  const strides = { walk: [80, 60, 45, 50, 60, 50, 45, 60], run: [126, 90, 90, 90, 100, 90, 90, 90], cwalk: [60, 42, 60, 42, 60, 42, 60, 42] }
+  // the track holds positions in eighths of a unit, each after the first as a step from the one before, so a step of one is eight units
+  const line = (heading: number, look: number) => decodeTrack({ t: [0, 100, 100], players: [{ id: 'A', segments: [{
+    from: 0, x: [0, Math.cos(heading), Math.cos(heading)], y: [0, Math.sin(heading), Math.sin(heading)], z: [0, 0, 0],
+    a: [Math.round(look / (2 * Math.PI) * 256), 0, 0] }] }], deaths: [] }).players.get('A')!
+  test('a step is divided by the stride of the direction it goes in relative to the look', () => {
+    expect(cyclesAt(pathOf(line(0, 0), strides), 'walk', 200)).toBeCloseTo(16 / 80, 5) // ahead
+    expect(cyclesAt(pathOf(line(Math.PI, 0), strides), 'walk', 200)).toBeCloseTo(16 / 60, 5) // backwards
+    expect(cyclesAt(pathOf(line(Math.PI / 2, 0), strides), 'walk', 200)).toBeCloseTo(16 / 45, 5) // to the left
+    expect(cyclesAt(pathOf(line(Math.PI / 2, Math.PI / 2), strides), 'walk', 200)).toBeCloseTo(16 / 80, 5) // looking where it goes
+    expect(cyclesAt(pathOf(line(0, 0), strides), 'run', 100)).toBeCloseTo(8 / 126, 5)
+  })
+  test('between samples it is a straight line, and a path made without strides has none', () => {
+    expect(cyclesAt(pathOf(line(0, 0), strides), 'walk', 50)).toBeCloseTo(4 / 80, 5)
+    expect(cyclesAt(pathOf(line(0, 0)), 'walk', 200)).toBe(0)
+  })
+})
+
+describe('turning an angle', () => {
   test('an angle is turned the short way round', () => {
     expect(lerpAngle(0.1, 0.3, 0.5)).toBeCloseTo(0.2, 9)
     expect(lerpAngle(3, -3, 0.5)).toBeCloseTo(3 + 0.5 * (2 * Math.PI - 6), 9) // across the back, not through zero
     expect(lerpAngle(1, 1, 0.7)).toBeCloseTo(1, 9)
-  })
-  test('the body follows the player\'s look when still and the direction of the walk when going', () => {
-    expect(facing(1, 2, 0)).toBeCloseTo(1, 9)
-    expect(facing(1, 2, 100)).toBeCloseTo(2, 9)
-    const half = facing(1, 2, 45)
-    expect(half).toBeGreaterThan(1); expect(half).toBeLessThan(2)
   })
 })
 

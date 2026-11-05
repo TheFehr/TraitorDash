@@ -13,14 +13,19 @@ export interface ClipSpec {
   sequence: string
   /** Every how many frames a key is kept (the last frame is always kept). */
   every: number
+  /** For a sequence that has an animation for each direction of travel: which one, as a number from 0 (straight ahead) counter-clockwise in steps of 45 degrees (see `DIRECTIONS`). */
+  direction?: number
 }
+
+/** The eight directions of travel relative to where the player looks, counter-clockwise from straight ahead (the viewer's list in `replaylogic.ts` is the same; a test compares them). */
+export const DIRECTIONS = ['f', 'fl', 'l', 'bl', 'b', 'br', 'r', 'fr'] as const
+/** The sequences that walk, each with an animation for every direction (a 3 by 3 grid with the standing one in the middle). */
+export const GAIT_SEQUENCES = { walk: 'walk_all', run: 'run_all_01', cwalk: 'cwalk_all' } as const
 
 export const CLIPS: ClipSpec[] = [
   { name: 'idle', sequence: 'idle_all_01', every: 4 },
-  { name: 'walk', sequence: 'walk_all', every: 1 },
-  { name: 'run', sequence: 'run_all_01', every: 1 },
   { name: 'cidle', sequence: 'cidle_all', every: 4 },
-  { name: 'cwalk', sequence: 'cwalk_all', every: 1 },
+  ...Object.entries(GAIT_SEQUENCES).flatMap(([gait, sequence]) => DIRECTIONS.map((d, direction) => ({ name: `${gait}_${d}`, sequence, every: 1, direction }))),
 ]
 
 export interface ClipTrack {
@@ -73,13 +78,27 @@ function forward(set: AnimationSet, blends: number[]): number {
   return best
 }
 
+/** The animation of a sequence that moves the player in the given direction (0 to 7, in steps of 45 degrees counter-clockwise from +x; Source's +y is to the left). */
+function heading(set: AnimationSet, blends: number[], direction: number): number {
+  let best = -1, off = Infinity
+  for (const ao of blends) {
+    const { move } = set.describe(ao)
+    if (!move || Math.hypot(move[0], move[1]) < 1e-3) continue
+    const d = Math.abs(((Math.atan2(move[1], move[0]) - direction * Math.PI / 4) % (2 * Math.PI) + 3 * Math.PI) % (2 * Math.PI) - Math.PI)
+    if (d < off) { off = d; best = ao }
+  }
+  if (best < 0 || off > Math.PI / 8) throw new RangeError('a sequence has no animation for a direction')
+  return best
+}
+
 const constant = (a: number[], width: number, eps: number) => {
   for (let k = 1; k < a.length / width; k++) for (let j = 0; j < width; j++) if (Math.abs(a[k * width + j]! - a[j]!) > eps) return false
   return true
 }
 
 function clipOf(set: AnimationSet, bones: Bone[], spec: ClipSpec): Clip {
-  const ao = forward(set, set.blends(set.sequence(spec.sequence)))
+  const blends = set.blends(set.sequence(spec.sequence))
+  const ao = spec.direction === undefined ? forward(set, blends) : heading(set, blends, spec.direction)
   const { numFrames, fps, move } = set.describe(ao)
   if (numFrames < 1 || !(fps > 0)) throw new RangeError('an animation has no frames')
   const frames: number[] = []

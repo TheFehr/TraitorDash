@@ -303,47 +303,93 @@ export function velocityAt(segments: Segment[], ms: number, window = 150): { spe
   return { speed: Math.hypot(dx, dy) / dt, heading: Math.atan2(dy, dx) }
 }
 
-/** How far along the ground a player has gone by each sample, summed over all their segments (a gap adds nothing). */
-export interface Path { t: number[], d: number[] }
-export function pathOf(segments: Segment[]): Path {
+/** The eight directions of travel relative to where the player looks, counter-clockwise from straight ahead: forward, forward-left, left, back-left, back, back-right, right, forward-right. */
+export const DIRECTIONS = ['f', 'fl', 'l', 'bl', 'b', 'br', 'r', 'fr'] as const
+export type Gait = 'walk' | 'run' | 'cwalk'
+export const GAITS: Gait[] = ['walk', 'run', 'cwalk']
+export type ClipName = 'idle' | 'cidle' | `${Gait}_${typeof DIRECTIONS[number]}`
+/** The clips of a gait, one for each direction, in the order of `DIRECTIONS`. */
+export const gaitClips = (gait: Gait): ClipName[] => DIRECTIONS.map(d => `${gait}_${d}` as ClipName)
+
+/** The two neighbouring directions that a direction of travel (radians relative to where the player looks, 0 ahead, counter-clockwise) lies between, and how far it is towards the second (0 to 1). */
+export function sectorOf(rel: number): { a: number, b: number, f: number } {
+  const turn = ((rel % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)
+  const x = turn / (Math.PI / 4), a = Math.floor(x) % 8
+  return { a, b: (a + 1) % 8, f: x - Math.floor(x) }
+}
+
+/**
+ * How far along the ground a player has gone by each sample, summed over all their segments (a gap adds nothing). With `strides`
+ * (how far each gait's clip for each direction walks in one cycle) it also keeps, for each gait, the cycles gone: a step is divided by
+ * the stride of the direction it goes in relative to where the player looks, so the feet keep up when the player turns from walking
+ * ahead to stepping aside (a plain distance divided by one stride would jump the cycle at every such change).
+ */
+export interface Path { t: number[], d: number[], c: Record<Gait, number[]> | null }
+export type Strides = Record<Gait, number[]>
+export function pathOf(segments: Segment[], strides: Strides | null = null): Path {
   const t: number[] = [], d: number[] = []
+  const c: Record<Gait, number[]> | null = strides ? { walk: [], run: [], cwalk: [] } : null
   let at = 0
+  const cycles: Record<Gait, number> = { walk: 0, run: 0, cwalk: 0 }
   for (const s of segments) {
     for (let i = 0; i < s.t.length; i++) {
-      if (i > 0) at += Math.hypot(s.x[i]! - s.x[i - 1]!, s.y[i]! - s.y[i - 1]!)
+      if (i > 0) {
+        const dx = s.x[i]! - s.x[i - 1]!, dy = s.y[i]! - s.y[i - 1]!, step = Math.hypot(dx, dy)
+        at += step
+        if (strides && step > 0) {
+          const look = (((s.a[i]! + s.a[i - 1]!) / 2) / 256) * Math.PI * 2
+          const { a, b, f } = sectorOf(Math.atan2(dy, dx) - look)
+          for (const g of GAITS) {
+            const stride = strides[g][a]! * (1 - f) + strides[g][b]! * f
+            if (stride > 0) cycles[g] += step / stride
+          }
+        }
+      }
       t.push(s.t[i]!); d.push(at)
+      if (c) for (const g of GAITS) c[g].push(cycles[g])
     }
   }
-  return { t, d }
+  return { t, d, c }
 }
-/** The distance gone by `ms`, between the samples as a straight line. */
-export function distanceAt(path: Path, ms: number): number {
-  const { t, d } = path
+const along = (t: number[], v: number[], ms: number): number => {
   if (t.length === 0 || ms <= t[0]!) return 0
-  if (ms >= t[t.length - 1]!) return d[d.length - 1]!
+  if (ms >= t[t.length - 1]!) return v[v.length - 1]!
   let a = 0, b = t.length - 1
   while (a < b) { const m = (a + b + 1) >> 1; if (t[m]! <= ms) a = m; else b = m - 1 }
   const span = t[a + 1]! - t[a]!
-  return d[a]! + (d[a + 1]! - d[a]!) * (span > 0 ? (ms - t[a]!) / span : 0)
+  return v[a]! + (v[a + 1]! - v[a]!) * (span > 0 ? (ms - t[a]!) / span : 0)
 }
+/** The distance gone by `ms`, between the samples as a straight line. */
+export const distanceAt = (path: Path, ms: number): number => along(path.t, path.d, ms)
+/** The cycles of a gait gone by `ms` (0 for a path made without strides). */
+export const cyclesAt = (path: Path, gait: Gait, ms: number): number => (path.c ? along(path.t, path.c[gait], ms) : 0)
 
-export type ClipName = 'idle' | 'walk' | 'run' | 'cidle' | 'cwalk'
+/** Every clip a moving model must have. */
+export const clipNames = (): ClipName[] => ['idle', 'cidle', ...GAITS.flatMap(gaitClips)]
+
 /** Where the speeds change over from one clip to the next, in units a second (a real round: walking is 120 to 150, running about 200, sprinting 300). */
 export const SPEEDS = { still: 12, walk: 45, run: 150, runFull: 190, crouchWalk: 40 }
 
-/** How much of each clip to show, summing to 1: a player standing still is idle, walking and running are blended into each other by speed, and a crouching player has the two crouch clips. */
-export function clipWeights(speed: number, crouching: boolean): Record<ClipName, number> {
+/**
+ * How much of each clip to show, summing to 1: a player standing still is idle, walking and running are blended into each other by
+ * speed, and a crouching player has the two crouch clips. A gait is shown in the direction the player goes relative to where they look
+ * (`rel`, radians, 0 ahead, counter-clockwise): the two clips either side of it, by how near.
+ */
+export function clipWeights(speed: number, rel: number, crouching: boolean): Record<ClipName, number> {
   const ramp = (v: number, from: number, to: number) => Math.min(1, Math.max(0, (v - from) / (to - from)))
-  const w: Record<ClipName, number> = { idle: 0, walk: 0, run: 0, cidle: 0, cwalk: 0 }
+  const w = { idle: 0, cidle: 0 } as Record<ClipName, number>
+  for (const g of GAITS) for (const n of gaitClips(g)) w[n] = 0
+  const { a, b, f } = sectorOf(rel)
+  const spread = (gait: Gait, amount: number) => { w[gaitClips(gait)[a]!] += amount * (1 - f); w[gaitClips(gait)[b]!] += amount * f }
   if (crouching) {
     const moving = ramp(speed, SPEEDS.still, SPEEDS.crouchWalk)
-    w.cwalk = moving; w.cidle = 1 - moving
+    spread('cwalk', moving); w.cidle = 1 - moving
     return w
   }
   const walking = ramp(speed, SPEEDS.still, SPEEDS.walk), running = ramp(speed, SPEEDS.run, SPEEDS.runFull)
   w.idle = 1 - walking
-  w.walk = walking * (1 - running)
-  w.run = walking * running
+  spread('walk', walking * (1 - running))
+  spread('run', walking * running)
   return w
 }
 
@@ -352,11 +398,6 @@ export const lerpAngle = (a: number, b: number, f: number) => {
   let d = ((b - a) % (2 * Math.PI) + 3 * Math.PI) % (2 * Math.PI) - Math.PI
   if (d < -Math.PI) d += 2 * Math.PI
   return a + d * f
-}
-
-/** Which way the body faces: where it goes when it goes somewhere, else where the player looks, turning over between the two as the speed picks up. */
-export function facing(look: number, heading: number, speed: number): number {
-  return lerpAngle(look, heading, Math.min(1, Math.max(0, (speed - 25) / 40)))
 }
 
 // ---- the follow camera

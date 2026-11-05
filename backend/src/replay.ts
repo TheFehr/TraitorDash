@@ -14,7 +14,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { startFlat } from './replayflat'
 import { applyColouring, offerBrowser, heightColours, levelColour, makeCamera, makeRenderer, makeScene, prepareMovable, prepareProps, prepareWater, savedColouring, boxWithout, type Painted } from './sceneKit'
 import {
-  decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, distanceAt, facing, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, trailBetween, levelOf, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose, fitLabel,
+  decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose, fitLabel,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
 } from './replaylogic'
 
@@ -498,7 +498,7 @@ async function start(root: HTMLElement) {
   // ---- the players' model (RFC 22): the game's own, in the team's colour. Moving when the backend sends clips (a skeleton that is
   // posed from how the player moves), still when it sends a pose; the box figure below is the fallback.
   let real: { geometry: BufferGeometry, height: number, back: number, thick: number } | null = null
-  let moving: { scene: Object3D, clips: Map<string, AnimationClip>, strides: Map<string, number> } | null = null
+  let moving: { scene: Object3D, clips: Map<string, AnimationClip>, strides: Strides } | null = null
   if (payload.playerModel) {
     try {
       const buf = await fetch(payload.playerModel, { credentials: 'same-origin' }).then(r => { if (!r.ok) throw new Error(String(r.status)); return r.arrayBuffer() })
@@ -511,10 +511,11 @@ async function start(root: HTMLElement) {
         g.computeBoundingBox()
         const height = Number(gltf.parser.json?.extras?.height) || g.boundingBox!.max.z
         real = { geometry: g, height, back: -g.boundingBox!.min.x, thick: g.boundingBox!.max.x - g.boundingBox!.min.x }
-        const names = ['idle', 'walk', 'run', 'cidle', 'cwalk']
+        const names: string[] = clipNames()
         const clips = new Map(gltf.animations.filter(c => names.includes(c.name)).map(c => [c.name, c] as const))
         if (clips.size === names.length) {
-          const strides = new Map<string, number>((gltf.parser.json?.animations ?? []).map((a: any) => [a.name, Number(a.extras?.stride) || 0] as const))
+          const walked = new Map<string, number>((gltf.parser.json?.animations ?? []).map((a: any) => [a.name, Number(a.extras?.stride) || 0] as const))
+          const strides = Object.fromEntries(GAITS.map(g => [g, gaitClips(g).map(n => walked.get(n) ?? 0)])) as Strides // how far each clip of a gait walks in one cycle, by direction
           moving = { scene: gltf.scene, clips, strides }
         }
       }
@@ -611,8 +612,12 @@ async function start(root: HTMLElement) {
     g.fillStyle = hex(colour); g.fillText(fit.text, 128, 32)
   })
 
-  /** Poses a figure's skeleton: how much of each clip (`weights`), and how far into each (the walks by the distance gone, so a foot does not slide; the two idles by the time). */
-  const poseRig = (g: Group, weights: Record<ClipName, number>, distance: number, ms: number) => {
+  /**
+   * Poses a figure's skeleton: how much of each clip (`weights`), and how far into each. A gait is in step in all its directions (the
+   * clips are made to be blended): the cycle is the one gone along the path, so a foot does not slide at any speed or direction and
+   * when scrubbing; the two idles go by the time.
+   */
+  const poseRig = (g: Group, weights: Record<ClipName, number>, path: Path | null, ms: number) => {
     const rig = g.userData.rig as { mixer: AnimationMixer, actions: Map<string, AnimationAction> } | undefined
     if (!rig || !moving) return
     for (const [name, action] of rig.actions) {
@@ -620,13 +625,14 @@ async function start(root: HTMLElement) {
       action.setEffectiveWeight(w)
       action.enabled = w > 0
       if (w <= 0) continue
-      const clip = moving.clips.get(name)!, stride = moving.strides.get(name) ?? 0
-      const cycle = stride > 0 ? (distance / stride) % 1 : ((ms / 1000) / clip.duration) % 1
+      const clip = moving.clips.get(name)!
+      const gait = GAITS.find(x => name.startsWith(x + '_'))
+      const cycle = gait && path ? cyclesAt(path, gait, ms) % 1 : ((ms / 1000) / clip.duration) % 1
       action.time = cycle * clip.duration
     }
     rig.mixer.update(0)
   }
-  const STILL: Record<ClipName, number> = { idle: 1, walk: 0, run: 0, cidle: 0, cwalk: 0 }
+  const STILL = { idle: 1 } as Record<ClipName, number>
 
   /**
    * The model's file holds its shape at rest, whose back (the arms, the feet) reaches 27 units behind the origin; in the standing
@@ -678,7 +684,7 @@ async function start(root: HTMLElement) {
     const corpse = new Group()
     const lying = figure(colour, true)
     lying.rotation.y = -Math.PI / 2 // onto its back, head towards -x
-    poseRig(lying, STILL, 0, 0) // a body is the standing pose, lying down
+    poseRig(lying, STILL, null, 0) // a body is the standing pose, lying down
     measureStill(lying) // how far the back reaches in that pose, which is not what the model's file says of its resting shape
     lying.position.z = real ? real.back : 9 // so the back lies on the floor
     const deadPin = screenSprite(look.cross, PIN, PIN)
@@ -688,7 +694,7 @@ async function start(root: HTMLElement) {
     corpse.visible = false
 
     world.add(group, trail, corpse)
-    markers.set(id, { group, pin, label, ring, trail, corpse, deadPin, segs: data.players.get(id) ?? [], body, lying, arrow, path: pathOf(data.players.get(id) ?? []), colour, looks, posedAt: -1e9 })
+    markers.set(id, { group, pin, label, ring, trail, corpse, deadPin, segs: data.players.get(id) ?? [], body, lying, arrow, path: pathOf(data.players.get(id) ?? [], moving?.strides ?? null), colour, looks, posedAt: -1e9 })
   }
   // The shot: a line of the width of a few pixels (a `Line` is one pixel wide in WebGL, which is too faint to see), as a thin
   // bright beam with a wider faint one around it, drawn over the map so a wall does not hide where the shot came from.
@@ -817,12 +823,11 @@ async function start(root: HTMLElement) {
         m.group.position.set(p.x, p.y, p.z)
         const look = (p.yaw / 256) * Math.PI * 2
         if (moving) {
-          // the body walks where the player goes and looks where they look; its pose is picked by how fast and how they move
+          // the body looks where the player looks, as in the game; its legs walk the way the player goes relative to that (forward, back, sideways)
           const v = velocityAt(m.segs, ms)
-          const turn = facing(look, v.heading, v.speed)
-          m.group.rotation.z = turn
-          m.arrow.rotation.z = look - turn // the arrow on the ground still says where the player looks
-          if (Math.abs(ms - m.posedAt) >= (slow ? 33 : 12)) { m.posedAt = ms; poseRig(m.body, clipWeights(v.speed, (moveAt(m.segs, ms) & MOVE.crouching) !== 0), distanceAt(m.path, ms), ms) }
+          m.group.rotation.z = look
+          m.arrow.rotation.z = 0
+          if (Math.abs(ms - m.posedAt) >= (slow ? 33 : 12)) { m.posedAt = ms; poseRig(m.body, clipWeights(v.speed, v.heading - look, (moveAt(m.segs, ms) & MOVE.crouching) !== 0), m.path, ms) }
         } else m.group.rotation.z = look
       }
       // from above the bodies are specks, so the pin itself points the way the player faces

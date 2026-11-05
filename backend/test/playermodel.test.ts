@@ -25,10 +25,12 @@ const model = () => buildRigged({
 })
 const spine = { bone: 1, flags: 0x02, data: quat48(0, 0, Math.SQRT1_2) }
 const loop = (name: string, move?: [number, number, number]) => ({ name, animations: [{ numFrames: 3, ...(move ? { move } : {}), entries: [spine] }] })
+// a walking sequence of the real set: nine animations, the eight directions (as the engine lists them) and the standing one in the middle
+const grid = (name: string, speed: number) => ({ name, animations: [[-1, 1], [-1, 0], [-1, -1], [0, 1], null, [0, -1], [1, 1], [1, 0], [1, -1]].map(d => ({ numFrames: 3, ...(d ? { move: [d[0]! * speed, d[1]! * speed, 0] as [number, number, number] } : {}), entries: [spine] })) })
 const animations = buildAnimationSet([{ name: 'Bip01_Pelvis', parent: -1 }, { name: 'Bip01_Spine', parent: 0, pos: [0, 0, 10] }], [
   { name: 'idle_all_01', entries: [spine] },
   { name: 'cidle_all', entries: [{ bone: 1, flags: 0x08, data: eulerPointer([null, null, [1571]]) }] },
-  loop('walk_all', [80, 0, 0]), loop('run_all_01', [126, 0, 0]), loop('cwalk_all', [60, 0, 0]),
+  grid('walk_all', 60), grid('run_all_01', 100), grid('cwalk_all', 50),
 ])
 
 /** A stand-in for the game's files: asked for what it is told to have; counts the questions. */
@@ -71,7 +73,7 @@ describe('the route', () => {
     const bytes = new Uint8Array(await r.arrayBuffer())
     expect(Buffer.from(bytes.subarray(0, 4)).toString()).toBe('glTF')
     const json = (b: Uint8Array) => JSON.parse(Buffer.from(b.subarray(20, 20 + new DataView(b.buffer, b.byteOffset).getUint32(12, true))).toString())
-    expect(json(bytes).animations.map((a: any) => a.name)).toEqual(['idle', 'walk', 'run', 'cidle', 'cwalk'])
+    expect(json(bytes).animations.map((a: any) => a.name)).toEqual(['idle', 'cidle', ...['walk', 'run', 'cwalk'].flatMap(g => ['f', 'fl', 'l', 'bl', 'b', 'br', 'r', 'fr'].map(d => `${g}_${d}`))])
     expect(json(bytes).skins).toHaveLength(1)
     // ?pose= is one pose of it, still: no skin and no clips
     const still = new Uint8Array(await (await get(url('?pose=stand'))).arrayBuffer())
