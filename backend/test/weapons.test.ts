@@ -365,6 +365,11 @@ describe('the pages', () => {
     expect((await text(path + '?level=1', USER)).text).toContain('1 death in 1 round')
     expect((await text(path + '?level=9', USER)).text).toContain('2 deaths in 1 round')
     // a filter that matches nothing keeps the filters, so it can be taken off again
+    // the filters sit above the picture, so they stay where they are whatever the height of the map (the maintainer, 2026-11-05)
+    const shown = (await text(path, USER)).text
+    expect(shown.indexOf('<span>Level</span>')).toBeGreaterThan(-1)
+    expect(shown.indexOf('<span>Level</span>')).toBeLessThan(shown.indexOf('<span>Weapon</span>'))
+    expect(shown.indexOf('<span>Weapon</span>')).toBeLessThan(shown.indexOf('data-killzone-picture'))
     const none = (await text(path + '?weapon=weapon_nothing', USER)).text
     expect(none).toContain('data-no-killzones'); expect(none).toContain('level=2'); expect(none).toContain('#34343a')
     expect(none).toContain('href="'+path+'"'); expect(none).toContain('match this filter')

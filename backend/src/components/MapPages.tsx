@@ -240,9 +240,19 @@ export const Killzones = ({ ctx, serverId, name, k }: { ctx: Ctx, serverId: stri
         <p class="none" data-no-killzones>{noDeaths}</p>
       ) : (
         <>
+          {k.levelList && k.levelList.length > 1 && (
+            <div class="bar mb6"><span>Level</span>
+              <a class={k.level === undefined ? 'on' : ''} href={to({ weapon: k.weapon })}>All</a>
+              {k.levelList.map(l => <a class={k.level === l ? 'on' : ''} href={to({ weapon: k.weapon, level: l })}>{l}</a>)}
+            </div>
+          )}
+          <div class="bar mb6"><span>Weapon</span>
+            <a class={k.weapon === null ? 'on' : ''} href={to({ level: k.level })}>All</a>
+            {k.weapons.slice(0, 8).map(w => <a class={k.weapon === w.weapon ? 'on' : ''} href={to({ weapon: w.weapon, level: k.level })} title={w.weapon}>{weaponName(w.weapon)} <span class="dim">{w.n}</span></a>)}
+          </div>
           {k.deaths === 0 ? (
             <>
-              <p class="none" data-no-killzones>{filtered ? 'No deaths with a position match this filter. Pick another level or weapon below.' : noDeaths}</p>
+              <p class="none" data-no-killzones>{filtered ? 'No deaths with a position match this filter. Pick another level or weapon above.' : noDeaths}</p>
               {k.svg !== null && <div data-killzone-picture>{raw(k.svg)}</div>}
             </>
           ) : (
@@ -258,16 +268,6 @@ export const Killzones = ({ ctx, serverId, name, k }: { ctx: Ctx, serverId: stri
               )}
             </>
           )}
-          {k.levelList && k.levelList.length > 1 && (
-            <div class="bar mt6"><span>Level</span>
-              <a class={k.level === undefined ? 'on' : ''} href={to({ weapon: k.weapon })}>All</a>
-              {k.levelList.map(l => <a class={k.level === l ? 'on' : ''} href={to({ weapon: k.weapon, level: l })}>{l}</a>)}
-            </div>
-          )}
-          <div class="bar mt6"><span>Weapon</span>
-            <a class={k.weapon === null ? 'on' : ''} href={to({ level: k.level })}>All</a>
-            {k.weapons.slice(0, 8).map(w => <a class={k.weapon === w.weapon ? 'on' : ''} href={to({ weapon: w.weapon, level: k.level })} title={w.weapon}>{weaponName(w.weapon)} <span class="dim">{w.n}</span></a>)}
-          </div>
           <p class="foot dark">{k.under === 'map' ? 'The outline is the map as the 3D view shows it, flattened.' : k.under === 'plan' ? 'The floor plan is drawn for admins.' : ctx.viewer ? 'This map has no geometry to draw under the deaths yet.' : 'Signed-in visitors, and players in the game, see the map under the deaths.'} {k.sizes ? (k.sizes.min === k.sizes.max ? `Squares are ${k.sizes.min} units wide.` : `Squares are ${k.sizes.min} to ${k.sizes.max} units wide, finer where more players died.`) : ''} Only deaths since the game server was updated are counted, and they name nobody.</p>
         </>
       )}
