@@ -331,6 +331,7 @@ async function start(root: HTMLElement) {
   // camera forward, what is in a cone from the camera to the player's head is faded out, with a screen-door pattern so nothing has to be
   // sorted. A prop is faded as a whole, by where its middle is (every prop knows its middle and its size); a wall by each pixel; a floor
   // only where it is above the line of sight (a ceiling, from where the camera is). Nothing is faded beyond the player.
+  const BIG_PROP = 200 // radius (units) from which a prop is faded by the pixel and not as a whole
   const lineOfSight = { uCam: { value: new Vector3() }, uHead: { value: new Vector3() } }
   const CUT_GLSL = `
     uniform vec3 uCam;
@@ -355,11 +356,13 @@ async function start(root: HTMLElement) {
     material.onBeforeCompile = shader => {
       shader.uniforms.uCam = lineOfSight.uCam
       shader.uniforms.uHead = lineOfSight.uHead
-      const piece = kind === 'prop' ? 'varying float vCut;' : 'varying vec3 vWorldC;'
+      // a prop that is large (a building, a wall) is faded by the pixel like a wall: its middle can be far from the line of sight while the
+      // camera is inside it, and the whole object cannot fade because a corner of it is in the way
+      const piece = kind === 'prop' ? 'varying float vCut;\nvarying float vBig;\nvarying vec3 vWorldC;' : 'varying vec3 vWorldC;'
       shader.vertexShader = shader.vertexShader
         .replace('void main() {', `${CUT_GLSL}\n${kind === 'prop' ? 'attribute vec4 aObject;' : ''}\n${piece}\nvoid main() {`)
-        .replace('#include <begin_vertex>', `#include <begin_vertex>\n${kind === 'prop' ? 'vCut = cutAt(aObject.xyz, aObject.w, 0.0);' : 'vWorldC = (modelMatrix * vec4(transformed, 1.0)).xyz;'}`)
-      const test = kind === 'prop' ? 'vCut' : `cutAt(vWorldC, 0.0, ${kind === 'floor' ? '1.0' : '0.0'})`
+        .replace('#include <begin_vertex>', `#include <begin_vertex>\n${kind === 'prop' ? `vBig = aObject.w > ${BIG_PROP.toFixed(1)} ? 1.0 : 0.0; vCut = vBig > 0.5 ? 0.0 : cutAt(aObject.xyz, aObject.w, 0.0); vWorldC = (modelMatrix * vec4(transformed, 1.0)).xyz;` : 'vWorldC = (modelMatrix * vec4(transformed, 1.0)).xyz;'}`)
+      const test = kind === 'prop' ? 'max(vCut, vBig > 0.5 ? cutAt(vWorldC, 0.0, 0.0) : 0.0)' : `cutAt(vWorldC, 0.0, ${kind === 'floor' ? '1.0' : '0.0'})`
       shader.fragmentShader = shader.fragmentShader
         .replace('void main() {', `${CUT_GLSL}\n${piece}\nvoid main() {`)
         .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>\n{ float c = ${test}; if (c > 0.0 && screenDoor(gl_FragCoord.xy) < c) discard; }`)
