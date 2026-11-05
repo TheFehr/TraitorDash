@@ -143,14 +143,17 @@ end
 
 -- ---- reporting
 
-local noEndpointOn = nil -- the map on which the backend said it does not know /api/v1/settings
+-- When the dashboard answers 404 (it is older than this bridge and does not know /api/v1/settings) the bridge waits before it asks again, and says
+-- so once on the console; it used to give up until the next map change, silently, so a dashboard that was updated afterwards never heard from it.
+local RETRY_AFTER = 300 -- seconds; the ten-minute timer asks again after this
+local noEndpointUntil = 0
+local told = false -- the console has been told about a failure that has not gone away yet
 
 --- Tells the dashboard what the bridge runs with: the value of each setting on the list, and where the file holds another one.
 function TraitorDash.ReportSettings()
     local cfg = TraitorDash.GetConfig and TraitorDash.GetConfig()
     if not cfg or not cfg.url or cfg.token == "" then return end
-    local map = game and game.GetMap and game.GetMap() or ""
-    if noEndpointOn == map then return end
+    if SysTime() < noEndpointUntil then return end
     local values, saved, kept = {}, {}, SavedSettings()
     for _, s in ipairs(TraitorDash.SettingList) do
         local cv = GetConVar(s.name)
@@ -168,10 +171,18 @@ function TraitorDash.ReportSettings()
         body = util.TableToJSON(body),
         timeout = 15,
         success = function(code)
-            if code == 404 then noEndpointOn = map
-            elseif code ~= 200 then print("[TraitorDash] The settings report was rejected (HTTP " .. tostring(code) .. ")") end
+            if code == 200 then told = false return end
+            if code == 404 then noEndpointUntil = SysTime() + RETRY_AFTER end
+            if told then return end
+            told = true
+            if code == 404 then print("[TraitorDash] The dashboard does not know the settings report yet (HTTP 404): it is older than this bridge. It is asked again every ten minutes.")
+            else print("[TraitorDash] The settings report was rejected (HTTP " .. tostring(code) .. ")") end
         end,
-        failed = function() end, -- the next report will do
+        failed = function(reason)
+            if told then return end -- the next report will do; once on the console is enough
+            told = true
+            print("[TraitorDash] The settings report could not be sent (" .. tostring(reason) .. "). It is tried again every ten minutes.")
+        end,
     })
 end
 

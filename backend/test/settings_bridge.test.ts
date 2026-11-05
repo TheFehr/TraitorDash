@@ -208,17 +208,59 @@ describe('the report', () => {
     expect(body.saved).toEqual({ traitordash_track: '1' })
     expect(JSON.stringify(body)).not.toContain('tok')
   })
-  test('is not sent without a configuration, and not again on a map where the backend does not know the address', () => {
+  test('is not sent without a configuration', () => {
     expect(run(`${PREPARE}
       SetCv("traitordash_token", "")
       TraitorDash.ReportSettings()
       RESULT = tostring(#SENT)`).result).toBe('0')
-    expect(run(`${PREPARE}
+  })
+  test('a dashboard that does not know the address is left alone for five minutes, then asked again, and the console says so once', () => {
+    const r = run(`${PREPARE}
       ${CONNECTED}
+      local now = 1000
+      SysTime = function() return now end
       TraitorDash.ReportSettings()
       SENT[1].success(404)
+      TraitorDash.ReportSettings()            -- at once: not sent
+      now = now + 299 TraitorDash.ReportSettings() -- still not
+      local before = #SENT
+      now = now + 2 TraitorDash.ReportSettings()   -- five minutes later: asked again (the ten-minute timer does this)
+      SENT[#SENT].success(404)
+      now = now + 301 TraitorDash.ReportSettings()
+      SENT[#SENT].success(404)
+      RESULT = before .. "|" .. #SENT .. "|" .. table.concat(PRINTS, "\\n")`)
+    const [before, total, said] = r.result.split('|')
+    expect(before).toBe('1'); expect(total).toBe('3')
+    expect(said!.match(/does not know the settings report/g)).toHaveLength(1) // twice asked, once told
+    expect(said).toContain('older than this bridge'); expect(said).toContain('every ten minutes')
+  })
+  test('the dashboard that learns the address is heard from at the next try, on the same map, and a later failure is told again', () => {
+    const r = run(`${PREPARE}
+      ${CONNECTED}
+      local now = 1000
+      SysTime = function() return now end
       TraitorDash.ReportSettings()
-      RESULT = tostring(#SENT)`).result).toBe('1')
+      SENT[1].success(404)
+      now = now + 600 TraitorDash.ReportSettings()
+      SENT[2].success(200)                              -- the dashboard was updated: this is it
+      now = now + 600 TraitorDash.ReportSettings()
+      SENT[3].success(404)                              -- and, later, not again
+      RESULT = #SENT .. "|" .. table.concat(PRINTS, "\\n")`)
+    const [total, said] = r.result.split('|')
+    expect(total).toBe('3')
+    expect(said!.match(/does not know the settings report/g)).toHaveLength(2) // told once before it worked and once after
+  })
+  test('a failure to send and a refusal are told once, and not again until a report has got through', () => {
+    const r = run(`${PREPARE}
+      ${CONNECTED}
+      TraitorDash.ReportSettings() SENT[1].failed("timedout")
+      TraitorDash.ReportSettings() SENT[2].failed("timedout")
+      TraitorDash.ReportSettings() SENT[3].success(200)
+      TraitorDash.ReportSettings() SENT[4].success(500)
+      TraitorDash.ReportSettings() SENT[5].success(500)
+      RESULT = table.concat(PRINTS, "\\n")`)
+    expect(r.result.match(/could not be sent \(timedout\)/g)).toHaveLength(1)
+    expect(r.result.match(/rejected \(HTTP 500\)/g)).toHaveLength(1)
   })
 })
 
