@@ -32,7 +32,18 @@ describe('what the triangles carry', () => {
     const n = (s.floors.length + s.walls.length) / 9
     expect(n).toBe(32) // 4 by 4 cells of two triangles
     expect(s.floorFaces.length + s.wallFaces.length).toBe(n)
-    expect(new Set([...s.floorFaces, ...s.wallFaces])).toEqual(new Set([0])); expect(s.faces).toEqual([{ mapping: 0 }]) // one face, one record, all the triangles name it
+    const used = [...s.floorFaces, ...s.wallFaces].map(i => s.faces[i]!)
+    expect(new Set(used.map(f => f.mapping))).toEqual(new Set([0])) // every triangle has a record of its own, naming the one mapping
+    expect(used.every(f => f.blend === 0)).toBe(true) // no alpha in the corners: the first texture
+  })
+
+  test('a displacement triangle carries the blend of the alpha of its corners (0 the first texture, 4 the second)', async () => {
+    const quads = { ...flatQuad(0), materials: ['dev/blend'], mappings: [{ s: [1, 0, 0, 0], t: [0, 1, 0, 0], width: 64, height: 64 }], displacements: [{ startPosition: [0, 0, 0] as [number, number, number], vertStart: 0, power: 2 }], dispVerts: Array.from({ length: 25 }, (_, k) => ({ vec: [0, 0, 1] as [number, number, number], dist: 0, alpha: k % 5 === 0 ? 255 : 0 })) }
+    quads.faces[0]!.dispinfo = 0
+    const s = await extractSurfaces(memorySource(buildBsp(quads)))
+    const all = [...s.floorFaces, ...s.wallFaces].map(i => s.faces[i]!.blend!)
+    expect(Math.min(...all)).toBe(0) // cells far from the second texture's column
+    expect(Math.max(...all)).toBeGreaterThan(0); expect(Math.max(...all)).toBeLessThanOrEqual(4) // and cells by it, between 0 and 4
   })
 
   test('the channels have a mapping for every triangle of the floors and of the walls', async () => {

@@ -301,18 +301,18 @@ describe('the 3D view on the map page', () => {
     expect(html).toContain('40 triangles lie apart')
   })
 
-  test('movable parts get a switch (on) and a note saying they are orange, only when the mesh has them', async () => {
+  test('movable parts get a switch (on) and a note about them, only when the mesh has them', async () => {
     await toggle(serverId, 'ttt_a', true)
     await geo.runGeometryQueue(writer(file))
     const plain = await page()
     expect(plain).not.toContain('data-movable')
-    expect(plain).not.toContain('Orange parts can move')
+    expect(plain).not.toContain('Movable parts (doors')
     const info = JSON.parse((db.prepare('SELECT info FROM map_geometry').get() as any).info)
     db.run('UPDATE map_geometry SET info = ?', [JSON.stringify({ ...info, movable: 615 })])
     const html = await page()
     expect(html).toMatch(/<input type="checkbox" data-movable="true" checked=""\/> Movable parts/)
     expect(html).toContain('615 triangles belong to parts that can move')
-    expect(html).toContain('Orange parts can move')
+    expect(html).toContain('Movable parts (doors, lifts')
   })
 
   test('a map without storeys (a hill) has no level buttons, says why, and tells the viewer', async () => {

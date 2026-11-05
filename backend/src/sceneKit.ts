@@ -82,7 +82,7 @@ export const COLOURINGS: Colouring[] = ['textured', 'height', 'levels']
 const LEAF_COLOUR = 0xa9a996
 const PLAIN = { floor: 0xcfc6b0, wall: 0xa59d8c }
 const LEVELS_WALL = 0x9999a6
-// Height runs deep blue, teal, yellow (not orange: orange is the parts that move). Mostly the colour, a little of the surface's own.
+// Height runs deep blue, teal, yellow. Mostly the colour, a little of the surface's own.
 const HEIGHT_STOPS = [new Color(0x2f4b8f), new Color(0x2fa39a), new Color(0xf0dc5a)], HEIGHT_TINT = 0.85
 const STORE_KEY = 'traitordash.mapcolour'
 
@@ -210,7 +210,7 @@ export function prepareWater(model: Object3D, cut: Plane): Object3D | null {
   return water
 }
 
-/** The parts that can move (doors, lifts, a collapsing building): cut like the levels, matte, and left in their own orange whatever the colouring. Null when the model has none. */
+/** The parts that can move (doors, lifts, a collapsing building): cut like the levels and matte; their textures (or the plain prop colour) come and go with the colouring through `propLook`. Null when the model has none. */
 export function prepareMovable(model: Object3D, cut: Plane): Object3D | null {
   const node = model.getObjectByName('movable') ?? null
   node?.traverse(o => {

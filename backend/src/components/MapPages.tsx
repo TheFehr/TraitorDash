@@ -359,7 +359,7 @@ export const MapViewPage = ({ ctx, server, map, name, next, plan, geometry }: Ma
               <p>
                 <i class={`pill ${geometry.status === 'parsed' ? 'ok' : geometry.status === 'failed' ? 'wait' : 'mute'}`}>{GEOMETRY_LABEL[geometry.status ?? 'queued'] ?? 'Unknown'}</i>
                 {geometry.status === 'parsed' && geometry.info && <span>{geometry.info.triangles} triangles, {geometry.info.levels} {geometry.info.levels === 1 ? 'level' : 'levels'}{geometry.info.water ? ', water' : ''}{geometry.info.props?.placed ? `, ${geometry.info.props.placed} props` : ''}</span>}
-                {geometry.status === 'parsed' && geometry.info?.movable ? <span class="dim"> {geometry.info.movable} triangles belong to parts that can move (orange, Movable parts).</span> : null}
+                {geometry.status === 'parsed' && geometry.info?.movable ? <span class="dim"> {geometry.info.movable} triangles belong to parts that can move (the Movable parts switch).</span> : null}
                 {geometry.status === 'parsed' && geometry.info?.detached ? <span class="dim"> {geometry.info.detached} triangles lie apart from the rest of the map and are hidden (Parts apart).</span> : null}
                 {geometry.status === 'parsed' && geometry.info?.storeys === false ? <span class="dim"> The floor is not at a few storeys (a hill or terrain), so there are no level buttons.</span> : null}
                 {geometry.status === 'parsed' && geometry.info?.props?.cards ? <span class="dim"> {geometry.info.props.cards} {geometry.info.props.cards === 1 ? 'model has' : 'models have'} flat texture cards (trees, clouds), which are left out.</span> : null}
@@ -411,7 +411,7 @@ export const MapViewPage = ({ ctx, server, map, name, next, plan, geometry }: Ma
               {geometry.info.detached ? <label><input type="checkbox" data-parts /> Parts apart</label> : null}
               {geometry.info.spawns ? <label><input type="checkbox" data-spawns /> Spawns</label> : null}
             </div>
-            <p class="foot dark">Drag to turn, scroll or pinch to zoom, right-drag to move. A simplified map (no glass): it shows the layout, not what a player could see.{geometry.info.movable ? ' Orange parts can move (doors, lifts, a collapsing building); they are drawn where the map file puts them, a door shut.' : ''} Colour: Plain shows the form, Height tints by height, Levels gives each storey its own colour, lowest green.</p>
+            <p class="foot dark">Drag to turn, scroll or pinch to zoom, right-drag to move. A simplified map (no glass): it shows the layout, not what a player could see.{geometry.info.movable ? ' Movable parts (doors, lifts, a collapsing building) are drawn where the map file puts them, a door shut.' : ''} Colour: Textured shows the textures of the map (the largest ones as pictures, the next as a plain colour), Height tints the plain greys by height, Levels gives each storey its own colour, lowest green; those two have none of the textures' colour.</p>
           </div>
         </div>
       )}

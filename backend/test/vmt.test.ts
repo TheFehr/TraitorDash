@@ -19,6 +19,10 @@ describe('a material', () => {
     expect(parseMaterial('"X" { "$basetexture" "a" "$translucent" 1 "$alpha" 0.25 }')).toMatchObject({ alpha: 0.25, explicitAlpha: true })
     expect(parseMaterial('"X" { "$basetexture" "a" "$translucent" 1 "$alpha" 9 }')).toMatchObject({ alpha: 1, explicitAlpha: false })
   })
+  test('a WorldVertexTransition names a second texture; another shader does not', () => {
+    expect(parseMaterial('"WorldVertexTransition" { "$basetexture2" "de_train/grass" "$basetexture" "de_train/dirt" }')).toMatchObject({ texture: 'de_train/dirt', texture2: 'de_train/grass' })
+    expect(parseMaterial('"LightmappedGeneric" { "$basetexture" "a" "$basetexture2" "b" }').texture2).toBeNull()
+  })
   test('a texture name with anything but a path in it is no texture', () => {
     for (const bad of ['../../etc/passwd', 'a;b', 'x'.repeat(300)]) expect(parseMaterial(`"X" { "$basetexture" "${bad}" }`).texture).toBeNull()
   })

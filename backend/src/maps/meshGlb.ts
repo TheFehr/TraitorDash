@@ -125,6 +125,8 @@ export interface DetachedParts { floors: number[], walls: number[], parts: { tri
 export interface MeshSpawn { class: string, x: number, y: number, z: number }
 /** A material of the surfaces of the map (RFC 18, 5): a texture to cut and tile, or a plain colour when its texture is not worth a file. */
 export interface SurfaceMaterial {
+  /** On the first of a run of five materials that are the steps of a blend between two textures: the step of a triangle is added to the index (RFC 18, 5). */
+  blendSteps?: number
   name: string
   /** An index into `SurfaceTextures.textures`, or null for a plain colour. */
   texture: number | null
@@ -360,12 +362,17 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
   }
 
   /** The triangles of a soup (and the face each came from) as primitives of a mesh: one for each material of the surface, or one plain (RFC 18, 5). */
+  const materialOfFace = (face: number): number => {
+    const rec = surface!.faces[face]!
+    const base = surface!.materialOf[rec.mapping] ?? -1
+    return base >= 0 && surface!.materials[base]?.blendSteps ? base + Math.min(surface!.materials[base]!.blendSteps! - 1, rec.blend ?? 0) : base
+  }
   const addSurface = (mesh: ReturnType<typeof doc.createMesh>, name: string, kind: 'floor' | 'wall', soup: number[], tags: number[], plain: ReturnType<typeof doc.createMaterial>, texturedName = kind) => {
     if (soup.length === 0) return
     // A surface with textures is cut into a primitive for each material (none: the plain floor or wall as before)
     const groups = new Map<number, number[]>()
     for (let t = 0; t < soup.length / 9; t++) {
-      const material = surface ? surface.materialOf[surface.faces[tags[t]!]!.mapping] ?? -1 : -1
+      const material = surface ? materialOfFace(tags[t]!) : -1
       const list = groups.get(material)
       if (list) list.push(t); else groups.set(material, [t])
     }

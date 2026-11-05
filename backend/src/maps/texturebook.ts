@@ -80,6 +80,41 @@ export class TextureBook {
     return index === null ? null : { index, hasAlpha: this.alpha.get(index)! }
   }
 
+  /**
+   * A texture that is `step` of 4 of the way from one texture to a second, for a material that blends two by the alpha of a displacement's corners
+   * (grass on dirt): the second is stretched to the size of the first. Step 0 and 4 are the textures themselves.
+   */
+  async mixed(first: string, second: string, step: number, side = this.limits.side): Promise<{ index: number, hasAlpha: boolean } | null> {
+    if (step <= 0) return this.texture(first, false, side)
+    if (step >= 4) return this.texture(second, false, side)
+    const key = `${first}+${second}@${step}|${side}`
+    const known = this.index.get(key)
+    if (known !== undefined) return known === null ? null : { index: known, hasAlpha: false }
+    let index: number | null = null
+    if (this.textures.length < this.limits.textures) {
+      const a = await this.pixels(first, side), b = await this.pixels(second, side)
+      if (a && b) {
+        const w = a.pixels.width, h = a.pixels.height, t = step / 4
+        const rgba = new Uint8Array(w * h * 4)
+        for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+          const p = (y * w + x) * 4, q = ((Math.min(b.pixels.height - 1, Math.floor(y * b.pixels.height / h))) * b.pixels.width + Math.min(b.pixels.width - 1, Math.floor(x * b.pixels.width / w))) * 4
+          for (let c = 0; c < 3; c++) rgba[p + c] = Math.round(a.pixels.rgba[p + c]! * (1 - t) + b.pixels.rgba[q + c]! * t)
+          rgba[p + 3] = 255
+        }
+        const png = encodePng(w, h, rgba)
+        if (this.bytes + png.length <= this.limits.pngBytes) {
+          this.bytes += png.length
+          if (!a.inPack || !b.inPack) this.fromGame++
+          index = this.textures.length
+          this.alpha.set(index, false)
+          this.textures.push({ name: key, width: w, height: h, png })
+        }
+      }
+    }
+    this.index.set(key, index)
+    return index === null ? null : { index, hasAlpha: false }
+  }
+
   /** The average colour of a texture (sRGB, 0 to 1), over its opaque pixels; for a surface that is not worth a texture of its own. Null when it cannot be had. */
   async average(name: string): Promise<[number, number, number] | null> {
     if (this.averages.has(name)) return this.averages.get(name)!

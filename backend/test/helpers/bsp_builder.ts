@@ -31,7 +31,7 @@ export interface BspSpec {
   /** Displacement records (terrain): where the grid starts, where its vertices begin in the vertex lump, and its power (2 to 4). */
   displacements?: { startPosition: [number, number, number], vertStart: number, power: number }[]
   /** The displacement vertex lump: a direction and a distance each (the position is the interpolated base plus direction * distance). */
-  dispVerts?: { vec: [number, number, number], dist: number }[]
+  dispVerts?: { vec: [number, number, number], dist: number, alpha?: number }[]
   /** The text of the entity lump (the map's entities, as key/value blocks). */
   entities?: string
   /** Raw bytes put into a lump instead of what the spec would produce. */
@@ -69,9 +69,9 @@ const dispinfo = (d: { startPosition: [number, number, number], vertStart: numbe
   d.startPosition.forEach((n, i) => b.writeFloatLE(n, i * 4)); b.writeInt32LE(d.vertStart, 12); b.writeInt32LE(d.power, 20)
   return b
 }
-const dispvert = (v: { vec: [number, number, number], dist: number }) => {
+const dispvert = (v: { vec: [number, number, number], dist: number, alpha?: number }) => {
   const b = Buffer.alloc(20)
-  v.vec.forEach((n, i) => b.writeFloatLE(n, i * 4)); b.writeFloatLE(v.dist, 12)
+  v.vec.forEach((n, i) => b.writeFloatLE(n, i * 4)); b.writeFloatLE(v.dist, 12); b.writeFloatLE(v.alpha ?? 0, 16)
   return b
 }
 const model = (m: Model) => { const b = Buffer.alloc(48); b.writeInt32LE(m.firstFace, 40); b.writeInt32LE(m.numFaces, 44); return b }

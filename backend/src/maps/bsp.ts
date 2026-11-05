@@ -157,7 +157,11 @@ export function mappedUv(m: FaceMapping, x: number, y: number, z: number): [numb
 }
 
 /** One face of the map as the triangles that came from it remember it: how it is textured (an index into `mappings`). */
-export interface FaceRecord { mapping: number }
+export interface FaceRecord {
+  mapping: number
+  /** A displacement triangle's blend between the two textures of a material that has two (0 the first, 4 the second): the mean of the alpha its corners carry. */
+  blend?: number
+}
 
 export interface Surfaces {
   fingerprint: string
@@ -414,6 +418,7 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
     }
     const c = [0, 1, 2, 3].map(k => pos(corner[(first + k) % 4]!))
     const grid = new Float64Array(size * size * 3)
+    const alphas = new Float64Array(size * size)
     const last = size - 1
     for (let i = 0; i < size; i++) {
       for (let j = 0; j < size; j++) {
@@ -421,6 +426,8 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
         const right = [0, 1, 2].map(a => c[3]![a]! + (c[2]![a]! - c[3]![a]!) * (i / last))
         const v = (vertStart + i * size + j) * RECORD.DISPVERTS
         const dist = dispVerts.getFloat32(v + 12, true)
+        const alpha = dispVerts.getFloat32(v + 16, true)
+        alphas[i * size + j] = Number.isFinite(alpha) ? Math.min(255, Math.max(0, alpha)) : 0
         for (let a = 0; a < 3; a++) {
           const dir = dispVerts.getFloat32(v + a * 4, true)
           const n = left[a]! + (right[a]! - left[a]!) * (j / last) + dir * dist
@@ -432,7 +439,8 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
     }
 
     const g = (i: number, j: number) => [grid[(i * size + j) * 3]!, grid[(i * size + j) * 3 + 1]!, grid[(i * size + j) * 3 + 2]!] as const
-    const emit = (a: readonly number[], b: readonly number[], d: readonly number[]) => {
+    const emit = (ia: readonly [number, number], ib: readonly [number, number], id: readonly [number, number]) => {
+      const a = g(...ia), b = g(...ib), d = g(...id)
       stats.displacementTriangles++
       const u = [b[0]! - a[0]!, b[1]! - a[1]!, b[2]! - a[2]!], w = [d[0]! - a[0]!, d[1]! - a[1]!, d[2]! - a[2]!]
       let n = [u[1]! * w[2]! - u[2]! * w[1]!, u[2]! * w[0]! - u[0]! * w[2]!, u[0]! * w[1]! - u[1]! * w[0]!]
@@ -444,11 +452,14 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
       const isFloor = nz + 1e-6 >= FLOOR_NZ
       const target = isFloor ? floors : walls
       for (const p of [a, b, d]) target.push(Math.round(p[0]!), Math.round(p[1]!), Math.round(p[2]!))
-      ;(isFloor ? floorFaces : wallFaces).push(record)
+      // this triangle's own record: the same mapping, and how far it is from the first texture to the second
+      const blend = Math.round(((alphas[ia[0] * size + ia[1]]! + alphas[ib[0] * size + ib[1]]! + alphas[id[0] * size + id[1]]!) / 3 / 255) * 4)
+      faceRecords.push({ mapping: faceRecords[record]!.mapping, blend })
+      ;(isFloor ? floorFaces : wallFaces).push(faceRecords.length - 1)
     }
     for (let i = 0; i < last; i++) {
       for (let j = 0; j < last; j++) {
-        const A = g(i, j), B = g(i, j + 1), C = g(i + 1, j + 1), D = g(i + 1, j)
+        const A = [i, j] as const, B = [i, j + 1] as const, C = [i + 1, j + 1] as const, D = [i + 1, j] as const
         if ((i + j) % 2 === 0) { emit(A, B, C); emit(A, C, D) } else { emit(A, B, D); emit(B, C, D) }
       }
     }

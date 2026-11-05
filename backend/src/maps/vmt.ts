@@ -5,11 +5,14 @@ const SEE_THROUGH = /["']?\$(alphatest|translucent|additive)["']?\s+["']?1/i
 const ALPHATEST = /["']?\$alphatest["']?\s+["']?1/i
 const ADDITIVE = /["']?\$additive["']?\s+["']?1/i
 const BASETEXTURE = /["']?\$basetexture["']?\s+(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s"'{}]+))/i
+const BASETEXTURE2 = /["']?\$basetexture2["']?\s+(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s"'{}]+))/i
 const ALPHA = /["']?\$alpha["']?\s+["']?([0-9.]+)/i
 
 /** What a material says that is needed to draw it. */
 export interface Vmt {
   texture: string | null
+  /** The second texture of a material that blends two (`$basetexture2`, the one of a displacement's vertex alpha), or null. */
+  texture2: string | null
   /** `solid`: nothing cut out; `mask`: the texture's alpha cuts it out; `blend`: it is see-through. */
   kind: 'solid' | 'mask' | 'blend'
   alpha: number
@@ -29,8 +32,10 @@ export function parseMaterial(text: string): Vmt {
   const found = BASETEXTURE.exec(text)
   const alpha = Number(ALPHA.exec(text)?.[1])
   const seeThrough = SEE_THROUGH.test(text)
+  const second = BASETEXTURE2.exec(text)
   return {
     texture: cleanTexture(found?.[1] ?? found?.[2] ?? found?.[3]),
+    texture2: /worldvertextransition/i.test(text) ? cleanTexture(second?.[1] ?? second?.[2] ?? second?.[3]) : null,
     kind: !seeThrough ? 'solid' : ALPHATEST.test(text) ? 'mask' : 'blend',
     alpha: Number.isFinite(alpha) && alpha >= 0 && alpha <= 1 ? alpha : 1,
     explicitAlpha: Number.isFinite(alpha) && alpha >= 0 && alpha <= 1,

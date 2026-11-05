@@ -270,14 +270,14 @@ describe('the leaves have their textures (RFC 18, 4.6)', () => {
   })
 
   test('the .vmt is read for the texture and the mode; a texture name with anything but a path in it is no texture', () => {
-    expect(parseVmt('"VertexLitGeneric" { "$basetexture" "Models\\Test\\Leaf.vtf" "$alphatest" "1" }')).toEqual({ texture: 'models/test/leaf', kind: 'mask', alpha: 1, explicitAlpha: false, additive: false })
-    expect(parseVmt('"VertexLitGeneric" { $translucent 1\n $basetexture models/test/glass\n $alpha 2 }')).toEqual({ texture: 'models/test/glass', kind: 'blend', alpha: 1, explicitAlpha: false, additive: false }) // $alpha over 1 is not a number to use
+    expect(parseVmt('"VertexLitGeneric" { "$basetexture" "Models\\Test\\Leaf.vtf" "$alphatest" "1" }')).toEqual({ texture: 'models/test/leaf', texture2: null, kind: 'mask', alpha: 1, explicitAlpha: false, additive: false })
+    expect(parseVmt('"VertexLitGeneric" { $translucent 1\n $basetexture models/test/glass\n $alpha 2 }')).toEqual({ texture: 'models/test/glass', texture2: null, kind: 'blend', alpha: 1, explicitAlpha: false, additive: false }) // $alpha over 1 is not a number to use
     expect(parseVmt('"VertexLitGeneric" { "$basetexture" "../../etc/passwd" "$alphatest" 1 }')!.texture).toBeNull()
     expect(parseVmt('"VertexLitGeneric" { "$basetexture" "a;b" "$alphatest" 1 }')!.texture).toBeNull()
     expect(parseVmt('"VertexLitGeneric" { "$basetexture" "x" }')).toBeNull() // not foliage
     expect(parseVmt('"VertexLitGeneric" { "$basetexture" "x" "$translucent" 1 "$alpha" 0.25 }')).toMatchObject({ kind: 'blend', alpha: 0.25, explicitAlpha: true })
     // a light shaft or a glow adds its colour: it is foliage-like (not solid), blended, and marked
-    expect(parseVmt('"UnlitGeneric"\n{\n\t"$baseTexture" "Models/Effects/vol_light001"\n\t"$nocull" "1"\n\t"$additive" "1"\n//\t"$translucent" "1"\n}')).toEqual({ texture: 'models/effects/vol_light001', kind: 'blend', alpha: 1, explicitAlpha: false, additive: true })
+    expect(parseVmt('"UnlitGeneric"\n{\n\t"$baseTexture" "Models/Effects/vol_light001"\n\t"$nocull" "1"\n\t"$additive" "1"\n//\t"$translucent" "1"\n}')).toEqual({ texture: 'models/effects/vol_light001', texture2: null, kind: 'blend', alpha: 1, explicitAlpha: false, additive: true })
   })
 })
 

@@ -14,7 +14,7 @@ export const SURFACE_LIMITS = {
   /** The materials looked at, by the ground they cover. */
   materials: 160,
   /** Of those, how many get a texture of their own. */
-  textured: 24,
+  textured: 40,
   /** The longer side of a texture. */
   side: 128,
   pngBytes: 3 * 1024 * 1024,
@@ -98,7 +98,7 @@ export async function buildSurfaceTextures(input: SurfaceInput, src: ByteSource,
   const book = new TextureBook(src, pak, { textures: limits.textured, side: limits.side, pngBytes: limits.pngBytes, memberBytes: limits.memberBytes })
   if (stock) {
     const wanted = new Set<string>()
-    for (const v of vmts.values()) if (!book.has(v.texture!)) wanted.add(`materials/${v.texture}.vtf`)
+    for (const v of vmts.values()) for (const tex of [v.texture, v.texture2]) if (tex && !book.has(tex)) wanted.add(`materials/${tex}.vtf`)
     if (wanted.size > 0) book.stock = (await stock([...wanted].slice(0, limits.stockTextures))).files
   }
 
@@ -109,6 +109,18 @@ export async function buildSurfaceTextures(input: SurfaceInput, src: ByteSource,
   for (const name of ranked) {
     const v = vmts.get(name)
     if (!v) continue
+    // two textures blended by the alpha of a displacement (grass on dirt): five materials, from the first texture to the second
+    if (v.texture2 && v.kind === 'solid') {
+      const steps = []
+      for (let k = 0; k < 5; k++) steps.push(await book.mixed(v.texture!, v.texture2, k))
+      if (steps.every(x => x !== null)) {
+        const base = materials.length
+        steps.forEach((got, k) => materials.push({ name: `${name}@${k}`, texture: got!.index, colour: null, mode: 'opaque', alpha: 1, ...(k === 0 ? { blendSteps: 5 } : {}) }))
+        indexOf.set(name, base)
+        report.textured++
+        continue
+      }
+    }
     // a cut-out or see-through material needs its texture for its shape; a solid one can fall back to its colour
     const got = await book.texture(v.texture!, v.additive)
     if (got) {
