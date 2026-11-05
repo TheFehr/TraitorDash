@@ -19,7 +19,7 @@ import { buildRoleView, listRoles, parsePlayers, publicRoles, publicRoleSettings
 import { RoleListPage, RolePage, RoleNotFound } from './components/RolePublic'
 import { HomePage } from './components/HomePage'
 import { MapsPage, MapFilePage, MapViewPage, nextOf, type KillzonesView } from './components/MapPages'
-import { renderKillzonesSvg, squaresOf, hottest, storeysOf, baseOfMap, baseOfPlan } from './services/killzones'
+import { renderKillzonesSvg, squaresOf, hottest, storeysOf, baseOfMap, baseOfPlan, rootSizeOf, footprintOfMap, footprintOfPlan } from './services/killzones'
 import { flattened, storeyAt } from './maps/topdown'
 import { NAME } from './services/validators'
 import { geometryEnabled, kickGeometryQueue, setGeometryFetcher, setStockModels } from './services/mapgeometry'
@@ -360,9 +360,16 @@ async function killzonesOf(serverId: string, map: string, ctx: Ctx, weaponAsked?
   const k = stats.getKillzones(serverId, map, undefined, weapon)
   const asked = levelAsked !== undefined && SMALL_INT.test(levelAsked) ? Number(levelAsked) : undefined
 
-  const mesh = ctx.viewer && geometryEnabled() ? Store.getMesh(serverId, map) : null
-  const flat = mesh ? await flattened(mesh) : null
-  const plan = !flat && adminOf(ctx) ? Store.getMapPlan(serverId, map) : null
+  // the map's own area decides how coarse the squares start (RFC 21, 11.2); it is only a number, so the mesh is read for it for every visitor
+  // and the plan too, but they are drawn only for the visitors that may see them
+  const meshAny = geometryEnabled() ? Store.getMesh(serverId, map) : null
+  const flatAny = meshAny ? await flattened(meshAny) : null
+  const planAny = Store.getMapPlan(serverId, map)
+  const gridAny = planAny ? JSON.parse(planAny) : null
+  const root = rootSizeOf(flatAny ? footprintOfMap(flatAny) : gridAny ? footprintOfPlan(gridAny) : null)
+
+  const flat = ctx.viewer ? flatAny : null
+  const plan = !flat && adminOf(ctx) ? planAny : null
   const grid = plan ? JSON.parse(plan) : null
   const storeys = !flat && grid ? storeysOf(grid) : null
 
@@ -371,12 +378,13 @@ async function killzonesOf(serverId: string, map: string, ctx: Ctx, weaponAsked?
   const pick = level === undefined ? undefined
     : flat ? (z: number, x: number, y: number) => storeyAt(flat, x, y, z) === level
     : storeys ? (z: number) => storeys.storeyOf(z) === level - 1 : undefined
-  const squares = squaresOf(k.cells, pick)
+  const squares = squaresOf(k.cells, root, pick)
   const base = flat ? baseOfMap(flat, level) : grid ? baseOfPlan(grid, level) : undefined
   if (flat && ctx.viewer) Store.logView(serverId, ctx.viewer.steamId, 'VIEW_MESH', map)
   return {
     svg: renderKillzonesSvg(squares, map, base), deaths: squares.reduce((n, s) => n + s.n, 0), rounds: k.rounds, hot: hottest(squares), weapons: k.weapons, weapon,
     level, levels, under: flat ? 'map' : grid ? 'plan' : null,
+    sizes: squares.length > 0 ? { min: Math.min(...squares.map(q => q.size)), max: Math.max(...squares.map(q => q.size)) } : null,
   }
 }
 

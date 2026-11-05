@@ -198,11 +198,11 @@ describe('the weapon tables', () => {
 describe('killzones', () => {
   const deaths = (list: [number, number, number, string?][]) => round({ deaths: list.map(([x, y, z, w]) => ({ victim: B, attacker: A, weapon: w ?? 'w', x, y, z })), damage: [] })
 
-  test('deaths are summed into the right squares, a negative position and an edge included', async () => {
+  test('deaths are summed into the right finest squares (32 units), a negative position and an edge included', async () => {
     await sendOk(deaths([[0, 0, 0], [127, 127, 0], [128, 0, 0], [-1, -1, 0], [-128, -128, 0], [-129, 0, 0]]))
     const cells = stats.getKillzones(serverId, 'ttt_a').cells
     const at = (bx: number, by: number) => cells.filter((c: any) => c.bx === bx && c.by === by).reduce((s: number, c: any) => s + c.n, 0)
-    expect(at(0, 0)).toBe(2); expect(at(1, 0)).toBe(1); expect(at(-1, -1)).toBe(2); expect(at(-2, 0)).toBe(1)
+    expect(at(0, 0)).toBe(1); expect(at(3, 3)).toBe(1); expect(at(4, 0)).toBe(1); expect(at(-1, -1)).toBe(1); expect(at(-4, -4)).toBe(1); expect(at(-5, 0)).toBe(1)
   })
 
   test('a death with no position is not drawn; the weapon filter; other maps are not mixed in', async () => {
@@ -217,13 +217,13 @@ describe('killzones', () => {
   })
 
   test('the picture: a blob for each square, the busiest first, well formed, with nothing that can run or load', async () => {
-    await sendOk(deaths([[0, 0, 0], [10, 10, 0], [300, 300, 0]]))
+    await sendOk(deaths([[0, 0, 0], [10, 10, 0], [3000, 3000, 0]]))
     const sq = kz.squaresOf(stats.getKillzones(serverId, 'ttt_a').cells)
     expect(sq.map((s: any) => s.n)).toEqual([2, 1])
-    expect(kz.hottest(sq)[0]).toEqual({ x: 64, y: 64, n: 2 })
+    expect(kz.hottest(sq)[0]).toEqual({ x: 256, y: 256, n: 2, size: 512 })
     const svg = kz.renderKillzonesSvg(sq, 'a "map" <x>')!
     expect((svg.match(/<circle /g) ?? []).length).toBe(2)
-    expect(svg).toContain('2 deaths'); expect(svg).toContain('1 death<')
+    expect(svg).toContain('2 deaths in a square of 512 units'); expect(svg).toContain('1 death in a square of 512 units')
     expect(svg).not.toMatch(/<script|<image|href=|xlink|onload|<foreignObject/i)
     expect(svg).toContain('a &quot;map&quot; &lt;x&gt;')
     expect(kz.renderKillzonesSvg([], 'm')).toBeNull()
@@ -235,7 +235,7 @@ describe('killzones', () => {
     const cells = stats.getKillzones(serverId, 'ttt_a').cells
     const { levels, storeyOf } = kz.storeysOf(grid)
     expect(levels.length).toBe(2)
-    const low = kz.squaresOf(cells, (z: number) => storeyOf(z) === 0)
+    const low = kz.squaresOf(cells, 512, (z: number) => storeyOf(z) === 0)
     expect(low.map((s: any) => s.n)).toEqual([1])
     const withFloor = kz.renderKillzonesSvg(low, 'ttt_a', kz.baseOfPlan(grid, 1))!
     const without = kz.renderKillzonesSvg(low, 'ttt_a')!
@@ -273,14 +273,14 @@ describe('killzones', () => {
     expect(storeyAt(flat, 9000, 9000, 310)).toBe(2) // nothing under it: by the heights the storeys start at
     const base = kz.baseOfMap(flat, 2)
     expect(base.cells.some((c: number) => c === 1)).toBe(true); expect(base.cells.some((c: number) => c === 2)).toBe(false)
-    const svg = kz.renderKillzonesSvg([{ bx: 0, by: 0, n: 3 }], 'ttt_a', base)!
+    const svg = kz.renderKillzonesSvg([{ x: 0, y: 0, size: 128, n: 3 }], 'ttt_a', base)!
     expect(svg).toContain('fill="#34343a"'); expect(svg).not.toContain('#6a6a72')
-    expect(kz.renderKillzonesSvg([{ bx: 0, by: 0, n: 3 }], 'ttt_a', kz.baseOfMap(flat, 1))).toContain('#6a6a72')
+    expect(kz.renderKillzonesSvg([{ x: 0, y: 0, size: 128, n: 3 }], 'ttt_a', kz.baseOfMap(flat, 1))).toContain('#6a6a72')
     expect(await flatten(new Uint8Array([1, 2, 3]))).toBeNull() // not a mesh
   })
 
   test('more than 10,000 squares draw the busiest 10,000', () => {
-    const sq = Array.from({ length: 10_050 }, (_, i) => ({ bx: i, by: 0, n: 10_050 - i }))
+    const sq = Array.from({ length: 10_050 }, (_, i) => ({ x: i * 128, y: 0, size: 128, n: 10_050 - i }))
     const svg = kz.renderKillzonesSvg(sq, 'm')!
     expect((svg.match(/<circle /g) ?? []).length).toBe(10_000)
   })

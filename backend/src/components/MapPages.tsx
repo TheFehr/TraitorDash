@@ -169,13 +169,15 @@ export interface MapFileProps {
 export interface KillzonesView {
   svg: string | null
   deaths: number, rounds: number
-  hot: { x: number, y: number, n: number }[]
+  hot: { x: number, y: number, n: number, size: number }[]
   weapons: { weapon: string, n: number }[]
   weapon: string | null
   /** Storeys can be picked when the map or the plan is under the deaths; `levels` is how many there are. */
   level?: number, levels?: number
   /** What is drawn under the deaths: the map's own geometry (signed-in visitors), an admin's floor plan, or nothing. */
   under: 'map' | 'plan' | null
+  /** The smallest and the largest square drawn, in world units (RFC 21, 11). */
+  sizes: { min: number, max: number } | null
 }
 
 /** What the rounds on one map say, and the way to its own view. */
@@ -246,12 +248,12 @@ export const Killzones = ({ ctx, serverId, name, k }: { ctx: Ctx, serverId: stri
           ) : (
             <>
               <p class="file" style="margin:.2rem 0 .6rem">
-                {k.deaths} {k.deaths === 1 ? 'death' : 'deaths'} in {k.rounds} {k.rounds === 1 ? 'round' : 'rounds'}{k.weapon ? <> by <b>{weaponName(k.weapon)}</b></> : ''}. From above, north is up; a brighter, redder square is where more players died.
+                {k.deaths} {k.deaths === 1 ? 'death' : 'deaths'} in {k.rounds} {k.rounds === 1 ? 'round' : 'rounds'}{k.weapon ? <> by <b>{weaponName(k.weapon)}</b></> : ''}. From above, north is up; a redder spot is where more players died for the area it covers; the squares are coarse where few died and finer where more did.
               </p>
               <div data-killzone-picture>{raw(k.svg!)}</div>
               {k.hot.length > 0 && (
                 <ol class="list" data-hottest>
-                  {k.hot.map(h => <li>{h.n} {h.n === 1 ? 'death' : 'deaths'} around <span class="dim">x {h.x}, y {h.y}</span></li>)}
+                  {k.hot.map(h => <li>{h.n} {h.n === 1 ? 'death' : 'deaths'} around <span class="dim">x {h.x}, y {h.y}</span> <span class="dim">(a square of {h.size} units)</span></li>)}
                 </ol>
               )}
             </>
@@ -266,7 +268,7 @@ export const Killzones = ({ ctx, serverId, name, k }: { ctx: Ctx, serverId: stri
             <a class={k.weapon === null ? 'on' : ''} href={to({ level: k.level })}>All</a>
             {k.weapons.slice(0, 8).map(w => <a class={k.weapon === w.weapon ? 'on' : ''} href={to({ weapon: w.weapon, level: k.level })} title={w.weapon}>{weaponName(w.weapon)} <span class="dim">{w.n}</span></a>)}
           </div>
-          <p class="foot dark">{k.under === 'map' ? 'The outline is the map as the 3D view shows it, flattened.' : k.under === 'plan' ? 'The floor plan is drawn for admins.' : ctx.viewer ? 'This map has no geometry to draw under the deaths yet.' : 'Signed-in visitors, and players in the game, see the map under the deaths.'} Squares are 128 units wide. Only deaths since the game server was updated are counted, and they name nobody.</p>
+          <p class="foot dark">{k.under === 'map' ? 'The outline is the map as the 3D view shows it, flattened.' : k.under === 'plan' ? 'The floor plan is drawn for admins.' : ctx.viewer ? 'This map has no geometry to draw under the deaths yet.' : 'Signed-in visitors, and players in the game, see the map under the deaths.'} {k.sizes ? (k.sizes.min === k.sizes.max ? `Squares are ${k.sizes.min} units wide.` : `Squares are ${k.sizes.min} to ${k.sizes.max} units wide, finer where more players died.`) : ''} Only deaths since the game server was updated are counted, and they name nobody.</p>
         </>
       )}
     </div>

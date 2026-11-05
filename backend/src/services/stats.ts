@@ -330,13 +330,13 @@ export function getPlayerWeapons(serverId: string, steamId: string, limit = 30):
     .slice(0, limit)
 }
 
-/** The size of a killzone square, in world units (RFC 21, 4.4). */
-export const KILLZONE_CELL = 128
+/** The finest killzone square, in world units: a player's width. The squares that are drawn are this or 2, 4, 8, 16 or 32 times it, made when the page is asked for (RFC 21, 11). */
+export const KILLZONE_CELL = 32
 /** The height bands the deaths are kept in, finer than the squares so a storey can be told from the next. */
 export const KILLZONE_BAND = 32
 
 export interface Killzones {
-  /** Deaths summed by square (`bx`, `by`: the position divided by KILLZONE_CELL, rounded down) and by height band (`bz`, in KILLZONE_BAND units). */
+  /** Deaths summed by finest square (`bx`, `by`: the position divided by KILLZONE_CELL, rounded down) and by height band (`bz`, in KILLZONE_BAND units). */
   cells: { bx: number, by: number, bz: number, n: number }[]
   deaths: number, rounds: number
   /** The weapons that killed on this map, most first, for the filter links. */
