@@ -350,9 +350,12 @@ async function start(root: HTMLElement) {
       // allows for the size; a pixel (r = 0) keeps the plain limit
       // nothing is faded at the player or beyond: the last stretch is a fixed 8 units (it was 8% of the line, about 25, and a wall 17 units in front of
       // the player, with their body behind it, stayed solid)
-      if (t < -0.05 - r / sqrt(l2) || t > 1.0 - 8.0 / sqrt(l2)) return 0.0;
+      // (a floor or a ledge above their feet goes on 240 units past them: it hides whoever stands behind the player, as the ledge in front of a
+      // second player in the same passage did)
+      float last = ceiling > 0.5 ? 1.0 + 240.0 / sqrt(l2) : 1.0 - 8.0 / sqrt(l2);
+      if (t < -0.05 - r / sqrt(l2) || t > last) return 0.0;
       vec3 q = uCam + ab * clamp(t, 0.0, 1.0);
-      float radius = 70.0 + 330.0 * (1.0 - t);
+      float radius = 160.0 + 240.0 * (1.0 - t);
       // a floor is faded only where it can hide some of the player: above the line from the camera to their feet (a ledge below the line to the
       // head still hides their legs; one below the line to the feet hides nothing and is what they stand on)
       if (ceiling > 0.5) {
@@ -363,7 +366,11 @@ async function start(root: HTMLElement) {
         if (p.y < feet - 24.0 || p.y < ground + 16.0) return 0.0;
         radius *= 0.8;
       }
-      float d = distance(p, q) - r * 0.5;
+      // the cone reaches higher than it is wide: what is above the line (a wall top, a roof, a branch) hides the surroundings of the player
+      // as much as what is beside it, and the camera looks down, so a round cone left them in the picture
+      vec3 off = p - q;
+      if (off.y > 0.0) off.y *= 0.55;
+      float d = length(off) - r * 0.5;
       return 1.0 - smoothstep(radius * 0.75, radius, d);
     }
     float screenDoor(vec2 f) { return fract(52.9829189 * fract(dot(f, vec2(0.06711056, 0.00583715)))); }`
