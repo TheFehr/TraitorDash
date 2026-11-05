@@ -36,6 +36,8 @@ export interface GeometryState {
   status: string
   detail: string | null
   info: GeometryInfo | null
+  /** The generation of the stored mesh (RFC 18, mesh generations), when there is one. */
+  version: number | null
 }
 
 export interface MapPlanMeta {
@@ -502,9 +504,12 @@ export class Store {
    * reported. `queued` when no row exists yet; `unknown` when the map has no fingerprint (nothing to
    * fetch against). Meshes are not loaded.
    */
+  /** The generation a mesh must have to count as built (older ones are rebuilt). */
+  static wantedMeshVersion = wantedMeshVersion
+
   static getGeometryStates(serverId: string): Map<string, GeometryState> {
     const rows = db.prepare(`
-      SELECT r.map_name AS map, m.fingerprint AS fingerprint, g.status AS status, g.detail AS detail, g.info AS info
+      SELECT r.map_name AS map, m.fingerprint AS fingerprint, g.status AS status, g.detail AS detail, g.info AS info, g.version AS version
       FROM map_geometry_requests r
       LEFT JOIN server_maps m ON m.server_id = r.server_id AND m.name = r.map_name
       LEFT JOIN map_geometry g ON g.map_name = r.map_name AND g.fingerprint = m.fingerprint
@@ -517,6 +522,7 @@ export class Store {
         status: r.fingerprint ? (r.status ?? 'queued') : 'unknown',
         detail: r.detail ?? null,
         info: r.info ? JSON.parse(r.info) : null,
+        version: typeof r.version === 'number' ? r.version : null,
       })
     }
     return out

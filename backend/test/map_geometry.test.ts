@@ -380,16 +380,20 @@ describe('rebuilding a mesh of an older generation (RFC 18)', () => {
     const f = writer(file)
     const watching = async (map: string) => { during = geo.geometryBuilding(); return f(map) }
     expect(await maps()).toContain('data-geometry-progress'); expect(await maps()).toContain('0 of 1 done')
+    expect(await maps()).toContain('data-mesh-state="queued"') // an admin sees which map it is: not built yet
     expect(await geo.runGeometryQueue(watching as any)).toBe(1)
     expect(during).toBe('ttt_a') // named while it is being built
     expect(geo.geometryBuilding()).toBeNull() // and not after
     expect(Store.getGeometryProgress()).toEqual({ total: 1, pending: 0, failed: 0 })
     expect(await maps()).not.toContain('data-geometry-progress') // nothing waits
+    expect(await maps()).toContain(`data-mesh-state="current"`); expect(await maps()).toContain(`3D v${MESH_VERSION}`) // and which one is done, by its generation
     makeOld() // an update of the extractor: the map is rebuilt, and keeps its mesh meanwhile
     expect(Store.getGeometryProgress()).toEqual({ total: 1, pending: 1, failed: 0 })
     const admin = await maps()
     expect(admin).toContain('0 of 1 done'); expect(admin).toContain('keeps its earlier 3D view until its new one is ready')
+    expect(admin).toContain('rebuild waiting') // this map is the one that waits
     expect(await (await req(`/servers/${serverId}/maps`, {}, false)).text()).not.toContain('data-geometry-progress') // not for a visitor
+    expect(await (await req(`/servers/${serverId}/maps`, {}, false)).text()).not.toContain('data-mesh-state')
     await geo.runGeometryQueue(f)
     expect(Store.getGeometryProgress().pending).toBe(0)
   })

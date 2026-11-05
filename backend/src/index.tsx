@@ -315,7 +315,8 @@ app.get('/servers/:serverId/maps', async (c) => {
   return respond(c, ctx,
     <MapsPage ctx={ctx} server={server} state={state} maps={maps} activity={stats.getMapActivity(serverId)} showAll={admin && c.req.query('all') === '1'}
       plans={admin ? Store.getMapPlans(serverId) : undefined} meshes={meshes} viewLogDays={viewLogDays()}
-      progress={admin && geometryEnabled() ? { ...Store.getGeometryProgress(), building: geometryBuilding() } : undefined} />)
+      progress={admin && geometryEnabled() ? { ...Store.getGeometryProgress(), building: geometryBuilding() } : undefined}
+      meshStates={admin && geometryEnabled() ? { states: new Map([...Store.getGeometryStates(serverId)].map(([name, g]) => [name, { status: g.status, version: g.version }])), wanted: Store.wantedMeshVersion(), building: geometryBuilding() } : undefined} />)
 })
 
 const geometryProp = (serverId: string, name: string) => {

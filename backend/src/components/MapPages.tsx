@@ -77,9 +77,26 @@ export interface MapsPageProps {
   viewLogDays?: number
   /** How far the build of the 3D maps is (RFC 18); given to admins, when the feature is on. */
   progress?: { total: number, pending: number, failed: number, building: string | null }
+  /** For an admin: where each map's 3D mesh stands (its generation, and the one wanted), so the progress line can be told map by map. */
+  meshStates?: { states: Map<string, { status: string, version: number | null }>, wanted: number, building: string | null }
 }
 
-export const MapsPage = ({ ctx, server, state, maps, activity, showAll, plans, meshes, viewLogDays = 0, progress }: MapsPageProps) => {
+/** An admin's pill for where a map's 3D mesh stands: its generation when built, "rebuild waiting" or "building" while it is being made again, and why when it is not there. */
+const MeshState = ({ state, wanted, building }: { state: { status: string, version: number | null }, wanted: number, building: boolean }) => {
+  const built = state.status === 'parsed' && state.version !== null
+  const current = built && state.version! >= wanted
+  return (
+    <span data-mesh-state={building ? 'building' : current ? 'current' : state.status}>
+      {building ? <i class="pill wait">3D building…</i>
+        : current ? <i class="pill ok" title="The 3D mesh is the current generation">3D v{state.version}</i>
+        : built ? <i class="pill wait" title="The earlier mesh is shown until the new one is ready">3D v{state.version} · rebuild waiting</i>
+        : state.status === 'failed' ? <i class="pill wait">3D failed</i>
+        : <i class="pill mute">3D {state.status}</i>}
+    </span>
+  )
+}
+
+export const MapsPage = ({ ctx, server, state, maps, activity, showAll, plans, meshes, viewLogDays = 0, progress, meshStates }: MapsPageProps) => {
   const id = server.id
   const admin = adminOf(ctx)
   const next = nextOf(state)
@@ -130,6 +147,7 @@ export const MapsPage = ({ ctx, server, state, maps, activity, showAll, plans, m
                             ? <span><a data-3d-signin class="pill mute" href={signinUrl(mapPath(id, m.name))}>3D: sign in</a></span>
                             : <span><i data-3d-locked class="pill mute">3D: sign in</i></span>)}
                       </>}
+                    {admin && meshStates?.states.has(m.name) && <MeshState state={meshStates.states.get(m.name)!} wanted={meshStates.wanted} building={meshStates.building === m.name} />}
                   </div>
                 )
               })}
