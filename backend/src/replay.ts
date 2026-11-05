@@ -332,8 +332,10 @@ async function start(root: HTMLElement) {
   // The camera sits behind the player, and whatever is on the way (a wall, a building, a tree) would hide them. Instead of pulling the
   // camera forward, what is in a cone from the camera to the player's head is faded out, with a screen-door pattern so nothing has to be
   // sorted. A prop is faded as a whole, by where its middle is (every prop knows its middle and its size); a wall by each pixel; a floor
-  // only where it is above the line of sight (a ceiling, from where the camera is). Nothing is faded beyond the player.
-  const BIG_PROP = 200 // radius (units) from which a prop is faded by the pixel and not as a whole
+  // only where it is above the line from the camera to the player's feet (a ceiling, or a ledge that hides their legs). Nothing is faded beyond the player.
+  // radius (units) from which a prop is faded by the pixel and not as a whole: a tree crown or a bush is cut out where it is in the way, and one
+  // whose middle is by the player (its leaves hanging over their head) is not skipped because its middle is past the end of the line
+  const BIG_PROP = 60
   const lineOfSight = { uCam: { value: new Vector3() }, uHead: { value: new Vector3() } }
   const CUT_GLSL = `
     uniform vec3 uCam;
@@ -346,10 +348,18 @@ async function start(root: HTMLElement) {
       float t = dot(p - uCam, ab) / l2;
       // an object of size r whose middle is behind the camera can still surround it (the camera inside a helicopter), so the lower limit
       // allows for the size; a pixel (r = 0) keeps the plain limit
-      if (t < -0.05 - r / sqrt(l2) || t > 0.92) return 0.0;
+      // nothing is faded at the player or beyond: the last stretch is a fixed 8 units (it was 8% of the line, about 25, and a wall 17 units in front of
+      // the player, with their body behind it, stayed solid)
+      if (t < -0.05 - r / sqrt(l2) || t > 1.0 - 8.0 / sqrt(l2)) return 0.0;
       vec3 q = uCam + ab * clamp(t, 0.0, 1.0);
       float radius = 70.0 + 330.0 * (1.0 - t);
-      if (ceiling > 0.5) { if (p.y < q.y + 10.0) return 0.0; radius *= 0.8; }
+      // a floor is faded only where it can hide some of the player: above the line from the camera to their feet (a ledge below the line to the
+      // head still hides their legs; one below the line to the feet hides nothing and is what they stand on)
+      if (ceiling > 0.5) {
+        float feet = uCam.y + (uHead.y - 64.0 - uCam.y) * clamp(t, 0.0, 1.0);
+        if (p.y < feet + 10.0) return 0.0;
+        radius *= 0.8;
+      }
       float d = distance(p, q) - r * 0.5;
       return 1.0 - smoothstep(radius * 0.75, radius, d);
     }
@@ -373,13 +383,13 @@ async function start(root: HTMLElement) {
     }
   }
 
-  /** Draws `meshes` (props placed in the map) as one mesh for each material, in the place they are; the ones given are hidden. A set that cannot be put together (different attributes) is left as it is. Returns the merged meshes made. */
+  /** Draws `meshes` (props placed in the map) as one mesh for each material, in the place they are, even where a material has only one; the ones given are hidden. A set that cannot be put together (different attributes) is left as it is. Returns the merged meshes made. */
   const mergeDrawn = (root: Object3D, meshes: Mesh[]): Mesh[] => {
     const made: Mesh[] = []
     const byMaterial = new Map<Material, Mesh[]>()
     for (const m of meshes) { const list = byMaterial.get(m.material as Material); if (list) list.push(m); else byMaterial.set(m.material as Material, [m]) }
     for (const [material, list] of byMaterial) {
-      if (list.length < 2) continue
+      // (also a material with one mesh: the fade needs the attribute that is made here, and a prop that is not merged is never faded)
       const parts = list.map(m => {
         const g = m.geometry.clone(); g.applyMatrix4(m.matrixWorld)
         // every vertex of a prop knows where the prop's middle is and how big it is, so a prop can be faded as one
