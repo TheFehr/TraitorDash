@@ -130,6 +130,95 @@ describe('validateTrack', () => {
   })
 })
 
+describe('validateTrack: parts that move and their inputs (RFC 20, 4.5)', () => {
+  // keyframes at ticks 0, 2 and 3 of the four; positions and angles as differences
+  const part = (over: Record<string, unknown> = {}) => ({
+    e: 1, m: 98, c: 'func_movelinear', n: 'building_collapse',
+    k: [0, 2, 1], x: [160, 0, 0], y: [2240, 0, 0], z: [-602, 0, -208], p: [0, 0, 0], w: [0, 90, 90], r: [0, 0, 0], ...over,
+  })
+  const withParts = (parts: unknown[], inputs?: unknown[]) => ({ ...good(), parts, ...(inputs ? { inputs } : {}) })
+
+  test('are kept when they are valid, and a track without them has neither', () => {
+    const input = { t: 420, e: 1, i: 'open', v: 'input' as const, by: A }
+    const r = validateTrack(withParts([part()], [input, { t: 500, e: 1, i: 'use', v: 'use' as const }]), round)
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.track.parts).toEqual([part()])
+      expect(r.track.inputs).toEqual([input, { t: 500, e: 1, i: 'use', v: 'use' as const }])
+    }
+    const none = validateTrack(good(), round)
+    expect(none.ok && 'parts' in none.track).toBe(false)
+    expect(none.ok && 'inputs' in none.track).toBe(false)
+  })
+
+  test('two entities of one model are two parts; the same entity number twice is refused', () => {
+    expect(validateTrack(withParts([part(), part({ e: 2 })]), round).ok).toBe(true)
+    refused(withParts([part(), part()]), /own whole number e/)
+  })
+
+  test('a part needs a model number, a class that moves and a name made of the usual characters', () => {
+    for (const bad of [0, 65536, 1.5, '98', null]) refused(withParts([part({ m: bad })]), /model number/)
+    for (const bad of ['prop_physics', 'func_breakable', 'func_door ', '', 7]) refused(withParts([part({ c: bad })]), /class/)
+    for (const bad of ['has space', 'x'.repeat(65), 5]) refused(withParts([part({ n: bad })]), /name/)
+    for (const bad of [0, 65536, 1.5, '1']) refused(withParts([part({ e: bad })]), /own whole number e/)
+    const { n, ...unnamed } = part()
+    expect(validateTrack(withParts([unnamed]), round).ok).toBe(true)
+  })
+
+  test('the keyframes are ticks of the track, in order, one at most for each tick', () => {
+    refused(withParts([part({ k: [0, 0, 1] })]), /in order/)           // two keyframes on one tick
+    refused(withParts([part({ k: [0, 2, 2] })]), /past the last tick/) // tick 4 of a track with ticks 0 to 3
+    refused(withParts([part({ k: [4, 0, 0] })]), /keyframes/)
+    refused(withParts([part({ k: [-1, 2, 1] })]), /keyframes/)
+    refused(withParts([part({ k: [] })]), /keyframes/)
+    expect(validateTrack(withParts([part({ k: [3], x: [1], y: [1], z: [1], p: [0], w: [0], r: [0] })]), round).ok).toBe(true) // one keyframe, on the last tick
+  })
+
+  test('every array is as long as the keyframes, in whole numbers, and the sums stay inside the map and the angles', () => {
+    for (const f of ['x', 'y', 'z', 'p', 'w', 'r']) refused(withParts([part({ [f]: [0, 0] })]), /same length/)
+    refused(withParts([part({ x: [160, 0.5, 0] })]), /same length/)
+    refused(withParts([part({ z: [30000, 3000, 0] })]), /outside the map/)        // 33,000 is past +-32,768
+    refused(withParts([part({ w: [0, 1440, 1] })]), /angle/)                       // 1,441 quarter degrees
+    refused(withParts([part({ x: [160, 70000, 0] })]), /same length/)              // one step past the biggest difference
+    expect(validateTrack(withParts([part({ w: [-720, 1439, 1] })]), round).ok).toBe(true)
+  })
+
+  test('at most 256 parts, 4,000 keyframes for a part and 50,000 in all', () => {
+    const many = (n: number) => Array.from({ length: n }, (_, i) => part({ e: i + 1 }))
+    expect(validateTrack(withParts(many(256)), round).ok).toBe(true)
+    refused(withParts(many(257)), /at most 256/)
+    const long = { ...good(), t: Array.from({ length: 5000 }, () => 1) }
+    const keys = (n: number) => ({ e: 1, m: 5, c: 'func_door', k: Array.from({ length: n }, (_, i) => (i === 0 ? 0 : 1)), x: Array(n).fill(0), y: Array(n).fill(0), z: Array(n).fill(0), p: Array(n).fill(0), w: Array(n).fill(0), r: Array(n).fill(0) })
+    expect(validateTrack({ ...long, players: [{ id: A, segments: [{ from: 0, x: [1], y: [1], z: [1], a: [1] }] }], deaths: [], parts: [keys(4000)] }, round).ok).toBe(true)
+    refused({ ...long, players: [{ id: A, segments: [{ from: 0, x: [1], y: [1], z: [1], a: [1] }] }], deaths: [], parts: [keys(4001)] }, /keyframes/)
+    // 13 parts of 4,000 keyframes are 52,000 in all
+    const big = Array.from({ length: 13 }, (_, i) => ({ ...keys(4000), e: i + 1 }))
+    refused({ ...long, players: [{ id: A, segments: [{ from: 0, x: [1], y: [1], z: [1], a: [1] }] }], deaths: [], parts: big }, /50000 keyframes in all/)
+  })
+
+  test('an input names a part of the track, a listed input, how it came, a time in order, and a player of the round or nobody', () => {
+    const ok = { t: 100, e: 1, i: 'toggle', v: 'use' as const, by: B }
+    expect(validateTrack(withParts([part()], [ok]), round).ok).toBe(true)
+    refused(withParts([part()], [{ ...ok, e: 2 }]), /part that is not/)
+    refused(withParts([], [ok]), /part that is not/)
+    for (const bad of ['kill', 'Open', '', 5]) refused(withParts([part()], [{ ...ok, i: bad }]), /not recorded/)
+    for (const bad of ['', 'Use', undefined, 1]) refused(withParts([part()], [{ ...ok, v: bad }]), /input or a use/)
+    refused(withParts([part()], [{ ...ok, by: '76561198999999999' }]), /was not in the round/)
+    refused(withParts([part()], [{ ...ok, t: -1 }]), /invalid time/)
+    refused(withParts([part()], [{ ...ok, t: 7 * 3600 * 1000 }]), /invalid time/)
+    refused(withParts([part()], [ok, { ...ok, t: 50 }]), /time order/)
+    refused(withParts([part()], Array.from({ length: 1025 }, () => ok)), /at most 1024/)
+    expect(validateTrack(withParts([part()], Array.from({ length: 1024 }, () => ok)), round).ok).toBe(true)
+  })
+
+  test('parts and inputs must be lists', () => {
+    refused({ ...good(), parts: {} }, /parts must be/)
+    refused({ ...good(), parts: [1] }, /part must be an object/)
+    refused({ ...withParts([part()]), inputs: 'x' }, /inputs must be/)
+    refused({ ...withParts([part()]), inputs: [null] }, /input must be an object/)
+  })
+})
+
 describe('trackConfig', () => {
   test('has the documented defaults', () => {
     expect(trackConfig({})).toEqual(TRACK_DEFAULTS)

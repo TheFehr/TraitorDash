@@ -39,10 +39,10 @@ const value = (script: string) => run(`${PREPARE}\n${script}`).result
 const lines = (script: string) => run(`${PREPARE}\n${script}\nRESULT = table.concat(PRINTS, "\\n")`).result.split('\n')
 
 describe('the list', () => {
-  test('has the eight settings, with their kinds, ranges and defaults, and nothing that is the connection', () => {
+  test('has the nine settings, with their kinds, ranges and defaults, and nothing that is the connection', () => {
     const r = JSON.parse(value('RESULT = ENC(TraitorDash.SettingList)'))
     expect(r.map((s: any) => s.name)).toEqual(['traitordash_stats', 'traitordash_stats_debug', 'traitordash_stats_bots', 'traitordash_track',
-      'traitordash_track_interval_min', 'traitordash_track_interval_max', 'traitordash_track_budget_ms', 'traitordash_track_max_ticks'])
+      'traitordash_track_interval_min', 'traitordash_track_interval_max', 'traitordash_track_budget_ms', 'traitordash_track_max_ticks', 'traitordash_track_parts'])
     expect(r.find((s: any) => s.name === 'traitordash_track_interval_min')).toMatchObject({ kind: 'number', min: 0.05, max: 2, default: '0.2' })
     expect(r.find((s: any) => s.name === 'traitordash_track_max_ticks')).toMatchObject({ kind: 'int', min: 1000, max: 100000, default: '40000' })
     for (const never of ['traitordash_url', 'traitordash_token', 'traitordash_public_url']) expect(r.some((s: any) => s.name === never)).toBe(false)

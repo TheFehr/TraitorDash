@@ -11,6 +11,14 @@ export const MAX_TRACK_PLAYERS = 128
 export const MAX_TRACK_DEATHS = 512
 export const MAX_SEGMENTS_PER_PLAYER = 64
 export const MAX_TRACK_EVENTS = 1024
+/** Parts that move, their keyframes and the inputs that reach them (RFC 20, 4.3 to 4.5). */
+export const MAX_TRACK_PARTS = 256
+export const MAX_KEYS_PER_PART = 4000
+export const MAX_TRACK_KEYS = 50_000
+export const MAX_TRACK_INPUTS = 1024
+/** The classes of RFC 18 that are drawn as parts that can move, and the inputs that are recorded when they reach one. */
+export const PART_CLASSES: ReadonlySet<string> = new Set(['func_door', 'func_door_rotating', 'func_movelinear', 'func_rotating', 'func_tracktrain', 'func_physbox', 'func_physbox_multiplayer'])
+export const PART_INPUTS: ReadonlySet<string> = new Set(['open', 'close', 'toggle', 'lock', 'unlock', 'use', 'setposition', 'startforward', 'startbackward', 'stop', 'reverse', 'start'])
 
 /** A weapon class, a role or team name, a revival reason: letters, digits, underscore, dot and hyphen. */
 
@@ -19,6 +27,10 @@ const POS_MAX = 4096
 const POS_STEP_MAX = 2 * POS_MAX
 const TICK_STEP_MAX = 60_000 // a tick is at most a minute after the last
 const TIME_MAX = 6 * 60 * 60 * 1000 // a round of at most six hours, in ms
+const PART_POS_MAX = 32768 // a part's position, in whole units (the map reaches +-16384)
+const PART_POS_STEP = 2 * PART_POS_MAX
+const PART_ANGLE_MAX = 1440 // quarter degrees; the bridge writes -720 to 719, the room is for the sums
+const PART_ANGLE_STEP = 2 * PART_ANGLE_MAX
 
 /** `s` (absent in tracks from an older game server): for each sample how the player moves, as bits: 1 crouching, 2 in the air, 4 in water. */
 export interface TrackSegment { from: number, x: number[], y: number[], z: number[], a: number[], s?: number[] }
@@ -44,6 +56,15 @@ export interface TrackEvent {
   how?: string
   why?: string
 }
+/**
+ * One part that moves, as its keyframes (RFC 20, 4.3). `e` is the number the track gives this entity (one for each entity, so two entities that
+ * share a model are two parts), `m` the number of its model in the map file, which is the name of its node in the mesh. `k` is the tick index
+ * of each keyframe (the first absolute, then differences); positions are whole units and angles quarter degrees (pitch `p`, yaw `w`, roll `r`),
+ * the first value absolute and then differences, as the players' segments are.
+ */
+export interface TrackPart { e: number, m: number, c: string, n?: string, k: number[], x: number[], y: number[], z: number[], p: number[], w: number[], r: number[] }
+/** What was asked of a part, and by whom (RFC 20, 4.4): `v` says whether it came as an input to the entity or as a player's use. */
+export interface TrackInput { t: number, e: number, i: string, v: 'input' | 'use', by?: string }
 export interface Track {
   roundId: string
   map: string
@@ -55,6 +76,9 @@ export interface Track {
   players: TrackPlayer[]
   deaths: TrackDeath[]
   events: TrackEvent[]
+  /** Absent in a track recorded without parts (and in every track from before RFC 20). */
+  parts?: TrackPart[]
+  inputs?: TrackInput[]
 }
 
 export type TrackCheck = { ok: true, track: Track } | { ok: false, error: string }
@@ -177,9 +201,60 @@ export function validateTrack(body: unknown, round: { roundId: string, map: stri
     }
   }
 
+  // Parts that move and the inputs that reach them (RFC 20, 4.5). Optional: a bridge without them sends neither.
+  const parts: TrackPart[] = []
+  if (b.parts !== undefined) {
+    if (!Array.isArray(b.parts) || b.parts.length > MAX_TRACK_PARTS) return no(`parts must be at most ${MAX_TRACK_PARTS} entries`)
+    const ids = new Set<number>()
+    let keys = 0
+    for (const q of b.parts as Record<string, unknown>[]) {
+      if (!q || typeof q !== 'object') return no('a part must be an object')
+      if (!isInt(q.e) || q.e < 1 || q.e > 65535 || ids.has(q.e)) return no('a part needs its own whole number e from 1 to 65535')
+      ids.add(q.e)
+      if (!isInt(q.m) || q.m < 1 || q.m > 65535) return no('a part needs a model number m from 1 to 65535')
+      if (typeof q.c !== 'string' || !PART_CLASSES.has(q.c)) return no('a part has a class that is not one that moves')
+      if (q.n !== undefined && (typeof q.n !== 'string' || !NAME.test(q.n))) return no('a part has an invalid name')
+      const k = ints(q.k, 1, MAX_KEYS_PER_PART, 0, t.length - 1)
+      if (!k) return no(`a part needs 1-${MAX_KEYS_PER_PART} keyframes, each a tick of the track`)
+      for (let i = 1; i < k.length; i++) if (k[i]! < 1) return no('the keyframes of a part must come in order, one at most for each tick')
+      if (!rebuilds(k, 0, t.length - 1)) return no('a keyframe is past the last tick')
+      const x = ints(q.x, k.length, k.length, -PART_POS_STEP, PART_POS_STEP)
+      const y = ints(q.y, k.length, k.length, -PART_POS_STEP, PART_POS_STEP)
+      const z = ints(q.z, k.length, k.length, -PART_POS_STEP, PART_POS_STEP)
+      const p = ints(q.p, k.length, k.length, -PART_ANGLE_STEP, PART_ANGLE_STEP)
+      const w = ints(q.w, k.length, k.length, -PART_ANGLE_STEP, PART_ANGLE_STEP)
+      const r = ints(q.r, k.length, k.length, -PART_ANGLE_STEP, PART_ANGLE_STEP)
+      if (!x || !y || !z || !p || !w || !r) return no('the arrays of a part must be whole numbers in range and of the same length')
+      if (!rebuilds(x, -PART_POS_MAX, PART_POS_MAX) || !rebuilds(y, -PART_POS_MAX, PART_POS_MAX) || !rebuilds(z, -PART_POS_MAX, PART_POS_MAX)) return no('a part is outside the map')
+      if (!rebuilds(p, -PART_ANGLE_MAX, PART_ANGLE_MAX) || !rebuilds(w, -PART_ANGLE_MAX, PART_ANGLE_MAX) || !rebuilds(r, -PART_ANGLE_MAX, PART_ANGLE_MAX)) return no('an angle of a part is out of range')
+      keys += k.length
+      if (keys > MAX_TRACK_KEYS) return no(`the parts have more than ${MAX_TRACK_KEYS} keyframes in all`)
+      parts.push(q.n !== undefined ? { e: q.e, m: q.m, c: q.c, n: q.n, k, x, y, z, p, w, r } : { e: q.e, m: q.m, c: q.c, k, x, y, z, p, w, r })
+    }
+  }
+  const inputs: TrackInput[] = []
+  if (b.inputs !== undefined) {
+    if (!Array.isArray(b.inputs) || b.inputs.length > MAX_TRACK_INPUTS) return no(`inputs must be at most ${MAX_TRACK_INPUTS} entries`)
+    const known = new Set(parts.map(q => q.e))
+    let last = 0
+    for (const n of b.inputs as Record<string, unknown>[]) {
+      if (!n || typeof n !== 'object') return no('an input must be an object')
+      if (!isInt(n.t) || n.t < 0 || n.t > TIME_MAX) return no('an input has an invalid time')
+      if (n.t < last) return no('inputs must be in time order')
+      last = n.t
+      if (!isInt(n.e) || !known.has(n.e)) return no('an input names a part that is not in the track')
+      if (typeof n.i !== 'string' || !PART_INPUTS.has(n.i)) return no('an input has a name that is not recorded')
+      if (n.v !== 'input' && n.v !== 'use') return no('an input says whether it came as an input or a use')
+      if (n.by !== undefined && (typeof n.by !== 'string' || !round.players.has(n.by))) return no('an input names a player who was not in the round')
+      const v: 'input' | 'use' = n.v
+      inputs.push(n.by !== undefined ? { t: n.t, e: n.e, i: n.i, v, by: n.by as string } : { t: n.t, e: n.e, i: n.i, v })
+    }
+  }
+
   return { ok: true, track: {
     roundId: round.roundId, map: b.map, fingerprint: typeof b.fingerprint === 'string' ? b.fingerprint : null,
     truncated: b.truncated === true, degraded: b.degraded === true, t, players, deaths, events,
+    ...(parts.length > 0 ? { parts } : {}), ...(inputs.length > 0 ? { inputs } : {}),
   } }
 }
 

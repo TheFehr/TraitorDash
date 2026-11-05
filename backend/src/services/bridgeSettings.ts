@@ -43,6 +43,9 @@ export const BRIDGE_SETTINGS: BridgeSetting[] = [
   { name: 'traitordash_track_max_ticks', kind: 'int', default: '40000', min: 1000, max: 100000, unit: 'ticks', group: 'Position tracking', applies: 'at once',
     label: 'Most ticks a round records',
     explain: 'A limit so that a round that never ends does not record for ever: a longer round is cut there and its replay says so. At 0.2 s between samples 40,000 ticks is about two hours and a half, at 0.05 s it is 33 minutes. A higher number allows longer replays and bigger tracks.' },
+  { name: 'traitordash_track_parts', kind: 'bool', default: '0', group: 'Position tracking', applies: 'next round',
+    label: 'Record doors, lifts and traps',
+    explain: 'Also records where the parts of the map that move are (doors, lifts, a building that falls) and who opened or set off what, so the replay can show it. Needs position tracking. It adds a few kilobytes to a round (under 20 on a typical one) and costs the game server a look at each part every second, and at every sample while it moves. Off means the replay shows them standing still.' },
 ]
 
 const BY_NAME = new Map(BRIDGE_SETTINGS.map(s => [s.name, s]))

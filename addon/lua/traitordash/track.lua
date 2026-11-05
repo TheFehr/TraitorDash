@@ -16,6 +16,9 @@
 -- Besides the position and the view yaw, each sample says how the player moves, as a number of bits `s`: 1 crouching, 2 in the air,
 -- 4 in water (the replay animates a player from it). A player the game cannot ask (a call that is not there) counts as 0.
 --
+-- Parts that move (RFC 20, 4.3): with traitordash_track_parts on, the doors, lifts and other brush entities that can move are recorded
+-- as keyframes on the same tick list, and the inputs that reach them (also a player pressing use) as a list; see the Parts section below.
+--
 -- Encoding (as recorded and as sent): one shared list `t` of tick times in whole milliseconds since
 -- the round began, stored as differences; per player and segment `x`, `y`, `z` in units / 8 and the
 -- view yaw `a` as 0-255, each the first absolute value and then differences to the previous sample.
@@ -29,6 +32,7 @@ local cv_min = CreateConVar("traitordash_track_interval_min", "0.2", {FCVAR_ARCH
 local cv_max = CreateConVar("traitordash_track_interval_max", "1", {FCVAR_ARCHIVE}, "Slowest sampling interval in seconds.")
 local cv_budget = CreateConVar("traitordash_track_budget_ms", "0.5", {FCVAR_ARCHIVE}, "What one sampling tick may cost on average, in milliseconds.")
 local cv_maxticks = CreateConVar("traitordash_track_max_ticks", "40000", {FCVAR_ARCHIVE}, "The most sampling ticks a round records; a longer round is cut and flagged truncated (1000 to 100000).")
+local cv_parts = CreateConVar("traitordash_track_parts", "0", {FCVAR_ARCHIVE}, "Also record doors, lifts and other parts that move, and who set them off (1/0; needs traitordash_track).")
 local cv_debug = CreateConVar("traitordash_stats_debug", "1", {FCVAR_ARCHIVE}, "Log what the stats tracker does (1/0).")
 
 local TIMER = "TraitorDash_Track"
@@ -36,6 +40,14 @@ local MAX_TICKS_FLOOR, MAX_TICKS_CEILING = 1000, 100000 -- what traitordash_trac
 local MAX_SEGMENTS = 64          -- per player
 local MAX_DEATHS = 512
 local MAX_EVENTS = 1024         -- revivals and role changes (RFC 14, 4.3)
+local MAX_PARTS = 256           -- parts that move, per round (RFC 20, 4.3)
+local MAX_KEYS_PART = 4000
+local MAX_KEYS = 50000
+local MAX_INPUTS = 1024
+local FULL_SCAN = 5                -- every part is looked at on every fifth tick; an active one on every tick
+local LIST_REFRESH = 25            -- the list of parts is made again on every 25th tick (a map creates and removes some during a round)
+local QUIET = 2                    -- ticks without a change after which a part is not active any more
+local SAME_INPUT_MS = 1000         -- the same input by the same player on one part within this is one entry (use is sent again while the key is held)
 local MAX_BYTES = 8 * 1024 * 1024
 local SAFE_BYTES = 7 * 1024 * 1024 -- the size estimate at which recording stops, a margin below the cap
 local BYTES_PER_SAMPLE = 18
@@ -64,7 +76,7 @@ local function MaxTicks()
 end
 
 local function EstimateBytes(r)
-    return r.samples * BYTES_PER_SAMPLE + #r.t * 6 + #r.deaths * 120 + #r.events * 100
+    return r.samples * BYTES_PER_SAMPLE + #r.t * 6 + #r.deaths * 120 + #r.events * 100 + r.keys * 36 + #r.inputs * 90
 end
 
 -- `at` is where the player really was, when it is known and `GetPos` would say something else: a dead player's position is the
@@ -87,8 +99,15 @@ local function State(ply)
     return s
 end
 
+local HOOK_ID = "TraitorDash_TrackParts"
+
+-- The timer and, with it, the two hooks of the parts (RFC 20, 4.4): both go when a recording ends for any reason.
 local function RemoveTimer()
     if timer.Exists and timer.Exists(TIMER) then timer.Remove(TIMER) end
+    if hook.Remove then
+        hook.Remove("AcceptInput", HOOK_ID)
+        hook.Remove("PlayerUse", HOOK_ID)
+    end
 end
 
 -- Ends sampling for this round; what was recorded is kept.
@@ -137,6 +156,175 @@ local function AddEvent(r, now, e)
     r.events[#r.events + 1] = e
 end
 
+-- ---- Parts that move (RFC 20, 4.3 and 4.4)
+-- Which entities are parts: the movable brush classes of RFC 18, with a model "*N" (the number of the model in the map file, which is what
+-- the mesh's node of the part is called) and no parent (a part with a parent is left out of the mesh).
+local PART_CLASSES = {
+    func_door = true, func_door_rotating = true, func_movelinear = true, func_rotating = true,
+    func_tracktrain = true, func_physbox = true, func_physbox_multiplayer = true,
+}
+-- The inputs that are recorded when they reach a part. The pose says what happened; the input says what was asked, and by whom.
+local PART_INPUTS = {
+    open = true, close = true, toggle = true, lock = true, unlock = true, use = true, setposition = true,
+    startforward = true, startbackward = true, stop = true, reverse = true, start = true,
+}
+
+-- An angle in quarter degrees, from -720 up to 719.
+local function Quarter(a)
+    return (Floor(a * 4) + 720) % 1440 - 720
+end
+
+-- The part an entity is, as a record of its own, or nil when it is not one to record.
+local function PartOf(ent)
+    if not IsValid(ent) then return nil end
+    local class = ent:GetClass()
+    if not PART_CLASSES[class] then return nil end
+    local model = ent:GetModel()
+    local n = type(model) == "string" and string.match(model, "^%*(%d+)$")
+    n = n and tonumber(n)
+    if not n or n < 1 or n > 65535 then return nil end
+    if ent.GetParent and IsValid(ent:GetParent()) then return nil end
+    local name = tostring(ent.GetName and ent:GetName() or ""):gsub("[^%w_.%-]", ""):sub(1, 64)
+    return {
+        ent = ent, idx = ent:EntIndex(), m = n, c = class, n = name ~= "" and name or nil,
+        nk = 0, lastKey = 0, quiet = 0, gone = false, stopped = false,
+        k = {}, x = {}, y = {}, z = {}, p = {}, w = {}, r = {},
+        wx = 0, wy = 0, wz = 0, wp = 0, ww = 0, wr = 0, -- the pose of the last keyframe written
+    }
+end
+
+-- Writes a keyframe: its tick (0-based, as the segments count them) and its pose, each as the difference to the one before it.
+local function WriteKey(r, part, tick, x, y, z, p, w, ro)
+    if part.nk >= MAX_KEYS_PART or r.keys >= MAX_KEYS then
+        part.stopped = true
+        r.truncated = true
+        return false
+    end
+    local n = part.nk + 1
+    part.k[n], part.x[n], part.y[n], part.z[n] = tick - part.lastKey, x - part.wx, y - part.wy, z - part.wz
+    part.p[n], part.w[n], part.r[n] = p - part.wp, w - part.ww, ro - part.wr
+    part.nk, part.lastKey = n, tick
+    part.wx, part.wy, part.wz, part.wp, part.ww, part.wr = x, y, z, p, w, ro
+    r.keys = r.keys + 1
+    return true
+end
+
+-- One look at a part. A keyframe is written when the pose is not the one of the last keyframe; and when the part stood still for more than a
+-- tick before, first one more keyframe of the old pose just before, so that the replay (which draws a straight line between two keyframes)
+-- does not slide from the rest pose to the new one over the whole time the part stood still.
+local function Look(r, part, tick)
+    local ent = part.ent
+    if not IsValid(ent) then
+        part.gone = true
+        if r.partByEnt[part.idx] == part then r.partByEnt[part.idx] = nil end
+        return
+    end
+    local pos, ang = ent:GetPos(), ent:GetAngles()
+    local x, y, z = Floor(pos.x), Floor(pos.y), Floor(pos.z)
+    local p, w, ro = Quarter(ang.p), Quarter(ang.y), Quarter(ang.r)
+    if part.nk == 0 then
+        WriteKey(r, part, tick, x, y, z, p, w, ro)
+    elseif x ~= part.wx or y ~= part.wy or z ~= part.wz or p ~= part.wp or w ~= part.ww or ro ~= part.wr then
+        if part.lastKey < tick - 1 then WriteKey(r, part, tick - 1, part.wx, part.wy, part.wz, part.wp, part.ww, part.wr) end
+        WriteKey(r, part, tick, x, y, z, p, w, ro)
+        part.quiet = QUIET
+    elseif part.quiet > 0 then
+        part.quiet = part.quiet - 1
+    end
+end
+
+-- Finds the parts the list does not have yet (a map creates some during a round). Beyond the cap the track is marked truncated.
+local function RefreshParts(r)
+    for class in pairs(PART_CLASSES) do
+        for _, ent in ipairs(ents.FindByClass(class)) do
+            if IsValid(ent) and not r.partByEnt[ent:EntIndex()] then
+                if #r.partList >= MAX_PARTS then
+                    r.truncated = true
+                else
+                    local part = PartOf(ent)
+                    if part then
+                        part.id = #r.partList + 1
+                        r.partList[part.id] = part
+                        r.partByEnt[part.idx] = part
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- The parts at one tick: the active ones every time, all of them on every fifth tick (which finds what no input announced: a pushed crate,
+-- a train). Inside the tick's own time, so the budget of the track covers it.
+local function SampleParts(r, tick)
+    r.partTick = r.partTick + 1
+    local n = r.partTick
+    if n == 1 or n % LIST_REFRESH == 0 then RefreshParts(r) end
+    local full = n == 1 or n % FULL_SCAN == 0
+    for _, part in ipairs(r.partList) do
+        if not part.gone and not part.stopped and (full or part.quiet > 0 or part.nk == 0) then Look(r, part, tick) end
+    end
+end
+
+-- The SteamID64 of a tracked player, or nil when `ply` is not one.
+local function SidOf(r, ply)
+    if not IsValid(ply) then return nil end
+    for _, sid in ipairs(r.order) do
+        if r.players[sid].ply == ply then return sid end
+    end
+    return nil
+end
+
+local function AddInput(r, part, name, ply, via)
+    if #r.inputs >= MAX_INPUTS then r.truncated = true return end
+    local now = RoundMs(r, CurTime())
+    local by = SidOf(r, ply)
+    if part.lastName == name and part.lastBy == by and part.lastAt and now - part.lastAt < SAME_INPUT_MS then return end
+    part.lastName, part.lastBy, part.lastAt = name, by, now
+    r.inputs[#r.inputs + 1] = { t = now, e = part.id, i = name, v = via, by = by }
+end
+
+-- GM:AcceptInput. It must end without a value on every path (returning true blocks the input in the game), and it does one table lookup
+-- before anything else, so the many inputs of a busy map cost almost nothing.
+local function OnInput(ent, input, activator, caller)
+    local r = rec
+    if not r or r.stopped or not r.partByEnt or not IsValid(ent) then return end
+    local part = r.partByEnt[ent:EntIndex()]
+    if not part then return end
+    part.quiet = QUIET + 1 -- an input makes the part active
+    local name = string.lower(tostring(input))
+    if not PART_INPUTS[name] then return end
+    local who = IsValid(activator) and activator.IsPlayer and activator:IsPlayer() and activator or (IsValid(caller) and caller.IsPlayer and caller:IsPlayer() and caller or nil)
+    AddInput(r, part, name, who, "input")
+end
+
+-- GM:PlayerUse: a door pushed open with the use key often arrives with no input to the door at all (RFC 20, findings), and this says who.
+-- It is sent again for as long as the key is held; AddInput makes that one entry. It ends without a value as well (false would stop the use).
+local function OnUse(ply, ent)
+    local r = rec
+    if not r or r.stopped or not r.partByEnt or not IsValid(ent) then return end
+    local part = r.partByEnt[ent:EntIndex()]
+    if not part then return end
+    part.quiet = QUIET + 1
+    AddInput(r, part, "use", ply, "use")
+end
+
+local function StartParts(r)
+    r.partList, r.partByEnt, r.partTick = {}, {}, 0
+    hook.Add("AcceptInput", HOOK_ID, function(ent, input, activator, caller) pcall(OnInput, ent, input, activator, caller) end)
+    hook.Add("PlayerUse", HOOK_ID, function(ply, ent) pcall(OnUse, ply, ent) end)
+end
+
+-- What `Finish` sends of the parts: nil when there are none.
+local function PartsOut(r)
+    local out = {}
+    for _, part in ipairs(r.partList or {}) do
+        if part.nk > 0 then
+            out[#out + 1] = { e = part.id, m = part.m, c = part.c, n = part.n, k = part.k, x = part.x, y = part.y, z = part.z, p = part.p, w = part.w, r = part.r }
+        end
+    end
+    return #out > 0 and out or nil
+end
+
 local function SampleAll(r, now, also)
     local idx = AddTick(r, now)
     for _, sid in ipairs(r.order) do
@@ -155,6 +343,14 @@ local function SampleAll(r, now, also)
         else
             p.cur = nil -- not alive now: the segment ends here (a revived player starts a new one)
             if p.awaiting then p.sawDead = true end
+        end
+    end
+    if r.partList and not r.partsOff then
+        -- (also called from Begin and Death, outside the timer's own pcall: a failure here ends the parts, never the round)
+        local ok, err = pcall(SampleParts, r, idx - 1)
+        if not ok then
+            r.partsOff = true
+            print("[TraitorDash:track] recording the parts failed, they are left out: " .. tostring(err))
         end
     end
 end
@@ -262,6 +458,7 @@ function Track.Begin(roundId, players)
         id = roundId, t0 = CurTime(), lastMs = 0, t = {}, order = {}, players = {}, deaths = {}, events = {},
         samples = 0, ticks = 0, skipped = 0, interval = mn, minUsed = math.huge, maxUsed = 0,
         ring = {}, costSum = 0, worst = 0, truncated = false, degraded = false, stopped = false,
+        keys = 0, inputs = {},
     }
     for _, e in ipairs(players) do
         if #r.order >= 128 then break end
@@ -269,6 +466,7 @@ function Track.Begin(roundId, players)
         r.players[e.sid] = { ply = e.ply, segs = {} }
     end
     rec = r
+    if cv_parts:GetBool() then StartParts(r) end
     SampleAll(r, r.t0) -- where everybody stands at the start
     timer.Create(TIMER, r.interval, 0, SafeTick)
     Dbg(string.format("recording round %s: %d players, interval %.2f-%.2f s", roundId, #r.order, mn, select(2, Settings())))
@@ -346,6 +544,7 @@ function Track.Finish(roundId)
         "[TraitorDash:track] round %s: %d ticks (%d samples, %d skipped), interval %.2f-%.2f s, tick cost avg %.3f ms worst %.3f ms, about %d KB%s%s",
         r.id, #r.t, r.samples, r.skipped, r.minUsed == math.huge and 0 or r.minUsed, r.maxUsed, avg * 1000, r.worst * 1000,
         math.floor(EstimateBytes(r) / 1024), r.truncated and ", TRUNCATED" or "", r.degraded and ", DEGRADED" or ""))
+    if r.partList then print(string.format("[TraitorDash:track] parts: %d, %d keyframes, %d inputs", #r.partList, r.keys, #r.inputs)) end
 
     local players = {}
     for _, sid in ipairs(r.order) do
@@ -373,6 +572,7 @@ function Track.Finish(roundId)
         truncated = r.truncated, degraded = r.degraded,
         t = r.t, players = players, deaths = r.deaths,
         events = #r.events > 0 and r.events or nil,
+        parts = PartsOut(r), inputs = #r.inputs > 0 and r.inputs or nil,
     }
 end
 

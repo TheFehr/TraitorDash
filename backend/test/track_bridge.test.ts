@@ -16,7 +16,7 @@ const PRELUDE = `
   TEAM_TRAITOR, TEAM_INNOCENT = "traitors", "innocents"
   FCVAR_ARCHIVE = 128
   isnumber = function(v) return type(v) == "number" end
-  IsValid = function(v) return v ~= nil and v ~= false end
+  IsValid = function(v) return v ~= nil and v ~= false and not (type(v) == "table" and v.removed) end
   local cvars = {}
   function CreateConVar(n, v)
     cvars[n] = tostring(v)
@@ -38,8 +38,14 @@ const PRELUDE = `
   function SysTime() local v = SYS SYS = SYS + COST return v end
 
   local hooks = {}
-  hook = { Add = function(ev, id, fn) hooks[ev] = hooks[ev] or {} hooks[ev][id] = fn end }
+  hook = {
+    Add = function(ev, id, fn) hooks[ev] = hooks[ev] or {} hooks[ev][id] = fn end,
+    Remove = function(ev, id) if hooks[ev] then hooks[ev][id] = nil end end,
+  }
   function Fire(ev, ...) for _, fn in pairs(hooks[ev] or {}) do fn(...) end end
+  -- like Fire, and says how many values the hooks returned: a hook of the game that returns something can block what it watches
+  function FireValues(ev, ...) local n = 0 for _, fn in pairs(hooks[ev] or {}) do n = n + select("#", fn(...)) end return n end
+  function HookCount(ev) local n = 0 for _ in pairs(hooks[ev] or {}) do n = n + 1 end return n end
 
   -- timer: one repeating timer at a time is all the tracker uses.
   TIMERS = {}
@@ -108,6 +114,23 @@ const PRELUDE = `
   SPEC = mkply("76561198000000009", "Spec", "innocent", "innocents"); SPEC.alive = false
   PLAYERS = { A, B, C, SPEC }
   player = { GetAll = function() return PLAYERS end }
+  -- entities that are parts of the map (RFC 20): ents.FindByClass finds the ones that were not removed
+  ENTS = {}
+  ents = { FindByClass = function(c) local o = {} for _, e in ipairs(ENTS) do if e.class == c and not e.removed then o[#o + 1] = e end end return o end }
+  local nextIndex = 100
+  function Part(class, model, name, x, y, z, yaw)
+    nextIndex = nextIndex + 1
+    local e = { class = class, model = model, name = name or "", idx = nextIndex, x = x or 0, y = y or 0, z = z or 0, pitch = 0, yaw = yaw or 0, roll = 0 }
+    function e:GetClass() return self.class end
+    function e:GetModel() return self.model end
+    function e:GetName() return self.name end
+    function e:GetParent() return self.parent end
+    function e:EntIndex() if self.badindex then error("EntIndex failed") end return self.idx end
+    function e:GetPos() if self.badpos then error("GetPos failed") end return { x = self.x, y = self.y, z = self.z } end
+    function e:GetAngles() return { p = self.pitch, y = self.yaw, r = self.roll } end
+    ENTS[#ENTS + 1] = e
+    return e
+  end
   function Begin() Fire("TTTPrepareRound") Fire("TTTBeginRound") end
   function Accept(i, code) local r = SENT[i] if r and r.success then r.success(code or 200, "{}") end end
 `
@@ -612,6 +635,216 @@ describe('what the bridge sends, as the backend sees it', () => {
     if (check.ok) {
       expect(check.track.deaths).toHaveLength(2)
       expect(check.track.players.find(p => p.id === B)!.segments.length).toBeGreaterThanOrEqual(2)
+    }
+  })
+})
+
+describe('track.lua: parts that move (RFC 20, 4.3 and 4.4)', () => {
+  const partsOf = (r: Run) => trackOf(r).parts as any[]
+  const inputsOf = (r: Run) => trackOf(r).inputs as any[]
+  const on = `SetCv("traitordash_track_parts", "1")`
+
+  test('with traitordash_track_parts at 0 (the default) nothing is hooked and the track has no parts', () => {
+    const r = play(`
+      Part("func_door", "*8", "door")
+      Begin() OUT = { input = HookCount("AcceptInput"), use = HookCount("PlayerUse") }
+      Run(3) Fire("TTTEndRound", WIN_TRAITOR) Accept(1)
+    `)
+    expect(r.out).toEqual({ input: 0, use: 0 })
+    expect(trackOf(r).parts).toBeUndefined()
+    expect(trackOf(r).inputs).toBeUndefined()
+    expect(r.printed.join('\n')).not.toMatch(/parts:/)
+  })
+
+  test('with it on, every part has a keyframe at the start, with the pose as absolute whole numbers and the angles in quarter degrees; one that never moves has only that one', () => {
+    const r = play(`${on}
+      local d = Part("func_door", "*8", "roofdoor", 100.4, 200.6, -300, 90)
+      d.pitch = -45.1 d.roll = 10
+      Part("func_rotating", "*9", "fan 1")                     -- a name is cut to the usual characters
+      Part("prop_door_rotating", "*10", "propdoor")            -- not a brush part
+      Part("func_door", "ent", "nomodel")                      -- no *N
+      Part("func_door", "*0", "world")                         -- model 0 is the world
+      local child = Part("func_door", "*11", "child") child.parent = d
+      Begin() OUT = { input = HookCount("AcceptInput"), use = HookCount("PlayerUse") }
+      Run(3) Fire("TTTEndRound", WIN_TRAITOR) Accept(1)
+    `)
+    expect(r.out).toEqual({ input: 1, use: 1 })
+    const parts = partsOf(r)
+    expect(parts).toHaveLength(2)
+    expect(parts[0]).toEqual({ e: 1, m: 8, c: 'func_door', n: 'roofdoor', k: [0], x: [100], y: [201], z: [-300], p: [-180], w: [360], r: [40] })
+    expect(parts[1]).toMatchObject({ e: 2, m: 9, c: 'func_rotating', n: 'fan1', k: [0] })
+    expect(r.printed.join('\n')).toMatch(/parts: 2, 2 keyframes, 0 inputs/)
+  })
+
+  test('a keyframe is written only when the pose changed, and the old pose is held until just before: no slide from the rest pose over the time it stood still', () => {
+    // every 5th sample looks at all parts; in between only the active ones are looked at, an active one until two samples bring no change
+    const r = play(`${on}
+      local d = Part("func_door", "*8", "door", 100, 200, 0, 0)
+      Begin() Run(1)
+      d.x = 150 d.yaw = 45
+      Run(3)  -- ticks 2, 3 and 4: only the 4th looks at it, and finds it
+      Run(1)  -- tick 5: active, looked at, no change
+      d.x = 160
+      Run(1)  -- tick 6: still active, so seen at once
+      Fire("TTTEndRound", WIN_TRAITOR) Accept(1)
+    `)
+    const p = partsOf(r)[0]
+    expect(rebuild(p.k)).toEqual([0, 3, 4, 5, 6]) // the start, the hold of the rest pose a tick before it was found, the pose found, the hold, the next move
+    expect(rebuild(p.x)).toEqual([100, 100, 150, 150, 160])
+    expect(rebuild(p.w)).toEqual([0, 0, 180, 180, 180])
+    expect(p.k.slice(1).every((d: number) => d >= 1)).toBe(true)
+  })
+
+  test('an input makes the part active, and is recorded when it is on the list: by the activator, else by the caller, else by nobody', () => {
+    const r = play(`${on}
+      local d = Part("func_door", "*8", "door", 100, 200, 0, 0)
+      Begin() Run(1)
+      Fire("AcceptInput", d, "Open", A, B)       -- upper case is the same input
+      Fire("AcceptInput", d, "close", nil, B)    -- the caller is a player
+      Fire("AcceptInput", d, "toggle", nil, nil) -- a timer of the map
+      Fire("AcceptInput", d, "Kill", A, A)       -- not on the list
+      d.x = 150 Run(1)                            -- tick 2 is not a full scan: it is looked at because the inputs made it active
+      Fire("TTTEndRound", WIN_TRAITOR) Accept(1)
+    `)
+    expect(inputsOf(r)).toEqual([
+      { t: 200, e: 1, i: 'open', v: 'input', by: A },
+      { t: 200, e: 1, i: 'close', v: 'input', by: B },
+      { t: 200, e: 1, i: 'toggle', v: 'input' },
+    ])
+    expect(rebuild(partsOf(r)[0].k)).toEqual([0, 1, 2])
+  })
+
+  test('an input to something that is not a tracked part is not recorded', () => {
+    const r = play(`${on}
+      Part("func_door", "*8", "door")
+      Begin() Run(1)
+      local late = Part("func_door", "*9", "made later") -- not in the list until the list is made again
+      local other = Part("prop_physics", "models/props_c17/oildrum001.mdl", "barrel")
+      Fire("AcceptInput", late, "open", A, A)
+      Fire("AcceptInput", other, "open", A, A)
+      Fire("TTTEndRound", WIN_TRAITOR) Accept(1)
+    `)
+    expect(trackOf(r).inputs).toBeUndefined()
+  })
+
+  test('GM:PlayerUse is recorded too, as a use; the key held down sends it again and again and that is one entry, the same use by the input of it too', () => {
+    const r = play(`${on}
+      local d = Part("func_door", "*8", "door")
+      Begin() Run(1)
+      Fire("PlayerUse", A, d) NOW = NOW + 0.1 Fire("PlayerUse", A, d) NOW = NOW + 0.1 Fire("PlayerUse", A, d)
+      Fire("AcceptInput", d, "use", A, A)         -- the same press, seen as an input
+      NOW = NOW + 1.5
+      Fire("PlayerUse", A, d)                      -- a new press
+      Fire("PlayerUse", B, d)                      -- another player
+      Fire("TTTEndRound", WIN_TRAITOR) Accept(1)
+    `)
+    expect(inputsOf(r)).toEqual([
+      { t: 200, e: 1, i: 'use', v: 'use', by: A },
+      { t: 1900, e: 1, i: 'use', v: 'use', by: A },
+      { t: 1900, e: 1, i: 'use', v: 'use', by: B },
+    ])
+  })
+
+  test('the hooks never return a value, which would block the input or the use: tracked or not, listed or not, and when the recording itself fails', () => {
+    const r = play(`${on}
+      local d = Part("func_door", "*8", "door")
+      Begin() Run(1)
+      local bad = Part("func_door", "*9", "bad") bad.badindex = true
+      OUT = {
+        tracked = FireValues("AcceptInput", d, "open", A, A),
+        unlisted = FireValues("AcceptInput", d, "kill", A, A),
+        untracked = FireValues("AcceptInput", Part("func_door", "*7", "x"), "open", A, A),
+        notAnEntity = FireValues("AcceptInput", nil, "open", A, A),
+        failing = FireValues("AcceptInput", bad, "open", A, A),
+        use = FireValues("PlayerUse", A, d), useFailing = FireValues("PlayerUse", A, bad), useNothing = FireValues("PlayerUse", A, nil),
+        hooks = HookCount("AcceptInput") + HookCount("PlayerUse"),
+      }
+    `)
+    expect(r.out).toEqual({ tracked: 0, unlisted: 0, untracked: 0, notAnEntity: 0, failing: 0, use: 0, useFailing: 0, useNothing: 0, hooks: 2 })
+  })
+
+  test('a part made during the round is found when the list is made again (every 25th sample), and one that is removed is not looked at again', () => {
+    const r = play(`${on}
+      local d = Part("func_physbox", "*8", "crate", 10, 10, 10)
+      Begin() Run(5)
+      local late = Part("func_physbox", "*9", "made later", 50, 60, 70)
+      Run(19)   -- the 25th sample is tick 24
+      d.removed = true
+      d.x = 999
+      Run(10)
+      Fire("TTTEndRound", WIN_TRAITOR) Accept(1)
+    `)
+    const parts = partsOf(r)
+    expect(parts.map(q => q.m)).toEqual([8, 9])
+    expect(parts[1].k).toEqual([24])
+    expect(parts[1].x).toEqual([50])
+    expect(parts[0].x).toEqual([10]) // never moved while it was there; after it was removed nothing was written
+  })
+
+  test('a failing look at a part ends the parts and not the round', () => {
+    const r = play(`${on}
+      local d = Part("func_door", "*8", "door") d.badpos = true
+      Begin() Run(4)
+      Fire("TTTEndRound", WIN_TRAITOR) Accept(1)
+    `)
+    expect(trackOf(r).parts).toBeUndefined()
+    expect(trackOf(r).t).toHaveLength(5)
+    expect(segOf(trackOf(r), A).x).toHaveLength(5)
+    expect(r.printed.join('\n')).toMatch(/recording the parts failed, they are left out/)
+  })
+
+  test('the caps: 256 parts, 1,024 inputs; beyond them the track is flagged truncated', () => {
+    const r = play(`${on}
+      for i = 1, 300 do Part("func_door", "*" .. i, "d" .. i) end
+      Begin() Run(1)
+      local d = ENTS[1]
+      for i = 1, 1100 do Fire("AcceptInput", d, i % 2 == 0 and "open" or "close", A, A) end
+      Fire("TTTEndRound", WIN_TRAITOR) Accept(1)
+    `)
+    expect(partsOf(r)).toHaveLength(256)
+    expect(inputsOf(r)).toHaveLength(1024)
+    expect(trackOf(r).truncated).toBe(true)
+  })
+
+  test('the hooks go when the round ends, when the recording is switched off in the middle of it, and when the next round is prepared', () => {
+    const r = play(`${on}
+      Part("func_door", "*8", "door")
+      Begin() Run(1)
+      local during = HookCount("AcceptInput")
+      Fire("TTTEndRound", WIN_TRAITOR) Accept(1)
+      local afterEnd = HookCount("AcceptInput") + HookCount("PlayerUse")
+      Begin() Run(1)
+      SetCv("traitordash_track", "0") Run(1)
+      local afterSwitchOff = HookCount("AcceptInput") + HookCount("PlayerUse")
+      SetCv("traitordash_track", "1") Begin() Run(1)
+      Fire("TTTPrepareRound")
+      OUT = { during = during, afterEnd = afterEnd, afterSwitchOff = afterSwitchOff, afterPrepare = HookCount("AcceptInput") + HookCount("PlayerUse") }
+    `)
+    expect(r.out).toEqual({ during: 1, afterEnd: 0, afterSwitchOff: 0, afterPrepare: 0 })
+  })
+
+  test('what the bridge sends of the parts passes the backend\'s own validation', () => {
+    const r = play(`${on}
+      local d = Part("func_movelinear", "*98", "building_collapse", 160, 2240, -602, 0)
+      local f = Part("func_rotating", "*20", "Clock")
+      Begin()
+      for i = 1, 30 do
+        f.yaw = (f.yaw + 17) % 360 if f.yaw > 180 then f.yaw = f.yaw - 360 end -- the angle the game gives is -180 to 180
+        if i == 8 then Fire("AcceptInput", d, "Open", A, A) end
+        if i >= 9 and i <= 14 then d.z = d.z - 40 end
+        if i == 12 then Fire("PlayerUse", B, d) end
+        Run(1)
+      end
+      Fire("TTTEndRound", WIN_TRAITOR) Accept(1)
+    `)
+    const round = roundOf(r), track = trackOf(r)
+    const check = validateTrack(track, { roundId: round.round_id, map: round.map, players: new Set(round.players.map((p: any) => p.steam_id)) })
+    expect(check).toMatchObject({ ok: true })
+    if (check.ok) {
+      expect(check.track.parts).toHaveLength(2)
+      expect(check.track.inputs!.map(i => `${i.i}/${i.v}`)).toEqual(['open/input', 'use/use'])
+      const door = check.track.parts!.find(q => q.m === 98)!
+      expect(rebuild(door.z).at(-1)).toBe(-602 - 40 * 6)
     }
   })
 })
