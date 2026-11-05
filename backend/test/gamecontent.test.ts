@@ -185,7 +185,8 @@ while read -r f; do [ -z "$f" ] && continue; mkdir -p "$OUT/$(dirname "$f")"; cp
   test('texture names are normalised, and anything that is not a texture path is refused', () => {
     expect(texturePathName('materials/Models/Props/De_Inferno/Bush.vtf')).toBe('materials/models/props/de_inferno/bush.vtf')
     expect(texturePathName('./materials\\glass\\pane.vtf')).toBe('materials/glass/pane.vtf')
-    for (const bad of ['../etc/passwd.vtf', 'materials/../x.vtf', 'materials/a.vmt', 'models/a.vtf', '/materials/a.vtf', 'materials/a\0.vtf', 'materials//a.vtf', 'materials/a;b.vtf']) expect(texturePathName(bad)).toBeNull()
+    expect(texturePathName('materials/Glass/Pane.VMT')).toBe('materials/glass/pane.vmt')
+    for (const bad of ['../etc/passwd.vtf', 'materials/../x.vtf', 'materials/a.vmf', 'models/a.vtf', '/materials/a.vtf', 'materials/a\0.vtf', 'materials//a.vtf', 'materials/a;b.vtf']) expect(texturePathName(bad)).toBeNull()
   })
 
   test('fetches the archives that hold the wanted textures, keeps the textures, answers by the path asked, and deletes the archives', async () => {
@@ -196,6 +197,16 @@ while read -r f; do [ -z "$f" ] && continue; mkdir -p "$OUT/$(dirname "$f")"; cp
     expect(Buffer.from(answer.files.get('materials\\glass\\pane.vtf')!).toString()).toBe('pane texture')
     expect(calls()).toHaveLength(4) // an index for each app, an archive for each package
     expect(readdirSync(scratch)).toEqual([])
+  })
+
+  test('a material file is fetched like a texture, by path, and kept apart from the texture of the same name', async () => {
+    const answer = await content().textures(['materials/glass/pane.vmt', 'materials/glass/pane.vtf'])
+    expect(answer.error).toBeUndefined()
+    expect(Buffer.from(answer.files.get('materials/glass/pane.vmt')!).toString()).toBe('not asked for')
+    expect(Buffer.from(answer.files.get('materials/glass/pane.vtf')!).toString()).toBe('pane texture')
+    const before = calls().length
+    expect((await content().textures(['materials/glass/pane.vmt'])).files.size).toBe(1) // from the cache
+    expect(calls()).toHaveLength(before)
   })
 
   test('asks for nothing again once the textures are cached, also after a restart; names that are no texture are never looked up', async () => {

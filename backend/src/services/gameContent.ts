@@ -49,8 +49,8 @@ export function modelBase(name: string): string | null {
   return MODEL_NAME.test(n) && !n.includes('..') && !n.includes('//') ? n.slice(0, -4) : null
 }
 
-const TEXTURE_NAME = /^materials\/[a-z0-9_\-/. ]+\.vtf$/
-/** `materials/models/props/de_inferno/bush.vtf` from whatever a material wrote (capitals, backslashes), or null for a name that is not a texture path. */
+const TEXTURE_NAME = /^materials\/[a-z0-9_\-/. ]+\.(vtf|vmt)$/
+/** `materials/models/props/de_inferno/bush.vtf` (or `.vmt`, the material that names it) from whatever a material wrote (capitals, backslashes), or null for a name that is not one of them. */
 export function texturePathName(name: string): string | null {
   const n = name.toLowerCase().replace(/\\/g, '/').replace(/^(\.\/)+/, '')
   return TEXTURE_NAME.test(n) && !n.includes('..') && !n.includes('//') ? n : null
@@ -64,7 +64,7 @@ export class GameContentError extends Error {}
 /** What the game's files are asked for: models, and the animation sets they include. */
 export interface GameContentSource {
   models: StockModels
-  /** The game's own textures (RFC 18, 4.7): the `.vtf` files of the paths asked for, by path; those the game does not have are left out. */
+  /** The game's own materials and textures (RFC 18, 4.7): the `.vmt` and `.vtf` files of the paths asked for, by path; those the game does not have are left out. */
   textures: StockTextures
   animations: (name: string) => Promise<{ files: AnimationFiles | null, error?: string }>
 }
@@ -77,7 +77,7 @@ export function gameContent(opts: GameContentOptions = {}): GameContentSource & 
   const limits = { maxBytes: maxArchive + 64 * 1024 * 1024, timeoutMs: opts.timeoutMs ?? 20 * 60_000 }
   const indexes: (VpkIndex | null)[] = sources.map(() => null)
   const modelPath = (base: string, ext: string) => join(root, 'models', `${cacheKey(base)}.${ext}`)
-  const texturePath = (path: string) => join(root, 'textures', `${cacheKey(path)}.vtf`)
+  const texturePath = (path: string) => join(root, 'textures', `${cacheKey(path)}.${path.slice(-3)}`)
   const indexPath = (i: number) => join(root, 'index', sources[i]!.app, sources[i]!.dir)
 
   /** Runs the helper once for exact paths of one app and returns the directory they landed in (the caller removes it). */
@@ -201,7 +201,7 @@ export function gameContent(opts: GameContentOptions = {}): GameContentSource & 
     return error
   }
 
-  /** The textures of the paths asked for (`materials/<name>.vtf`), from the cache or the archives that hold them. */
+  /** The materials and textures of the paths asked for (`materials/<name>.vmt` or `.vtf`), from the cache or the archives that hold them. */
   async function runTextures(paths: string[]): Promise<{ files: Map<string, Uint8Array>, error?: string }> {
     const result = new Map<string, Uint8Array>()
     const need = new Map<string, string[]>() // the path as the game knows it -> the paths asked

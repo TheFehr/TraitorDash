@@ -234,12 +234,50 @@ describe('the leaves have their textures (RFC 18, 4.6)', () => {
     expect((await validator.validateBytes(b.glb)).issues.numErrors).toBe(0)
   })
 
+  test('a stock model whose material is the game\'s own is read with it: a light shaft is a glow of its texture\'s brightness, not a solid column', async () => {
+    const shaft = buildModel({ textures: ['vol_light001'], cdTextures: ['models\\effects\\'], meshes: [{ material: 0, vertices: [A, B, C], tris: [0, 1, 2], uvs: [[0, 0], [1, 0], [0, 1]] }] })
+    const { src, header } = await open({}, [{ model: 'models/effects/vol_light.mdl', x: 100, y: 100 }])
+    const stock = async () => ({ models: new Map([['models/effects/vol_light.mdl', { mdl: shaft.mdl, vvd: shaft.vvd, vtx: shaft.vtx }]]) })
+    // a 4 by 4 DXT5 texture with an opaque, bright and dark half: the shaft is dark at the edge and bright in the middle
+    const tex = texture('x', 4)
+    const asked: string[][] = []
+    const files = new Map<string, Uint8Array>([
+      ['materials/models/effects/vol_light001.vmt', Buffer.from('"UnlitGeneric"\n{\n\t"$baseTexture" "Models/Effects/vol_light001"\n\t"$additive" "1"\n}')],
+      ['materials/models/effects/vol_light001.vtf', tex],
+    ])
+    const textures = async (paths: string[]) => { asked.push(paths); return { files: new Map(paths.filter(p => files.has(p)).map(p => [p, files.get(p)!])) } }
+    const got = await buildPropSet(src, header, [], around, undefined, stock, textures)
+    expect(asked[0]).toContain('materials/models/effects/vol_light001.vmt') // the material was asked of the game
+    const m = got.set.models[0]!
+    expect(m.solid).toEqual([]); expect(m.foliage).toHaveLength(9) // not a solid prop
+    expect(m.foliageRuns).toEqual([{ material: 0, triangles: 1 }])
+    expect(got.set.leafMaterials![0]).toMatchObject({ mode: 'blend', alpha: 1 })
+    expect(got.report).toMatchObject({ fromGame: 1, foliageModels: 1, leafTextures: 1, leafTexturesFromGame: 1 })
+  })
+
+  test('glass: a translucent material with no alpha in its texture and none of its own is see-through by default; one with an $alpha, or with alpha in its texture, keeps its own', async () => {
+    const opaque = Buffer.from(texture('x', 4)); // blocks with a0 = 255 and a1 = 255: every alpha 255
+    for (let b = 0; b < 1; b++) Buffer.from(block(255, 255, Array(16).fill(0))).copy(opaque, 80 + b * 16)
+    const glass = async (vmt: string, tex: Buffer) => {
+      const { src, header } = await place(vmt, { 'materials/models/test/glasstex.vtf': tex })
+      return (await buildPropSet(src, header, [], around)).set.leafMaterials![0]!
+    }
+    const plain = '"VertexLitGeneric" { "$basetexture" "models/test/glasstex" "$translucent" 1 }'
+    expect((await glass(plain, opaque)).alpha).toBe(0.4)
+    expect((await glass('"VertexLitGeneric" { "$basetexture" "models/test/glasstex" "$translucent" 1 "$alpha" 0.7 }', opaque)).alpha).toBe(0.7)
+    const holes = Buffer.from(opaque); Buffer.from(block(0, 255, Array(16).fill(0))).copy(holes, 80)
+    expect((await glass(plain, holes)).alpha).toBe(1) // the texture has its own alpha: that is the shape
+  })
+
   test('the .vmt is read for the texture and the mode; a texture name with anything but a path in it is no texture', () => {
-    expect(parseVmt('"VertexLitGeneric" { "$basetexture" "Models\\Test\\Leaf.vtf" "$alphatest" "1" }')).toEqual({ texture: 'models/test/leaf', mode: 'mask', alpha: 1 })
-    expect(parseVmt('"VertexLitGeneric" { $translucent 1\n $basetexture models/test/glass\n $alpha 2 }')).toEqual({ texture: 'models/test/glass', mode: 'blend', alpha: 1 }) // $alpha over 1 is not a number to use
+    expect(parseVmt('"VertexLitGeneric" { "$basetexture" "Models\\Test\\Leaf.vtf" "$alphatest" "1" }')).toEqual({ texture: 'models/test/leaf', mode: 'mask', alpha: 1, explicitAlpha: false, additive: false })
+    expect(parseVmt('"VertexLitGeneric" { $translucent 1\n $basetexture models/test/glass\n $alpha 2 }')).toEqual({ texture: 'models/test/glass', mode: 'blend', alpha: 1, explicitAlpha: false, additive: false }) // $alpha over 1 is not a number to use
     expect(parseVmt('"VertexLitGeneric" { "$basetexture" "../../etc/passwd" "$alphatest" 1 }')!.texture).toBeNull()
     expect(parseVmt('"VertexLitGeneric" { "$basetexture" "a;b" "$alphatest" 1 }')!.texture).toBeNull()
     expect(parseVmt('"VertexLitGeneric" { "$basetexture" "x" }')).toBeNull() // not foliage
+    expect(parseVmt('"VertexLitGeneric" { "$basetexture" "x" "$translucent" 1 "$alpha" 0.25 }')).toMatchObject({ mode: 'blend', alpha: 0.25, explicitAlpha: true })
+    // a light shaft or a glow adds its colour: it is foliage-like (not solid), blended, and marked
+    expect(parseVmt('"UnlitGeneric"\n{\n\t"$baseTexture" "Models/Effects/vol_light001"\n\t"$nocull" "1"\n\t"$additive" "1"\n//\t"$translucent" "1"\n}')).toEqual({ texture: 'models/effects/vol_light001', mode: 'blend', alpha: 1, explicitAlpha: false, additive: true })
   })
 })
 

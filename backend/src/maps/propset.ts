@@ -56,24 +56,41 @@ export interface PropReport {
   stockError?: string
 }
 
-const FOLIAGE = /["']?\$(alphatest|translucent)["']?\s+["']?1/i
+const FOLIAGE = /["']?\$(alphatest|translucent|additive)["']?\s+["']?1/i
+const ADDITIVE = /["']?\$additive["']?\s+["']?1/i
 const ALPHATEST = /["']?\$alphatest["']?\s+["']?1/i
 const BASETEXTURE = /["']?\$basetexture["']?\s+(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s"'{}]+))/i
 const ALPHA = /["']?\$alpha["']?\s+["']?([0-9.]+)/i
 
 /** What a foliage material (a `.vmt`) says that is needed to draw its leaves: the texture, whether it is cut out or translucent, and how much. */
-interface Vmt { texture: string | null, mode: 'mask' | 'blend', alpha: number }
+interface Vmt {
+  texture: string | null
+  mode: 'mask' | 'blend'
+  alpha: number
+  /** The material says its own `$alpha`; else a translucent texture with no alpha channel of its own gets a default (glass is not opaque). */
+  explicitAlpha: boolean
+  /** Added to what is behind it (a light shaft, a glow), which a plain blend cannot do: its brightness is made the alpha. */
+  additive: boolean
+}
 /** null for a material that is not foliage. */
 export function parseVmt(text: string): Vmt | null {
   if (!FOLIAGE.test(text)) return null
   const found = BASETEXTURE.exec(text)
   const texture = (found?.[1] ?? found?.[2] ?? found?.[3])?.trim().toLowerCase().replace(/\\/g, '/').replace(/\.vtf$/, '') ?? null
   const alpha = Number(ALPHA.exec(text)?.[1])
-  return { texture: texture && /^[a-z0-9_ ./-]{1,200}$/.test(texture) && !texture.includes('..') ? texture : null, mode: ALPHATEST.test(text) ? 'mask' : 'blend', alpha: Number.isFinite(alpha) && alpha >= 0 && alpha <= 1 ? alpha : 1 }
+  return {
+    texture: texture && /^[a-z0-9_ ./-]{1,200}$/.test(texture) && !texture.includes('..') ? texture : null,
+    mode: ALPHATEST.test(text) ? 'mask' : 'blend',
+    alpha: Number.isFinite(alpha) && alpha >= 0 && alpha <= 1 ? alpha : 1,
+    explicitAlpha: Number.isFinite(alpha) && alpha >= 0 && alpha <= 1,
+    additive: ADDITIVE.test(text) && !ALPHATEST.test(text),
+  }
 }
 
 /** The textures of the leaves: how many, how big (the longer side) and how many bytes of PNG a map may have (RFC 18, 7). */
-export const LEAF_LIMITS = { textures: 24, side: 256, pngBytes: 4 * 1024 * 1024, memberBytes: 24 * 1024 * 1024, /** Textures asked of the game's own files for one map. */ stockTextures: 64 }
+export const LEAF_LIMITS = { textures: 24, side: 256, pngBytes: 4 * 1024 * 1024, memberBytes: 24 * 1024 * 1024, /** Textures asked of the game's own files for one map. */ stockTextures: 64, /** Material files (`.vmt`) asked of them: every path a model could have its materials at, most of which do not exist. */ stockMaterials: 600 }
+/** How see-through a translucent material is when neither its texture nor the material says (the glass of a window). */
+export const DEFAULT_TRANSLUCENT = 0.4
 
 /**
  * The game's own models (RFC 18, 4.5): the files of the models it has, by model name; names it does not have are left out.
@@ -81,7 +98,7 @@ export const LEAF_LIMITS = { textures: 24, side: 256, pngBytes: 4 * 1024 * 1024,
  */
 export type StockModels = (names: string[]) => Promise<{ models: Map<string, ModelFiles>, error?: string }>
 
-/** The game's own textures (RFC 18, 4.7): the `.vtf` files of the paths asked (`materials/<name>.vtf`), by path; those the game does not have are left out. */
+/** The game's own materials and textures (RFC 18, 4.7): the `.vmt` and `.vtf` files of the paths asked (`materials/<name>.vmt`), by path; those the game does not have are left out. */
 export type StockTextures = (paths: string[]) => Promise<{ files: Map<string, Uint8Array>, error?: string }>
 
 /** The three files of a model in the map's pack, or null when they are not all there. */
@@ -95,7 +112,7 @@ async function packFiles(src: ByteSource, pak: Pak, name: string): Promise<Model
   return mdl && vvd && vtx ? { mdl, vvd, vtx } : null
 }
 
-/** The mesh of a model from its files, and the answer to "is this material foliage" for the materials it names (those in the pack; the game's own count as solid). */
+/** The mesh of a model from its files, and the answer to "is this material foliage" for the materials it names (in the pack, or the game's own that `buildPropSet` has read). */
 async function loadModel(src: ByteSource, pak: Pak, files: ModelFiles, foliageCache: Map<string, Vmt | null>, maxTriangles: number): Promise<'unreadable' | 'big' | ModelMesh> {
   // First ask which materials the model names, read those that are in the pack, then ask again with the answers.
   const wanted = new Set<string>()
@@ -103,7 +120,8 @@ async function loadModel(src: ByteSource, pak: Pak, files: ModelFiles, foliageCa
     return readModel(files, () => false, Infinity) ? 'big' : 'unreadable'
   }
   for (const path of wanted) {
-    if (foliageCache.has(path) || !pak.entries.has(path)) continue
+    if (foliageCache.has(path)) continue // (the game's own were put there by `buildPropSet`)
+    if (!pak.entries.has(path)) { foliageCache.set(path, null); continue }
     const text = await readPakMember(src, pak, path, { maxMemberBytes: 64 * 1024 })
     foliageCache.set(path, text ? parseVmt(Buffer.from(text).toString('latin1')) : null)
   }
@@ -127,8 +145,11 @@ class LeafBook {
   fromGame = 0
   constructor(private src: ByteSource, private pak: Pak, private cache: Map<string, Vmt | null>) {}
 
-  private async textureOf(name: string): Promise<number | null> {
-    if (this.texture.has(name)) return this.texture.get(name)!
+  private alphaOf = new Map<number, boolean>()
+
+  private async textureOf(name: string, additive: boolean): Promise<number | null> {
+    const key = additive ? `${name}|additive` : name
+    if (this.texture.has(key)) return this.texture.get(key)!
     let index: number | null = null
     const path = `materials/${name}.vtf`
     const inPack = this.pak.entries.has(path)
@@ -136,16 +157,21 @@ class LeafBook {
       const file = inPack ? await readPakMember(this.src, this.pak, path, { maxMemberBytes: LEAF_LIMITS.memberBytes }) : this.stock.get(path)!
       const pixels = file && file.length <= LEAF_LIMITS.memberBytes ? readVtf(file, LEAF_LIMITS.side) : null
       if (pixels) {
+        let clear = false
+        for (let i = 3; i < pixels.rgba.length; i += 4) if (pixels.rgba[i]! < 250) { clear = true; break }
+        // an additive material adds its colour to what is behind it: dark is nothing and bright is a glow, so the brightness is the alpha
+        if (additive) for (let i = 0; i < pixels.rgba.length; i += 4) { pixels.rgba[i + 3] = Math.round(Math.max(pixels.rgba[i]!, pixels.rgba[i + 1]!, pixels.rgba[i + 2]!) * 0.7); clear = true }
         const png = encodePng(pixels.width, pixels.height, pixels.rgba)
         if (this.bytes + png.length <= LEAF_LIMITS.pngBytes) {
           this.bytes += png.length
           if (!inPack) this.fromGame++
           index = this.textures.length
-          this.textures.push({ name, width: pixels.width, height: pixels.height, png })
+          this.alphaOf.set(index, clear)
+          this.textures.push({ name: key, width: pixels.width, height: pixels.height, png })
         }
       }
     }
-    this.texture.set(name, index)
+    this.texture.set(key, index)
     return index
   }
 
@@ -154,9 +180,14 @@ class LeafBook {
     const known = this.material.get(vmtPath)
     if (known !== undefined) return known
     const vmt = this.cache.get(vmtPath)
-    const texture = vmt?.texture ? await this.textureOf(vmt.texture) : null
+    const texture = vmt?.texture ? await this.textureOf(vmt.texture, vmt.additive) : null
     let index = -1
-    if (vmt && texture !== null) { index = this.materials.length; this.materials.push({ name: vmtPath, texture, mode: vmt.mode, alpha: vmt.alpha }) }
+    if (vmt && texture !== null) {
+      // glass: a translucent material whose texture has no alpha and that names no `$alpha` is drawn see-through, not as a solid pane
+      const alpha = vmt.mode === 'blend' && !vmt.explicitAlpha && !this.alphaOf.get(texture) ? DEFAULT_TRANSLUCENT : vmt.alpha
+      index = this.materials.length
+      this.materials.push({ name: vmtPath, texture, mode: vmt.mode, alpha })
+    }
     this.material.set(vmtPath, index)
     return index
   }
@@ -204,21 +235,33 @@ export async function buildPropSet(
       loaded.set(name, r.solid.length + r.foliage.length === 0 ? null : { solid: r.solid, foliage: r.foliage, foliageUv: r.foliageUv, runs: r.foliageRuns, triangles: (r.solid.length + r.foliage.length) / 9 })
     }
   }
+  // The files of every model first (the map's pack, then the game's own), then the materials they name that the pack does not have (the game's
+  // own, in one request), then the models: a light shaft of the game is a material of the game, and without it is a solid grey column.
+  const files = new Map<string, ModelFiles>()
   const missing: string[] = []
   for (const name of names) {
-    const files = await packFiles(src, pak, name)
-    if (files) settle(name, await loadModel(src, pak, files, foliageCache, limits.maxModelTriangles))
+    const found = await packFiles(src, pak, name)
+    if (found) files.set(name, found)
     else missing.push(name)
   }
   const answer = stock && missing.length ? await stock(missing) : { models: new Map<string, ModelFiles>() }
-  const game = answer.models
   if ('error' in answer && answer.error) report.stockError = answer.error
   for (const name of missing) {
-    const files = game.get(name)
-    if (!files) { settle(name, 'unavailable'); continue }
+    const got = answer.models.get(name)
+    if (!got) { settle(name, 'unavailable'); continue }
     fromGame.add(name)
-    settle(name, await loadModel(src, pak, files, foliageCache, limits.maxModelTriangles))
+    files.set(name, got)
   }
+  if (stockTextures) {
+    const wantedVmts = new Set<string>()
+    for (const f of files.values()) readModel(f, paths => { for (const p of paths) if (!pak.entries.has(p)) wantedVmts.add(p); return false }, limits.maxModelTriangles)
+    if (wantedVmts.size > 0) {
+      const got = await stockTextures([...wantedVmts].slice(0, LEAF_LIMITS.stockMaterials))
+      for (const [path, bytes] of got.files) foliageCache.set(path, parseVmt(Buffer.from(bytes).toString('latin1')))
+      if (got.error) report.stockError ??= got.error
+    }
+  }
+  for (const [name, f] of files) settle(name, await loadModel(src, pak, f, foliageCache, limits.maxModelTriangles))
 
   // The leaves whose texture is not in the pack are the game's own (a bush of Counter-Strike, a window of Half-Life 2): asked for together, one request for the map.
   if (stockTextures) {
