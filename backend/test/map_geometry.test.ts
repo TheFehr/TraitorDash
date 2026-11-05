@@ -371,6 +371,35 @@ describe('rebuilding a mesh of an older generation (RFC 18)', () => {
     expect(Store.getGeometryQueue()).toEqual([])
   })
 
+  test('how far the build is: maps waiting, done and failed, the map being built, and a line on the maps page for an admin only while something waits', async () => {
+    const maps = () => req(`/servers/${serverId}/maps`).then((r: Response) => r.text())
+    expect(Store.getGeometryProgress()).toEqual({ total: 0, pending: 0, failed: 0 }) // nothing asked for
+    await toggle(serverId, 'ttt_a', true)
+    expect(Store.getGeometryProgress()).toEqual({ total: 1, pending: 1, failed: 0 }) // asked for and not built yet
+    let during: string | null = 'unset'
+    const f = writer(file)
+    const watching = async (map: string) => { during = geo.geometryBuilding(); return f(map) }
+    expect(await maps()).toContain('data-geometry-progress'); expect(await maps()).toContain('0 of 1 done')
+    expect(await geo.runGeometryQueue(watching as any)).toBe(1)
+    expect(during).toBe('ttt_a') // named while it is being built
+    expect(geo.geometryBuilding()).toBeNull() // and not after
+    expect(Store.getGeometryProgress()).toEqual({ total: 1, pending: 0, failed: 0 })
+    expect(await maps()).not.toContain('data-geometry-progress') // nothing waits
+    makeOld() // an update of the extractor: the map is rebuilt, and keeps its mesh meanwhile
+    expect(Store.getGeometryProgress()).toEqual({ total: 1, pending: 1, failed: 0 })
+    const admin = await maps()
+    expect(admin).toContain('0 of 1 done'); expect(admin).toContain('keeps its earlier 3D view until its new one is ready')
+    expect(await (await req(`/servers/${serverId}/maps`, {}, false)).text()).not.toContain('data-geometry-progress') // not for a visitor
+    await geo.runGeometryQueue(f)
+    expect(Store.getGeometryProgress().pending).toBe(0)
+  })
+
+  test('a failed build is counted as failed, not as waiting, and the line counts the ones that are done', async () => {
+    await toggle(serverId, 'ttt_a', true)
+    await geo.runGeometryQueue((async () => ({ error: 'The download failed.' })) as any)
+    expect(Store.getGeometryProgress()).toEqual({ total: 1, pending: 0, failed: 1 })
+  })
+
   test('a rebuild that fails keeps the mesh that is there, says why, and is not retried at every report', async () => {
     await parse()
     makeOld()

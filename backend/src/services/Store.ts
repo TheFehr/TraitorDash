@@ -566,6 +566,24 @@ export class Store {
     `).all(wantedMeshVersion()) as any[]
   }
 
+  /**
+   * How far the 3D maps are: of the maps that were asked for (each map file once), how many are waiting for a build or a rebuild after an update of
+   * the extractor (RFC 18, mesh generations), how many are done, and how many failed. A rebuild keeps the old mesh in place, so `pending` is the
+   * only sign of it.
+   */
+  static getGeometryProgress(): { total: number, pending: number, failed: number } {
+    const row = db.prepare(`
+      SELECT COUNT(*) AS total,
+             COALESCE(SUM(CASE WHEN g.status IS NULL OR (g.status = 'parsed' AND g.version < ?) THEN 1 ELSE 0 END), 0) AS pending,
+             COALESCE(SUM(CASE WHEN g.status = 'failed' THEN 1 ELSE 0 END), 0) AS failed
+      FROM (SELECT r.map_name, m.fingerprint FROM map_geometry_requests r
+            JOIN server_maps m ON m.server_id = r.server_id AND m.name = r.map_name AND m.fingerprint IS NOT NULL
+            GROUP BY r.map_name, m.fingerprint) q
+      LEFT JOIN map_geometry g ON g.map_name = q.map_name AND g.fingerprint = q.fingerprint
+    `).get(wantedMeshVersion()) as { total: number, pending: number, failed: number }
+    return row
+  }
+
   /** Records that a job has taken the map (so it is not started twice), or replaces an earlier failure. */
   static startGeometry(map: string, fingerprint: string): boolean {
     // A stored mesh of an older generation is rebuilt: it stays in place (and is drawn) until the new one replaces it.

@@ -22,7 +22,7 @@ import { MapsPage, MapFilePage, MapViewPage, nextOf, type KillzonesView } from '
 import { renderKillzonesSvg, squaresOf, hottest, storeysOf, baseOfMap, baseOfPlan, rootSizeOf, footprintOfMap, footprintOfPlan, listedStoreys } from './services/killzones'
 import { flattened, storeyAt } from './maps/topdown'
 import { NAME } from './services/validators'
-import { geometryEnabled, kickGeometryQueue, setGeometryFetcher, setStockModels, setStockTextures } from './services/mapgeometry'
+import { geometryBuilding, geometryEnabled, kickGeometryQueue, setGeometryFetcher, setStockModels, setStockTextures } from './services/mapgeometry'
 import { gameContent, gameContentEnabled } from './services/gameContent'
 import { isPose, playerModel, setPlayerModelContent } from './services/playermodel'
 import { helperAvailable, workshopFetcher } from './services/workshop'
@@ -314,7 +314,8 @@ app.get('/servers/:serverId/maps', async (c) => {
     : undefined
   return respond(c, ctx,
     <MapsPage ctx={ctx} server={server} state={state} maps={maps} activity={stats.getMapActivity(serverId)} showAll={admin && c.req.query('all') === '1'}
-      plans={admin ? Store.getMapPlans(serverId) : undefined} meshes={meshes} viewLogDays={viewLogDays()} />)
+      plans={admin ? Store.getMapPlans(serverId) : undefined} meshes={meshes} viewLogDays={viewLogDays()}
+      progress={admin && geometryEnabled() ? { ...Store.getGeometryProgress(), building: geometryBuilding() } : undefined} />)
 })
 
 const geometryProp = (serverId: string, name: string) => {

@@ -75,9 +75,11 @@ export interface MapsPageProps {
   meshes?: Set<string>
   /** How many days a 3D view is logged (RFC 13, 6.3); 0 means it is not. */
   viewLogDays?: number
+  /** How far the build of the 3D maps is (RFC 18); given to admins, when the feature is on. */
+  progress?: { total: number, pending: number, failed: number, building: string | null }
 }
 
-export const MapsPage = ({ ctx, server, state, maps, activity, showAll, plans, meshes, viewLogDays = 0 }: MapsPageProps) => {
+export const MapsPage = ({ ctx, server, state, maps, activity, showAll, plans, meshes, viewLogDays = 0, progress }: MapsPageProps) => {
   const id = server.id
   const admin = adminOf(ctx)
   const next = nextOf(state)
@@ -99,6 +101,12 @@ export const MapsPage = ({ ctx, server, state, maps, activity, showAll, plans, m
               <Num label="Votable now" value={known ? maps.filter(m => m.votable === true).length : '–'} />
               <Num label="Running map" value={state.current ? prettyMap(state.current) : '–'} />
             </div>
+            {admin && progress && progress.pending > 0 && (
+              <p class="foot" data-geometry-progress>
+                Building the 3D maps: {progress.total - progress.pending - progress.failed} of {progress.total} done{progress.building ? <>, now <b>{prettyMap(progress.building)}</b></> : ', the next one starts shortly'}
+                {progress.failed > 0 ? ` (${progress.failed} failed)` : ''}. A map keeps its earlier 3D view until its new one is ready.
+              </p>
+            )}
             <div class="g">
               {listed.map(m => {
                 const a = activity.get(m.name)

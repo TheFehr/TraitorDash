@@ -63,6 +63,9 @@ export async function buildGeometry(src: ByteSource, map: string, fingerprint: s
 export type Fetcher = (map: string, fingerprint: string) => Promise<{ path: string, offset?: number, length?: number, cleanup: () => Promise<void> } | { error: string }>
 
 let running = false
+let building: string | null = null
+/** The map the queue is working on now, or null (RFC 18). */
+export const geometryBuilding = () => building
 
 /**
  * Works through the queue one map at a time, sequentially so memory and disk stay bounded. The
@@ -77,6 +80,7 @@ export async function runGeometryQueue(fetcher: Fetcher): Promise<number> {
     for (const job of Store.getGeometryQueue()) {
       if (!Store.startGeometry(job.map, job.fingerprint)) continue
       done++
+      building = job.map
       let got: Awaited<ReturnType<Fetcher>>
       try { got = await fetcher(job.map, job.fingerprint) } catch { got = { error: 'The download failed.' } }
       if ('error' in got) { Store.finishGeometry(job.map, job.fingerprint, { error: got.error }); continue }
@@ -92,7 +96,7 @@ export async function runGeometryQueue(fetcher: Fetcher): Promise<number> {
         await got.cleanup().catch(() => rm(got.path, { force: true }).catch(() => {}))
       }
     }
-  } finally { running = false }
+  } finally { running = false; building = null }
   return done
 }
 
