@@ -58,6 +58,7 @@ export async function buildGeometry(src: ByteSource, map: string, fingerprint: s
       const pak = await readPak(src, header.lumps[40]!)
       const built = await buildSurfaceTextures({
         mappings: surfaces.mappings, faces: surfaces.faces, floors: cleaned.floors, walls: cleaned.walls,
+        parts: surfaces.movableParts,
         floorFaces: pickTags(surfaces.floorFaces, mainAt[0]!), wallFaces: pickTags(surfaces.wallFaces, mainAt[1]!),
       }, src, pak, textures)
       surface = built.surface; surfaceReport = built.report

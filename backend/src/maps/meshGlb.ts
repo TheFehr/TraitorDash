@@ -331,7 +331,7 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
   const material = (name: string, rgb: [number, number, number]) => doc.createMaterial(name).setBaseColorFactor([...rgb, 1]).setMetallicFactor(0).setRoughnessFactor(1).setDoubleSided(true)
   const mats = { floor: material('floor', [0.2, 0.7, 0.3]), wall: material('wall', [0.6, 0.6, 0.65]) }
   // Parts that can move are orange in every colouring, so they cannot be taken for the fixed map.
-  const movableMat = material('movable', [0.93, 0.5, 0.12])
+  const movableMat = material('movable', [0.72, 0.7, 0.63])
   const waterMat = doc.createMaterial('water').setBaseColorFactor([0.23, 0.49, 0.65, 0.55]).setAlphaMode('BLEND').setMetallicFactor(0).setRoughnessFactor(1).setDoubleSided(true)
 
   // The materials of the surfaces (RFC 18, 5): a texture cut as the file says, or a plain colour; the same material is one for the floors and one for the walls
@@ -359,54 +359,56 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
     return mat
   }
 
+  /** The triangles of a soup (and the face each came from) as primitives of a mesh: one for each material of the surface, or one plain (RFC 18, 5). */
+  const addSurface = (mesh: ReturnType<typeof doc.createMesh>, name: string, kind: 'floor' | 'wall', soup: number[], tags: number[], plain: ReturnType<typeof doc.createMaterial>, texturedName = kind) => {
+    if (soup.length === 0) return
+    // A surface with textures is cut into a primitive for each material (none: the plain floor or wall as before)
+    const groups = new Map<number, number[]>()
+    for (let t = 0; t < soup.length / 9; t++) {
+      const material = surface ? surface.materialOf[surface.faces[tags[t]!]!.mapping] ?? -1 : -1
+      const list = groups.get(material)
+      if (list) list.push(t); else groups.set(material, [t])
+    }
+    let k = 0
+    for (const [material, triangles] of groups) {
+      const part = pickTriangles(soup, triangles)
+      const prim = doc.createPrimitive()
+      const def = material >= 0 ? surface!.materials[material] : undefined
+      if (def && def.texture !== null) {
+        // the coordinates of each corner from where it is, as the file of the map projects them; a whole number of tiles is taken off a
+        // triangle (the picture repeats) so that the numbers stay small
+        const uvs: number[] = []
+        triangles.forEach((t, n) => {
+          const mp = surface!.mappings[surface!.faces[tags[t]!]!.mapping]!
+          const c = [0, 1, 2].map(i => mappedUv(mp, part[n * 9 + i * 3]!, part[n * 9 + i * 3 + 1]!, part[n * 9 + i * 3 + 2]!))
+          const du = Math.floor(Math.min(c[0]![0], c[1]![0], c[2]![0])), dv = Math.floor(Math.min(c[0]![1], c[1]![1], c[2]![1]))
+          for (const [u, v] of c) uvs.push(u - du, v - dv)
+        })
+        const { positions, uvs: coords, indices } = indexedUv(part, uvs)
+        info.vertices += positions.length / 3; info.triangles += indices.length / 3; texturedTriangles += indices.length / 3
+        prim.setMaterial(surfaceMaterial(texturedName, material))
+          .setAttribute('POSITION', doc.createAccessor(`${name}-${kind}-positions-${k}`).setType('VEC3').setArray(positions).setBuffer(buffer))
+          .setAttribute('TEXCOORD_0', doc.createAccessor(`${name}-${kind}-uv-${k}`).setType('VEC2').setArray(coords).setBuffer(buffer))
+          .setIndices(doc.createAccessor(`${name}-${kind}-indices-${k}`).setType('SCALAR').setArray(indices).setBuffer(buffer))
+      } else {
+        const { positions, indices } = indexed(part)
+        info.vertices += positions.length / 3; info.triangles += indices.length / 3
+        if (def) colouredTriangles += indices.length / 3
+        prim.setMaterial(def ? surfaceMaterial(texturedName, material) : plain)
+          .setAttribute('POSITION', doc.createAccessor(`${name}-${kind}-positions-${k}`).setType('VEC3').setArray(positions).setBuffer(buffer))
+          .setIndices(doc.createAccessor(`${name}-${kind}-indices-${k}`).setType('SCALAR').setArray(indices).setBuffer(buffer))
+      }
+      mesh.addPrimitive(prim)
+      k++
+    }
+  }
   const info: GlbInfo = { vertices: 0, triangles: 0, droppedDegenerate: dropped, levels: [], storeys, detached: { triangles: 0, parts: 0 }, movable: 0, spawns: 0, waterTriangles: 0, props: { placements: 0, models: 0, triangles: 0 }, cropped }
   byLevel.forEach((lv) => {
     if (lv.floors.length === 0 && lv.walls.length === 0) return
     const index = info.levels.length + 1
     const name = `level-${index}`
     const mesh = doc.createMesh(name)
-    for (const [kind, soup, tags] of [['floor', lv.floors, lv.floorTags], ['wall', lv.walls, lv.wallTags]] as const) {
-      if (soup.length === 0) continue
-      // A surface with textures is cut into a primitive for each material (none: the plain floor or wall as before)
-      const groups = new Map<number, number[]>()
-      for (let t = 0; t < soup.length / 9; t++) {
-        const material = surface ? surface.materialOf[surface.faces[tags[t]!]!.mapping] ?? -1 : -1
-        const list = groups.get(material)
-        if (list) list.push(t); else groups.set(material, [t])
-      }
-      let k = 0
-      for (const [material, triangles] of groups) {
-        const part = pickTriangles(soup, triangles)
-        const prim = doc.createPrimitive()
-        const def = material >= 0 ? surface!.materials[material] : undefined
-        if (def && def.texture !== null) {
-          // the coordinates of each corner from where it is, as the file of the map projects them; a whole number of tiles is taken off a
-          // triangle (the picture repeats) so that the numbers stay small
-          const uvs: number[] = []
-          triangles.forEach((t, n) => {
-            const mp = surface!.mappings[surface!.faces[tags[t]!]!.mapping]!
-            const c = [0, 1, 2].map(i => mappedUv(mp, part[n * 9 + i * 3]!, part[n * 9 + i * 3 + 1]!, part[n * 9 + i * 3 + 2]!))
-            const du = Math.floor(Math.min(c[0]![0], c[1]![0], c[2]![0])), dv = Math.floor(Math.min(c[0]![1], c[1]![1], c[2]![1]))
-            for (const [u, v] of c) uvs.push(u - du, v - dv)
-          })
-          const { positions, uvs: coords, indices } = indexedUv(part, uvs)
-          info.vertices += positions.length / 3; info.triangles += indices.length / 3; texturedTriangles += indices.length / 3
-          prim.setMaterial(surfaceMaterial(kind, material))
-            .setAttribute('POSITION', doc.createAccessor(`${name}-${kind}-positions-${k}`).setType('VEC3').setArray(positions).setBuffer(buffer))
-            .setAttribute('TEXCOORD_0', doc.createAccessor(`${name}-${kind}-uv-${k}`).setType('VEC2').setArray(coords).setBuffer(buffer))
-            .setIndices(doc.createAccessor(`${name}-${kind}-indices-${k}`).setType('SCALAR').setArray(indices).setBuffer(buffer))
-        } else {
-          const { positions, indices } = indexed(part)
-          info.vertices += positions.length / 3; info.triangles += indices.length / 3
-          if (def) colouredTriangles += indices.length / 3
-          prim.setMaterial(def ? surfaceMaterial(kind, material) : mats[kind])
-            .setAttribute('POSITION', doc.createAccessor(`${name}-${kind}-positions-${k}`).setType('VEC3').setArray(positions).setBuffer(buffer))
-            .setIndices(doc.createAccessor(`${name}-${kind}-indices-${k}`).setType('SCALAR').setArray(indices).setBuffer(buffer))
-        }
-        mesh.addPrimitive(prim)
-        k++
-      }
-    }
+    for (const [kind, soup, tags] of [['floor', lv.floors, lv.floorTags], ['wall', lv.walls, lv.wallTags]] as const) addSurface(mesh, name, kind, soup, tags, mats[kind])
     // The heights of the level: those of the corners of its floors, or of its walls when there are no floors at all.
     const zs = lv.floors.length ? lv.floors.filter((_, i) => i % 3 === 2) : lv.walls.filter((_, i) => i % 3 === 2)
     const level: MeshLevel = {
@@ -437,24 +439,32 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
     for (const p of s.movableParts) {
       // The crop keeps a triangle whose centre, once placed, is inside it.
       let soup = p.triangles
+      let tags = p.faces && p.faces.length === soup.length / 9 ? p.faces : []
       if (opts.crop) {
         const m = angleMatrix(p.pitch, p.yaw, p.roll)
-        const kept: number[] = []
-        for (let i = 0; i < soup.length; i += 9) {
+        const keep: number[] = []
+        for (let i = 0, t = 0; i < soup.length; i += 9, t++) {
           const cx = (soup[i]! + soup[i + 3]! + soup[i + 6]!) / 3, cy = (soup[i + 1]! + soup[i + 4]! + soup[i + 7]!) / 3, cz = (soup[i + 2]! + soup[i + 5]! + soup[i + 8]!) / 3
           const wx = m[0]! * cx + m[1]! * cy + m[2]! * cz + p.x, wy = m[3]! * cx + m[4]! * cy + m[5]! * cz + p.y
-          if (wx >= opts.crop.minX && wx <= opts.crop.maxX && wy >= opts.crop.minY && wy <= opts.crop.maxY) for (let k = 0; k < 9; k++) kept.push(soup[i + k]!)
+          if (wx >= opts.crop.minX && wx <= opts.crop.maxX && wy >= opts.crop.minY && wy <= opts.crop.maxY) keep.push(t)
         }
-        soup = kept
+        if (tags.length) tags = pickTags(tags, keep)
+        soup = pickTriangles(soup, keep)
       }
-      soup = withoutDegenerate(soup).kept
+      const live = areaTriangles(soup)
+      if (tags.length) tags = pickTags(tags, live)
+      soup = pickTriangles(soup, live)
       if (soup.length === 0) continue
-      const { positions, indices } = indexed(soup)
-      info.vertices += positions.length / 3
       const name = `movable-${p.model}`
-      const mesh = doc.createMesh(name).addPrimitive(doc.createPrimitive().setMaterial(movableMat)
-        .setAttribute('POSITION', doc.createAccessor(`${name}-positions`).setType('VEC3').setArray(positions).setBuffer(buffer))
-        .setIndices(doc.createAccessor(`${name}-indices`).setType('SCALAR').setArray(indices).setBuffer(buffer)))
+      const mesh = doc.createMesh(name)
+      if (tags.length) addSurface(mesh, name, 'wall', soup, tags, movableMat, 'wall')
+      else {
+        const { positions, indices } = indexed(soup)
+        info.vertices += positions.length / 3
+        mesh.addPrimitive(doc.createPrimitive().setMaterial(movableMat)
+          .setAttribute('POSITION', doc.createAccessor(`${name}-positions`).setType('VEC3').setArray(positions).setBuffer(buffer))
+          .setIndices(doc.createAccessor(`${name}-indices`).setType('SCALAR').setArray(indices).setBuffer(buffer)))
+      }
       const n = soup.length / 9
       triangles += n; count++
       group.addChild(doc.createNode(name).setMesh(mesh).setTranslation([p.x, p.y, p.z]).setRotation(angleQuaternion(p.pitch, p.yaw, p.roll))

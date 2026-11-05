@@ -174,6 +174,9 @@ function alphaOnly(tex: Texture): Texture {
   return out
 }
 
+/** The meshes of a node (none for no node). */
+export const meshesOf = (node: Object3D | null): Mesh[] => { const out: Mesh[] = []; node?.traverse(o => { if ((o as Mesh).isMesh) out.push(o as Mesh) }); return out }
+
 /**
  * The leaves of plants (and the glass) and the solid props: with their textures in the Textured view; in the others a leaf is its cut-out shape in a
  * flat colour and a solid prop is the plain prop colour. The look is kept on the material (which many meshes share), not on the mesh.

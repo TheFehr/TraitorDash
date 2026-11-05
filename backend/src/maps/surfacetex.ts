@@ -33,6 +33,8 @@ export interface SurfaceInput {
   floorFaces: number[]
   walls: number[]
   wallFaces: number[]
+  /** The parts that can move: their triangles (local to the part) and the face of each. */
+  parts?: { triangles: number[], faces?: number[] }[]
 }
 
 const area = (soup: number[], i: number) => {
@@ -53,6 +55,7 @@ export async function buildSurfaceTextures(input: SurfaceInput, src: ByteSource,
   for (const [soup, faces] of [[input.floors, input.floorFaces], [input.walls, input.wallFaces]] as const) {
     for (let i = 0, t = 0; i < soup.length; i += 9, t++) areaOfMapping[input.faces[faces[t]!]!.mapping]! += area(soup, i)
   }
+  for (const p of input.parts ?? []) if (p.faces) for (let i = 0, t = 0; i < p.triangles.length; i += 9, t++) areaOfMapping[input.faces[p.faces[t]!]!.mapping]! += area(p.triangles, i)
   input.mappings.forEach((m, k) => { if (m.material) byMaterial.set(m.material, (byMaterial.get(m.material) ?? 0) + areaOfMapping[k]!) })
   const ranked = [...byMaterial].sort((a, b) => b[1] - a[1]).slice(0, limits.materials).map(([name]) => name)
   report.materials = byMaterial.size

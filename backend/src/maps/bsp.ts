@@ -105,7 +105,9 @@ export interface Fixture { model: number, x: number, y: number, z: number, pitch
  * A part that can move, as the mesh holds it (RFC 20, 4.2): its triangles are local to the entity's origin (as the map file stores
  * them), and the entity's origin and angles place them. `model` is the number the game gives the entity (`*N`), the join with it.
  */
-export interface MovablePart { model: number, class: string, name?: string, x: number, y: number, z: number, pitch: number, yaw: number, roll: number, triangles: number[] }
+export interface MovablePart { model: number, class: string, name?: string, x: number, y: number, z: number, pitch: number, yaw: number, roll: number, triangles: number[]
+  /** The face each triangle came from (an index into `faces`, as the floors have): its mapping is the texture's own, for coordinates local to the part. */
+  faces?: number[] }
 
 /** Source's angles (pitch, yaw, roll, degrees) as a 3 by 3 matrix: a turn by roll about X, then pitch about Y, then yaw about Z (the same as `angleQuaternion` in the mesh writer). */
 export function angleMatrix(pitch: number, yaw: number, roll: number): number[] {
@@ -345,10 +347,12 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
       stats.movableFaces++
       let part = parts.get(fixture.model)
       if (!part) {
-        part = { model: fixture.model, class: fixture.class ?? 'func_door', ...(fixture.name ? { name: fixture.name } : {}), x: fixture.x, y: fixture.y, z: fixture.z, pitch: fixture.pitch, yaw: fixture.yaw, roll: fixture.roll, triangles: [] }
+        part = { model: fixture.model, class: fixture.class ?? 'func_door', ...(fixture.name ? { name: fixture.name } : {}), x: fixture.x, y: fixture.y, z: fixture.z, pitch: fixture.pitch, yaw: fixture.yaw, roll: fixture.roll, triangles: [], faces: [] }
         parts.set(fixture.model, part)
       }
+      faceRecords.push({ mapping: mappingFor(texinfo, null, null) })
       for (let k = 1; k + 1 < corner.length; k++) {
+        part.faces!.push(faceRecords.length - 1)
         for (const v of [corner[0]!, corner[k]!, corner[k + 1]!]) {
           movable.push(...place(v))
           // local to the origin, in sixty-fourths of a unit (exact in a float32; whole units where the map has them)
