@@ -2,7 +2,7 @@
 import {
   WebGLRenderer, OrthographicCamera, Box3, Vector3, Color, Group, Mesh, MeshStandardMaterial, MeshBasicMaterial,
   SphereGeometry, CylinderGeometry, RingGeometry, DoubleSide, ConeGeometry, BoxGeometry, InstancedMesh, Matrix4, Object3D, Plane, Sprite,
-  SpriteMaterial, CanvasTexture, BufferGeometry, Float32BufferAttribute, Line, LineSegments, LineBasicMaterial, AnimationMixer, BufferAttribute, type Material, type AnimationAction, type AnimationClip,
+  SpriteMaterial, CanvasTexture, Raycaster, BufferGeometry, Float32BufferAttribute, Line, LineSegments, LineBasicMaterial, AnimationMixer, BufferAttribute, type Material, type AnimationAction, type AnimationClip,
   type Camera, type MeshStandardMaterial as StdMat,
 } from 'three'
 import { hex } from './teamColours'
@@ -87,7 +87,7 @@ async function start(root: HTMLElement) {
   let followLevel = true
   let upTo: number | 'all' = 'all'
   // What the drawing behind the page does when something changes: the WebGL scene or the flat canvas sets these.
-  const hooks = { paint: () => {}, level: () => {}, walls: (_on: boolean) => {}, resize: () => {} }
+  const hooks = { paint: () => {}, level: () => {}, walls: (_on: boolean) => {}, leaves: (_on: boolean) => {}, resize: () => {} }
 
   // ---- the page's own parts that do not need WebGL: the round's deaths, the player list, the notes
   const notes = el(root, '[data-notes]')
@@ -221,6 +221,7 @@ async function start(root: HTMLElement) {
   const syncFollowBox = () => { if (followBox) followBox.checked = followLevel }
   followBox?.addEventListener('change', () => { followLevel = followBox.checked; changed() })
   el<HTMLInputElement>(root, '[data-walls]')?.addEventListener('change', e => hooks.walls((e.target as HTMLInputElement).checked))
+  el<HTMLInputElement>(root, '[data-leaves]')?.addEventListener('change', e => hooks.leaves((e.target as HTMLInputElement).checked))
 
   // ---- controls
   const playBtn = el<HTMLButtonElement>(root, '[data-play]')!
@@ -372,8 +373,9 @@ async function start(root: HTMLElement) {
     }
   }
 
-  /** Draws `meshes` (props placed in the map) as one mesh for each material, in the place they are; the ones given are hidden. A set that cannot be put together (different attributes) is left as it is. */
-  const mergeDrawn = (root: Object3D, meshes: Mesh[]) => {
+  /** Draws `meshes` (props placed in the map) as one mesh for each material, in the place they are; the ones given are hidden. A set that cannot be put together (different attributes) is left as it is. Returns the merged meshes made. */
+  const mergeDrawn = (root: Object3D, meshes: Mesh[]): Mesh[] => {
+    const made: Mesh[] = []
     const byMaterial = new Map<Material, Mesh[]>()
     for (const m of meshes) { const list = byMaterial.get(m.material as Material); if (list) list.push(m); else byMaterial.set(m.material as Material, [m]) }
     for (const [material, list] of byMaterial) {
@@ -394,14 +396,20 @@ async function start(root: HTMLElement) {
       const one = new Mesh(merged, material)
       one.name = 'props-merged'
       root.add(one)
+      made.push(one)
       for (const m of list) m.visible = false
     }
+    return made
   }
 
   // ---- the background
   const cut = new Plane(new Vector3(0, -1, 0), 1e9)
   const levelNodes: { index: number, node: Object3D }[] = []
   const wallMeshes: Mesh[] = []
+  // The leaves of the map's plants (Glass and leaves, RFC 18): drawn without their textures they are opaque grey sheets, and a camera in a jungle (Yucatan) sees nothing else
+  const leafMeshes: Mesh[] = []
+  // What a body can lie on: the floors of the map and its solid props (not the walls, the leaves or the water)
+  const groundMeshes: Mesh[] = []
   let bounds = new Box3(new Vector3(-512, -512, -64), new Vector3(512, 512, 256)) // Source coordinates
 
   const finish = (b: Box3) => { bounds = b }
@@ -446,7 +454,13 @@ async function start(root: HTMLElement) {
       model.updateMatrixWorld(true)
       // Hundreds of props are hundreds of draw calls, which is what a phone is slowest at: the props of one material are drawn as one mesh
       // (the separate ones stay, unseen, for the camera). Then nothing of the map moves, so its matrices are not worked out again each frame.
-      for (const list of [props.solid, props.foliage]) mergeDrawn(model, list)
+      const mergedSolid = mergeDrawn(model, props.solid)
+      groundMeshes.push(...painted.filter(q => !q.wall).map(q => q.mesh), ...mergedSolid, ...props.solid.filter(m => m.visible))
+      const mergedLeaves = mergeDrawn(model, props.foliage)
+      leafMeshes.push(...mergedLeaves, ...props.foliage.filter(m => m.visible)) // the ones that could not be merged stay as they are
+      const leavesBox = el<HTMLInputElement>(root, '[data-leaves]')
+      for (const m of leafMeshes) m.visible = !!leavesBox?.checked
+      if (leafMeshes.length === 0) leavesBox?.closest('label')?.setAttribute('hidden', '')
       model.traverse(o => { o.matrixAutoUpdate = false })
       const b = boxWithout(model, ['detached']) // in three's Y-up
       // back to Source's Z-up: (x, y, z) three = (x, z, -y) Source
@@ -646,6 +660,28 @@ async function start(root: HTMLElement) {
     if (d) { real.back = -d.min; real.thick = d.max - d.min }
   }
 
+  // A body lies on the ground, not in the air where the player was when they died: shot in a jump, thrown by an explosion, killed on a ledge
+  // (2026-11-05: a body 86 units over the floor on Yucatan). The place of a death is the player's last position; the body is put on the first
+  // floor or prop below it, found with a ray down through the map (once for each death). Without a map drawn it stays where it was recorded.
+  const ray = new Raycaster()
+  const downFrom = new Vector3(), down = new Vector3(0, -1, 0)
+  const grounds = new Map<string, number | null>()
+  const groundBelow = (x: number, y: number, z: number): number | null => {
+    if (groundMeshes.length === 0) return null
+    const key = `${x},${y},${z}`
+    if (grounds.has(key)) return grounds.get(key)!
+    downFrom.set(x, z + 24, -y) // Source's (x, y, z) in three's Y-up world
+    ray.set(downFrom, down)
+    ray.far = 900
+    const sides = groundMeshes.map(m => (m.material as Material).side)
+    for (const m of groundMeshes) (m.material as Material).side = DoubleSide // a floor that faces the other way (a prop's top) still counts
+    const hit = ray.intersectObjects(groundMeshes, false)[0]
+    groundMeshes.forEach((m, i) => { (m.material as Material).side = sides[i]! })
+    const z0 = hit ? hit.point.y : null
+    grounds.set(key, z0)
+    return z0
+  }
+
   interface Look { plain: CanvasTexture, pointer: CanvasTexture, cross: CanvasTexture, label: CanvasTexture }
   interface Marker {
     group: Group, pin: Sprite, label: Sprite, ring: Mesh, trail: Line, corpse: Group, deadPin: Sprite, segs: Segment[]
@@ -841,7 +877,7 @@ async function start(root: HTMLElement) {
       const deathLevel = death && levels.length > 0 && bg.kind !== 'none' ? levelOf(levels, death.at[2]) : 0
       m.corpse.visible = !!death && !(typeof upTo === 'number' && deathLevel > upTo)
       if (death) {
-        m.corpse.position.set(death.at[0], death.at[1], death.at[2])
+        m.corpse.position.set(death.at[0], death.at[1], groundBelow(death.at[0], death.at[1], death.at[2]) ?? death.at[2])
         const last = lastPoseAt(m.segs, death.t)
         m.corpse.rotation.z = last ? (last.yaw / 256) * Math.PI * 2 : 0
       }
@@ -912,6 +948,7 @@ async function start(root: HTMLElement) {
   hooks.paint = apply
   hooks.level = () => { showLevels(); render() }
   hooks.walls = on => { for (const m of wallMeshes) m.visible = on; render() }
+  hooks.leaves = on => { for (const m of leafMeshes) m.visible = on; render() }
   hooks.resize = resize
 
   const setCam = (mode: 'orbit' | 'top' | 'follow') => {
