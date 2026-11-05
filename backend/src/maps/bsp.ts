@@ -127,6 +127,36 @@ const MAX_COORD = 131_072 // Source maps are at most +-16384; room to spare, far
 export interface SurfaceLimits { maxFaces?: number, maxVertices?: number, maxBytes?: number }
 const DEFAULT_LIMITS = { maxFaces: 1_000_000, maxVertices: 2_000_000, maxBytes: 64 * 1024 * 1024 }
 
+/**
+ * How a face is textured (RFC 18, 5): the material it names, the two vectors that project a point of the map onto the texture
+ * (`u = (x * s[0] + y * s[1] + z * s[2] + s[3]) / width`, and the same with `t` for v), and the size of the texture those are
+ * counted in. A brush entity's faces are stored around its own origin, so a face of one carries where it was put.
+ */
+export interface FaceMapping {
+  material: string
+  s: number[]
+  t: number[]
+  width: number
+  height: number
+  /** For a brush entity: where its origin was put and the turn that was applied (a row-major 3 by 3), so the face's own space can be found again. */
+  placed?: { origin: [number, number, number], turn: number[] | null }
+}
+
+/** The texture coordinates of a point of the map, for the face mapping it was drawn with (v is down, as in the file of the texture). */
+export function mappedUv(m: FaceMapping, x: number, y: number, z: number): [number, number] {
+  let px = x, py = y, pz = z
+  if (m.placed) {
+    const dx = x - m.placed.origin[0], dy = y - m.placed.origin[1], dz = z - m.placed.origin[2], r = m.placed.turn
+    // placed = R * local + origin, so local = R^T * (placed - origin)
+    if (r) { px = r[0]! * dx + r[3]! * dy + r[6]! * dz; py = r[1]! * dx + r[4]! * dy + r[7]! * dz; pz = r[2]! * dx + r[5]! * dy + r[8]! * dz } else { px = dx; py = dy; pz = dz }
+  }
+  const w = m.width > 0 ? m.width : 1, h = m.height > 0 ? m.height : 1
+  return [(px * m.s[0]! + py * m.s[1]! + pz * m.s[2]! + m.s[3]!) / w, (px * m.t[0]! + py * m.t[1]! + pz * m.t[2]! + m.t[3]!) / h]
+}
+
+/** One face of the map as the triangles that came from it remember it: how it is textured (an index into `mappings`). */
+export interface FaceRecord { mapping: number }
+
 export interface Surfaces {
   fingerprint: string
   version: number
@@ -134,6 +164,11 @@ export interface Surfaces {
   /** Triangles as flat x, y, z, x, y, z, ... in whole map units. */
   floors: number[]
   walls: number[]
+  /** For each triangle of `floors` and of `walls`, the face it came from: an index into `faces`. */
+  floorFaces: number[]
+  wallFaces: number[]
+  faces: FaceRecord[]
+  mappings: FaceMapping[]
   /** The upward-facing triangles of liquid surfaces; not floors. */
   water: number[]
   /** The triangles of brush entities that can move (any slope), where the map file puts them. */
@@ -240,6 +275,25 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
   const faceList = function* () { for (const [from, n, fx] of ranges) for (let f = from; f < from + n; f++) yield [f, fx] as const }
 
   const floors: number[] = [], walls: number[] = [], water: number[] = [], movable: number[] = []
+  const floorFaces: number[] = [], wallFaces: number[] = []
+  const faceRecords: FaceRecord[] = []
+  // How each face is textured: one mapping for each texinfo and brush entity (a texinfo is shared by faces of a plane, an entity moves them)
+  const mappings: FaceMapping[] = []
+  const mappingOf = new Map<string, number>()
+  const mappingFor = (texinfo: number, fixture: Fixture | null, turn: number[] | null): number => {
+    const key = `${texinfo}|${fixture?.model ?? 0}`
+    const known = mappingOf.get(key)
+    if (known !== undefined) return known
+    const at = texinfo * RECORD.TEXINFO
+    const vec = (o: number) => [0, 1, 2, 3].map(k => { const n = tex.getFloat32(at + o + k * 4, true); return Number.isFinite(n) ? n : 0 })
+    const di = tex.getInt32(at + 68, true)
+    const width = di >= 0 && di < nTexData ? texData.getInt32(di * 32 + 16, true) : 0, height = di >= 0 && di < nTexData ? texData.getInt32(di * 32 + 20, true) : 0
+    const m: FaceMapping = { material: materialOf(texinfo), s: vec(0), t: vec(16), width: width > 0 && width <= 16384 ? width : 0, height: height > 0 && height <= 16384 ? height : 0 }
+    if (fixture) m.placed = { origin: [fixture.x, fixture.y, fixture.z], turn }
+    mappings.push(m)
+    mappingOf.set(key, mappings.length - 1)
+    return mappings.length - 1
+  }
   const parts = new Map<number, MovablePart>()
   const stats = {
     faces: numFaces, floorFaces: 0, wallFaces: 0, ceilingFaces: 0, skipped: 0, otherModelFaces, displacements: 0, displacementTriangles: 0,
@@ -306,7 +360,8 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
 
     if (dispinfo >= 0) {
       stats.displacements++
-      displacement(f, dispinfo, corner, [nx, ny, nz])
+      faceRecords.push({ mapping: mappingFor(texinfo, fixture, turn) })
+      displacement(f, dispinfo, corner, [nx, ny, nz], faceRecords.length - 1)
       continue
     }
 
@@ -318,9 +373,12 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
     if (nz <= -FLOOR_NZ + 1e-6) { stats.ceilingFaces++; continue }
     const isFloor = nz + 1e-6 >= FLOOR_NZ
     if (isFloor) stats.floorFaces++; else stats.wallFaces++
-    const out = isFloor ? floors : walls
+    const out = isFloor ? floors : walls, outFaces = isFloor ? floorFaces : wallFaces
+    faceRecords.push({ mapping: mappingFor(texinfo, fixture, turn) })
+    const record = faceRecords.length - 1
     for (let k = 1; k + 1 < corner.length; k++) {
       for (const v of [corner[0]!, corner[k]!, corner[k + 1]!]) out.push(...place(v))
+      outFaces.push(record)
     }
   }
 
@@ -331,7 +389,7 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
    * alternating like a chessboard. A triangle is a floor, a wall or a ceiling by its own slope, with
    * the face's plane deciding which way is "out" (so the order of the corners does not matter).
    */
-  function displacement(f: number, index: number, corner: number[], out: [number, number, number]) {
+  function displacement(f: number, index: number, corner: number[], out: [number, number, number], record: number) {
     if (index >= nDispInfo) throw new BspError(`face ${f} names a displacement that does not exist`)
     if (corner.length !== 4) throw new BspError(`face ${f} has a displacement but ${corner.length} corners: a displacement is on a quad`)
     const at = index * RECORD.DISPINFO
@@ -379,8 +437,10 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
       if (n[0]! * out[0] + n[1]! * out[1] + n[2]! * out[2] < 0) n = n.map(x => -x) // point it out of the face
       const nz = n[2]! / len
       if (nz <= -FLOOR_NZ + 1e-6) return // a ceiling
-      const target = nz + 1e-6 >= FLOOR_NZ ? floors : walls
+      const isFloor = nz + 1e-6 >= FLOOR_NZ
+      const target = isFloor ? floors : walls
       for (const p of [a, b, d]) target.push(Math.round(p[0]!), Math.round(p[1]!), Math.round(p[2]!))
+      ;(isFloor ? floorFaces : wallFaces).push(record)
     }
     for (let i = 0; i < last; i++) {
       for (let j = 0; j < last; j++) {
@@ -390,7 +450,7 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
     }
   }
 
-  return { fingerprint: header.fingerprint, version: header.version, revision: header.revision, floors, walls, water, movable, movableParts: [...parts.values()].sort((a, b) => a.model - b.model), stats }
+  return { fingerprint: header.fingerprint, version: header.version, revision: header.revision, floors, walls, floorFaces, wallFaces, faces: faceRecords, mappings, water, movable, movableParts: [...parts.values()].sort((a, b) => a.model - b.model), stats }
 }
 
 // ---- the entities we need: spawn points and the 3D skybox camera ---------------------------------

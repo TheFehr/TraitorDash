@@ -3,7 +3,7 @@ import {
   Box3, Vector3, Mesh, MeshStandardMaterial, Plane, type Object3D, type BufferGeometry,
 } from 'three'
 import {
-  applyColouring, boxWithout, COLOURINGS, heightColours, makeCamera, makeRenderer, makeScene, makeSpawnMarkers, mapLoader, prepareDetached, prepareMovable, prepareProps, prepareWater, saveColouring, savedColouring,
+  applyColouring, leafLook, boxWithout, COLOURINGS, heightColours, makeCamera, makeRenderer, makeScene, makeSpawnMarkers, mapLoader, prepareDetached, prepareMovable, prepareProps, prepareWater, saveColouring, savedColouring,
   type Colouring, type Painted, type SpawnPoint,
 } from './sceneKit'
 import { startMapFlat } from './mapflat'
@@ -114,6 +114,7 @@ function start(root: HTMLElement) {
 
   const colour = (mode: Colouring) => {
     applyColouring(painted, mode, levels.length)
+    leafLook(propMeshes.foliage, mode === 'textured')
     root.querySelectorAll<HTMLElement>('[data-colour]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.colour === mode)))
     draw()
   }
@@ -150,9 +151,9 @@ function start(root: HTMLElement) {
       spawnMarkers = makeSpawnMarkers(model, Array.isArray(userData['spawns']) ? userData['spawns'] as SpawnPoint[] : [], cut)
       heightColours(painted)
       // A hill or a terrain has no storeys, so Levels would only stripe it: Height is the default there (a saved choice still wins).
-      colour(savedColouring(root.dataset.storeys === '0' ? 'height' : 'plain'))
+      colour(savedColouring(root.dataset.storeys === '0' ? 'height' : 'textured'))
       root.querySelectorAll<HTMLElement>('[data-colour]').forEach(b => b.addEventListener('click', () => {
-        const mode = (b.dataset.colour ?? 'plain') as Colouring
+        const mode = (b.dataset.colour ?? 'textured') as Colouring
         if ((COLOURINGS as string[]).includes(mode)) { saveColouring(mode); colour(mode) }
       }))
       scene.add(model)

@@ -213,6 +213,13 @@ export function findParts(soups: number[][], where: { spawns: Point3[], skyCamer
   return { of, parts, skyTriangles }
 }
 
+/** The numbers (in the soup) of the triangles whose part has one of the kinds: for what goes with each triangle (its texture). */
+export function trianglesOfKinds(of: Int32Array, parts: Part[], kinds: Part['kind'][]): number[] {
+  const out: number[] = []
+  for (let t = 0; t < of.length; t++) if (kinds.includes(parts[of[t]!]!.kind)) out.push(t)
+  return out
+}
+
 /** The triangles of a soup whose part has one of the kinds (`of` is that soup's entry in `Parted.of`). */
 export function soupOfKinds(soup: number[], of: Int32Array, parts: Part[], kinds: Part['kind'][]): number[] {
   const out: number[] = []

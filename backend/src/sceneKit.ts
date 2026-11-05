@@ -1,7 +1,7 @@
 import {
   WebGLRenderer, Scene, PerspectiveCamera, HemisphereLight, AmbientLight, DirectionalLight, Color, BufferAttribute,
-  Box3, ConeGeometry, Group, Mesh as MeshClass, MeshBasicMaterial, TextureLoader,
-  type LoadingManager, type Mesh, type MeshStandardMaterial, type BufferGeometry, type Object3D, type Plane,
+  Box3, CanvasTexture, ConeGeometry, Group, Mesh as MeshClass, MeshBasicMaterial, TextureLoader,
+  type LoadingManager, type Texture, type Mesh, type MeshStandardMaterial, type BufferGeometry, type Object3D, type Plane,
 } from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 
@@ -72,9 +72,14 @@ export function explainNoWebGL(root: HTMLElement, say: (t: string) => void, what
 
 // ---- how a map is coloured (RFC 18, 5): the same in the map view and the replay
 
-/** Plain (the default): warm greys, the light shows the form. Height: the same greys tinted a little by height over the whole map. Levels: one hue per storey. */
-export type Colouring = 'plain' | 'height' | 'levels'
-export const COLOURINGS: Colouring[] = ['plain', 'height', 'levels']
+/**
+ * Textured (the default): the textures of the map's own surfaces and plants (RFC 18, 5); a surface with none is a warm grey, the light shows the form.
+ * The others are the colour-by-storey views and have none of that colour. Height: greys tinted a little by height over the whole map. Levels: one hue per storey.
+ */
+export type Colouring = 'textured' | 'height' | 'levels'
+export const COLOURINGS: Colouring[] = ['textured', 'height', 'levels']
+/** The colour the leaves of plants have where their own colour is off: only their shape (the cut-out of their texture) is kept. */
+const LEAF_COLOUR = 0xa9a996
 const PLAIN = { floor: 0xcfc6b0, wall: 0xa59d8c }
 const LEVELS_WALL = 0x9999a6
 // Height runs deep blue, teal, yellow (not orange: orange is the parts that move). Mostly the colour, a little of the surface's own.
@@ -84,8 +89,8 @@ const STORE_KEY = 'traitordash.mapcolour'
 /** One hue per level, low to high, so the storeys can be told apart. */
 export const levelColour = (index: number, count: number) => new Color().setHSL(0.38 - 0.34 * (count > 1 ? (index - 1) / (count - 1) : 0), 0.55, 0.45)
 
-/** The choice made on the map page, kept in this browser; Plain without one (or without storage). */
-export const savedColouring = (fallback: Colouring = 'plain'): Colouring => {
+/** The choice made on the map page, kept in this browser; Textured without one (or without storage; a choice of the old Plain is Textured). */
+export const savedColouring = (fallback: Colouring = 'textured'): Colouring => {
   try { const v = localStorage.getItem(STORE_KEY); if (v && (COLOURINGS as string[]).includes(v)) return v as Colouring } catch { /* storage may be off */ }
   return fallback
 }
@@ -125,13 +130,59 @@ export function heightColours(painted: Painted[]): void {
   }
 }
 
-/** Paints the meshes in a colouring (call `heightColours` once before the first use of 'height'). */
+/** Whether any surface of the model has a texture or a colour of its own (a mesh made before RFC 18, 5 has none, and has nothing for the Textured view to show). */
+export const hasTextures = (painted: Painted[]) => painted.some(p => !!p.mesh.material.userData?.surface)
+
+/**
+ * Paints the meshes in a colouring (call `heightColours` once before the first use of 'height'). In the colour-by-storey views the textures and
+ * the plain colours of the surfaces are put away, and come back in Textured; a surface with none is the plain floor or wall in every view.
+ */
 export function applyColouring(painted: Painted[], mode: Colouring, levelCount: number): void {
   for (const p of painted) {
     const m = p.mesh.material
-    m.vertexColors = mode === 'height'
-    m.color = mode === 'height' ? new Color(0xffffff)
-      : new Color(mode === 'levels' ? (p.wall ? LEVELS_WALL : levelColour(p.level, levelCount).getHex()) : p.wall ? PLAIN.wall : PLAIN.floor)
+    const own = m.userData?.surface as string | undefined
+    if (own && !p.mesh.userData.own) p.mesh.userData.own = { map: m.map, color: m.color.clone(), transparent: m.transparent, alphaTest: m.alphaTest }
+    const saved = p.mesh.userData.own as { map: typeof m.map, color: Color, transparent: boolean, alphaTest: number } | undefined
+    if (mode === 'textured' && own && saved) {
+      m.map = saved.map; m.color = saved.color.clone(); m.transparent = saved.transparent; m.alphaTest = saved.alphaTest; m.vertexColors = false
+    } else {
+      if (saved) { m.map = null; m.transparent = false; m.alphaTest = 0 } // a cut-out or see-through surface is a plain one where its texture is off
+      m.vertexColors = mode === 'height'
+      m.color = mode === 'height' ? new Color(0xffffff)
+        : new Color(mode === 'levels' ? (p.wall ? LEVELS_WALL : levelColour(p.level, levelCount).getHex()) : p.wall ? PLAIN.wall : PLAIN.floor)
+    }
+    m.needsUpdate = true
+  }
+}
+
+const alphaMaps = new WeakMap<Texture, Texture>()
+/** A copy of a texture that carries only its alpha (in the green channel, which is where a material reads an alpha map), so a leaf can keep its shape without its colour. */
+function alphaOnly(tex: Texture): Texture {
+  let out = alphaMaps.get(tex)
+  if (out) return out
+  const image = tex.image as CanvasImageSource & { width: number, height: number }
+  const canvas = document.createElement('canvas')
+  canvas.width = image.width; canvas.height = image.height
+  const g = canvas.getContext('2d')!
+  g.drawImage(image, 0, 0)
+  const data = g.getImageData(0, 0, canvas.width, canvas.height)
+  for (let i = 0; i < data.data.length; i += 4) { const a = data.data[i + 3]!; data.data[i] = 255; data.data[i + 1] = a; data.data[i + 2] = 255; data.data[i + 3] = 255 }
+  g.putImageData(data, 0, 0)
+  out = new CanvasTexture(canvas)
+  out.flipY = tex.flipY; out.wrapS = tex.wrapS; out.wrapT = tex.wrapT
+  alphaMaps.set(tex, out)
+  return out
+}
+
+/** The leaves of plants (and the glass): with their textures in the Textured view, and as their cut-out shape in a flat colour in the others. */
+export function leafLook(meshes: Mesh[], textured: boolean): void {
+  for (const mesh of meshes) {
+    const m = mesh.material as MeshStandardMaterial
+    if (!mesh.userData.leaf && m.map) mesh.userData.leaf = { map: m.map, color: m.color.clone() }
+    const own = mesh.userData.leaf as { map: Texture, color: Color } | undefined
+    if (!own) continue
+    if (textured) { m.map = own.map; m.alphaMap = null; m.color = own.color.clone() }
+    else { m.map = null; m.alphaMap = alphaOnly(own.map); m.color = new Color(LEAF_COLOUR) }
     m.needsUpdate = true
   }
 }

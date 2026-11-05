@@ -2,8 +2,10 @@ import { rm } from 'node:fs/promises'
 import { Store } from './Store'
 import { BspError, extractMapEntities, extractSurfaces, readHeader, type ByteSource } from '../maps/bsp'
 import { buildPropSet, type StockModels, type StockTextures } from '../maps/propset'
-import { nearTriangles, surfacesToGlb } from '../maps/meshGlb'
-import { findParts, soupOfKinds } from '../maps/parts'
+import { nearTriangles, pickTags, pickTriangles, surfacesToGlb, type SurfaceTextures } from '../maps/meshGlb'
+import { findParts, soupOfKinds, trianglesOfKinds } from '../maps/parts'
+import { readPak } from '../maps/pak'
+import { buildSurfaceTextures, type SurfaceReport } from '../maps/surfacetex'
 import { fileSource } from '../maps/fileSource'
 export { fileSource }
 
@@ -15,6 +17,8 @@ export interface GeometryInfo {
   vertices: number, triangles: number, levels: number, water: number
   /** False for a hill or terrain (no storeys); the triangles in detached parts; spawn points in the file. */
   storeys?: boolean, detached?: number, movable?: number, spawns?: number
+  /** The materials the faces of the map name, and what became of the largest: textures, plain colours, and how many textures are the game's own (RFC 18, 5). */
+  surface?: SurfaceReport
   props?: { placed: number, models: number, foliage: number, /** Textures written for the leaves of the plants (RFC 18, 4.6). */ leafTextures?: number, leafTexturesFromGame?: number, cards?: number, fromGame?: number, unavailable: number, unreadable: number, dropped: number }
 }
 
@@ -42,15 +46,27 @@ export async function buildGeometry(src: ByteSource, map: string, fingerprint: s
     // The parts by shared corners: the skybox goes, detached parts are kept apart (RFC 18, 4.4).
     const found = findParts([surfaces.floors, surfaces.walls], { spawns, skyCameras })
     const kind = (k: ('main' | 'detached')[]) => ({ floors: soupOfKinds(surfaces.floors, found.of[0]!, found.parts, k), walls: soupOfKinds(surfaces.walls, found.of[1]!, found.parts, k) })
-    const cleaned = kind(['main'])
+    const mainAt = [trianglesOfKinds(found.of[0]!, found.parts, ['main']), trianglesOfKinds(found.of[1]!, found.parts, ['main'])]
+    const cleaned = { floors: pickTriangles(surfaces.floors, mainAt[0]!), walls: pickTriangles(surfaces.walls, mainAt[1]!) }
     const apart = kind(['detached'])
     const detached = { ...apart, parts: found.parts.filter(p => p.kind === 'detached').sort((a, b) => b.triangles - a.triangles).map(p => ({ triangles: p.triangles, min: p.min.map(Math.round), max: p.max.map(Math.round) })) }
     const water = nearTriangles(surfaces.water, [cleaned.floors, cleaned.walls], 512)
     const { set, report } = await buildPropSet(src, header, entityProps, boxOf(cleaned.floors, cleaned.walls), undefined, stock, textures)
-    const out = await surfacesToGlb({ ...surfaces, ...cleaned, water, movable: surfaces.movable, movableParts: surfaces.movableParts, detached, spawns, props: set }, { map })
+    // The materials of the floors and walls: textures for the largest, plain colours for the next (RFC 18, 5). A map that cannot have them is drawn without.
+    let surface: SurfaceTextures | undefined, surfaceReport: SurfaceReport | undefined
+    try {
+      const pak = await readPak(src, header.lumps[40]!)
+      const built = await buildSurfaceTextures({
+        mappings: surfaces.mappings, faces: surfaces.faces, floors: cleaned.floors, walls: cleaned.walls,
+        floorFaces: pickTags(surfaces.floorFaces, mainAt[0]!), wallFaces: pickTags(surfaces.wallFaces, mainAt[1]!),
+      }, src, pak, textures)
+      surface = built.surface; surfaceReport = built.report
+    } catch (e) { console.warn(`[Geometry] The textures of the surfaces of ${map} could not be made: ${e instanceof Error ? e.message : e}`) }
+    const out = await surfacesToGlb({ ...surfaces, ...cleaned, surface, water, movable: surfaces.movable, movableParts: surfaces.movableParts, detached, spawns, props: set }, { map })
     if (!out) return { ok: false, error: 'The map has no surfaces to draw.' }
     return { ok: true, glb: out.glb, note: report.stockError ? `The game's own models could not all be fetched: ${report.stockError}` : undefined, info: {
       vertices: out.info.vertices, triangles: out.info.triangles, levels: out.info.levels.length, water: out.info.waterTriangles, storeys: out.info.storeys, detached: out.info.detached.triangles, movable: out.info.movable, spawns: out.info.spawns,
+      ...(surfaceReport ? { surface: surfaceReport } : {}),
       props: { placed: report.drawnPlacements, models: report.drawnModels, foliage: report.foliageModels, leafTextures: report.leafTextures, leafTexturesFromGame: report.leafTexturesFromGame, cards: report.cards, fromGame: report.fromGame, unavailable: report.unavailable, unreadable: report.unreadable + report.tooBig, dropped: report.dropped },
     } }
   } catch (e) {

@@ -1,6 +1,7 @@
 import { Document, NodeIO } from '@gltf-transform/core'
 import { storeyModel, storeyCoverage } from './levels'
 import { MESH_VERSION } from './meshVersion'
+import { mappedUv, type FaceMapping, type FaceRecord } from './bsp'
 import { angleMatrix, type MovablePart } from './bsp'
 
 // RFC 11, 3.6: the map's exact geometry as glTF 2.0 (GLB), an existing standard, not a format of our
@@ -107,6 +108,8 @@ export interface GlbInfo {
   movable: number
   /** Spawn points written into the file. */
   spawns: number
+  /** Textures and materials of the floors and walls (RFC 18, 5), when they have them. */
+  surface?: { textures: number, materials: number, texturedTriangles: number, colouredTriangles: number }
   /** What was placed: places, distinct models, and the triangles drawn (every place counts its model's triangles). */
   props: { placements: number, models: number, triangles: number, /** Textures written for the leaves. */ textures?: number }
   /** Triangles removed by the crop. */
@@ -116,7 +119,29 @@ export interface GlbInfo {
 /** Parts of the map that are not near the rest (RFC 18, 4.4): outside the level model, in a group of their own. */
 export interface DetachedParts { floors: number[], walls: number[], parts: { triangles: number, min: number[], max: number[] }[] }
 export interface MeshSpawn { class: string, x: number, y: number, z: number }
-export interface MeshInput { floors: number[], walls: number[], water?: number[], movable?: number[], movableParts?: MovablePart[], detached?: DetachedParts, spawns?: MeshSpawn[], props?: PropSet, fingerprint: string, version: number, revision: number }
+/** A material of the surfaces of the map (RFC 18, 5): a texture to cut and tile, or a plain colour when its texture is not worth a file. */
+export interface SurfaceMaterial {
+  name: string
+  /** An index into `SurfaceTextures.textures`, or null for a plain colour. */
+  texture: number | null
+  /** The average colour of the texture (sRGB, 0 to 1), for a material with no texture of its own. */
+  colour: [number, number, number] | null
+  mode: 'opaque' | 'mask' | 'blend'
+  alpha: number
+}
+/** How the floors and the walls are textured: for each triangle how it is mapped, and what each mapping is drawn with. */
+export interface SurfaceTextures {
+  /** One entry for each triangle of `floors` and of `walls`: the number of the face it came from. */
+  floorFaces: number[]
+  wallFaces: number[]
+  faces: FaceRecord[]
+  mappings: FaceMapping[]
+  /** For each mapping, an index into `materials`, or -1 (drawn as the plain floor or wall). */
+  materialOf: number[]
+  materials: SurfaceMaterial[]
+  textures: { name: string, width: number, height: number, png: Uint8Array }[]
+}
+export interface MeshInput { surface?: SurfaceTextures, floors: number[], walls: number[], water?: number[], movable?: number[], movableParts?: MovablePart[], detached?: DetachedParts, spawns?: MeshSpawn[], props?: PropSet, fingerprint: string, version: number, revision: number }
 /** A map has storeys when at least this share of its floor lies within 48 units of the height of one (see `storeyCoverage`). */
 export const STOREY_COVERAGE = 0.6
 const MAX_SPAWNS = 512
@@ -131,6 +156,37 @@ export interface MeshOptions {
 const check = (soup: number[], what: string) => {
   if (soup.length % 9 !== 0) throw new RangeError(`${what} must be triangles of three corners of three numbers each`)
   for (const n of soup) if (!Number.isFinite(n)) throw new RangeError(`${what} contains a number that is not finite`)
+}
+
+/** The triangles of a soup with the numbers given, in that order. */
+export const pickTriangles = (soup: number[], which: number[]): number[] => {
+  const out: number[] = []
+  for (const t of which) for (let k = 0; k < 9; k++) out.push(soup[t * 9 + k]!)
+  return out
+}
+/** What goes with each triangle (one number for each), for the same numbers. */
+export const pickTags = (tags: number[], which: number[]): number[] => which.map(t => tags[t]!)
+
+/** The numbers of the triangles `cropTriangles` keeps. */
+export function croppedTriangles(soup: number[], b: Bounds): number[] {
+  const out: number[] = []
+  for (let i = 0, t = 0; i < soup.length; i += 9, t++) {
+    const cx = (soup[i]! + soup[i + 3]! + soup[i + 6]!) / 3
+    const cy = (soup[i + 1]! + soup[i + 4]! + soup[i + 7]!) / 3
+    if (cx >= b.minX && cx <= b.maxX && cy >= b.minY && cy <= b.maxY) out.push(t)
+  }
+  return out
+}
+
+/** The numbers of the triangles `withoutDegenerate` keeps. */
+function areaTriangles(soup: number[]): number[] {
+  const out: number[] = []
+  for (let i = 0, t = 0; i < soup.length; i += 9, t++) {
+    const ux = soup[i + 3]! - soup[i]!, uy = soup[i + 4]! - soup[i + 1]!, uz = soup[i + 5]! - soup[i + 2]!
+    const vx = soup[i + 6]! - soup[i]!, vy = soup[i + 7]! - soup[i + 1]!, vz = soup[i + 8]! - soup[i + 2]!
+    if (!(uy * vz - uz * vy === 0 && uz * vx - ux * vz === 0 && ux * vy - uy * vx === 0)) out.push(t)
+  }
+  return out
 }
 
 /** Drops triangles that have no area (two equal corners, or all three on a line). */
@@ -153,8 +209,13 @@ function withoutDegenerate(soup: number[]): { kept: number[], dropped: number } 
  * hidden. Cut pieces share their cut corners exactly, as each edge is cut the same way from either side.
  */
 export function splitAtHeights(soup: number[], heights: number[]): number[] {
-  if (heights.length === 0) return soup
-  const out: number[] = []
+  return splitAtHeightsFrom(soup, heights).soup
+}
+
+/** The same, and for each triangle of the result the number of the triangle it is a piece of (for what goes with a triangle: its texture). */
+export function splitAtHeightsFrom(soup: number[], heights: number[]): { soup: number[], from: number[] } {
+  if (heights.length === 0) return { soup, from: Array.from({ length: soup.length / 9 }, (_, t) => t) }
+  const out: number[] = [], from: number[] = []
   type P = [number, number, number]
   const cut = (a: P, b: P, h: number): P => {
     const [lo, hi] = a[2] < b[2] || (a[2] === b[2] && (a[0] < b[0] || (a[0] === b[0] && a[1] <= b[1]))) ? [a, b] : [b, a]
@@ -177,16 +238,16 @@ export function splitAtHeights(soup: number[], heights: number[]): number[] {
     const tri: P[] = [[soup[i]!, soup[i + 1]!, soup[i + 2]!], [soup[i + 3]!, soup[i + 4]!, soup[i + 5]!], [soup[i + 6]!, soup[i + 7]!, soup[i + 8]!]]
     const zmin = Math.min(tri[0]![2], tri[1]![2], tri[2]![2]), zmax = Math.max(tri[0]![2], tri[1]![2], tri[2]![2])
     const inner = heights.filter(h => h > zmin && h < zmax)
-    if (inner.length === 0) { out.push(...soup.slice(i, i + 9)); continue }
+    if (inner.length === 0) { out.push(...soup.slice(i, i + 9)); from.push(i / 9); continue }
     const edges = [-Infinity, ...inner, Infinity]
     for (let s = 0; s + 1 < edges.length; s++) {
       let poly = tri
       if (edges[s]! > -Infinity) poly = clip(poly, edges[s]!, true)
       if (edges[s + 1]! < Infinity) poly = clip(poly, edges[s + 1]!, false)
-      for (let k = 1; k + 1 < poly.length; k++) for (const p of [poly[0]!, poly[k]!, poly[k + 1]!]) out.push(p[0], p[1], p[2])
+      for (let k = 1; k + 1 < poly.length; k++) { for (const p of [poly[0]!, poly[k]!, poly[k + 1]!]) out.push(p[0], p[1], p[2]); from.push(i / 9) }
     }
   }
-  return out
+  return { soup: out, from }
 }
 
 /** Indexed vertices from a triangle soup: identical corners are one vertex. */
@@ -226,14 +287,19 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
   const cell = opts.cell ?? 64
 
   let floors = s.floors, walls = s.walls
+  let floorTags = s.surface?.floorFaces, wallTags = s.surface?.wallFaces
+  if (s.surface && (floorTags!.length !== floors.length / 9 || wallTags!.length !== walls.length / 9)) throw new RangeError('the textures must have one mapping for each triangle of the floors and of the walls')
   const cropped = { floors: 0, walls: 0 }
+  // What each step keeps, as the numbers of the triangles, so that what goes with a triangle (its mapping) goes with it
+  const keep = (which: number[], soup: number[], tags: number[] | undefined) => ({ soup: pickTriangles(soup, which), tags: tags && pickTags(tags, which) })
   if (opts.crop) {
-    const f = cropTriangles(floors, opts.crop), w = cropTriangles(walls, opts.crop)
-    cropped.floors = (floors.length - f.length) / 9; cropped.walls = (walls.length - w.length) / 9
-    floors = f; walls = w
+    const f = keep(croppedTriangles(floors, opts.crop), floors, floorTags), w = keep(croppedTriangles(walls, opts.crop), walls, wallTags)
+    cropped.floors = (floors.length - f.soup.length) / 9; cropped.walls = (walls.length - w.soup.length) / 9
+    floors = f.soup; floorTags = f.tags; walls = w.soup; wallTags = w.tags
   }
-  const f = withoutDegenerate(floors), w = withoutDegenerate(walls)
-  floors = f.kept; walls = w.kept
+  const fArea = keep(areaTriangles(floors), floors, floorTags), wArea = keep(areaTriangles(walls), walls, wallTags)
+  const dropped = (floors.length - fArea.soup.length + walls.length - wArea.soup.length) / 9
+  floors = fArea.soup; floorTags = fArea.tags; walls = wArea.soup; wallTags = wArea.tags
   if (floors.length === 0 && walls.length === 0) return null
   const water = withoutDegenerate(s.water ?? []).kept
 
@@ -245,10 +311,13 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
   const model = storeyModel(heights, weights)
   const storeys = heights.length === 0 || storeyCoverage(heights, weights, model.peaks) >= STOREY_COVERAGE
   const count = Math.max(1, model.levels.length)
-  const byLevel = Array.from({ length: count }, () => ({ floors: [] as number[], walls: [] as number[] }))
-  for (let i = 0, n = 0; i < floors.length; i += 9, n++) byLevel[model.storeyOf(heights[n]!)]!.floors.push(...floors.slice(i, i + 9))
-  walls = withoutDegenerate(splitAtHeights(walls, model.bounds)).kept
-  for (let i = 0; i < walls.length; i += 9) byLevel[model.levels.length ? model.storeyOf(centre(walls, i)) : 0]!.walls.push(...walls.slice(i, i + 9))
+  const byLevel = Array.from({ length: count }, () => ({ floors: [] as number[], walls: [] as number[], floorTags: [] as number[], wallTags: [] as number[] }))
+  for (let i = 0, n = 0; i < floors.length; i += 9, n++) { const lv = byLevel[model.storeyOf(heights[n]!)]!; lv.floors.push(...floors.slice(i, i + 9)); if (floorTags) lv.floorTags.push(floorTags[n]!) }
+  const split = splitAtHeightsFrom(walls, model.bounds)
+  const splitTags = wallTags && split.from.map(t => wallTags![t]!)
+  const wSplit = keep(areaTriangles(split.soup), split.soup, splitTags)
+  walls = wSplit.soup; wallTags = wSplit.tags
+  for (let i = 0, n = 0; i < walls.length; i += 9, n++) { const lv = byLevel[model.levels.length ? model.storeyOf(centre(walls, i)) : 0]!; lv.walls.push(...walls.slice(i, i + 9)); if (wallTags) lv.wallTags.push(wallTags[n]!) }
 
   const doc = new Document()
   const buffer = doc.createBuffer()
@@ -261,19 +330,78 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
   const movableMat = material('movable', [0.93, 0.5, 0.12])
   const waterMat = doc.createMaterial('water').setBaseColorFactor([0.23, 0.49, 0.65, 0.55]).setAlphaMode('BLEND').setMetallicFactor(0).setRoughnessFactor(1).setDoubleSided(true)
 
-  const info: GlbInfo = { vertices: 0, triangles: 0, droppedDegenerate: f.dropped + w.dropped, levels: [], storeys, detached: { triangles: 0, parts: 0 }, movable: 0, spawns: 0, waterTriangles: 0, props: { placements: 0, models: 0, triangles: 0 }, cropped }
+  // The materials of the surfaces (RFC 18, 5): a texture cut as the file says, or a plain colour; the same material is one for the floors and one for the walls
+  const surface = s.surface
+  const textures = (surface?.textures ?? []).map(t => doc.createTexture(t.name).setImage(t.png).setMimeType('image/png'))
+  const surfaceMaterials = new Map<string, ReturnType<typeof doc.createMaterial>>()
+  let texturedTriangles = 0, colouredTriangles = 0
+  const linear = (c: number) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)
+  const surfaceMaterial = (kind: 'floor' | 'wall', index: number) => {
+    const key = `${kind}|${index}`
+    let mat = surfaceMaterials.get(key)
+    if (!mat) {
+      const def = surface!.materials[index]!
+      mat = doc.createMaterial(kind).setMetallicFactor(0).setRoughnessFactor(1).setDoubleSided(true).setExtras({ surface: def.texture !== null ? 'texture' : 'colour', material: def.name })
+      if (def.texture !== null) {
+        mat.setBaseColorFactor([1, 1, 1, def.mode === 'blend' ? def.alpha : 1]).setBaseColorTexture(textures[def.texture]!)
+        if (def.mode === 'mask') mat.setAlphaMode('MASK').setAlphaCutoff(0.5)
+        else if (def.mode === 'blend') mat.setAlphaMode('BLEND')
+      } else {
+        const c = def.colour ?? [0.6, 0.6, 0.6]
+        mat.setBaseColorFactor([linear(c[0]), linear(c[1]), linear(c[2]), 1])
+      }
+      surfaceMaterials.set(key, mat)
+    }
+    return mat
+  }
+
+  const info: GlbInfo = { vertices: 0, triangles: 0, droppedDegenerate: dropped, levels: [], storeys, detached: { triangles: 0, parts: 0 }, movable: 0, spawns: 0, waterTriangles: 0, props: { placements: 0, models: 0, triangles: 0 }, cropped }
   byLevel.forEach((lv) => {
     if (lv.floors.length === 0 && lv.walls.length === 0) return
     const index = info.levels.length + 1
     const name = `level-${index}`
     const mesh = doc.createMesh(name)
-    for (const [kind, soup] of [['floor', lv.floors], ['wall', lv.walls]] as const) {
+    for (const [kind, soup, tags] of [['floor', lv.floors, lv.floorTags], ['wall', lv.walls, lv.wallTags]] as const) {
       if (soup.length === 0) continue
-      const { positions, indices } = indexed(soup)
-      info.vertices += positions.length / 3; info.triangles += indices.length / 3
-      mesh.addPrimitive(doc.createPrimitive().setMaterial(mats[kind])
-        .setAttribute('POSITION', doc.createAccessor(`${name}-${kind}-positions`).setType('VEC3').setArray(positions).setBuffer(buffer))
-        .setIndices(doc.createAccessor(`${name}-${kind}-indices`).setType('SCALAR').setArray(indices).setBuffer(buffer)))
+      // A surface with textures is cut into a primitive for each material (none: the plain floor or wall as before)
+      const groups = new Map<number, number[]>()
+      for (let t = 0; t < soup.length / 9; t++) {
+        const material = surface ? surface.materialOf[surface.faces[tags[t]!]!.mapping] ?? -1 : -1
+        const list = groups.get(material)
+        if (list) list.push(t); else groups.set(material, [t])
+      }
+      let k = 0
+      for (const [material, triangles] of groups) {
+        const part = pickTriangles(soup, triangles)
+        const prim = doc.createPrimitive()
+        const def = material >= 0 ? surface!.materials[material] : undefined
+        if (def && def.texture !== null) {
+          // the coordinates of each corner from where it is, as the file of the map projects them; a whole number of tiles is taken off a
+          // triangle (the picture repeats) so that the numbers stay small
+          const uvs: number[] = []
+          triangles.forEach((t, n) => {
+            const mp = surface!.mappings[surface!.faces[tags[t]!]!.mapping]!
+            const c = [0, 1, 2].map(i => mappedUv(mp, part[n * 9 + i * 3]!, part[n * 9 + i * 3 + 1]!, part[n * 9 + i * 3 + 2]!))
+            const du = Math.floor(Math.min(c[0]![0], c[1]![0], c[2]![0])), dv = Math.floor(Math.min(c[0]![1], c[1]![1], c[2]![1]))
+            for (const [u, v] of c) uvs.push(u - du, v - dv)
+          })
+          const { positions, uvs: coords, indices } = indexedUv(part, uvs)
+          info.vertices += positions.length / 3; info.triangles += indices.length / 3; texturedTriangles += indices.length / 3
+          prim.setMaterial(surfaceMaterial(kind, material))
+            .setAttribute('POSITION', doc.createAccessor(`${name}-${kind}-positions-${k}`).setType('VEC3').setArray(positions).setBuffer(buffer))
+            .setAttribute('TEXCOORD_0', doc.createAccessor(`${name}-${kind}-uv-${k}`).setType('VEC2').setArray(coords).setBuffer(buffer))
+            .setIndices(doc.createAccessor(`${name}-${kind}-indices-${k}`).setType('SCALAR').setArray(indices).setBuffer(buffer))
+        } else {
+          const { positions, indices } = indexed(part)
+          info.vertices += positions.length / 3; info.triangles += indices.length / 3
+          if (def) colouredTriangles += indices.length / 3
+          prim.setMaterial(def ? surfaceMaterial(kind, material) : mats[kind])
+            .setAttribute('POSITION', doc.createAccessor(`${name}-${kind}-positions-${k}`).setType('VEC3').setArray(positions).setBuffer(buffer))
+            .setIndices(doc.createAccessor(`${name}-${kind}-indices-${k}`).setType('SCALAR').setArray(indices).setBuffer(buffer))
+        }
+        mesh.addPrimitive(prim)
+        k++
+      }
     }
     // The heights of the level: those of the corners of its floors, or of its walls when there are no floors at all.
     const zs = lv.floors.length ? lv.floors.filter((_, i) => i % 3 === 2) : lv.walls.filter((_, i) => i % 3 === 2)
@@ -450,6 +578,7 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
     spawns: (s.spawns ?? []).slice(0, MAX_SPAWNS).map(p => ({ class: p.class, x: p.x, y: p.y, z: p.z })),
   })
   info.spawns = Math.min((s.spawns ?? []).length, MAX_SPAWNS)
+  if (surface) info.surface = { textures: surface.textures.length, materials: surfaceMaterials.size, texturedTriangles, colouredTriangles }
   if (s.props?.leafTextures?.length) info.props.textures = s.props.leafTextures.length
   return { glb: await new NodeIO().writeBinary(doc), info }
 }

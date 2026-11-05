@@ -152,7 +152,7 @@ export function startMapFlat(root: HTMLElement, canvas: HTMLCanvasElement, say: 
 
   function run(model: Object3D) {
     const g = ctx2d!
-    const soup = soupOf(model, savedColouring(root.dataset.storeys === '0' ? 'height' : 'plain'))
+    const soup = soupOf(model, savedColouring(root.dataset.storeys === '0' ? 'height' : 'textured'))
     if (soup.n === 0) { say('This map has nothing to draw.'); return }
     const centre: [number, number, number] = [(soup.min[0] + soup.max[0]) / 2, (soup.min[1] + soup.max[1]) / 2, (soup.min[2] + soup.max[2]) / 2]
     const radius = Math.hypot(soup.max[0] - soup.min[0], soup.max[1] - soup.min[1], soup.max[2] - soup.min[2]) / 2 || 1
@@ -294,11 +294,11 @@ export function startMapFlat(root: HTMLElement, canvas: HTMLCanvasElement, say: 
     root.querySelector<HTMLInputElement>('[data-walls]')?.addEventListener('change', e => { walls = (e.target as HTMLInputElement).checked; paint() })
     root.querySelector<HTMLInputElement>('[data-water]')?.addEventListener('change', e => { water = (e.target as HTMLInputElement).checked; paint() })
     root.querySelectorAll<HTMLElement>('[data-colour]').forEach(b => b.addEventListener('click', () => {
-      const mode = (b.dataset.colour ?? 'plain') as Colouring
+      const mode = (b.dataset.colour ?? 'textured') as Colouring
       if (!(COLOURINGS as string[]).includes(mode)) return
       saveColouring(mode); soup.recolour(mode); mark('[data-colour]', 'colour', mode); paint()
     }))
-    mark('[data-colour]', 'colour', savedColouring(root.dataset.storeys === '0' ? 'height' : 'plain'))
+    mark('[data-colour]', 'colour', savedColouring(root.dataset.storeys === '0' ? 'height' : 'textured'))
     // what this view does not draw
     for (const sel of ['[data-props]', '[data-foliage]', '[data-movable]', '[data-parts]', '[data-spawns]']) root.querySelector(sel)?.closest('label')?.setAttribute('hidden', '')
 

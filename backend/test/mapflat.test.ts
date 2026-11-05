@@ -22,7 +22,7 @@ function model() {
 }
 
 describe('soupOf', () => {
-  const soup = soupOf(model(), 'plain')
+  const soup = soupOf(model(), 'textured')
 
   test('one entry for each triangle: floor, wall and water, with their kind and level', () => {
     expect(soup.n).toBe(3)
@@ -49,7 +49,7 @@ describe('soupOf', () => {
     soup.recolour('levels')
     expect(soup.base[1]).toBe(0x9999a6) // a wall in the Levels colouring
     expect(soup.base[0]).not.toBe(0xcfc6b0)
-    soup.recolour('plain')
+    soup.recolour('textured')
     expect(soup.base[0]).toBe(0xcfc6b0)
   })
 

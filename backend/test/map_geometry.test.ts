@@ -265,12 +265,12 @@ describe('the 3D view on the map page', () => {
     expect(html).toContain('data-level="all"')
   })
 
-  test('has the Colour choice (Plain first and pressed), no water switch for a map without water, and no Download GLB', async () => {
+  test('has the Colour choice (Textured first and pressed), no water switch for a map without water, and no Download GLB', async () => {
     await toggle(serverId, 'ttt_a', true)
     await geo.runGeometryQueue(writer(file))
     const html = await page()
-    expect(html.match(/data-colour="(plain|height|levels)"/g)).toEqual(['data-colour="plain"', 'data-colour="height"', 'data-colour="levels"'])
-    expect(html).toMatch(/data-colour="plain" aria-pressed="true"/)
+    expect(html.match(/data-colour="(textured|height|levels)"/g)).toEqual(['data-colour="textured"', 'data-colour="height"', 'data-colour="levels"'])
+    expect(html).toMatch(/data-colour="textured" aria-pressed="true"/)
     expect(html).not.toContain('data-water')
     expect(html).not.toContain('Download GLB')
     expect(html).toContain('data-walls')

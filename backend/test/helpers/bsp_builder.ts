@@ -25,6 +25,8 @@ export interface BspSpec {
   texinfoFlags?: number[]
   /** The material name of each texinfo (by index), as in the map's texture data lumps. */
   materials?: string[]
+  /** How each texinfo projects a point onto its texture (the two vectors of four numbers) and the size of the texture in the texture data. */
+  mappings?: { s: number[], t: number[], width?: number, height?: number }[]
   models?: Model[]
   /** Displacement records (terrain): where the grid starts, where its vertices begin in the vertex lump, and its power (2 to 4). */
   displacements?: { startPosition: [number, number, number], vertStart: number, power: number }[]
@@ -56,7 +58,12 @@ const face = (f: Face) => {
   b.writeInt16LE(f.texinfo ?? 0, 10); b.writeInt16LE(f.dispinfo ?? -1, 12)
   return b
 }
-const texinfo = (flags: number, texdata = 0) => { const b = Buffer.alloc(72); b.writeInt32LE(flags, 64); b.writeInt32LE(texdata, 68); return b }
+const texinfo = (flags: number, texdata = 0, map?: { s: number[], t: number[] }) => {
+  const b = Buffer.alloc(72)
+  if (map) { map.s.forEach((n, k) => b.writeFloatLE(n, k * 4)); map.t.forEach((n, k) => b.writeFloatLE(n, 16 + k * 4)) }
+  b.writeInt32LE(flags, 64); b.writeInt32LE(texdata, 68)
+  return b
+}
 const dispinfo = (d: { startPosition: [number, number, number], vertStart: number, power: number }) => {
   const b = Buffer.alloc(176)
   d.startPosition.forEach((n, i) => b.writeFloatLE(n, i * 4)); b.writeInt32LE(d.vertStart, 12); b.writeInt32LE(d.power, 20)
@@ -77,10 +84,10 @@ export function buildBsp(spec: BspSpec = {}): Buffer {
   lumps[LUMP.SURFEDGES] = Buffer.concat((spec.surfedges ?? []).map(int))
   lumps[LUMP.FACES] = Buffer.concat((spec.faces ?? []).map(face))
   const count = Math.max((spec.texinfoFlags ?? [0]).length, (spec.materials ?? []).length)
-  lumps[LUMP.TEXINFO] = Buffer.concat(Array.from({ length: count }, (_, i) => texinfo((spec.texinfoFlags ?? [0])[i] ?? 0, i)))
+  lumps[LUMP.TEXINFO] = Buffer.concat(Array.from({ length: count }, (_, i) => texinfo((spec.texinfoFlags ?? [0])[i] ?? 0, i, spec.mappings?.[i])))
   if (spec.materials) {
     // texture data: one record per material (the name is entry i of the string table); the strings are NUL-ended, one after another.
-    lumps[LUMP.TEXDATA] = Buffer.concat(spec.materials.map((_, i) => { const b = Buffer.alloc(32); b.writeInt32LE(i, 12); return b }))
+    lumps[LUMP.TEXDATA] = Buffer.concat(spec.materials.map((_, i) => { const b = Buffer.alloc(32); b.writeInt32LE(i, 12); b.writeInt32LE(spec.mappings?.[i]?.width ?? 0, 16); b.writeInt32LE(spec.mappings?.[i]?.height ?? 0, 20); return b }))
     let at = 0
     lumps[LUMP.TEXDATA_STRING_TABLE] = Buffer.concat(spec.materials.map(m => { const b = int(at); at += m.length + 1; return b }))
     lumps[LUMP.TEXDATA_STRING_DATA] = Buffer.concat(spec.materials.map(m => Buffer.from(m + '\0', 'latin1')))

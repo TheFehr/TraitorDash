@@ -2,7 +2,8 @@ import type { BspHeader, ByteSource, Placement } from './bsp'
 import type { PropSet } from './meshGlb'
 import { readModel, type ModelFiles, type ModelMesh } from './model'
 import { readPak, readPakMember, type Pak } from './pak'
-import { readVtf } from './vtf'
+import { TextureBook } from './texturebook'
+import { parseSeeThrough, type Vmt } from './vmt'
 import { encodePng } from './png'
 import { readStaticProps } from './props'
 
@@ -56,36 +57,8 @@ export interface PropReport {
   stockError?: string
 }
 
-const FOLIAGE = /["']?\$(alphatest|translucent|additive)["']?\s+["']?1/i
-const ADDITIVE = /["']?\$additive["']?\s+["']?1/i
-const ALPHATEST = /["']?\$alphatest["']?\s+["']?1/i
-const BASETEXTURE = /["']?\$basetexture["']?\s+(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s"'{}]+))/i
-const ALPHA = /["']?\$alpha["']?\s+["']?([0-9.]+)/i
-
-/** What a foliage material (a `.vmt`) says that is needed to draw its leaves: the texture, whether it is cut out or translucent, and how much. */
-interface Vmt {
-  texture: string | null
-  mode: 'mask' | 'blend'
-  alpha: number
-  /** The material says its own `$alpha`; else a translucent texture with no alpha channel of its own gets a default (glass is not opaque). */
-  explicitAlpha: boolean
-  /** Added to what is behind it (a light shaft, a glow), which a plain blend cannot do: its brightness is made the alpha. */
-  additive: boolean
-}
-/** null for a material that is not foliage. */
-export function parseVmt(text: string): Vmt | null {
-  if (!FOLIAGE.test(text)) return null
-  const found = BASETEXTURE.exec(text)
-  const texture = (found?.[1] ?? found?.[2] ?? found?.[3])?.trim().toLowerCase().replace(/\\/g, '/').replace(/\.vtf$/, '') ?? null
-  const alpha = Number(ALPHA.exec(text)?.[1])
-  return {
-    texture: texture && /^[a-z0-9_ ./-]{1,200}$/.test(texture) && !texture.includes('..') ? texture : null,
-    mode: ALPHATEST.test(text) ? 'mask' : 'blend',
-    alpha: Number.isFinite(alpha) && alpha >= 0 && alpha <= 1 ? alpha : 1,
-    explicitAlpha: Number.isFinite(alpha) && alpha >= 0 && alpha <= 1,
-    additive: ADDITIVE.test(text) && !ALPHATEST.test(text),
-  }
-}
+/** The material of a file's text if it is see-through (cut out, translucent or additive), else null: such a model is foliage-like (RFC 18, 4.6). */
+export const parseVmt = parseSeeThrough
 
 /** The textures of the leaves: how many, how big (the longer side) and how many bytes of PNG a map may have (RFC 18, 7). */
 export const LEAF_LIMITS = { textures: 24, side: 256, pngBytes: 4 * 1024 * 1024, memberBytes: 24 * 1024 * 1024, /** Textures asked of the game's own files for one map. */ stockTextures: 64, /** Material files (`.vmt`) asked of them: every path a model could have its materials at, most of which do not exist. */ stockMaterials: 600 }
@@ -135,58 +108,25 @@ async function loadModel(src: ByteSource, pak: Pak, files: ModelFiles, foliageCa
  */
 class LeafBook {
   materials: NonNullable<PropSet['leafMaterials']> = []
-  textures: NonNullable<PropSet['leafTextures']> = []
   private material = new Map<string, number>()
-  private texture = new Map<string, number | null>()
-  private bytes = 0
-  /** Textures of the game's own files, by path (RFC 18, 4.7); the pack's are looked at first. */
-  stock = new Map<string, Uint8Array>()
-  /** How many of the textures written came from the game's own files. */
-  fromGame = 0
-  constructor(private src: ByteSource, private pak: Pak, private cache: Map<string, Vmt | null>) {}
-
-  private alphaOf = new Map<number, boolean>()
-
-  private async textureOf(name: string, additive: boolean): Promise<number | null> {
-    const key = additive ? `${name}|additive` : name
-    if (this.texture.has(key)) return this.texture.get(key)!
-    let index: number | null = null
-    const path = `materials/${name}.vtf`
-    const inPack = this.pak.entries.has(path)
-    if (this.textures.length < LEAF_LIMITS.textures && (inPack || this.stock.has(path))) {
-      const file = inPack ? await readPakMember(this.src, this.pak, path, { maxMemberBytes: LEAF_LIMITS.memberBytes }) : this.stock.get(path)!
-      const pixels = file && file.length <= LEAF_LIMITS.memberBytes ? readVtf(file, LEAF_LIMITS.side) : null
-      if (pixels) {
-        let clear = false
-        for (let i = 3; i < pixels.rgba.length; i += 4) if (pixels.rgba[i]! < 250) { clear = true; break }
-        // an additive material adds its colour to what is behind it: dark is nothing and bright is a glow, so the brightness is the alpha
-        if (additive) for (let i = 0; i < pixels.rgba.length; i += 4) { pixels.rgba[i + 3] = Math.round(Math.max(pixels.rgba[i]!, pixels.rgba[i + 1]!, pixels.rgba[i + 2]!) * 0.7); clear = true }
-        const png = encodePng(pixels.width, pixels.height, pixels.rgba)
-        if (this.bytes + png.length <= LEAF_LIMITS.pngBytes) {
-          this.bytes += png.length
-          if (!inPack) this.fromGame++
-          index = this.textures.length
-          this.alphaOf.set(index, clear)
-          this.textures.push({ name: key, width: pixels.width, height: pixels.height, png })
-        }
-      }
-    }
-    this.texture.set(key, index)
-    return index
-  }
+  readonly book: TextureBook
+  constructor(src: ByteSource, pak: Pak, private cache: Map<string, Vmt | null>) { this.book = new TextureBook(src, pak, LEAF_LIMITS) }
+  get textures() { return this.book.textures }
+  get fromGame() { return this.book.fromGame }
+  set stock(files: Map<string, Uint8Array>) { this.book.stock = files }
 
   /** The index of the material of a `.vmt` among `materials`, or -1 when its leaves have no texture to be drawn with. */
   private async materialOf(vmtPath: string): Promise<number> {
     const known = this.material.get(vmtPath)
     if (known !== undefined) return known
     const vmt = this.cache.get(vmtPath)
-    const texture = vmt?.texture ? await this.textureOf(vmt.texture, vmt.additive) : null
+    const texture = vmt?.texture ? await this.book.texture(vmt.texture, vmt.additive) : null
     let index = -1
     if (vmt && texture !== null) {
       // glass: a translucent material whose texture has no alpha and that names no `$alpha` is drawn see-through, not as a solid pane
-      const alpha = vmt.mode === 'blend' && !vmt.explicitAlpha && !this.alphaOf.get(texture) ? DEFAULT_TRANSLUCENT : vmt.alpha
+      const alpha = vmt.kind === 'blend' && !vmt.explicitAlpha && !texture.hasAlpha ? DEFAULT_TRANSLUCENT : vmt.alpha
       index = this.materials.length
-      this.materials.push({ name: vmtPath, texture, mode: vmt.mode, alpha })
+      this.materials.push({ name: vmtPath, texture: texture.index, mode: vmt.kind === 'mask' ? 'mask' : 'blend', alpha })
     }
     this.material.set(vmtPath, index)
     return index

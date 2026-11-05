@@ -380,7 +380,7 @@ export const MapViewPage = ({ ctx, server, map, name, next, plan, geometry }: Ma
               </span>
               <span role="group" aria-label="Colour">
                 <span class="cap">Colour</span>
-                <button type="button" data-colour="plain" aria-pressed="true" class="tog">Plain</button>
+                <button type="button" data-colour="textured" aria-pressed="true" class="tog">Textured</button>
                 <button type="button" data-colour="height" aria-pressed="false" class="tog">Height</button>
                 <button type="button" data-colour="levels" aria-pressed="false" class="tog">Levels</button>
               </span>
