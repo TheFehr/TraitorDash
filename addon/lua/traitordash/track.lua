@@ -25,13 +25,13 @@ local Track = {}
 TraitorDash.Track = Track
 
 local cv_track = CreateConVar("traitordash_track", "0", {FCVAR_ARCHIVE}, "Record player positions for round replays (1/0).")
-local cv_min = CreateConVar("traitordash_track_interval_min", "0.2", {FCVAR_ARCHIVE}, "Fastest sampling interval in seconds (at least 0.1).")
+local cv_min = CreateConVar("traitordash_track_interval_min", "0.2", {FCVAR_ARCHIVE}, "Fastest sampling interval in seconds (at least 0.05).")
 local cv_max = CreateConVar("traitordash_track_interval_max", "1", {FCVAR_ARCHIVE}, "Slowest sampling interval in seconds.")
 local cv_budget = CreateConVar("traitordash_track_budget_ms", "0.5", {FCVAR_ARCHIVE}, "What one sampling tick may cost on average, in milliseconds.")
 local cv_debug = CreateConVar("traitordash_stats_debug", "1", {FCVAR_ARCHIVE}, "Log what the stats tracker does (1/0).")
 
 local TIMER = "TraitorDash_Track"
-local MAX_TICKS = 20000          -- caps of RFC 12, 3.2 (the backend refuses more)
+local MAX_TICKS = 40000          -- caps of RFC 12, 3.2 (the backend refuses more): 33 minutes at the fastest sampling, 0.05 s
 local MAX_SEGMENTS = 64          -- per player
 local MAX_DEATHS = 512
 local MAX_EVENTS = 1024         -- revivals and role changes (RFC 14, 4.3)
@@ -51,7 +51,7 @@ end
 local function Floor(v) return math.floor(v + 0.5) end
 
 local function Settings()
-    local mn = math.max(cv_min:GetFloat(), 0.1)
+    local mn = math.max(cv_min:GetFloat(), 0.05)
     local mx = math.max(cv_max:GetFloat(), mn)
     local budget = math.max(cv_budget:GetFloat(), 0.05) / 1000 -- seconds
     return mn, mx, budget

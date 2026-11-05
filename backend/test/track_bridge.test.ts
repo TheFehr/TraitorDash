@@ -367,7 +367,9 @@ describe('track.lua: the sampling rate follows the cost', () => {
     `)
     expect(r.out.delay).toBe(0.1)
     const floor = play(`SetCv("traitordash_track_interval_min", "0.01") Begin() OUT = { delay = TIMERS.TraitorDash_Track.delay }`)
-    expect(floor.out.delay).toBe(0.1) // never below 0.1 s
+    expect(floor.out.delay).toBe(0.05) // never below 0.05 s
+    const fast = play(`SetCv("traitordash_track_interval_min", "0.05") Begin() OUT = { delay = TIMERS.TraitorDash_Track.delay }`)
+    expect(fast.out.delay).toBe(0.05) // twenty samples a second, the fastest there is
   })
 
   test('a server whose frame is slow lengthens the interval; a very slow frame skips the tick and records a gap', () => {
@@ -410,17 +412,17 @@ describe('track.lua: the sampling rate follows the cost', () => {
 })
 
 describe('track.lua: caps', () => {
-  test('after 20 000 ticks the track is cut and flagged truncated', () => {
+  test('after 40 000 ticks the track is cut and flagged truncated', () => {
     const r = play(`
       SetCv("traitordash_track_interval_max", "0.2")
       Begin()
-      Run(20100)
+      Run(40100)
       Fire("TTTEndRound", WIN_TRAITOR); Accept(1)
     `)
     const t = trackOf(r)
     expect(t.truncated).toBe(true)
-    expect(t.t).toHaveLength(20000)
-  })
+    expect(t.t).toHaveLength(40000)
+  }, 30_000) // forty thousand ticks of the fake game take a few seconds
 
   test('as the size approaches its cap the interval is raised to its slowest, and at the cap the track is cut', () => {
     const r = play(`

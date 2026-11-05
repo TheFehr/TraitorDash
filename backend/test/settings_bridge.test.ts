@@ -43,7 +43,7 @@ describe('the list', () => {
     const r = JSON.parse(value('RESULT = ENC(TraitorDash.SettingList)'))
     expect(r.map((s: any) => s.name)).toEqual(['traitordash_stats', 'traitordash_stats_debug', 'traitordash_stats_bots', 'traitordash_track',
       'traitordash_track_interval_min', 'traitordash_track_interval_max', 'traitordash_track_budget_ms'])
-    expect(r.find((s: any) => s.name === 'traitordash_track_interval_min')).toMatchObject({ kind: 'number', min: 0.1, max: 2, default: '0.2' })
+    expect(r.find((s: any) => s.name === 'traitordash_track_interval_min')).toMatchObject({ kind: 'number', min: 0.05, max: 2, default: '0.2' })
     for (const never of ['traitordash_url', 'traitordash_token', 'traitordash_public_url']) expect(r.some((s: any) => s.name === never)).toBe(false)
   })
 
@@ -68,7 +68,7 @@ describe('a value', () => {
     expect(check('traitordash_track_interval_min', '.5')).toBe('0.5|nil')
     expect(check('traitordash_track_interval_min', '0.50')).toBe('0.5|nil')
     expect(check('traitordash_track_interval_min', '2')).toBe('2|nil')
-    for (const bad of ['0.09', '2.01', '5', '0', '1e2', '0x1', '1..2', 'NaN', '-0.5', '0.1.1', '123456789']) expect(check('traitordash_track_interval_min', bad)).toMatch(/^nil\|/)
+    for (const bad of ['0.04', '2.01', '5', '0', '1e2', '0x1', '1..2', 'NaN', '-0.5', '0.1.1', '123456789']) expect(check('traitordash_track_interval_min', bad)).toMatch(/^nil\|/)
     expect(check('traitordash_track_budget_ms', '0.05')).toBe('0.05|nil')
     expect(check('traitordash_track_budget_ms', '5')).toBe('5|nil')
     expect(check('traitordash_track_budget_ms', '5.1')).toMatch(/^nil\|out of range/)

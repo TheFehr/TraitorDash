@@ -50,7 +50,7 @@ describe('the page', () => {
     expect(t).not.toContain('data-not-reported')
     for (const s of BRIDGE_SETTINGS) { expect(t).toContain(s.label); expect(t).toContain(s.explain.slice(0, 40)) }
     expect(t).toContain('Round stats'); expect(t).toContain('Position tracking')
-    expect(t).toContain('Range 0.1 to 2 s')
+    expect(t).toContain('Range 0.05 to 2 s')
     expect(t).toContain('Reset to default')
     // what runs, as the starting values of the form (the reported ones, the default for the rest)
     expect(t).toContain('&quot;traitordash_track&quot;:true')

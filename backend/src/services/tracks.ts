@@ -5,7 +5,7 @@ import { FINGERPRINT, NAME, STEAM_ID } from './validators'
  */
 
 export const MAX_TRACK_BYTES = 8 * 1024 * 1024
-export const MAX_TICKS = 20_000
+export const MAX_TICKS = 40_000
 export const MAX_TRACK_PLAYERS = 128
 export const MAX_TRACK_DEATHS = 512
 export const MAX_SEGMENTS_PER_PLAYER = 64

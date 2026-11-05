@@ -19,7 +19,7 @@ TraitorDash.SettingList = {
     { name = "traitordash_stats_debug",          kind = "bool",   default = "1" },
     { name = "traitordash_stats_bots",           kind = "bool",   default = "0" },
     { name = "traitordash_track",                kind = "bool",   default = "0" },
-    { name = "traitordash_track_interval_min",   kind = "number", default = "0.2", min = 0.1,  max = 2 },
+    { name = "traitordash_track_interval_min",   kind = "number", default = "0.2", min = 0.05, max = 2 },
     { name = "traitordash_track_interval_max",   kind = "number", default = "1",   min = 0.2,  max = 5 },
     { name = "traitordash_track_budget_ms",      kind = "number", default = "0.5", min = 0.05, max = 5 },
 }
