@@ -1,8 +1,7 @@
 /// <reference lib="dom" />
 import { Color, type BufferGeometry, type Mesh, type MeshStandardMaterial, type Object3D } from 'three'
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { hex } from './teamColours'
-import { applyColouring, heightColours, levelColour, savedColouring, type Painted } from './sceneKit'
+import { applyColouring, mapLoader, heightColours, levelColour, savedColouring, type Painted } from './sceneKit'
 import { currentDeath, lastPoseAt, levelOf, poseAt, revivePose, trailBetween, type Decoded, type LevelRange, type TrackEvent } from './replaylogic'
 
 // RFC 19, 3.1: the replay drawn from above on a plain 2D canvas, for a browser without WebGL (the game's window). The map's
@@ -178,7 +177,7 @@ export async function startFlat(host: FlatHost): Promise<void> {
     host.say('Loading the map…')
     try {
       const buf = await fetch(bg.meshUrl, { credentials: 'same-origin' }).then(r => { if (!r.ok) throw new Error(String(r.status)); return r.arrayBuffer() })
-      const model = await new Promise<Object3D>((ok, fail) => new GLTFLoader().parse(buf, '', x => ok(x.scene), fail))
+      const model = await new Promise<Object3D>((ok, fail) => mapLoader().parse(buf, '', x => ok(x.scene), fail))
       flat = flatten(model, savedColouring(), Math.max(1, levels.length))
     } catch {
       host.say('The map could not be loaded; the positions are drawn without it.')

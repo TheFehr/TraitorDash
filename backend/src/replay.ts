@@ -12,7 +12,7 @@ import { clone as cloneRig } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { startFlat } from './replayflat'
-import { applyColouring, offerBrowser, heightColours, levelColour, makeCamera, makeRenderer, makeScene, prepareMovable, prepareProps, prepareWater, savedColouring, boxWithout, type Painted } from './sceneKit'
+import { applyColouring, offerBrowser, heightColours, levelColour, makeCamera, makeRenderer, makeScene, mapLoader, prepareMovable, prepareProps, prepareWater, savedColouring, boxWithout, type Painted } from './sceneKit'
 import {
   decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose, fitLabel,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
@@ -406,7 +406,7 @@ async function start(root: HTMLElement) {
   const cut = new Plane(new Vector3(0, -1, 0), 1e9)
   const levelNodes: { index: number, node: Object3D }[] = []
   const wallMeshes: Mesh[] = []
-  // The leaves of the map's plants (Glass and leaves, RFC 18): drawn without their textures they are opaque grey sheets, and a camera in a jungle (Yucatan) sees nothing else
+  // The leaves of the map's plants (Glass and leaves, RFC 18, 4.6): drawn with their own textures, cut out as the game does; a switch to see the ground through them
   const leafMeshes: Mesh[] = []
   // What a body can lie on: the floors of the map and its solid props (not the walls, the leaves or the water)
   const groundMeshes: Mesh[] = []
@@ -425,7 +425,7 @@ async function start(root: HTMLElement) {
     say('Loading the map…')
     try {
       const buf = await fetch(bg.meshUrl, { credentials: 'same-origin' }).then(r => { if (!r.ok) throw new Error(String(r.status)); return r.arrayBuffer() })
-      const model = await new Promise<Object3D>((ok, fail) => new GLTFLoader().parse(buf, '', g => ok(g.scene), fail))
+      const model = await new Promise<Object3D>((ok, fail) => mapLoader().parse(buf, '', g => ok(g.scene), fail))
       model.traverse(o => { const m = LEVEL_NAME.exec(o.name); if (m && !levelNodes.some(l => l.node === o)) levelNodes.push({ index: Number(m[1]), node: o }) })
       levelNodes.sort((a, b) => a.index - b.index)
       // The same colouring as the map page (the choice made there, Plain without one), and the same water.

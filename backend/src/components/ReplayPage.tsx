@@ -70,7 +70,7 @@ export const ReplayPage = ({ ctx, server, round, hasTrack, src, pinned, here, pi
                 <span role="group" aria-label="Levels shown"><span class="cap">Up to level</span><span data-levels></span></span>
                 <label><input type="checkbox" data-follow-level checked /> Follow the selected player's level</label>
                 <label><input type="checkbox" data-walls checked /> Walls</label>
-                <label><input type="checkbox" data-leaves /> Leaves</label>
+                <label><input type="checkbox" data-leaves checked /> Leaves</label>
               </div>
             </div>
             <p data-background class="foot"></p>

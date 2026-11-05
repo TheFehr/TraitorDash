@@ -1,7 +1,6 @@
 /// <reference lib="dom" />
 import { Color, type BufferGeometry, Mesh, MeshStandardMaterial, Object3D } from 'three'
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
-import { applyColouring, COLOURINGS, heightColours, offerBrowser, saveColouring, savedColouring, type Colouring, type Painted } from './sceneKit'
+import { applyColouring, mapLoader, COLOURINGS, heightColours, offerBrowser, saveColouring, savedColouring, type Colouring, type Painted } from './sceneKit'
 
 // RFC 19, 3.2: the 3D view of a map on a plain 2D canvas, for a browser without WebGL (the game's window). The painter's
 // algorithm: every triangle of the map is turned to the camera, the triangles are put in order from far to near and filled
@@ -147,7 +146,7 @@ export function startMapFlat(root: HTMLElement, canvas: HTMLCanvasElement, say: 
 
   fetch(src, { credentials: 'same-origin' })
     .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.arrayBuffer() })
-    .then(buf => new Promise<Object3D>((ok, fail) => new GLTFLoader().parse(buf, '', x => ok(x.scene), fail)))
+    .then(buf => new Promise<Object3D>((ok, fail) => mapLoader().parse(buf, '', x => ok(x.scene), fail)))
     .then(model => run(model))
     .catch(() => say('The map could not be loaded.'))
 

@@ -64,7 +64,15 @@ export function nearTriangles(soup: number[], around: number[][], margin: number
 
 /** The models placed in a map (RFC 18, 4.3): each distinct model once, and every place it stands. */
 export interface PropSet {
-  models: { name: string, solid: number[], foliage: number[] }[]
+  models: {
+    name: string, solid: number[], foliage: number[]
+    /** The texture coordinates of `foliage` (u, v for each corner) and the runs of triangles, each with a material of `leafMaterials` (-1: none, drawn grey). */
+    foliageUv?: number[]
+    foliageRuns?: { material: number, triangles: number }[]
+  }[]
+  /** The materials of the leaves (RFC 18, 4.6): the texture that cuts them out (an index into `leafTextures`), and how it is used. */
+  leafMaterials?: { name: string, texture: number, mode: 'mask' | 'blend', alpha: number }[]
+  leafTextures?: { name: string, width: number, height: number, png: Uint8Array }[]
   /** `model` is an index into `models`; the angles are Source's pitch, yaw, roll in degrees. */
   placements: { model: number, x: number, y: number, z: number, pitch: number, yaw: number, roll: number }[]
 }
@@ -100,7 +108,7 @@ export interface GlbInfo {
   /** Spawn points written into the file. */
   spawns: number
   /** What was placed: places, distinct models, and the triangles drawn (every place counts its model's triangles). */
-  props: { placements: number, models: number, triangles: number }
+  props: { placements: number, models: number, triangles: number, /** Textures written for the leaves. */ textures?: number }
   /** Triangles removed by the crop. */
   cropped: { floors: number, walls: number }
 }
@@ -193,6 +201,19 @@ function indexed(soup: number[]) {
     indices.push(id)
   }
   return { positions: new Float32Array(positions), indices: positions.length / 3 > 65_535 ? new Uint32Array(indices) : new Uint16Array(indices) }
+}
+
+/** The same with a texture coordinate for each corner: corners with the same place and the same coordinate are one vertex. */
+function indexedUv(soup: number[], uvs: number[]) {
+  const ids = new Map<string, number>()
+  const positions: number[] = [], coords: number[] = [], indices: number[] = []
+  for (let i = 0; i < soup.length / 3; i++) {
+    const key = `${soup[i * 3]},${soup[i * 3 + 1]},${soup[i * 3 + 2]},${uvs[i * 2]},${uvs[i * 2 + 1]}`
+    let id = ids.get(key)
+    if (id === undefined) { id = positions.length / 3; ids.set(key, id); positions.push(soup[i * 3]!, soup[i * 3 + 1]!, soup[i * 3 + 2]!); coords.push(uvs[i * 2]!, uvs[i * 2 + 1]!) }
+    indices.push(id)
+  }
+  return { positions: new Float32Array(positions), uvs: new Float32Array(coords), indices: positions.length / 3 > 65_535 ? new Uint32Array(indices) : new Uint16Array(indices) }
 }
 
 /**
@@ -354,6 +375,54 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
         .setAttribute('POSITION', doc.createAccessor(`${name}-positions`).setType('VEC3').setArray(positions).setBuffer(buffer))
         .setIndices(doc.createAccessor(`${name}-indices`).setType('SCALAR').setArray(indices).setBuffer(buffer)))
     }
+    // The leaves (RFC 18, 4.6): a material for each cut-out texture, shared by all the models that use it. A run of triangles with no texture is grey, as it was.
+    const textures = (s.props.leafTextures ?? []).map(t => doc.createTexture(t.name).setImage(t.png).setMimeType('image/png'))
+    const leafMats = new Map<number, ReturnType<typeof doc.createMaterial>>()
+    const leafMaterial = (index: number) => {
+      let mat = leafMats.get(index)
+      if (!mat) {
+        const def = s.props!.leafMaterials![index]!
+        mat = doc.createMaterial('foliage').setBaseColorFactor([1, 1, 1, def.mode === 'blend' ? def.alpha : 1]).setMetallicFactor(0).setRoughnessFactor(1).setDoubleSided(true)
+          .setBaseColorTexture(textures[def.texture]!)
+        if (def.mode === 'mask') mat.setAlphaMode('MASK').setAlphaCutoff(0.5)
+        else mat.setAlphaMode('BLEND')
+        leafMats.set(index, mat)
+      }
+      return mat
+    }
+    const leavesOf = (name: string, model: PropSet['models'][number]) => {
+      if (model.foliage.length === 0) return null
+      const runs = model.foliageRuns, uvs = model.foliageUv
+      const whole = runs && uvs && s.props!.leafMaterials !== undefined && uvs.length === (model.foliage.length / 3) * 2 && runs.reduce((n, r) => n + r.triangles, 0) * 9 === model.foliage.length
+      if (!whole) return meshOf(name, model.foliage, foliageMat)
+      const groups = new Map<number, { pos: number[], uv: number[] }>()
+      let at = 0
+      for (const r of runs!) {
+        const g = groups.get(r.material) ?? { pos: [], uv: [] }
+        groups.set(r.material, g)
+        for (let i = at * 9; i < (at + r.triangles) * 9; i++) g.pos.push(model.foliage[i]!)
+        for (let i = at * 6; i < (at + r.triangles) * 6; i++) g.uv.push(uvs![i]!)
+        at += r.triangles
+      }
+      const prims: ReturnType<typeof doc.createPrimitive>[] = []
+      let k = 0
+      for (const [material, g] of groups) {
+        const prim = doc.createPrimitive()
+        if (material >= 0 && material < s.props!.leafMaterials!.length) {
+          const { positions, uvs: coords, indices } = indexedUv(g.pos, g.uv)
+          prim.setMaterial(leafMaterial(material))
+            .setAttribute('POSITION', doc.createAccessor(`${name}-positions-${k}`).setType('VEC3').setArray(positions).setBuffer(buffer))
+            .setAttribute('TEXCOORD_0', doc.createAccessor(`${name}-uv-${k}`).setType('VEC2').setArray(coords).setBuffer(buffer))
+            .setIndices(doc.createAccessor(`${name}-indices-${k}`).setType('SCALAR').setArray(indices).setBuffer(buffer))
+        } else continue // leaves with no texture to cut them out are not drawn: opaque sheets are not leaves (RFC 18, 4.6)
+        prims.push(prim)
+        k++
+      }
+      if (prims.length === 0) return null // (a mesh made and not used would be written empty)
+      const mesh = doc.createMesh(name)
+      for (const prim of prims) mesh.addPrimitive(prim)
+      return mesh
+    }
     const group = doc.createNode('props')
     root.addChild(group)
     for (const pl of s.props.placements) {
@@ -361,7 +430,7 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
       if (!model) throw new RangeError('a placement names a model that is not there')
       let m = meshes.get(pl.model)
       if (!m) {
-        m = { solid: meshOf(`prop:${model.name}`, model.solid, propMat), foliage: meshOf(`foliage:${model.name}`, model.foliage, foliageMat), triangles: (model.solid.length + model.foliage.length) / 9 }
+        m = { solid: meshOf(`prop:${model.name}`, model.solid, propMat), foliage: leavesOf(`foliage:${model.name}`, model), triangles: (model.solid.length + model.foliage.length) / 9 }
         meshes.set(pl.model, m)
         info.props.models++
       }
@@ -381,5 +450,6 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
     spawns: (s.spawns ?? []).slice(0, MAX_SPAWNS).map(p => ({ class: p.class, x: p.x, y: p.y, z: p.z })),
   })
   info.spawns = Math.min((s.spawns ?? []).length, MAX_SPAWNS)
+  if (s.props?.leafTextures?.length) info.props.textures = s.props.leafTextures.length
   return { glb: await new NodeIO().writeBinary(doc), info }
 }

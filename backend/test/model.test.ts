@@ -68,6 +68,32 @@ describe('foliage (a material with a cut-out or a translucent texture)', () => {
     expect(m.cards).toBe(1)
   })
 
+  test('the foliage carries its texture coordinates, a pair for each corner in the order of the corners, and runs of triangles with the paths of their material', () => {
+    const files = buildModel({
+      ...spec,
+      meshes: [
+        { material: 0, vertices: [A, B, C], tris: [0, 1, 2], uvs: [[0, 0], [1, 0], [0, 1]] },
+        { material: 1, vertices: [B, C, D, A], tris: [0, 1, 2, 2, 1, 3], uvs: [[0.25, 0.5], [0.75, 0.5], [2, -1], [0.5, 0.5]] },
+      ],
+    })
+    const m = readModel(files, () => true)!
+    expect(m.solid).toEqual([])
+    expect(m.foliageUv).toEqual([0, 0, 1, 0, 0, 1, 0.25, 0.5, 0.75, 0.5, 2, -1, 2, -1, 0.75, 0.5, 0.5, 0.5]) // a coordinate outside 0..1 is a texture that repeats
+    expect(m.foliageRuns).toEqual([
+      { paths: ['materials/models/props/tree/trunk.vmt', 'materials/models/props/trunk.vmt'], triangles: 1 },
+      { paths: ['materials/models/props/tree/leaves.vmt', 'materials/models/props/leaves.vmt'], triangles: 2 },
+    ])
+    expect(m.foliageUv.length / 6).toBe(m.foliage.length / 9) // a pair for every corner of every triangle
+    expect(m.foliageRuns.reduce((n, r) => n + r.triangles, 0)).toBe(m.foliage.length / 9)
+  })
+
+  test('a mesh that is not foliage, and a card, have no texture coordinates or run in the foliage', () => {
+    const huge: [number, number, number][] = [[0, 0, 0], [2400, 0, 0], [0, 1000, 0]]
+    const m = readModel(buildModel({ ...spec, meshes: [{ material: 0, vertices: [A, B, C], tris: [0, 1, 2], uvs: [[5, 5], [6, 6], [7, 7]] }, { material: 1, vertices: huge, tris: [0, 1, 2] }] }), p => p.some(x => x.includes('leaves.vmt')))!
+    expect(m.foliage).toEqual([]); expect(m.foliageUv).toEqual([]); expect(m.foliageRuns).toEqual([])
+    expect(m.cards).toBe(1)
+  })
+
   test('a material that is not named by the model counts as solid', () => {
     const m = readModel(buildModel({ ...spec, skinref: [0] }), () => true)! // mesh 1 has material 1, which the skin table does not have
     expect(tri(m)).toEqual({ solid: 1, foliage: 1 })

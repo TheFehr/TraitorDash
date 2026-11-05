@@ -3,11 +3,10 @@ import {
   Box3, Vector3, Mesh, MeshStandardMaterial, Plane, type Object3D, type BufferGeometry,
 } from 'three'
 import {
-  applyColouring, boxWithout, COLOURINGS, heightColours, makeCamera, makeRenderer, makeScene, makeSpawnMarkers, prepareDetached, prepareMovable, prepareProps, prepareWater, saveColouring, savedColouring,
+  applyColouring, boxWithout, COLOURINGS, heightColours, makeCamera, makeRenderer, makeScene, makeSpawnMarkers, mapLoader, prepareDetached, prepareMovable, prepareProps, prepareWater, saveColouring, savedColouring,
   type Colouring, type Painted, type SpawnPoint,
 } from './sceneKit'
 import { startMapFlat } from './mapflat'
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 
 // The 3D view of a map (RFC 11, 3.6): the stored GLB drawn by three.js, with a level cutaway.
@@ -122,7 +121,7 @@ function start(root: HTMLElement) {
   say('Loading the map…')
   fetch(src, { credentials: 'same-origin' })
     .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.arrayBuffer() })
-    .then(buf => new Promise<{ scene: Object3D, userData: Record<string, unknown> }>((ok, fail) => new GLTFLoader().parse(buf, '', g => ok({ scene: g.scene, userData: g.userData ?? {} }), fail)))
+    .then(buf => new Promise<{ scene: Object3D, userData: Record<string, unknown> }>((ok, fail) => mapLoader().parse(buf, '', g => ok({ scene: g.scene, userData: g.userData ?? {} }), fail)))
     .then(({ scene: model, userData }) => {
       model.traverse(o => { const m = LEVEL_NAME.exec(o.name); if (m && !levels.some(l => l.node === o)) levels.push({ index: Number(m[1]), node: o, hi: Number(o.userData.hi) }) })
       levels.sort((a, b) => a.index - b.index)

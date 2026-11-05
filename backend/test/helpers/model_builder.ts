@@ -35,6 +35,8 @@ export interface ModelMeshSpec {
   vertices: [number, number, number][]
   /** Indices into `vertices`, three to a triangle. */
   tris: number[]
+  /** Texture coordinates (u, v) of each vertex; zeros when not given. */
+  uvs?: [number, number][]
 }
 export interface ModelSpec {
   meshes: ModelMeshSpec[]
@@ -92,6 +94,7 @@ export function buildModel(spec: ModelSpec): { mdl: Buffer, vvd: Buffer, vtx: Bu
 
   // ---- .vvd
   const verts = spec.vvd?.vertices ?? spec.meshes.flatMap(m => m.vertices)
+  const uvs = spec.meshes.flatMap(m => m.uvs ?? m.vertices.map(() => [0, 0] as [number, number]))
   const fixups = spec.vvd?.fixups ?? []
   const fixAt = 64, vertAt = fixAt + fixups.length * 12
   const vvd = Buffer.alloc(vertAt + verts.length * 48)
@@ -100,6 +103,7 @@ export function buildModel(spec: ModelSpec): { mdl: Buffer, vvd: Buffer, vtx: Bu
   vvd.writeInt32LE(fixups.length, 48); vvd.writeInt32LE(fixAt, 52); vvd.writeInt32LE(vertAt, 56)
   fixups.forEach((f, i) => { vvd.writeInt32LE(f.lod, fixAt + i * 12); vvd.writeInt32LE(f.from, fixAt + i * 12 + 4); vvd.writeInt32LE(f.count, fixAt + i * 12 + 8) })
   verts.forEach((v, i) => v.forEach((n, a) => vvd.writeFloatLE(n, vertAt + i * 48 + 16 + a * 4)))
+  if (!spec.vvd) uvs.forEach((uv, i) => { vvd.writeFloatLE(uv[0], vertAt + i * 48 + 40); vvd.writeFloatLE(uv[1], vertAt + i * 48 + 44) })
 
   // ---- .vtx: header (36), body part (8), model (8), lod (12), then per mesh: mesh (9), strip group (25), vertices (9 each), indices, strip (27)
   const parts: Buffer[] = []

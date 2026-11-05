@@ -9,6 +9,10 @@ export interface ModelMesh {
   solid: number[]
   /** Triangles of the meshes whose material is foliage (a cut-out or translucent material) and that have a shape of their own. */
   foliage: number[]
+  /** The texture coordinates of `foliage`: u and v for each corner, in Source's way (the top left of the texture is 0, 0). */
+  foliageUv: number[]
+  /** `foliage` is made of runs of triangles that each have one material: the paths its `.vmt` could be at, and how many triangles. */
+  foliageRuns: { paths: string[], triangles: number }[]
   /** Foliage meshes left out because they are cards: see `CARD_TRIANGLE_AREA`. */
   cards: number
 }
@@ -64,8 +68,12 @@ function read({ mdl, vvd, vtx }: ModelFiles, isFoliage: (vmtPaths: string[]) => 
   // The vertices of the first level of detail, with its fix-ups (the vertices a level of detail takes from the others).
   const numFix = cap(v.getInt32(48, true), MAX_FIXUPS), fixStart = v.getInt32(52, true), vertStart = v.getInt32(56, true)
   const lod0 = cap(v.getInt32(16, true), MAX_VERTICES)
-  const positions: number[] = []
-  const take = (i: number) => { const o = vertStart + i * VERTEX; positions.push(v.getFloat32(o + 16, true), v.getFloat32(o + 20, true), v.getFloat32(o + 24, true)) }
+  const positions: number[] = [], texcoords: number[] = []
+  const take = (i: number) => {
+    const o = vertStart + i * VERTEX
+    positions.push(v.getFloat32(o + 16, true), v.getFloat32(o + 20, true), v.getFloat32(o + 24, true))
+    texcoords.push(v.getFloat32(o + 40, true), v.getFloat32(o + 44, true))
+  }
   if (numFix > 0) {
     for (let f = 0; f < numFix; f++) {
       const o = fixStart + f * 12
@@ -84,21 +92,22 @@ function read({ mdl, vvd, vtx }: ModelFiles, isFoliage: (vmtPaths: string[]) => 
     const d = cstr(mdl, m.getInt32(cdAt + i * 4, true)).toLowerCase().replace(/\\/g, '/')
     dirs.push(d === '' || d.endsWith('/') ? d : d + '/')
   }
-  const foliageOfMaterial = new Map<number, boolean>()
-  const foliageMaterial = (material: number): boolean => {
+  const foliageOfMaterial = new Map<number, { foliage: boolean, paths: string[] }>()
+  const foliageMaterial = (material: number): { foliage: boolean, paths: string[] } => {
     const known = foliageOfMaterial.get(material)
     if (known !== undefined) return known
-    let foliage = false
+    let answer = { foliage: false, paths: [] as string[] }
     if (material >= 0 && material < numSkinRef) {
       const tex = m.getInt16(skinAt + material * 2, true) // the first skin family
       if (tex >= 0 && tex < numTex) {
         const at = texAt + tex * STUDIO_TEXTURE
         const name = cstr(mdl, at + m.getInt32(at, true)).toLowerCase().replace(/\\/g, '/')
-        foliage = isFoliage(dirs.map(d => `materials/${d}${name}.vmt`))
+        const paths = dirs.map(d => `materials/${d}${name}.vmt`)
+        answer = { foliage: isFoliage(paths), paths }
       }
     }
-    foliageOfMaterial.set(material, foliage)
-    return foliage
+    foliageOfMaterial.set(material, answer)
+    return answer
   }
 
   // The structure: first body part, first model, first level of detail.
@@ -112,13 +121,15 @@ function read({ mdl, vvd, vtx }: ModelFiles, isFoliage: (vmtPaths: string[]) => 
   const vtxPart = t.getInt32(32, true), vtxModel = vtxPart + t.getInt32(vtxPart + 4, true), vtxLod = vtxModel + t.getInt32(vtxModel + 4, true)
   const vtxMeshes = cap(t.getInt32(vtxLod, true), MAX_MESHES), vtxMeshAt = vtxLod + t.getInt32(vtxLod + 4, true)
 
-  const solid: number[] = [], foliage: number[] = []
+  const solid: number[] = [], foliage: number[] = [], foliageUv: number[] = [], foliageRuns: { paths: string[], triangles: number }[] = []
   let triangles = 0, cards = 0
   for (let k = 0; k < Math.min(nMeshes, vtxMeshes); k++) {
     const mesh = meshAt + k * STUDIO_MESH
     const vertexOffset = m.getInt32(mesh + 12, true)
-    const isFoliage_ = foliageMaterial(m.getInt32(mesh, true))
+    const material = foliageMaterial(m.getInt32(mesh, true))
+    const isFoliage_ = material.foliage
     const target = isFoliage_ ? [] as number[] : solid
+    const targetUv: number[] = []
     const vm = vtxMeshAt + k * 9
     const groups = cap(t.getInt32(vm, true), MAX_STRIP_GROUPS), groupAt = vm + t.getInt32(vm + 4, true)
     for (let g = 0; g < groups; g++) {
@@ -139,6 +150,7 @@ function read({ mdl, vvd, vtx }: ModelFiles, isFoliage: (vmtPaths: string[]) => 
             const gv = vertexIndex + vertexOffset + original[local]!
             if (!(gv >= 0 && gv < vertexCount)) return null
             target.push(positions[gv * 3]!, positions[gv * 3 + 1]!, positions[gv * 3 + 2]!)
+            if (isFoliage_) targetUv.push(texcoords[gv * 2]!, texcoords[gv * 2 + 1]!)
           }
           if (++triangles > maxTriangles) return null
         }
@@ -146,10 +158,14 @@ function read({ mdl, vvd, vtx }: ModelFiles, isFoliage: (vmtPaths: string[]) => 
     }
     if (isFoliage_) {
       if (meanArea(target) > CARD_TRIANGLE_AREA) cards++
-      else for (const x of target) foliage.push(x)
+      else {
+        for (const x of target) foliage.push(x)
+        for (const x of targetUv) foliageUv.push(Number.isFinite(x) ? x : 0)
+        foliageRuns.push({ paths: material.paths, triangles: target.length / 9 })
+      }
     }
   }
-  return triangles === 0 ? null : { solid, foliage, cards }
+  return triangles === 0 ? null : { solid, foliage, foliageUv, foliageRuns, cards }
 }
 
 /** The mean area of the triangles of a soup (x y z per corner). */

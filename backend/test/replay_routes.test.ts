@@ -257,8 +257,8 @@ describe('the replay page', () => {
     expect(r.text).toContain('/public/replay.js')
     expect(r.text).toContain('data-scrub')
     expect(r.text).toContain('data-theater')
-    // the leaves of the map's plants are a switch, off: drawn without their textures they are opaque grey sheets (Yucatan, 2026-11-05)
-    expect(r.text).toContain('<input type="checkbox" data-leaves="true"/> Leaves') // not checked
+    // the leaves of the map's plants are a switch, on: drawn with their textures (Yucatan, 2026-11-05)
+    expect(r.text).toContain('<input type="checkbox" data-leaves="true" checked=""/> Leaves')
     expect(r.text).toContain('<input type="checkbox" data-walls="true" checked=""/> Walls')
     expect(r.text).toContain('data-cam="top"')
     expect(r.text).toContain('not what they could see') // the fixed line: it is not a line-of-sight source

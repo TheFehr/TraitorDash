@@ -1,8 +1,9 @@
 import {
   WebGLRenderer, Scene, PerspectiveCamera, HemisphereLight, AmbientLight, DirectionalLight, Color, BufferAttribute,
-  Box3, ConeGeometry, Group, Mesh as MeshClass, MeshBasicMaterial,
-  type Mesh, type MeshStandardMaterial, type BufferGeometry, type Object3D, type Plane,
+  Box3, ConeGeometry, Group, Mesh as MeshClass, MeshBasicMaterial, TextureLoader,
+  type LoadingManager, type Mesh, type MeshStandardMaterial, type BufferGeometry, type Object3D, type Plane,
 } from 'three'
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 
 /** What the map view and the replay start from: the same renderer, lit scene and camera, so a map looks the same in both. */
 
@@ -162,6 +163,17 @@ export function prepareMovable(model: Object3D, cut: Plane): Object3D | null {
     mesh.material.roughness = 1
   })
   return node
+}
+
+/**
+ * A loader for the map's file. The textures in it (the leaves of the plants, RFC 18, 4.6) are PNG images inside the file; the loader's
+ * own way of reading them fetches a `blob:` address, which the page's policy does not allow (`connect-src 'self'`), so they are read as
+ * images (`img-src` has `blob:`), the way an older browser does it, and the policy stays as strict as it was.
+ */
+export function mapLoader(): GLTFLoader {
+  const loader = new GLTFLoader()
+  loader.register(parser => { (parser as unknown as { textureLoader: TextureLoader }).textureLoader = new TextureLoader((parser as unknown as { options: { manager: LoadingManager } }).options.manager); return { name: 'TD_images' } })
+  return loader
 }
 
 /** The props of a model, if it has any: the meshes by kind, cut like the levels, matte. Their materials are shared by all the places, so they are set once. */

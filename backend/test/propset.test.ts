@@ -6,6 +6,8 @@ import { buildPropSet, PROP_LIMITS } from '../src/maps/propset'
 import { surfacesToGlb, angleQuaternion } from '../src/maps/meshGlb'
 import { buildBsp, flatQuad } from './helpers/bsp_builder'
 import { buildModel, buildZip } from './helpers/model_builder'
+import { parseVmt, LEAF_LIMITS } from '../src/maps/propset'
+import { encodePng } from '../src/maps/png'
 
 // RFC 18, 4.3 and 7: the props of a map as the mesh gets them: from the map's own pack, near the map, within the limits.
 
@@ -15,6 +17,7 @@ const glassy = buildModel({ textures: ['wall', 'glass'], meshes: [{ material: 0,
 const big = (n: number) => buildModel({ meshes: [{ vertices: [A, B, C], tris: Array.from({ length: n * 3 }, (_, i) => i % 3) }] })
 const files = (name: string, m: { mdl: Buffer, vvd: Buffer, vtx: Buffer }) => ({ [`models/test/${name}.mdl`]: m.mdl, [`models/test/${name}.vvd`]: m.vvd, [`models/test/${name}.dx90.vtx`]: m.vtx })
 const around = { minX: 0, minY: 0, maxX: 1000, maxY: 1000 }
+const floor = (z: number) => [0, 0, z, 64, 0, z, 64, 64, z, 0, 0, z, 64, 64, z, 0, 64, z]
 
 const open = async (pack: Record<string, Buffer | string>, props: { model: string, x: number, y: number, z?: number }[], extra: Parameters<typeof buildBsp>[0] = {}) => {
   const models = [...new Set(props.map(p => p.model))]
@@ -91,6 +94,127 @@ describe('foliage, from the material files in the pack', () => {
   test('the report says how many drawn models have foliage', async () => {
     const { src, header } = await open(pack('"VertexLitGeneric" { $alphatest 1 }'), [{ model: 'models/test/glassy.mdl', x: 100, y: 100 }])
     expect((await buildPropSet(src, header, [], around)).report.foliageModels).toBe(1)
+  })
+})
+
+describe('the leaves have their textures (RFC 18, 4.6)', () => {
+  // a texture of 8 by 8 in DXT5: 4 blocks, the first half of the leaf cut out
+  const block = (a0: number, a1: number, idx: number[]) => {
+    let bits = 0n
+    idx.forEach((v, i) => { bits |= BigInt(v) << BigInt(3 * i) })
+    return [a0, a1, ...Array.from({ length: 6 }, (_, i) => Number((bits >> BigInt(8 * i)) & 255n)), 0x00, 0xf8, 0x1f, 0x00, 0, 0, 0, 0]
+  }
+  const texture = (name: string, wide = 8) => {
+    const out = Buffer.alloc(80 + wide * wide) // header 7.2, 1 mip of DXT5
+    out.write('VTF\0', 0, 'latin1'); out.writeUInt32LE(7, 4); out.writeUInt32LE(2, 8); out.writeUInt32LE(80, 12)
+    out.writeUInt16LE(wide, 16); out.writeUInt16LE(wide, 18); out.writeUInt16LE(1, 24); out.writeInt32LE(15, 52); out.writeUInt8(1, 56); out.writeInt32LE(-1, 57); out.writeUInt16LE(1, 63)
+    const blocks = (wide / 4) ** 2
+    for (let b = 0; b < blocks; b++) Buffer.from(block(b % 2 ? 255 : 0, 255, Array(16).fill(0))).copy(out, 80 + b * 16) // alternate blocks cut out and solid
+    return out.subarray(0, 80 + blocks * 16)
+  }
+  const leaf = buildModel({ textures: ['leaves'], cdTextures: ['models\\test\\'], meshes: [{ material: 0, vertices: [A, B, C], tris: [0, 1, 2], uvs: [[0, 0], [1, 0], [0, 1]] }] })
+  const place = (vmt: string, extra: Record<string, Buffer | string> = {}) => open({ ...files('leaf', leaf), 'materials/models/test/leaves.vmt': vmt, ...extra }, [{ model: 'models/test/leaf.mdl', x: 100, y: 100 }, { model: 'models/test/leaf.mdl', x: 300, y: 100 }])
+
+  test('the texture is read from the pack, once for the map, as a PNG; the material says how it is used', async () => {
+    const { src, header } = await place('"VertexLitGeneric" { "$basetexture" "models/test/leaftex" "$alphatest" 1 }', { 'materials/models/test/leaftex.vtf': texture('x') })
+    const { set, report } = await buildPropSet(src, header, [], around)
+    expect(set.leafTextures).toHaveLength(1)
+    expect(set.leafTextures![0]).toMatchObject({ name: 'models/test/leaftex', width: 8, height: 8 })
+    expect(Array.from(set.leafTextures![0]!.png.subarray(1, 4))).toEqual([0x50, 0x4e, 0x47]) // PNG
+    expect(set.leafMaterials).toEqual([{ name: 'materials/models/test/leaves.vmt', texture: 0, mode: 'mask', alpha: 1 }])
+    expect(set.models[0]!.foliageRuns).toEqual([{ material: 0, triangles: 1 }])
+    expect(set.models[0]!.foliageUv).toEqual([0, 0, 1, 0, 0, 1])
+    expect(report).toMatchObject({ leafTextures: 1, leafMaterials: 1, leavesWithoutTexture: 0, foliageModels: 1 })
+  })
+
+  test('$translucent is blended, with the $alpha of the material; $alphatest wins when both are there', async () => {
+    const glass = await place('"VertexLitGeneric" { "$basetexture" "models/test/leaftex" "$translucent" 1 "$alpha" 0.4 }', { 'materials/models/test/leaftex.vtf': texture('x') })
+    expect((await buildPropSet(glass.src, glass.header, [], around)).set.leafMaterials![0]).toMatchObject({ mode: 'blend', alpha: 0.4 })
+    const both = await place('"VertexLitGeneric" { "$basetexture" "models/test/leaftex" "$translucent" 1 "$alphatest" 1 }', { 'materials/models/test/leaftex.vtf': texture('x') })
+    expect((await buildPropSet(both.src, both.header, [], around)).set.leafMaterials![0]).toMatchObject({ mode: 'mask', alpha: 1 })
+  })
+
+  test('a texture that is not in the pack (the game\'s own), cannot be read or is a kind that is not read leaves the leaves without one, counted', async () => {
+    const extras: Record<string, Buffer | string>[] = [{}, { 'materials/models/test/leaftex.vtf': Buffer.from('not a texture') }, { 'materials/models/test/leaftex.vtf': (() => { const t = Buffer.from(texture('x')); t.writeUInt16LE(0x4000, 20); return t })() }]
+    for (const extra of extras) {
+      const { src, header } = await place('"VertexLitGeneric" { "$basetexture" "models/test/leaftex" "$alphatest" 1 }', extra)
+      const { set, report } = await buildPropSet(src, header, [], around)
+      expect(set.leafTextures).toEqual([]); expect(set.leafMaterials).toEqual([])
+      expect(set.models[0]!.foliageRuns).toEqual([{ material: -1, triangles: 1 }])
+      expect(report).toMatchObject({ leafTextures: 0, leavesWithoutTexture: 1, foliageModels: 1 })
+    }
+    const none = await place('"VertexLitGeneric" { "$alphatest" 1 }') // no $basetexture at all
+    expect((await buildPropSet(none.src, none.header, [], around)).report.leavesWithoutTexture).toBe(1)
+  })
+
+  test('the limits: at most so many textures and so many bytes of PNG for a map, and the texture is cut down to the size allowed', async () => {
+    const was = { ...LEAF_LIMITS }
+    try {
+      LEAF_LIMITS.textures = 0
+      let r = await place('"VertexLitGeneric" { "$basetexture" "models/test/leaftex" "$alphatest" 1 }', { 'materials/models/test/leaftex.vtf': texture('x') })
+      expect((await buildPropSet(r.src, r.header, [], around)).report).toMatchObject({ leafTextures: 0, leavesWithoutTexture: 1 })
+      LEAF_LIMITS.textures = was.textures; LEAF_LIMITS.pngBytes = 10
+      r = await place('"VertexLitGeneric" { "$basetexture" "models/test/leaftex" "$alphatest" 1 }', { 'materials/models/test/leaftex.vtf': texture('x') })
+      expect((await buildPropSet(r.src, r.header, [], around)).report).toMatchObject({ leafTextures: 0, leavesWithoutTexture: 1 })
+      LEAF_LIMITS.pngBytes = was.pngBytes; LEAF_LIMITS.memberBytes = 100
+      r = await place('"VertexLitGeneric" { "$basetexture" "models/test/leaftex" "$alphatest" 1 }', { 'materials/models/test/leaftex.vtf': texture('x') })
+      expect((await buildPropSet(r.src, r.header, [], around)).report).toMatchObject({ leafTextures: 0, leavesWithoutTexture: 1 })
+      LEAF_LIMITS.memberBytes = was.memberBytes; LEAF_LIMITS.side = 4
+      r = await place('"VertexLitGeneric" { "$basetexture" "models/test/leaftex" "$alphatest" 1 }', { 'materials/models/test/leaftex.vtf': texture('x') })
+      expect((await buildPropSet(r.src, r.header, [], around)).set.leafTextures![0]).toMatchObject({ width: 8, height: 8 }) // a file with one mip has only that one
+    } finally { Object.assign(LEAF_LIMITS, was) }
+  })
+
+  test('two materials with one texture share it; two models with one material share it', async () => {
+    const two = buildModel({ textures: ['leaves', 'leaves2'], cdTextures: ['models\\test\\'], meshes: [{ material: 0, vertices: [A, B, C], tris: [0, 1, 2], uvs: [[0, 0], [1, 0], [0, 1]] }, { material: 1, vertices: [A, B, C], tris: [0, 1, 2], uvs: [[0, 0], [1, 0], [0, 1]] }] })
+    const vmt = '"VertexLitGeneric" { "$basetexture" "models/test/leaftex" "$alphatest" 1 }'
+    const { src, header } = await open({ ...files('leaf', two), ...files('leaf2', leaf), 'materials/models/test/leaves.vmt': vmt, 'materials/models/test/leaves2.vmt': vmt, 'materials/models/test/leaftex.vtf': texture('x') },
+      [{ model: 'models/test/leaf.mdl', x: 100, y: 100 }, { model: 'models/test/leaf2.mdl', x: 300, y: 100 }])
+    const { set } = await buildPropSet(src, header, [], around)
+    expect(set.leafTextures).toHaveLength(1)
+    expect(set.leafMaterials).toHaveLength(2) // two materials
+    expect(set.leafMaterials!.every(m => m.texture === 0)).toBe(true)
+  })
+
+  test('the mesh: a foliage mesh with a primitive for each texture, the coordinates, the texture as a PNG in the file and a cut-out material shared by every place; it is a valid file', async () => {
+    const { src, header } = await place('"VertexLitGeneric" { "$basetexture" "models/test/leaftex" "$alphatest" 1 }', { 'materials/models/test/leaftex.vtf': texture('x') })
+    const { set } = await buildPropSet(src, header, [], around)
+    const r = (await surfacesToGlb({ fingerprint: 'ab'.repeat(32), version: 20, revision: 1, floors: [0, 0, 0, 64, 0, 0, 64, 64, 0, 0, 0, 0, 64, 64, 0, 0, 64, 0], walls: [], props: set }, { map: 'x' }))!
+    expect(r.info.props).toMatchObject({ placements: 2, models: 1, textures: 1 })
+    const doc = await new NodeIO().readBinary(r.glb)
+    const mesh = doc.getRoot().listMeshes().find(m => m.getName() === 'foliage:models/test/leaf.mdl')!
+    const prim = mesh.listPrimitives()[0]!
+    expect(mesh.listPrimitives()).toHaveLength(1)
+    expect(Array.from(prim.getAttribute('TEXCOORD_0')!.getArray()!)).toEqual([0, 0, 1, 0, 0, 1])
+    const mat = prim.getMaterial()!
+    expect(mat.getName()).toBe('foliage'); expect(mat.getAlphaMode()).toBe('MASK'); expect(mat.getAlphaCutoff()).toBe(0.5); expect(mat.getDoubleSided()).toBe(true)
+    const tex = mat.getBaseColorTexture()!
+    expect(tex.getMimeType()).toBe('image/png'); expect(Array.from(tex.getImage()!.subarray(1, 4))).toEqual([0x50, 0x4e, 0x47])
+    expect(doc.getRoot().listTextures()).toHaveLength(1) // one texture for both places and one model
+    const report = await validator.validateBytes(r.glb)
+    expect(report.issues.numErrors).toBe(0)
+    expect(report.issues.numWarnings).toBe(0)
+  })
+
+  test('the mesh: a translucent material is blended with its alpha, and leaves with no texture are not in the file at all', async () => {
+    const glass = await place('"VertexLitGeneric" { "$basetexture" "models/test/leaftex" "$translucent" 1 "$alpha" 0.4 }', { 'materials/models/test/leaftex.vtf': texture('x') })
+    const g = (await surfacesToGlb({ fingerprint: 'ab'.repeat(32), version: 20, revision: 1, floors: floor(0), walls: [], props: (await buildPropSet(glass.src, glass.header, [], around)).set }, { map: 'x' }))!
+    const gm = (await new NodeIO().readBinary(g.glb)).getRoot().listMeshes().find(m => m.getName().startsWith('foliage:'))!.listPrimitives()[0]!.getMaterial()!
+    expect(gm.getAlphaMode()).toBe('BLEND'); expect(gm.getBaseColorFactor()[3]).toBeCloseTo(0.4, 6)
+    const bare = await place('"VertexLitGeneric" { "$alphatest" 1 }')
+    const b = (await surfacesToGlb({ fingerprint: 'ab'.repeat(32), version: 20, revision: 1, floors: floor(0), walls: [], props: (await buildPropSet(bare.src, bare.header, [], around)).set }, { map: 'x' }))!
+    const doc = await new NodeIO().readBinary(b.glb)
+    expect(doc.getRoot().listMeshes().filter(m => m.getName().startsWith('foliage:'))).toHaveLength(0) // nothing grey in its place
+    expect(doc.getRoot().listTextures()).toHaveLength(0)
+    expect((await validator.validateBytes(b.glb)).issues.numErrors).toBe(0)
+  })
+
+  test('the .vmt is read for the texture and the mode; a texture name with anything but a path in it is no texture', () => {
+    expect(parseVmt('"VertexLitGeneric" { "$basetexture" "Models\\Test\\Leaf.vtf" "$alphatest" "1" }')).toEqual({ texture: 'models/test/leaf', mode: 'mask', alpha: 1 })
+    expect(parseVmt('"VertexLitGeneric" { $translucent 1\n $basetexture models/test/glass\n $alpha 2 }')).toEqual({ texture: 'models/test/glass', mode: 'blend', alpha: 1 }) // $alpha over 1 is not a number to use
+    expect(parseVmt('"VertexLitGeneric" { "$basetexture" "../../etc/passwd" "$alphatest" 1 }')!.texture).toBeNull()
+    expect(parseVmt('"VertexLitGeneric" { "$basetexture" "a;b" "$alphatest" 1 }')!.texture).toBeNull()
+    expect(parseVmt('"VertexLitGeneric" { "$basetexture" "x" }')).toBeNull() // not foliage
   })
 })
 

@@ -15,7 +15,7 @@ export interface GeometryInfo {
   vertices: number, triangles: number, levels: number, water: number
   /** False for a hill or terrain (no storeys); the triangles in detached parts; spawn points in the file. */
   storeys?: boolean, detached?: number, movable?: number, spawns?: number
-  props?: { placed: number, models: number, foliage: number, cards?: number, fromGame?: number, unavailable: number, unreadable: number, dropped: number }
+  props?: { placed: number, models: number, foliage: number, /** Textures written for the leaves of the plants (RFC 18, 4.6). */ leafTextures?: number, cards?: number, fromGame?: number, unavailable: number, unreadable: number, dropped: number }
 }
 
 export type GeometryResult =
@@ -51,7 +51,7 @@ export async function buildGeometry(src: ByteSource, map: string, fingerprint: s
     if (!out) return { ok: false, error: 'The map has no surfaces to draw.' }
     return { ok: true, glb: out.glb, note: report.stockError ? `The game's own models could not all be fetched: ${report.stockError}` : undefined, info: {
       vertices: out.info.vertices, triangles: out.info.triangles, levels: out.info.levels.length, water: out.info.waterTriangles, storeys: out.info.storeys, detached: out.info.detached.triangles, movable: out.info.movable, spawns: out.info.spawns,
-      props: { placed: report.drawnPlacements, models: report.drawnModels, foliage: report.foliageModels, cards: report.cards, fromGame: report.fromGame, unavailable: report.unavailable, unreadable: report.unreadable + report.tooBig, dropped: report.dropped },
+      props: { placed: report.drawnPlacements, models: report.drawnModels, foliage: report.foliageModels, leafTextures: report.leafTextures, cards: report.cards, fromGame: report.fromGame, unavailable: report.unavailable, unreadable: report.unreadable + report.tooBig, dropped: report.dropped },
     } }
   } catch (e) {
     // BspError messages describe the file's structure, not its content; anything else is ours.
