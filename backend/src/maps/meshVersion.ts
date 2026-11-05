@@ -8,10 +8,11 @@
  * 6 and 7 (with the game's own models): the parts that can move (doors, lifts, a collapsing building) in a group of their own, at their starting place.
  * 8 (9 with the game's own models): the leaves of the plants carry their textures, cut out as the game does (RFC 18, 4.6).
  * 9 (10 with the game's own models): the floors and walls carry the textures of their materials, cut as the map's file says (RFC 18, 5).
+ * 10 (11 with the game's own models): the solid props and the parts that can move carry their textures too, and a part without one is no longer orange (RFC 18, 5).
  * The part nodes of RFC 20 stage 1 are written by every build from now on, but are not a generation of their own: the generation is raised when the replay needs them (stage 3).
  */
-export const MESH_VERSION = 9
-export const MESH_VERSION_GAME = 10
+export const MESH_VERSION = 10
+export const MESH_VERSION_GAME = 11
 
 /** The generation a backend wants: the one with the game's own models when it has them, else the one without. */
 export const meshVersion = (withGameContent: boolean) => withGameContent ? MESH_VERSION_GAME : MESH_VERSION
