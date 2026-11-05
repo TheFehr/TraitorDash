@@ -22,7 +22,7 @@ import { MapsPage, MapFilePage, MapViewPage, nextOf, type KillzonesView } from '
 import { renderKillzonesSvg, squaresOf, hottest, storeysOf, baseOfMap, baseOfPlan, rootSizeOf, footprintOfMap, footprintOfPlan, listedStoreys } from './services/killzones'
 import { flattened, storeyAt } from './maps/topdown'
 import { NAME } from './services/validators'
-import { geometryEnabled, kickGeometryQueue, setGeometryFetcher, setStockModels } from './services/mapgeometry'
+import { geometryEnabled, kickGeometryQueue, setGeometryFetcher, setStockModels, setStockTextures } from './services/mapgeometry'
 import { gameContent, gameContentEnabled } from './services/gameContent'
 import { isPose, playerModel, setPlayerModelContent } from './services/playermodel'
 import { helperAvailable, workshopFetcher } from './services/workshop'
@@ -708,6 +708,7 @@ if (import.meta.main) {
     if (gameContentEnabled()) {
       const content = gameContent()
       setStockModels(content.models)
+      setStockTextures(content.textures)
       setPlayerModelContent(content)
       console.log(`[Geometry] The game's own models are fetched on demand into ${content.root}.`)
     }

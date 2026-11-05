@@ -1,7 +1,7 @@
 import { rm } from 'node:fs/promises'
 import { Store } from './Store'
 import { BspError, extractMapEntities, extractSurfaces, readHeader, type ByteSource } from '../maps/bsp'
-import { buildPropSet, type StockModels } from '../maps/propset'
+import { buildPropSet, type StockModels, type StockTextures } from '../maps/propset'
 import { nearTriangles, surfacesToGlb } from '../maps/meshGlb'
 import { findParts, soupOfKinds } from '../maps/parts'
 import { fileSource } from '../maps/fileSource'
@@ -15,7 +15,7 @@ export interface GeometryInfo {
   vertices: number, triangles: number, levels: number, water: number
   /** False for a hill or terrain (no storeys); the triangles in detached parts; spawn points in the file. */
   storeys?: boolean, detached?: number, movable?: number, spawns?: number
-  props?: { placed: number, models: number, foliage: number, /** Textures written for the leaves of the plants (RFC 18, 4.6). */ leafTextures?: number, cards?: number, fromGame?: number, unavailable: number, unreadable: number, dropped: number }
+  props?: { placed: number, models: number, foliage: number, /** Textures written for the leaves of the plants (RFC 18, 4.6). */ leafTextures?: number, leafTexturesFromGame?: number, cards?: number, fromGame?: number, unavailable: number, unreadable: number, dropped: number }
 }
 
 export type GeometryResult =
@@ -33,7 +33,7 @@ function boxOf(...soups: number[][]): { minX: number, minY: number, maxX: number
  * A map file to a mesh. The file must be the one the server reported: its header must hash to
  * `fingerprint` (RFC 11, 3.2). Nothing in the result carries file content except the mesh itself.
  */
-export async function buildGeometry(src: ByteSource, map: string, fingerprint: string, stock?: StockModels): Promise<GeometryResult> {
+export async function buildGeometry(src: ByteSource, map: string, fingerprint: string, stock?: StockModels, textures?: StockTextures): Promise<GeometryResult> {
   try {
     const header = await readHeader(src)
     if (header.fingerprint !== fingerprint) return { ok: false, error: 'The file is not the version of the map the server has (fingerprint differs).' }
@@ -46,12 +46,12 @@ export async function buildGeometry(src: ByteSource, map: string, fingerprint: s
     const apart = kind(['detached'])
     const detached = { ...apart, parts: found.parts.filter(p => p.kind === 'detached').sort((a, b) => b.triangles - a.triangles).map(p => ({ triangles: p.triangles, min: p.min.map(Math.round), max: p.max.map(Math.round) })) }
     const water = nearTriangles(surfaces.water, [cleaned.floors, cleaned.walls], 512)
-    const { set, report } = await buildPropSet(src, header, entityProps, boxOf(cleaned.floors, cleaned.walls), undefined, stock)
+    const { set, report } = await buildPropSet(src, header, entityProps, boxOf(cleaned.floors, cleaned.walls), undefined, stock, textures)
     const out = await surfacesToGlb({ ...surfaces, ...cleaned, water, movable: surfaces.movable, movableParts: surfaces.movableParts, detached, spawns, props: set }, { map })
     if (!out) return { ok: false, error: 'The map has no surfaces to draw.' }
     return { ok: true, glb: out.glb, note: report.stockError ? `The game's own models could not all be fetched: ${report.stockError}` : undefined, info: {
       vertices: out.info.vertices, triangles: out.info.triangles, levels: out.info.levels.length, water: out.info.waterTriangles, storeys: out.info.storeys, detached: out.info.detached.triangles, movable: out.info.movable, spawns: out.info.spawns,
-      props: { placed: report.drawnPlacements, models: report.drawnModels, foliage: report.foliageModels, leafTextures: report.leafTextures, cards: report.cards, fromGame: report.fromGame, unavailable: report.unavailable, unreadable: report.unreadable + report.tooBig, dropped: report.dropped },
+      props: { placed: report.drawnPlacements, models: report.drawnModels, foliage: report.foliageModels, leafTextures: report.leafTextures, leafTexturesFromGame: report.leafTexturesFromGame, cards: report.cards, fromGame: report.fromGame, unavailable: report.unavailable, unreadable: report.unreadable + report.tooBig, dropped: report.dropped },
     } }
   } catch (e) {
     // BspError messages describe the file's structure, not its content; anything else is ours.
@@ -83,7 +83,7 @@ export async function runGeometryQueue(fetcher: Fetcher): Promise<number> {
       try {
         const { src, close } = await fileSource(got.path, got.offset, got.length)
         try {
-          const r = await buildGeometry(src, job.map, job.fingerprint, stockModels ?? undefined)
+          const r = await buildGeometry(src, job.map, job.fingerprint, stockModels ?? undefined, stockTextures ?? undefined)
           Store.finishGeometry(job.map, job.fingerprint, r.ok ? { mesh: r.glb, info: r.info, note: r.note } : { error: r.error })
         } finally { await close() }
       } catch {
@@ -99,6 +99,9 @@ export async function runGeometryQueue(fetcher: Fetcher): Promise<number> {
 let stockModels: StockModels | null = null
 /** Installs the source of the game's own models (RFC 18, 4.5). Without one, they are counted, not drawn. */
 export const setStockModels = (s: StockModels | null) => { stockModels = s }
+let stockTextures: StockTextures | null = null
+/** Where the game's own textures come from (RFC 18, 4.7), when the game's files are on. */
+export const setStockTextures = (s: StockTextures | null) => { stockTextures = s }
 
 let fetcher: Fetcher | null = null
 /** Installs the way files are fetched (RFC 11, 3.2). Without one, requested maps stay queued. */

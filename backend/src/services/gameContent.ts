@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rename, rm, stat, statfs, writeFile } from 'n
 import { dirname, join } from 'node:path'
 import type { ModelFiles } from '../maps/model'
 import type { AnimationFiles } from '../maps/posedmodel'
-import type { StockModels } from '../maps/propset'
+import type { StockModels, StockTextures } from '../maps/propset'
 import { readVpkFile, readVpkIndex, vpkArchiveName, type VpkEntry, type VpkIndex } from '../maps/vpk'
 import { fileSource } from '../maps/fileSource'
 import { helperPath, runHelper, scratchRoot } from './workshop'
@@ -16,6 +16,7 @@ import { helperPath, runHelper, scratchRoot } from './workshop'
 /** Where the content is: the dedicated-server apps (4020: Garry's Mod, 232330: Counter-Strike: Source), and the index file of each package in them. */
 export const GAME_SOURCES = [
   { app: '4020', dir: 'sourceengine/hl2_misc_dir.vpk' },
+  { app: '4020', dir: 'sourceengine/hl2_textures_dir.vpk' },
   { app: '232330', dir: 'cstrike/cstrike_pak_dir.vpk' },
   { app: '4020', dir: 'garrysmod/garrysmod_dir.vpk' },
 ] as const
@@ -48,6 +49,13 @@ export function modelBase(name: string): string | null {
   return MODEL_NAME.test(n) && !n.includes('..') && !n.includes('//') ? n.slice(0, -4) : null
 }
 
+const TEXTURE_NAME = /^materials\/[a-z0-9_\-/. ]+\.vtf$/
+/** `materials/models/props/de_inferno/bush.vtf` from whatever a material wrote (capitals, backslashes), or null for a name that is not a texture path. */
+export function texturePathName(name: string): string | null {
+  const n = name.toLowerCase().replace(/\\/g, '/').replace(/^(\.\/)+/, '')
+  return TEXTURE_NAME.test(n) && !n.includes('..') && !n.includes('//') ? n : null
+}
+
 const cacheKey = (base: string) => createHash('sha1').update(base).digest('hex')
 
 export class GameContentError extends Error {}
@@ -56,6 +64,8 @@ export class GameContentError extends Error {}
 /** What the game's files are asked for: models, and the animation sets they include. */
 export interface GameContentSource {
   models: StockModels
+  /** The game's own textures (RFC 18, 4.7): the `.vtf` files of the paths asked for, by path; those the game does not have are left out. */
+  textures: StockTextures
   animations: (name: string) => Promise<{ files: AnimationFiles | null, error?: string }>
 }
 
@@ -67,6 +77,7 @@ export function gameContent(opts: GameContentOptions = {}): GameContentSource & 
   const limits = { maxBytes: maxArchive + 64 * 1024 * 1024, timeoutMs: opts.timeoutMs ?? 20 * 60_000 }
   const indexes: (VpkIndex | null)[] = sources.map(() => null)
   const modelPath = (base: string, ext: string) => join(root, 'models', `${cacheKey(base)}.${ext}`)
+  const texturePath = (path: string) => join(root, 'textures', `${cacheKey(path)}.vtf`)
   const indexPath = (i: number) => join(root, 'index', sources[i]!.app, sources[i]!.dir)
 
   /** Runs the helper once for exact paths of one app and returns the directory they landed in (the caller removes it). */
@@ -151,12 +162,27 @@ export function gameContent(opts: GameContentOptions = {}): GameContentSource & 
       }
     }
 
-    for (const { source, archive, items } of plan.values()) try {
+    error ??= await extract([...plan.values()].map(p => ({ source: p.source, archive: p.archive, items: p.items.map(it => ({ entry: it.entry, save: (bytes: Uint8Array) => store(it.base, it.ext, bytes) })) })))
+
+    for (const base of complete) {
+      const files = await cached(base, exts)
+      if (files) for (const name of need.get(base)!) result.set(name, files)
+    }
+    return { models: result, error }
+  }
+
+  /**
+   * Fetches the archives that hold the planned files, one at a time, and hands each file to its `save`; an archive that cannot be fetched
+   * costs only its own files. Returns the first problem, if any.
+   */
+  async function extract(plan: { source: number, archive: number, items: { entry: VpkEntry, save: (bytes: Uint8Array) => Promise<void> }[] }[]): Promise<string | undefined> {
+    let error: string | undefined
+    for (const { source, archive, items } of plan) try {
       const dirFile = sources[source]!.dir
       if (archive === 0x7fff) {
         // Data inside the index file itself: already on disk.
         const { src, close } = await fileSource(indexPath(source))
-        try { for (const it of items) await store(it.base, it.ext, await readVpkFile(it.entry, src, MAX_FILE)) } finally { await close() }
+        try { for (const it of items) await it.save(await readVpkFile(it.entry, src, MAX_FILE)) } finally { await close() }
         continue
       }
       const archiveName = vpkArchiveName(dirFile, archive)
@@ -169,15 +195,52 @@ export function gameContent(opts: GameContentOptions = {}): GameContentSource & 
       const got = await fetchFiles(sources[source]!.app, [archiveName])
       try {
         const { src, close } = await fileSource(join(got.out, archiveName)).catch(() => { throw new GameContentError(`The download held no ${archiveName}.`) })
-        try { for (const it of items) await store(it.base, it.ext, await readVpkFile(it.entry, src, MAX_FILE)) } finally { await close() }
+        try { for (const it of items) await it.save(await readVpkFile(it.entry, src, MAX_FILE)) } finally { await close() }
       } finally { await rm(got.dir, { recursive: true, force: true }) }
     } catch (e) { error ??= e instanceof Error ? e.message : 'The game content could not be fetched.' }
+    return error
+  }
 
-    for (const base of complete) {
-      const files = await cached(base, exts)
-      if (files) for (const name of need.get(base)!) result.set(name, files)
+  /** The textures of the paths asked for (`materials/<name>.vtf`), from the cache or the archives that hold them. */
+  async function runTextures(paths: string[]): Promise<{ files: Map<string, Uint8Array>, error?: string }> {
+    const result = new Map<string, Uint8Array>()
+    const need = new Map<string, string[]>() // the path as the game knows it -> the paths asked
+    for (const asked of paths) {
+      const path = texturePathName(asked)
+      if (!path) continue
+      const f = Bun.file(texturePath(path))
+      if (await f.exists()) { result.set(asked, new Uint8Array(await f.arrayBuffer())); continue }
+      need.set(path, [...(need.get(path) ?? []), asked])
     }
-    return { models: result, error }
+    if (need.size === 0) return { files: result }
+    try { await loadIndexes() } catch (e) { return { files: result, error: e instanceof Error ? e.message : 'The index files could not be fetched.' } }
+    const plan = new Map<string, { source: number, archive: number, items: { entry: VpkEntry, save: (bytes: Uint8Array) => Promise<void> }[] }>()
+    for (const path of need.keys()) {
+      for (let i = 0; i < sources.length; i++) {
+        const entry = indexes[i]?.get(path)
+        if (!entry) continue
+        const key = `${i}/${entry.archive}`
+        const slot = plan.get(key) ?? { source: i, archive: entry.archive, items: [] }
+        slot.items.push({ entry, save: bytes => storeTexture(path, bytes) })
+        plan.set(key, slot)
+        break
+      }
+    }
+    const error = await extract([...plan.values()])
+    for (const [path, asked] of need) {
+      const f = Bun.file(texturePath(path))
+      if (!(await f.exists())) continue
+      const bytes = new Uint8Array(await f.arrayBuffer())
+      for (const a of asked) result.set(a, bytes)
+    }
+    return { files: result, error }
+  }
+
+  async function storeTexture(path: string, bytes: Uint8Array) {
+    const file = texturePath(path)
+    await mkdir(dirname(file), { recursive: true })
+    await writeFile(file + '.tmp', bytes)
+    await rename(file + '.tmp', file)
   }
 
   async function store(base: string, ext: string, bytes: Uint8Array) {
@@ -204,5 +267,11 @@ export function gameContent(opts: GameContentOptions = {}): GameContentSource & 
     const f = answer.models.get(name)
     return { files: f ? { mdl: f.mdl!, ani: f.ani! } : null, error: answer.error }
   }
-  return { models, animations, root }
+  // One request at a time, with the models: two would download the same archive twice.
+  const textures: StockTextures = paths => {
+    const next = chain.then(() => runTextures(paths))
+    chain = next.catch(() => {})
+    return next.catch(e => ({ files: new Map<string, Uint8Array>(), error: e instanceof Error ? e.message : 'The game content could not be read.' }))
+  }
+  return { models, textures, animations, root }
 }

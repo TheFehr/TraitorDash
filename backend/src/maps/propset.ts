@@ -36,6 +36,8 @@ export interface PropReport {
   foliageModels: number
   /** Textures written for the leaves, and the materials that are drawn with one (the others are grey). */
   leafTextures: number
+  /** Of those, the textures that came from the game's own files, not from the map's pack (RFC 18, 4.7). */
+  leafTexturesFromGame: number
   leafMaterials: number
   /** Triangles of leaves that have no texture to be cut out with (the texture is not in the map's pack): they are not drawn. */
   leavesWithoutTexture: number
@@ -71,13 +73,16 @@ export function parseVmt(text: string): Vmt | null {
 }
 
 /** The textures of the leaves: how many, how big (the longer side) and how many bytes of PNG a map may have (RFC 18, 7). */
-export const LEAF_LIMITS = { textures: 24, side: 256, pngBytes: 4 * 1024 * 1024, memberBytes: 24 * 1024 * 1024 }
+export const LEAF_LIMITS = { textures: 24, side: 256, pngBytes: 4 * 1024 * 1024, memberBytes: 24 * 1024 * 1024, /** Textures asked of the game's own files for one map. */ stockTextures: 64 }
 
 /**
  * The game's own models (RFC 18, 4.5): the files of the models it has, by model name; names it does not have are left out.
  * `error` says why some could not be fetched (a download failed); the models that were fetched are in the answer anyway.
  */
 export type StockModels = (names: string[]) => Promise<{ models: Map<string, ModelFiles>, error?: string }>
+
+/** The game's own textures (RFC 18, 4.7): the `.vtf` files of the paths asked (`materials/<name>.vtf`), by path; those the game does not have are left out. */
+export type StockTextures = (paths: string[]) => Promise<{ files: Map<string, Uint8Array>, error?: string }>
 
 /** The three files of a model in the map's pack, or null when they are not all there. */
 async function packFiles(src: ByteSource, pak: Pak, name: string): Promise<ModelFiles | null> {
@@ -116,19 +121,25 @@ class LeafBook {
   private material = new Map<string, number>()
   private texture = new Map<string, number | null>()
   private bytes = 0
+  /** Textures of the game's own files, by path (RFC 18, 4.7); the pack's are looked at first. */
+  stock = new Map<string, Uint8Array>()
+  /** How many of the textures written came from the game's own files. */
+  fromGame = 0
   constructor(private src: ByteSource, private pak: Pak, private cache: Map<string, Vmt | null>) {}
 
   private async textureOf(name: string): Promise<number | null> {
     if (this.texture.has(name)) return this.texture.get(name)!
     let index: number | null = null
     const path = `materials/${name}.vtf`
-    if (this.textures.length < LEAF_LIMITS.textures && this.pak.entries.has(path)) {
-      const file = await readPakMember(this.src, this.pak, path, { maxMemberBytes: LEAF_LIMITS.memberBytes })
-      const pixels = file ? readVtf(file, LEAF_LIMITS.side) : null
+    const inPack = this.pak.entries.has(path)
+    if (this.textures.length < LEAF_LIMITS.textures && (inPack || this.stock.has(path))) {
+      const file = inPack ? await readPakMember(this.src, this.pak, path, { maxMemberBytes: LEAF_LIMITS.memberBytes }) : this.stock.get(path)!
+      const pixels = file && file.length <= LEAF_LIMITS.memberBytes ? readVtf(file, LEAF_LIMITS.side) : null
       if (pixels) {
         const png = encodePng(pixels.width, pixels.height, pixels.rgba)
         if (this.bytes + png.length <= LEAF_LIMITS.pngBytes) {
           this.bytes += png.length
+          if (!inPack) this.fromGame++
           index = this.textures.length
           this.textures.push({ name, width: pixels.width, height: pixels.height, png })
         }
@@ -167,13 +178,13 @@ class LeafBook {
  */
 export async function buildPropSet(
   src: ByteSource, header: BspHeader, entityProps: Placement[], around: { minX: number, minY: number, maxX: number, maxY: number } | null,
-  limits: PropLimits = PROP_LIMITS, stock?: StockModels,
+  limits: PropLimits = PROP_LIMITS, stock?: StockModels, stockTextures?: StockTextures,
 ): Promise<{ set: PropSet, report: PropReport }> {
   const statics = await readStaticProps(src, header)
   const all = [...statics.placements, ...entityProps]
   const m = limits.nearMargin
   const near = around ? all.filter(p => p.x >= around.minX - m && p.x <= around.maxX + m && p.y >= around.minY - m && p.y <= around.maxY + m) : []
-  const report: PropReport = { found: all.length, near: near.length, drawnModels: 0, drawnPlacements: 0, fromGame: 0, triangles: 0, foliageModels: 0, leafTextures: 0, leafMaterials: 0, leavesWithoutTexture: 0, cards: 0, unavailable: 0, unreadable: 0, tooBig: 0, dropped: 0, skippedRecords: statics.skipped }
+  const report: PropReport = { found: all.length, near: near.length, drawnModels: 0, drawnPlacements: 0, fromGame: 0, triangles: 0, foliageModels: 0, leafTextures: 0, leafTexturesFromGame: 0, leafMaterials: 0, leavesWithoutTexture: 0, cards: 0, unavailable: 0, unreadable: 0, tooBig: 0, dropped: 0, skippedRecords: statics.skipped }
   const set: PropSet = { models: [], placements: [] }
   if (near.length === 0) return { set, report }
 
@@ -209,6 +220,21 @@ export async function buildPropSet(
     settle(name, await loadModel(src, pak, files, foliageCache, limits.maxModelTriangles))
   }
 
+  // The leaves whose texture is not in the pack are the game's own (a bush of Counter-Strike, a window of Half-Life 2): asked for together, one request for the map.
+  if (stockTextures) {
+    const wanted = new Set<string>()
+    for (const m of loaded.values()) if (m) for (const run of m.runs) {
+      const vmt = run.paths.find(p => foliageCache.get(p) != null)
+      const texture = vmt ? foliageCache.get(vmt)!.texture : null
+      if (texture && !pak.entries.has(`materials/${texture}.vtf`)) wanted.add(`materials/${texture}.vtf`)
+    }
+    if (wanted.size > 0) {
+      const got = await stockTextures([...wanted].slice(0, LEAF_LIMITS.stockTextures))
+      leaves.stock = got.files
+      if (got.error) report.stockError ??= got.error
+    }
+  }
+
   // Over a limit, the biggest models go first: the places are sorted by the triangles of their model, and the list is cut.
   const usable = near.filter(p => loaded.get(p.model))
   usable.sort((a, b) => loaded.get(a.model)!.triangles - loaded.get(b.model)!.triangles)
@@ -234,6 +260,7 @@ export async function buildPropSet(
   set.leafTextures = leaves.textures
   report.leafTextures = leaves.textures.length
   report.leafMaterials = leaves.materials.length
+  report.leafTexturesFromGame = leaves.fromGame
   report.drawnPlacements = set.placements.length
   report.triangles = triangles
   return { set, report }

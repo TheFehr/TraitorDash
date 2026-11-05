@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { memorySource, readHeader } from '../src/maps/bsp'
 import { readVpkIndex, readVpkFile, vpkArchiveName, VpkError } from '../src/maps/vpk'
 import { buildPropSet } from '../src/maps/propset'
-import { gameContent, modelBase } from '../src/services/gameContent'
+import { gameContent, modelBase, texturePathName } from '../src/services/gameContent'
 import { buildBsp, flatQuad } from './helpers/bsp_builder'
 import { buildModel, buildZip } from './helpers/model_builder'
 import { buildVpk } from './helpers/vpk_builder'
@@ -79,10 +79,10 @@ while read -r f; do [ -z "$f" ] && continue; mkdir -p "$OUT/$(dirname "$f")"; cp
     dir = mkdtempSync(join(tmpdir(), 'gc-test-'))
     fix = join(dir, 'fix'); log = join(dir, 'log'); root = join(dir, 'root'); scratch = join(dir, 'scratch')
     for (const d of [fix, log, scratch]) mkdirSync(d, { recursive: true })
-    const misc = buildVpk([...modelFiles('models/props_c17/crate', crate), { name: 'models/m_anm.mdl', data: Buffer.from('sequences'), archive: 0 }, { name: 'models/m_anm.ani', data: Buffer.from('frames'), archive: 0 }])
+    const misc = buildVpk([...modelFiles('models/props_c17/crate', crate), { name: 'models/m_anm.mdl', data: Buffer.from('sequences'), archive: 0 }, { name: 'models/m_anm.ani', data: Buffer.from('frames'), archive: 0 }, { name: 'materials/glass/pane.vtf', data: Buffer.from('pane texture'), archive: 0 }])
     put('4020', 'sourceengine/hl2_misc_dir.vpk', misc.dir)
     put('4020', 'sourceengine/hl2_misc_000.vpk', misc.archives.get(0)!)
-    const css = buildVpk(modelFiles('models/props/cs_office/drum', drum, 3))
+    const css = buildVpk([...modelFiles('models/props/cs_office/drum', drum, 3), { name: 'materials/models/props/de_inferno/bush.vtf', data: Buffer.from('bush texture'), archive: 3 }])
     put('232330', 'cstrike/cstrike_pak_dir.vpk', css.dir)
     put('232330', 'cstrike/cstrike_pak_003.vpk', css.archives.get(3)!)
   })
@@ -152,6 +152,76 @@ while read -r f; do [ -z "$f" ] && continue; mkdir -p "$OUT/$(dirname "$f")"; cp
     const answer = await content().models(['../../etc/passwd.mdl', 'models/../../x.mdl'])
     expect(answer.models.size).toBe(0)
     expect(calls()).toHaveLength(0)
+  })
+})
+
+describe('the game\'s own textures (RFC 18, 4.7)', () => {
+  // the same stand-in for the downloader as above, with the textures in the packages
+  let dir: string, fix: string, log: string, root: string, scratch: string
+  const put = (app: string, path: string, data: Buffer) => { mkdirSync(join(fix, app, path, '..'), { recursive: true }); writeFileSync(join(fix, app, path), data) }
+  const calls = () => (existsSync(join(log, 'args')) ? readFileSync(join(log, 'args'), 'utf8').trim().split('\n').filter(Boolean) : [])
+  const content = (o: Record<string, unknown> = {}) => {
+    const script = join(dir, 'helper.sh')
+    writeFileSync(script, `#!/bin/bash
+echo "$@" >> "${log}/args"
+while [ $# -gt 0 ]; do case "$1" in -app) APP="$2"; shift 2;; -dir) OUT="$2"; shift 2;; -filelist) LIST="$2"; shift 2;; *) shift;; esac; done
+[ -f "${fix}/fail" ] && { echo "Error: the account may not download this"; exit 1; }
+while read -r f; do [ -z "$f" ] && continue; mkdir -p "$OUT/$(dirname "$f")"; cp "${fix}/$APP/$f" "$OUT/$f" 2>/dev/null || true; done < "$LIST"
+`)
+    chmodSync(script, 0o755)
+    return gameContent({ binary: script, root, scratch, sources: [{ app: '4020', dir: 'sourceengine/hl2_misc_dir.vpk' }, { app: '232330', dir: 'cstrike/cstrike_pak_dir.vpk' }], ...o })
+  }
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'gc-tex-'))
+    fix = join(dir, 'fix'); log = join(dir, 'log'); root = join(dir, 'root'); scratch = join(dir, 'scratch')
+    for (const d of [fix, log, scratch]) mkdirSync(d, { recursive: true })
+    const misc = buildVpk([{ name: 'materials/glass/pane.vtf', data: Buffer.from('pane texture'), archive: 0 }, { name: 'materials/glass/pane.vmt', data: Buffer.from('not asked for'), archive: 0 }])
+    put('4020', 'sourceengine/hl2_misc_dir.vpk', misc.dir); put('4020', 'sourceengine/hl2_misc_000.vpk', misc.archives.get(0)!)
+    const css = buildVpk([{ name: 'materials/models/props/de_inferno/bush.vtf', data: Buffer.from('bush texture'), archive: 3 }])
+    put('232330', 'cstrike/cstrike_pak_dir.vpk', css.dir); put('232330', 'cstrike/cstrike_pak_003.vpk', css.archives.get(3)!)
+  })
+  afterEach(() => rmSync(dir, { recursive: true, force: true }))
+
+  test('texture names are normalised, and anything that is not a texture path is refused', () => {
+    expect(texturePathName('materials/Models/Props/De_Inferno/Bush.vtf')).toBe('materials/models/props/de_inferno/bush.vtf')
+    expect(texturePathName('./materials\\glass\\pane.vtf')).toBe('materials/glass/pane.vtf')
+    for (const bad of ['../etc/passwd.vtf', 'materials/../x.vtf', 'materials/a.vmt', 'models/a.vtf', '/materials/a.vtf', 'materials/a\0.vtf', 'materials//a.vtf', 'materials/a;b.vtf']) expect(texturePathName(bad)).toBeNull()
+  })
+
+  test('fetches the archives that hold the wanted textures, keeps the textures, answers by the path asked, and deletes the archives', async () => {
+    const answer = await content().textures(['materials/models/props/de_inferno/Bush.vtf', 'materials\\glass\\pane.vtf', 'materials/nobody/has/this.vtf', '../../etc/passwd', 'models/a.mdl'])
+    expect(answer.error).toBeUndefined()
+    expect([...answer.files.keys()].sort()).toEqual(['materials/models/props/de_inferno/Bush.vtf', 'materials\\glass\\pane.vtf'])
+    expect(Buffer.from(answer.files.get('materials/models/props/de_inferno/Bush.vtf')!).toString()).toBe('bush texture')
+    expect(Buffer.from(answer.files.get('materials\\glass\\pane.vtf')!).toString()).toBe('pane texture')
+    expect(calls()).toHaveLength(4) // an index for each app, an archive for each package
+    expect(readdirSync(scratch)).toEqual([])
+  })
+
+  test('asks for nothing again once the textures are cached, also after a restart; names that are no texture are never looked up', async () => {
+    await content().textures(['materials/glass/pane.vtf'])
+    const before = calls().length
+    expect((await content().textures(['materials/GLASS/pane.vtf'])).files.size).toBe(1)
+    expect(calls()).toHaveLength(before)
+    expect((await content().textures(['../x.vtf', 'materials/../y.vtf'])).files.size).toBe(0)
+    expect(calls()).toHaveLength(before)
+  })
+
+  test('a failed download is an answer, not an exception, and the textures that were fetched stay', async () => {
+    await content().textures(['materials/glass/pane.vtf'])
+    writeFileSync(join(fix, 'fail'), '')
+    const answer = await content().textures(['materials/glass/pane.vtf', 'materials/models/props/de_inferno/bush.vtf'])
+    expect([...answer.files.keys()]).toEqual(['materials/glass/pane.vtf'])
+    expect(answer.error).toBeTruthy()
+  })
+
+  test('an archive larger than the limit is not fetched; models and textures share one queue', async () => {
+    const answer = await content({ maxArchiveBytes: 10 }).textures(['materials/glass/pane.vtf'])
+    expect(answer.files.size).toBe(0); expect(answer.error).toContain('larger than the limit')
+    const c = content()
+    const [a, b] = await Promise.all([c.textures(['materials/glass/pane.vtf']), c.textures(['materials/glass/pane.vtf'])])
+    expect(a.files.size + b.files.size).toBe(2)
+    expect(calls()).toHaveLength(3) // an index for each app and the archive, once: the second request found the texture in the cache
   })
 })
 

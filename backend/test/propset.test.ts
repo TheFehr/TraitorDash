@@ -176,6 +176,31 @@ describe('the leaves have their textures (RFC 18, 4.6)', () => {
     expect(set.leafMaterials!.every(m => m.texture === 0)).toBe(true)
   })
 
+  test('a texture that is not in the pack is asked of the game\'s own files, once for the whole map, and drawn; one the game does not have, or a failed answer, leaves the leaves bare and says why', async () => {
+    const vmt = '"VertexLitGeneric" { "$basetexture" "models/props/de_inferno/bush" "$alphatest" 1 }'
+    const asked: string[][] = []
+    const stock = (answer: Map<string, Uint8Array>, error?: string) => async (paths: string[]) => { asked.push(paths); return { files: answer, error } }
+    const { src, header } = await place(vmt)
+    const got = await buildPropSet(src, header, [], around, undefined, undefined, stock(new Map([['materials/models/props/de_inferno/bush.vtf', texture('x')]])))
+    expect(asked).toEqual([['materials/models/props/de_inferno/bush.vtf']]) // one request, with the path of the texture (two places, one model)
+    expect(got.set.leafTextures).toHaveLength(1)
+    expect(got.set.models[0]!.foliageRuns).toEqual([{ material: 0, triangles: 1 }])
+    expect(got.report).toMatchObject({ leafTextures: 1, leafTexturesFromGame: 1, leavesWithoutTexture: 0 })
+
+    const none = await buildPropSet(src, header, [], around, undefined, undefined, stock(new Map()))
+    expect(none.report).toMatchObject({ leafTextures: 0, leavesWithoutTexture: 1 })
+    const failed = await buildPropSet(src, header, [], around, undefined, undefined, stock(new Map(), 'a download failed'))
+    expect(failed.report).toMatchObject({ leafTextures: 0, leavesWithoutTexture: 1, stockError: 'a download failed' })
+
+    // a texture that is in the pack is not asked for, and one that is not a readable texture is no texture
+    asked.length = 0
+    const pk = await place(vmt, { 'materials/models/props/de_inferno/bush.vtf': texture('x') })
+    const inPack = await buildPropSet(pk.src, pk.header, [], around, undefined, undefined, stock(new Map()))
+    expect(asked).toEqual([]); expect(inPack.report).toMatchObject({ leafTextures: 1, leafTexturesFromGame: 0 })
+    const junk = await buildPropSet(src, header, [], around, undefined, undefined, stock(new Map([['materials/models/props/de_inferno/bush.vtf', Buffer.from('not a texture')]])))
+    expect(junk.report).toMatchObject({ leafTextures: 0, leavesWithoutTexture: 1 })
+  })
+
   test('the mesh: a foliage mesh with a primitive for each texture, the coordinates, the texture as a PNG in the file and a cut-out material shared by every place; it is a valid file', async () => {
     const { src, header } = await place('"VertexLitGeneric" { "$basetexture" "models/test/leaftex" "$alphatest" 1 }', { 'materials/models/test/leaftex.vtf': texture('x') })
     const { set } = await buildPropSet(src, header, [], around)
