@@ -22,7 +22,7 @@ const PRELUDE = `
   local cvars = {}
   function CreateConVar(n, v)
     cvars[n] = tostring(v)
-    return { GetBool = function() return cvars[n] == "1" end, GetFloat = function() return tonumber(cvars[n]) end }
+    return { GetBool = function() return cvars[n] == "1" end, GetFloat = function() return tonumber(cvars[n]) end, GetInt = function() return math.floor(tonumber(cvars[n]) or 0) end }
   end
   cvars.traitordash_url = "https://td.test/"; cvars.traitordash_token = "tok"
   function GetConVar(n) return { GetString = function() return cvars[n] end } end

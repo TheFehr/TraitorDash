@@ -22,6 +22,7 @@ TraitorDash.SettingList = {
     { name = "traitordash_track_interval_min",   kind = "number", default = "0.2", min = 0.05, max = 2 },
     { name = "traitordash_track_interval_max",   kind = "number", default = "1",   min = 0.2,  max = 5 },
     { name = "traitordash_track_budget_ms",      kind = "number", default = "0.5", min = 0.05, max = 5 },
+    { name = "traitordash_track_max_ticks",      kind = "int",    default = "40000", min = 1000, max = 100000 },
 }
 
 local BY_NAME = {}
@@ -35,6 +36,12 @@ function TraitorDash.CheckSettingValue(name, value)
     if s.kind == "bool" then
         if value == "0" or value == "1" then return value end
         return nil, "must be 0 or 1"
+    end
+    if s.kind == "int" then
+        if not value:match("^%d+$") then return nil, "not a whole number" end
+        local whole = tonumber(value)
+        if not whole or whole < s.min or whole > s.max then return nil, "out of range (" .. s.min .. " to " .. s.max .. ")" end
+        return string.format("%d", whole)
     end
     if not (value:match("^%d+%.?%d*$") or value:match("^%.%d+$")) then return nil, "not a number" end
     local n = tonumber(value)

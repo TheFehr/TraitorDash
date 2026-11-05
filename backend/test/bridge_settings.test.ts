@@ -47,7 +47,9 @@ describe('the list', () => {
   test('both ends take the same values and write them the same way', () => {
     const cases: [string, string][] = [['traitordash_track', '1'], ['traitordash_track', '2'], ['traitordash_track_interval_min', '0.1'], ['traitordash_track_interval_min', '.5'],
       ['traitordash_track_interval_min', '0.50'], ['traitordash_track_interval_min', '0.04'], ['traitordash_track_interval_min', '0.05'], ['traitordash_track_interval_min', '2.1'], ['traitordash_track_interval_max', '5'],
-      ['traitordash_track_budget_ms', '0.05'], ['traitordash_track_budget_ms', '1e2'], ['traitordash_token', '1'], ['traitordash_track_budget_ms', '0.1234567']]
+      ['traitordash_track_budget_ms', '0.05'], ['traitordash_track_budget_ms', '1e2'], ['traitordash_token', '1'], ['traitordash_track_budget_ms', '0.1234567'],
+      ['traitordash_track_max_ticks', '40000'], ['traitordash_track_max_ticks', '1000'], ['traitordash_track_max_ticks', '100000'], ['traitordash_track_max_ticks', '999'], ['traitordash_track_max_ticks', '100001'],
+      ['traitordash_track_max_ticks', '1.5'], ['traitordash_track_max_ticks', '4e4'], ['traitordash_track_max_ticks', '040000']]
     for (const [name, v] of cases) {
       const lua = run(`local ok = TraitorDash.CheckSettingValue("${name}", "${v}") RESULT = tostring(ok)`).result
       const mine = settings.checkSettingValue(name, v)

@@ -2,7 +2,7 @@
 // addon/lua/traitordash/settings.lua (a test compares the two): names, kinds, ranges and defaults. The words are only
 // here. Not on it, on purpose: traitordash_url, traitordash_token and traitordash_public_url.
 
-export type SettingKind = 'bool' | 'number'
+export type SettingKind = 'bool' | 'number' | 'int'
 export interface BridgeSetting {
   name: string
   kind: SettingKind
@@ -40,6 +40,9 @@ export const BRIDGE_SETTINGS: BridgeSetting[] = [
   { name: 'traitordash_track_budget_ms', kind: 'number', default: '0.5', min: 0.05, max: 5, unit: 'ms', group: 'Position tracking', applies: 'at once',
     label: 'Time the sampling may take',
     explain: 'How long one sample may take on the game server before the sampling slows itself down. A higher number lets it keep a fast rate on a busy server and costs frame time; a lower one protects the frame rate and may thin out the replay.' },
+  { name: 'traitordash_track_max_ticks', kind: 'int', default: '40000', min: 1000, max: 100000, unit: 'ticks', group: 'Position tracking', applies: 'at once',
+    label: 'Most ticks a round records',
+    explain: 'A limit so that a round that never ends does not record for ever: a longer round is cut there and its replay says so. At 0.2 s between samples 40,000 ticks is about two hours and a half, at 0.05 s it is 33 minutes. A higher number allows longer replays and bigger tracks.' },
 ]
 
 const BY_NAME = new Map(BRIDGE_SETTINGS.map(s => [s.name, s]))
@@ -53,6 +56,11 @@ export function checkSettingValue(name: string, raw: unknown): { value: string }
   const v = raw.trim()
   if (v.length === 0 || v.length > 8) return { error: 'not a value' }
   if (s.kind === 'bool') return v === '0' || v === '1' ? { value: v } : { error: 'must be on or off' }
+  if (s.kind === 'int') {
+    if (!/^\d+$/.test(v)) return { error: 'not a whole number' }
+    const whole = Number(v)
+    return whole >= s.min! && whole <= s.max! ? { value: String(whole) } : { error: `out of range (${s.min} to ${s.max})` }
+  }
   if (!/^(\d+\.?\d*|\.\d+)$/.test(v)) return { error: 'not a number' }
   const n = Number(v)
   if (!(n >= s.min! && n <= s.max!)) return { error: `out of range (${s.min} to ${s.max})` }

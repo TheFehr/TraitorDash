@@ -28,10 +28,11 @@ local cv_track = CreateConVar("traitordash_track", "0", {FCVAR_ARCHIVE}, "Record
 local cv_min = CreateConVar("traitordash_track_interval_min", "0.2", {FCVAR_ARCHIVE}, "Fastest sampling interval in seconds (at least 0.05).")
 local cv_max = CreateConVar("traitordash_track_interval_max", "1", {FCVAR_ARCHIVE}, "Slowest sampling interval in seconds.")
 local cv_budget = CreateConVar("traitordash_track_budget_ms", "0.5", {FCVAR_ARCHIVE}, "What one sampling tick may cost on average, in milliseconds.")
+local cv_maxticks = CreateConVar("traitordash_track_max_ticks", "40000", {FCVAR_ARCHIVE}, "The most sampling ticks a round records; a longer round is cut and flagged truncated (1000 to 100000).")
 local cv_debug = CreateConVar("traitordash_stats_debug", "1", {FCVAR_ARCHIVE}, "Log what the stats tracker does (1/0).")
 
 local TIMER = "TraitorDash_Track"
-local MAX_TICKS = 40000          -- caps of RFC 12, 3.2 (the backend refuses more): 33 minutes at the fastest sampling, 0.05 s
+local MAX_TICKS_FLOOR, MAX_TICKS_CEILING = 1000, 100000 -- what traitordash_track_max_ticks is kept between (the backend refuses more than the ceiling)
 local MAX_SEGMENTS = 64          -- per player
 local MAX_DEATHS = 512
 local MAX_EVENTS = 1024         -- revivals and role changes (RFC 14, 4.3)
@@ -55,6 +56,11 @@ local function Settings()
     local mx = math.max(cv_max:GetFloat(), mn)
     local budget = math.max(cv_budget:GetFloat(), 0.05) / 1000 -- seconds
     return mn, mx, budget
+end
+
+-- The most ticks a round records (RFC 12, 3.2): a round that never ends must not record for ever. 40,000 is 33 minutes at the fastest sampling, 0.05 s.
+local function MaxTicks()
+    return math.min(math.max(math.floor(cv_maxticks:GetInt()), MAX_TICKS_FLOOR), MAX_TICKS_CEILING)
 end
 
 local function EstimateBytes(r)
@@ -213,7 +219,7 @@ local function Tick()
     end
     local t0 = SysTime()
 
-    if #r.t >= MAX_TICKS then r.truncated = true StopSampling(r, "the tick cap was reached") return end
+    if #r.t >= MaxTicks() then r.truncated = true StopSampling(r, "the tick cap was reached") return end
     if EstimateBytes(r) > SAFE_BYTES then r.truncated = true StopSampling(r, "the size cap was reached") return end
 
     -- A server that is already struggling gets no extra work: its own frame time against its tick.

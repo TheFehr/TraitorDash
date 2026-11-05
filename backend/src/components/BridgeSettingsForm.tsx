@@ -144,11 +144,11 @@ export const BridgeSettingsForm = ({ serverId, state, now }: { serverId: string,
 
 const SettingField = ({ s, reported, saved, running }: { s: BridgeSetting, reported: boolean, saved: string | null, running?: string }) => {
   const name = s.name
-  const range = s.kind === 'number' ? `${s.min} to ${s.max} ${s.unit}` : ''
+  const range = s.kind !== 'bool' ? `${s.min} to ${s.max} ${s.unit}` : ''
   const fileDiffers = saved !== null && running !== undefined && !same(saved, running)
   const control = s.kind === 'bool'
     ? <input type="checkbox" class="switch" id={name} disabled={!reported} aria-label={s.label} x-model={`current['${name}']`} />
-    : <input type="number" id={name} aria-label={s.label} min={s.min} max={s.max} step="any" required disabled={!reported} {...{ 'x-model.number': `current['${name}']` }} />
+    : <input type="number" id={name} aria-label={s.label} min={s.min} max={s.max} step={s.kind === 'int' ? '1' : 'any'} required disabled={!reported} {...{ 'x-model.number': `current['${name}']` }} />
   return (
     <div class={s.kind === 'bool' ? 'fld row' : 'fld'} data-setting={name}>
       <div>

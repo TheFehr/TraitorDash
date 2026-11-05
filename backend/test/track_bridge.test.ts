@@ -20,7 +20,7 @@ const PRELUDE = `
   local cvars = {}
   function CreateConVar(n, v)
     cvars[n] = tostring(v)
-    return { GetBool = function() return cvars[n] == "1" end, GetFloat = function() return tonumber(cvars[n]) end }
+    return { GetBool = function() return cvars[n] == "1" end, GetFloat = function() return tonumber(cvars[n]) end, GetInt = function() return math.floor(tonumber(cvars[n]) or 0) end }
   end
   cvars.traitordash_url = "https://td.test/"; cvars.traitordash_token = "tok"
   function GetConVar(n) return { GetString = function() return cvars[n] end } end
@@ -423,6 +423,22 @@ describe('track.lua: caps', () => {
     expect(t.truncated).toBe(true)
     expect(t.t).toHaveLength(40000)
   }, 30_000) // forty thousand ticks of the fake game take a few seconds
+
+  test('the cap of ticks is a ConVar, kept between 1,000 and 100,000', () => {
+    const cut = (v: string, ticks: number) => trackOf(play(`
+      SetCv("traitordash_track_interval_max", "0.2")
+      SetCv("traitordash_track_max_ticks", "${v}")
+      Begin()
+      Run(${ticks})
+      Fire("TTTEndRound", WIN_TRAITOR); Accept(1)
+    `))
+    const small = cut('1500', 1600)
+    expect(small.truncated).toBe(true); expect(small.t).toHaveLength(1500)
+    const floor = cut('5', 1100) // a nonsense value does not stop the recording at once: the lowest is 1,000
+    expect(floor.truncated).toBe(true); expect(floor.t).toHaveLength(1000)
+    const under = cut('1500', 1400)
+    expect(under.truncated).toBe(false); expect(under.t.length).toBeGreaterThanOrEqual(1400); expect(under.t.length).toBeLessThan(1500) // the first sample is at the start, then one for each tick
+  })
 
   test('as the size approaches its cap the interval is raised to its slowest, and at the cap the track is cut', () => {
     const r = play(`
