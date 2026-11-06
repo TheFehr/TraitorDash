@@ -12,7 +12,7 @@ import { clone as cloneRig } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { startFlat } from './replayflat'
-import { applyColouring, meshesOf, propLook, offerBrowser, heightColours, levelColour, makeCamera, makeRenderer, makeScene, mapLoader, prepareMovable, prepareProps, prepareWater, savedColouring, boxWithout, type Painted } from './sceneKit'
+import { applyColouring, meshesOf, propLook, offerBrowser, heightColours, levelColour, makeCamera, makeRenderer, makeScene, mapLoader, prepareMovable, prepareProps, prepareWater, savedColouring, saveColouring, COLOURINGS, boxWithout, type Colouring, type Painted } from './sceneKit'
 import {
   decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose, fitLabel,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
@@ -469,7 +469,6 @@ async function start(root: HTMLElement) {
       const apart = model.getObjectByName('detached')
       if (apart) apart.visible = false
       heightColours(painted)
-      applyColouring(painted, savedColouring(), levelNodes.length)
       scene.add(model)
       model.updateMatrixWorld(true)
       // Hundreds of props are hundreds of draw calls, which is what a phone is slowest at: the props of one material are drawn as one mesh
@@ -478,7 +477,19 @@ async function start(root: HTMLElement) {
       groundMeshes.push(...painted.filter(q => !q.wall).map(q => q.mesh), ...mergedSolid, ...props.solid.filter(m => m.visible))
       const mergedLeaves = mergeDrawn(model, props.foliage)
       leafMeshes.push(...mergedLeaves, ...props.foliage.filter(m => m.visible)) // the ones that could not be merged stay as they are
-      propLook([...leafMeshes, ...mergedSolid, ...props.solid, ...meshesOf(movableNode)], savedColouring() === 'textured')
+      const propMeshes = [...leafMeshes, ...mergedSolid, ...props.solid, ...meshesOf(movableNode)]
+      // The colour switch, as on the map page: the choice is remembered, and the page starts with the one made last.
+      const colour = (mode: Colouring) => {
+        applyColouring(painted, mode, levelNodes.length)
+        propLook(propMeshes, mode === 'textured')
+        root.querySelectorAll<HTMLElement>('[data-colour]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.colour === mode)))
+        render()
+      }
+      root.querySelectorAll<HTMLElement>('[data-colour]').forEach(b => b.addEventListener('click', () => {
+        const mode = (b.dataset.colour ?? 'textured') as Colouring
+        if ((COLOURINGS as string[]).includes(mode)) { saveColouring(mode); colour(mode) }
+      }))
+      colour(savedColouring())
       const leavesBox = el<HTMLInputElement>(root, '[data-leaves]')
       for (const m of leafMeshes) m.visible = !!leavesBox?.checked
       if (leafMeshes.length === 0) leavesBox?.closest('label')?.setAttribute('hidden', '')
