@@ -10,10 +10,11 @@
  * 9 (10 with the game's own models): the floors and walls carry the textures of their materials, cut as the map's file says (RFC 18, 5).
  * 10 (11 with the game's own models): the solid props and the parts that can move carry their textures too, and a part without one is no longer orange (RFC 18, 5).
  * 11 (12 with the game's own models): a floor that blends two textures (grass on dirt, by the alpha of a displacement's corners) is drawn with both (RFC 18, 5).
+ * 12 (13 with the game's own models): the budget for the props is 1 000 000 triangles, not 600 000, so six maps no longer lose their largest pieces (the water slide of `ttt_waterworld_tropical`).
  * The part nodes of RFC 20 stage 1 are written by every build from now on, but are not a generation of their own: the generation is raised when the replay needs them (stage 3).
  */
-export const MESH_VERSION = 11
-export const MESH_VERSION_GAME = 12
+export const MESH_VERSION = 12
+export const MESH_VERSION_GAME = 13
 
 /** The generation a backend wants: the one with the game's own models when it has them, else the one without. */
 export const meshVersion = (withGameContent: boolean) => withGameContent ? MESH_VERSION_GAME : MESH_VERSION

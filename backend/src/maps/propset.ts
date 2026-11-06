@@ -23,7 +23,7 @@ export interface PropLimits {
   /** How far outside the map's own geometry (units) a prop may stand and still be drawn: a 3D skybox has props of its own, far away. */
   nearMargin: number
 }
-export const PROP_LIMITS: PropLimits = { maxPlacements: 4000, maxModels: 2000, maxModelTriangles: 50_000, maxTriangles: 600_000, nearMargin: 2048 }
+export const PROP_LIMITS: PropLimits = { maxPlacements: 4000, maxModels: 2000, maxModelTriangles: 50_000, maxTriangles: 1_000_000, nearMargin: 2048 }
 
 export interface PropReport {
   /** Places in the map's lumps, and the ones that were near the map. */
