@@ -636,6 +636,26 @@ export class Store {
     return row?.mesh ?? null
   }
 
+  /**
+   * The admins in the game now (RFC 2, 4): the bridge sends their SteamID64s with every heartbeat. Kept in memory, not in the database, since
+   * the list is true for a minute at most; a server that stops reporting has none. This is only for the notice on the edit pages; who may
+   * edit on the web is `ADMIN_STEAM_IDS`, whatever the game says (RFC 5).
+   */
+  private static onlineAdmins = new Map<string, { ids: string[], at: number }>()
+
+  static setOnlineAdmins(serverId: string, ids: unknown, now = Date.now()) {
+    const ok = Array.isArray(ids) ? ids.filter((i): i is string => typeof i === 'string' && /^\d{17}$/.test(i)).slice(0, 32) : []
+    Store.onlineAdmins.set(serverId, { ids: [...new Set(ok)], at: now })
+  }
+
+  /** The admins the last heartbeat named, as nicks where a round knows them (else the SteamID64); none if it is older than a minute. */
+  static getOnlineAdmins(serverId: string, now = Date.now()): string[] {
+    const kept = Store.onlineAdmins.get(serverId)
+    if (!kept || now - kept.at > 60_000) return []
+    const nick = db.prepare('SELECT nick FROM round_players WHERE server_id = ? AND steam_id = ? AND nick IS NOT NULL AND nick <> \'\' ORDER BY rowid DESC LIMIT 1')
+    return kept.ids.map(id => (nick.get(serverId, id) as { nick: string } | null)?.nick ?? id)
+  }
+
   static updateHeartbeat(serverId: string) {
     const update = db.prepare('UPDATE servers SET last_seen = ? WHERE id = ?')
     update.run(new Date().toISOString(), serverId)

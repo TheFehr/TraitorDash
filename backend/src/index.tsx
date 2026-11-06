@@ -677,7 +677,7 @@ app.get('/servers/:serverId/roles/:roleName/config', async (c) => {
   
   if (!server || !schema) return c.redirect('/')
   
-  return c.html(<RoleConfigPage steamId={steamId as string} server={server} roleName={roleName} roles={roles} schema={schema} live={Store.getConVarValues(serverId)} />)
+  return c.html(<RoleConfigPage steamId={steamId as string} server={server} roleName={roleName} roles={roles} schema={schema} live={Store.getConVarValues(serverId)} onlineAdmins={Store.getOnlineAdmins(serverId)} />)
 })
 
 // The settings of a server (RFC 23): the bridge's own and the dashboard's, on one page. Admins only.
@@ -690,7 +690,7 @@ app.get('/servers/:serverId/settings', async (c) => {
   const got = Store.getBridgeSettings(serverId)
   c.header('Cache-Control', 'no-store')
   return c.html(<ServerSettingsPage steamId={steamId as string} server={server} roles={getRolesWithState(serverId)} storage={trackInfo(serverId)}
-    state={{ reportedAt: got?.reportedAt ?? null, values: got?.values ?? {}, pending: Store.pendingBridgeSettings(serverId) }} />)
+    state={{ reportedAt: got?.reportedAt ?? null, values: got?.values ?? {}, pending: Store.pendingBridgeSettings(serverId) }} onlineAdmins={Store.getOnlineAdmins(serverId)} />)
 })
 // The page was the bridge's settings alone at first: its old address goes to the page that has them all.
 app.get('/servers/:serverId/bridge', async (c) => {

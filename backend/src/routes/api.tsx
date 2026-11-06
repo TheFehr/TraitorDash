@@ -167,8 +167,7 @@ api.post('/ingest', getServer, async (c) => {
 
     // Update active admins for the server if provided
     if (active_admins && Array.isArray(active_admins)) {
-      console.log(`[API] Active admins on ${server.name}:`, active_admins)
-      // TODO: Persist to authorized_admins table in RFC 5
+      Store.setOnlineAdmins(server.id, active_admins)
     }
 
     // MD5 Caching Logic
@@ -775,7 +774,7 @@ api.post('/v1/poll', getServer, async (c) => {
 
   if (active_admins && Array.isArray(active_admins)) {
     console.log(`[API] Heartbeat with ${active_admins.length} admins from ${server.name} (${server.id})`)
-    // TODO: Store active_admins in RFC 5
+    Store.setOnlineAdmins(server.id, active_admins)
   } else {
     console.log(`[API] Heartbeat from ${server.name} (${server.id})`)
   }

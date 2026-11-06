@@ -41,8 +41,16 @@ export const ServerPage = ({ steamId, server, roles }: { steamId: string, server
   </Admin>
 )
 
-export const RoleConfigPage = ({ steamId, server, roleName, roles, schema, live }: {
-  steamId: string, server: { id: string, name: string }, roleName: string, roles: any[], schema: any[], live: Record<string, LiveConVar>
+/** RFC 2, 4: shown on the pages that edit a server while an admin is in the game, whose changes there win over an edit made here. */
+export const OnlineAdminsNotice = ({ admins }: { admins?: string[] }) => admins && admins.length > 0 ? (
+  <div class="call wait" role="status">
+    <h3>{admins.length === 1 ? 'An admin is in the game' : 'Admins are in the game'}</h3>
+    Attention: {admins.length === 1 ? 'admin' : 'admins'} {admins.join(', ')} {admins.length === 1 ? 'is' : 'are'} online. In-game changes take priority and may overwrite web-based edits.
+  </div>
+) : null
+
+export const RoleConfigPage = ({ steamId, server, roleName, roles, schema, live, onlineAdmins }: {
+  steamId: string, server: { id: string, name: string }, roleName: string, roles: any[], schema: any[], live: Record<string, LiveConVar>, onlineAdmins?: string[]
 }) => (
   <Admin title={`Configure ${roleName}`} steamId={steamId}>
     <div class="lay">
@@ -52,6 +60,7 @@ export const RoleConfigPage = ({ steamId, server, roleName, roles, schema, live 
           <a href="/">Dashboard</a> / <a href={`/servers/${server.id}`}>{server.name}</a> / {roleName}
           {' · '}<a href={`/servers/${server.id}/roles/${encodeURIComponent(roleName)}`}>Public page</a>
         </Crumbs>
+        <OnlineAdminsNotice admins={onlineAdmins} />
         <RoleConfigForm serverId={server.id} role={roleName} schema={schema} live={live} />
       </div>
     </div>
@@ -59,12 +68,13 @@ export const RoleConfigPage = ({ steamId, server, roleName, roles, schema, live 
 )
 
 /** The settings of a server (RFC 23): the bridge's own and the dashboard's, on one page, for admins. */
-export const ServerSettingsPage = ({ steamId, server, roles, state, storage }: { steamId: string, server: { id: string, name: string }, roles: any[], state: BridgeSettingsState, storage: TracksInfo }) => (
+export const ServerSettingsPage = ({ steamId, server, roles, state, storage, onlineAdmins }: { steamId: string, server: { id: string, name: string }, roles: any[], state: BridgeSettingsState, storage: TracksInfo, onlineAdmins?: string[] }) => (
   <Admin title={`Settings | ${server.name}`} steamId={steamId}>
     <div class="lay">
       <Sidebar serverId={server.id} roles={roles} />
       <div>
         <Crumbs><a href="/">Dashboard</a> / <a href={`/servers/${server.id}`}>{server.name}</a> / Settings</Crumbs>
+        <OnlineAdminsNotice admins={onlineAdmins} />
         <ServerSettingsForm serverId={server.id} state={state} storage={storage} />
       </div>
     </div>
