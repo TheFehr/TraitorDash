@@ -140,8 +140,26 @@ describe('the queue', () => {
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toBe('model/gltf-binary')
     expect(res.headers.get('x-content-type-options')).toBe('nosniff')
-    expect(res.headers.get('cache-control')).toBe('no-store')
+    expect(res.headers.get('cache-control')).toBe('private, no-cache')
     expect(new TextDecoder().decode(new Uint8Array(await res.arrayBuffer()).subarray(0, 4))).toBe('glTF')
+  })
+
+  test('the mesh is kept by the browser and checked each time: an ETag answers 304, gzip where asked, and a guest still gets 401', async () => {
+    await toggle(serverId, 'ttt_a', true)
+    await geo.runGeometryQueue(writer(file))
+    const url = `/servers/${serverId}/maps/ttt_a/mesh.glb`
+    const plain = await req(url, { headers: { 'Accept-Encoding': 'identity' } })
+    const etag = plain.headers.get('etag')!
+    expect(etag).toBeTruthy()
+    expect(plain.headers.get('content-encoding')).toBeNull()
+    const again = await req(url, { headers: { 'If-None-Match': etag } })
+    expect(again.status).toBe(304)
+    expect((await again.arrayBuffer()).byteLength).toBe(0)
+    const zipped = await req(url, { headers: { 'Accept-Encoding': 'gzip' } })
+    expect(zipped.headers.get('content-encoding')).toBe('gzip')
+    expect(zipped.headers.get('etag')).toBe(etag)
+    expect(new Uint8Array(Bun.gunzipSync(new Uint8Array(await zipped.arrayBuffer())))).toEqual(new Uint8Array(await plain.arrayBuffer()))
+    expect((await req(url, { headers: { 'If-None-Match': etag } }, false)).status).toBe(401)
   })
 
   test('the mesh is for admins: 401 for a guest, 404 before it exists', async () => {

@@ -473,17 +473,36 @@ app.post('/servers/:serverId/maps/:map/geometry', async (c) => {
  * every open is logged once an hour. The body is a binary glTF the page loads into a viewer; it is
  * never rendered as a page.
  */
+// The compressed mesh of each recent version, so a large GLB is compressed once and not on every view.
+const meshGzip = new Map<string, Uint8Array>()
 app.get('/servers/:serverId/maps/:map/mesh.glb', gated('mesh'), async (c) => {
   const serverId = c.req.param('serverId'), map = c.req.param('map')
   const mesh = Store.getMesh(serverId, map)
   if (!mesh) return c.text('Not found', 404)
   Store.logView(serverId, c.get('session').steamId, 'VIEW_MESH', map)
-  return c.body(mesh as Uint8Array<ArrayBuffer>, 200, {
+  // The mesh only changes with the map or the code that builds it, so it is kept by the browser and asked for again each time (an ETag answers with a few bytes);
+  // private, since it is for signed-in users. The access check and the view log above still run on every view.
+  const etag = `"${Bun.hash(mesh).toString(36)}-${mesh.length}"`
+  const headers: Record<string, string> = {
     'Content-Type': 'model/gltf-binary',
+    ETag: etag,
+    'Cache-Control': 'private, no-cache',
+    Vary: 'Accept-Encoding, Cookie',
     'X-Content-Type-Options': 'nosniff',
     'Content-Security-Policy': "default-src 'none'",
-    'Cache-Control': 'no-store',
-  })
+  }
+  const given = c.req.header('If-None-Match')
+  if (given && given.split(',').map(x => x.trim()).includes(etag)) return c.body(null, 304, headers)
+  if (/\bgzip\b/.test(c.req.header('Accept-Encoding') ?? '')) {
+    let gz = meshGzip.get(etag)
+    if (!gz) {
+      gz = gzipSync(mesh)
+      if (meshGzip.size >= 8) meshGzip.delete(meshGzip.keys().next().value!)
+      meshGzip.set(etag, gz)
+    }
+    return c.body(gz as Uint8Array<ArrayBuffer>, 200, { ...headers, 'Content-Encoding': 'gzip' })
+  }
+  return c.body(mesh as Uint8Array<ArrayBuffer>, 200, headers)
 })
 
 /**
