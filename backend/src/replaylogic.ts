@@ -11,10 +11,12 @@ export interface RawTrack {
   deaths: { victim: string, attacker: string | null, t: number, vx: number, vy: number, vz: number, ax: number | null, ay: number | null, az: number | null, weapon: string | null }[]
   /** Revivals and role changes (RFC 14); absent in tracks stored before it. */
   events?: TrackEvent[]
+  /** Where bodies lay (RFC 24); absent in tracks from before it. */
+  bodies?: { p: string, t: number, x: number, y: number, z: number, pt: number, w: number, r: number }[]
 }
 export interface TrackEvent {
-  t: number, p: string, k: 'revive' | 'role' | 'say' | 'buy' | 'found', role?: string, team?: string, by?: string, how?: string, why?: string
-  /** say: the line and who could read it; buy: the class and whether it is a passive item; found: whose body (RFC 26) */
+  t: number, p: string, k: 'revive' | 'role' | 'say' | 'buy' | 'found' | 'pickup' | 'drop', role?: string, team?: string, by?: string, how?: string, why?: string
+  /** say: the line and who could read it; buy: the class and whether it is a passive item; found, pickup, drop: whose body (RFC 26, RFC 24) */
   text?: string, ch?: 'all' | 'team' | 'dead', item?: string, it?: boolean, of?: string
 }
 
@@ -29,7 +31,11 @@ export interface Decoded {
   deaths: Death[]
   /** In time order; empty for a track without any. */
   events: TrackEvent[]
+  /** The path of each player's body, in time order (RFC 24); empty for a track without any. */
+  bodies: Map<string, BodyPoint[]>
 }
+/** One point of a body's path: ms, position in units, and the turn in degrees. */
+export interface BodyPoint { t: number, at: [number, number, number], pitch: number, yaw: number, roll: number }
 export interface Death { victim: string, attacker: string | null, t: number, at: [number, number, number], from: [number, number, number] | null, weapon: string | null }
 
 /** Positions are stored in whole numbers of 8 units. */
@@ -90,7 +96,13 @@ export function decodeTrack(raw: RawTrack): Decoded {
   deaths.sort((a, b) => a.t - b.t)
   for (const d of deaths) correctDeathHeight(players.get(d.victim) ?? [], d)
   const events = [...(raw.events ?? [])].sort((a, b) => a.t - b.t)
-  return { times, length: times.length ? times[times.length - 1]! : 0, players, deaths, events }
+  const bodies = new Map<string, BodyPoint[]>()
+  for (const b of [...(raw.bodies ?? [])].sort((a, c) => a.t - c.t)) {
+    const list = bodies.get(b.p) ?? []
+    list.push({ t: b.t, at: [b.x * UNITS, b.y * UNITS, b.z * UNITS], pitch: b.pt / 4, yaw: b.w / 4, roll: b.r / 4 })
+    bodies.set(b.p, list)
+  }
+  return { times, length: times.length ? times[times.length - 1]! : 0, players, deaths, events, bodies }
 }
 
 export interface Pose { x: number, y: number, z: number, /** Heading in 256ths of a turn, 0-255. */ yaw: number }
@@ -327,6 +339,45 @@ export function currentDeath(deaths: Death[], events: TrackEvent[], player: stri
   if (!death) return null
   const d = death
   return events.some(e => e.k === 'revive' && e.p === player && e.t >= d.t && e.t <= ms) ? null : death
+}
+
+/** Two points further apart than this are not drawn between (RFC 24, 4.5): a gap is not interpolated through. */
+export const BODY_GAP_MS = 1500
+
+/** The shortest way round from `a` to `b` in degrees, as a fraction `f`. */
+const lerpDeg = (a: number, b: number, f: number) => {
+  let d = ((b - a) % 360 + 540) % 360 - 180
+  if (d === -180) d = 180
+  return a + d * f
+}
+
+const wrap180 = (d: number) => ((d % 360) + 540) % 360 - 180
+
+/**
+ * Where a body is at `ms` (RFC 24, 4.4): the last recorded point at or before `ms` that is not before the death, else the death position.
+ * Between two points no more than BODY_GAP_MS apart the position is drawn between them. `turn` is how far the body has turned about the
+ * vertical since its first point, in degrees (0 without points): the ragdoll's own yaw has no fixed relation to the drawn figure, its change does.
+ */
+export function bodyAt(points: BodyPoint[] | undefined, death: Death, ms: number): { at: [number, number, number], turn: number, moved: boolean } {
+  let last = -1, first = -1
+  for (let i = 0; i < (points?.length ?? 0); i++) {
+    const q = points![i]!
+    if (q.t < death.t) continue
+    if (first < 0) first = i
+    if (q.t <= ms) last = i
+    else break
+  }
+  if (!points || last < 0) return { at: death.at, turn: 0, moved: false }
+  const a = points[last]!, base = points[first]!
+  const next = points[last + 1]
+  if (next && next.t > ms && next.t - a.t <= BODY_GAP_MS) {
+    const f = (ms - a.t) / (next.t - a.t)
+    return {
+      at: [a.at[0] + (next.at[0] - a.at[0]) * f, a.at[1] + (next.at[1] - a.at[1]) * f, a.at[2] + (next.at[2] - a.at[2]) * f],
+      turn: wrap180(lerpDeg(a.yaw, next.yaw, f) - base.yaw), moved: true,
+    }
+  }
+  return { at: a.at, turn: wrap180(a.yaw - base.yaw), moved: true }
 }
 
 /** How far before a revival the killer's death may be to be mentioned (RFC 14, 4.4). */

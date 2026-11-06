@@ -950,3 +950,85 @@ describe('track.lua: chat, purchases and bodies found (RFC 26)', () => {
     expect(trackOf(later).events).toBeUndefined() // switched on in the middle of a round: from the next one
   })
 })
+
+describe('track.lua: where the bodies lie (RFC 24)', () => {
+  const RAG = `rag = Part("prop_ragdoll", "models/player.mdl", "", 160, 80, 4, 30)`
+  const die = `B.alive = false; Fire("TTTOnCorpseCreated", rag, B)`
+  const bodiesOf = (r: Run) => trackOf(r).bodies as any[]
+
+  test('a body is followed from the first tick after it is made; a body that lies still costs one point, one that is moved gets a point from 16 units on', () => {
+    const r = play(`
+      ${RAG}
+      Begin()
+      Run(1)
+      ${die}
+      Run(2)
+      rag.x = 168; Run(1)   -- 8 units: not enough
+      rag.x = 200; Run(1)   -- 40 from the first point
+      rag.y = 400; rag.yaw = 90; Run(1)
+      Fire("TTTEndRound", WIN_TRAITOR); Accept(1)
+    `)
+    const b = bodiesOf(r)
+    expect(b).toHaveLength(3)
+    expect(b[0]).toMatchObject({ p: B, x: 20, y: 10, z: 1, w: 120 }) // units / 8, quarter degrees
+    expect(b[1]).toMatchObject({ x: 25, y: 10 })
+    expect(b[2]).toMatchObject({ y: 50, w: 360 })
+    expect(b.map(e => e.t)).toEqual([...b.map(e => e.t)].sort((x, y) => x - y))
+    const t = trackOf(r)
+    expect(validateTrack(t, { roundId: t.round_id, map: t.map, players: new Set([A, B, C]) }).ok).toBe(true)
+  })
+
+  test('a body that only turns is recorded once it has turned 20 degrees', () => {
+    const r = play(`${RAG} Begin() ${die} Run(1) rag.yaw = 40 Run(1) rag.yaw = 55 Run(1) Fire("TTTEndRound", WIN_TRAITOR) Accept(1)`)
+    expect(bodiesOf(r).map(e => e.w)).toEqual([120, 220]) // 30 degrees, then 55 (25 more)
+  })
+
+  test('a removed ragdoll or a revival stops it, and neither raises', () => {
+    const gone = play(`${RAG} Begin() ${die} Run(1) rag.removed = true Run(2) Fire("TTTEndRound", WIN_TRAITOR) Accept(1)`)
+    expect(bodiesOf(gone)).toHaveLength(1)
+    const revived = play(`${RAG} Begin() ${die} Run(1) Fire("TTT2PostPlayerDeath", B, nil, A) B.alive = true rag.x = 400 Run(2) Fire("TTTEndRound", WIN_TRAITOR) Accept(1)`)
+    expect(bodiesOf(revived)).toHaveLength(1) // alive again: no more points
+  })
+
+  test('a ragdoll of a player who was not in the round is left alone, and a round with no body sends no field', () => {
+    const r = play(`${RAG} Begin() Fire("TTTOnCorpseCreated", rag, SPEC) Fire("TTTOnCorpseCreated", rag, nil) Run(2) Fire("TTTEndRound", WIN_TRAITOR) Accept(1)`)
+    expect(trackOf(r).bodies).toBeUndefined()
+  })
+
+  test('the list is capped at 4096 points and the track is marked truncated', () => {
+    const r = play(`
+      ${RAG}
+      Begin() ${die}
+      for i = 1, 4200 do rag.x = rag.x + 160; Run(1) if i % 40 == 0 then rag.x = 0 end end
+      Fire("TTTEndRound", WIN_TRAITOR); Accept(1)
+    `)
+    expect(bodiesOf(r).length).toBeLessThanOrEqual(4096)
+    expect(trackOf(r).truncated).toBe(true)
+  })
+
+  test('picking up and dropping a ragdoll are events with whose body it was; another entity and the hooks return nothing', () => {
+    const r = play(`
+      ${RAG}
+      Begin() ${die}
+      CORPSE = { GetPlayer = function(e) return B end }
+      Run(1)
+      Fire("OnPlayerPhysicsPickup", A, rag)
+      Run(1)
+      Fire("OnPlayerPhysicsDrop", A, rag, false)
+      local crate = Part("prop_physics", "models/crate.mdl")
+      Fire("OnPlayerPhysicsPickup", A, crate)
+      Fire("OnPlayerPhysicsPickup", SPEC, rag)
+      OUT = { v = FireValues("OnPlayerPhysicsPickup", A, rag) + FireValues("TTTOnCorpseCreated", rag, B) }
+      Fire("TTTEndRound", WIN_TRAITOR); Accept(1)
+    `)
+    expect(r.out.v).toBe(0)
+    const ev = (trackOf(r).events as any[]).filter(e => e.k === 'pickup' || e.k === 'drop')
+    expect(ev.slice(0, 2)).toMatchObject([{ p: A, k: 'pickup', of: B }, { p: A, k: 'drop', of: B }])
+    expect(ev).toHaveLength(3) // the last pickup of the ragdoll in OUT is the third
+  })
+
+  test('nothing is recorded with tracking off', () => {
+    const r = play(`${RAG} Begin() ${die} Run(2) Fire("OnPlayerPhysicsPickup", A, rag) Fire("TTTEndRound", WIN_TRAITOR) Accept(1)`, false)
+    expect(trackOf(r)).toBeUndefined()
+  })
+})

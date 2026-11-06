@@ -2,7 +2,7 @@
 import { Color, type BufferGeometry, type Mesh, type MeshStandardMaterial, type Object3D } from 'three'
 import { hex } from './teamColours'
 import { mapLoader, levelColour, paintPlain, type Painted } from './sceneKit'
-import { currentDeath, lastPoseAt, levelOf, poseAt, revivePose, trailBetween, type Decoded, type LevelRange, type TrackEvent } from './replaylogic'
+import { bodyAt, currentDeath, lastPoseAt, levelOf, poseAt, revivePose, trailBetween, type Decoded, type LevelRange, type TrackEvent } from './replaylogic'
 
 // RFC 19, 3.1: the replay drawn from above on a plain 2D canvas, for a browser without WebGL (the game's window). The map's
 // floors are filled shapes, its walls lines, drawn level by level from the lowest; the picture of the map is made once and
@@ -309,8 +309,9 @@ export async function startFlat(host: FlatHost): Promise<void> {
       const segs = player(id)
       const death = currentDeath(data.deaths, data.events, id, ms) // a revived player is not dead any more
       if (death) {
-        if (visible(death.at[2]).above) continue
-        const x = X(death.at[0]), y = Y(death.at[1]), s = 6 * px
+        const body = bodyAt(data.bodies.get(id), death, ms) // where it lies now (RFC 24)
+        if (visible(body.at[2]).above) continue
+        const x = X(body.at[0]), y = Y(body.at[1]), s = 6 * px
         g.lineWidth = 7 * px; g.strokeStyle = '#000'
         g.beginPath(); g.moveTo(x - s, y - s); g.lineTo(x + s, y + s); g.moveTo(x + s, y - s); g.lineTo(x - s, y + s); g.stroke()
         g.lineWidth = 4 * px; g.strokeStyle = colour

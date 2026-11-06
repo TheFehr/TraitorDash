@@ -41,8 +41,11 @@ local MAX_TICKS_FLOOR, MAX_TICKS_CEILING = 1000, 100000 -- what traitordash_trac
 local MAX_SEGMENTS = 64          -- per player
 local MAX_DEATHS = 512
 -- What happened to players besides moving (RFC 14, 4.3 and RFC 26): each kind has a cap of its own, so a chatty round does not use up the room of the others.
-local EVENT_CAP = { revive = 1024, role = 1024, say = 1024, buy = 512, found = 256 }
+local EVENT_CAP = { revive = 1024, role = 1024, say = 1024, buy = 512, found = 256, pickup = 256, drop = 256 }
 local SAY_LEN = 200             -- characters of a chat line that are kept
+local MAX_BODIES = 4096         -- points of bodies' paths (RFC 24)
+local BODY_MOVE = 16                -- units a body must move from its last point to be recorded again
+local BODY_TURN = 80                -- quarter degrees (20 degrees) it must turn
 local MAX_PARTS = 256           -- parts that move, per round (RFC 20, 4.3)
 local MAX_KEYS_PART = 4000
 local MAX_KEYS = 50000
@@ -79,7 +82,7 @@ local function MaxTicks()
 end
 
 local function EstimateBytes(r)
-    return r.samples * BYTES_PER_SAMPLE + #r.t * 6 + #r.deaths * 120 + #r.events * 100 + r.keys * 36 + #r.inputs * 90
+    return r.samples * BYTES_PER_SAMPLE + #r.t * 6 + #r.deaths * 120 + #r.events * 100 + #r.bodies * 40 + r.keys * 36 + #r.inputs * 90
 end
 
 -- `at` is where the player really was, when it is known and `GetPos` would say something else: a dead player's position is the
@@ -330,6 +333,39 @@ local function PartsOut(r)
     return #out > 0 and out or nil
 end
 
+-- The way round between two angles in quarter degrees (they are -720 to 719).
+local function QuarterGap(a, b)
+    local d = math.abs(a - b) % 1440
+    return math.min(d, 1440 - d)
+end
+
+-- The bodies (RFC 24, 4.2): a body that has moved BODY_MOVE units or turned BODY_TURN from its last point gets a new one, and the first
+-- sighting always does. A body that lies still costs one distance check. A ragdoll that is gone or a player who lives again drops it.
+local function SampleBodies(r, now)
+    for _, sid in ipairs(r.order) do
+        local p = r.players[sid]
+        local rag = p.rag
+        if rag then
+            if not IsValid(rag) or (IsValid(p.ply) and p.ply:IsTerror()) then
+                p.rag, p.lastBody = nil, nil
+            elseif #r.bodies >= MAX_BODIES then
+                r.truncated = true
+            else
+                local pos, ang = rag:GetPos(), rag:GetAngles()
+                local x, y, z = Floor(pos.x / 8), Floor(pos.y / 8), Floor(pos.z / 8)
+                local pt, w, ro = Quarter(ang.p), Quarter(ang.y), Quarter(ang.r)
+                local l = p.lastBody
+                local moved = not l or math.abs(x - l.x) * 8 >= BODY_MOVE or math.abs(y - l.y) * 8 >= BODY_MOVE or math.abs(z - l.z) * 8 >= BODY_MOVE
+                    or QuarterGap(pt, l.pt) >= BODY_TURN or QuarterGap(w, l.w) >= BODY_TURN or QuarterGap(ro, l.ro) >= BODY_TURN
+                if moved then
+                    p.lastBody = { x = x, y = y, z = z, pt = pt, w = w, ro = ro }
+                    r.bodies[#r.bodies + 1] = { p = sid, t = RoundMs(r, now), x = x, y = y, z = z, pt = pt, w = w, r = ro }
+                end
+            end
+        end
+    end
+end
+
 local function SampleAll(r, now, also)
     local idx = AddTick(r, now)
     for _, sid in ipairs(r.order) do
@@ -350,6 +386,7 @@ local function SampleAll(r, now, also)
             if p.awaiting then p.sawDead = true end
         end
     end
+    SampleBodies(r, now)
     if r.partList and not r.partsOff then
         -- (also called from Begin and Death, outside the timer's own pcall: a failure here ends the parts, never the round)
         local ok, err = pcall(SampleParts, r, idx - 1)
@@ -463,7 +500,7 @@ function Track.Begin(roundId, players)
         id = roundId, t0 = CurTime(), lastMs = 0, t = {}, order = {}, players = {}, deaths = {}, events = {},
         samples = 0, ticks = 0, skipped = 0, interval = mn, minUsed = math.huge, maxUsed = 0,
         ring = {}, costSum = 0, worst = 0, truncated = false, degraded = false, stopped = false,
-        keys = 0, inputs = {}, kinds = {}, chat = cv_chat:GetBool(),
+        keys = 0, inputs = {}, bodies = {}, kinds = {}, chat = cv_chat:GetBool(),
     }
     for _, e in ipairs(players) do
         if #r.order >= 128 then break end
@@ -524,6 +561,7 @@ function Track.Revive(sid, info)
     local p = r.players[sid]
     if not p then return end
     p.awaiting, p.sawDead = false, false
+    p.rag, p.lastBody = nil, nil -- a revival removes the body
     local e = { p = sid, k = "revive" }
     if info then e.by, e.how, e.why = info.by, info.how, info.why end
     AddEvent(r, CurTime(), e)
@@ -590,10 +628,42 @@ function Track.Found(finder, dead)
     AddEvent(r, CurTime(), { p = sid, k = "found", of = SidOf(r, dead) })
 end
 
+-- ---- Bodies (RFC 24)
+
+-- TTT2 made a ragdoll for a tracked player's death: it is followed from the next tick on (SampleBodies).
+function Track.Corpse(rag, ply)
+    local r = rec
+    if not r or r.stopped or not IsValid(rag) then return end
+    local sid = SidOf(r, ply)
+    if not sid then return end
+    local p = r.players[sid]
+    p.rag, p.lastBody = rag, nil
+end
+
+-- A tracked player took hold of a body (the magneto stick, or the use key) or let go of it. `ent` is any entity the hook is about: only a ragdoll
+-- counts, and `of` is the player it was when the game still knows.
+local function BodyHandled(kind, ply, ent)
+    local r = rec
+    if not r or r.stopped or not IsValid(ent) or ent:GetClass() ~= "prop_ragdoll" then return end
+    local sid = SidOf(r, ply)
+    if not sid then return end
+    local owner = nil
+    if CORPSE and CORPSE.GetPlayer then
+        local ok, o = pcall(CORPSE.GetPlayer, ent)
+        if ok then owner = o end
+    end
+    AddEvent(r, CurTime(), { p = sid, k = kind, of = SidOf(r, owner) })
+end
+function Track.Pickup(ply, ent) BodyHandled("pickup", ply, ent) end
+function Track.Drop(ply, ent) BodyHandled("drop", ply, ent) end
+
 -- The hooks return nothing, so they can never block or change what they watch.
 hook.Add("PlayerSay", "TraitorDash_TrackSay", function(ply, text, teamOnly) pcall(Track.Say, ply, text, teamOnly) end)
 hook.Add("TTT2OrderedEquipment", "TraitorDash_TrackBuy", function(ply, item, isItem) pcall(Track.Buy, ply, item, isItem) end)
 hook.Add("TTTOrderedEquipment", "TraitorDash_TrackBuyClassic", function(ply, item, isItem) pcall(Track.Buy, ply, item, isItem) end)
+hook.Add("TTTOnCorpseCreated", "TraitorDash_TrackCorpse", function(rag, ply) pcall(Track.Corpse, rag, ply) end)
+hook.Add("OnPlayerPhysicsPickup", "TraitorDash_TrackPickup", function(ply, ent) pcall(Track.Pickup, ply, ent) end)
+hook.Add("OnPlayerPhysicsDrop", "TraitorDash_TrackDrop", function(ply, ent) pcall(Track.Drop, ply, ent) end)
 hook.Add("TTTBodyFound", "TraitorDash_TrackFound", function(finder, dead) pcall(Track.Found, finder, dead) end)
 
 -- The round is over: stops the timer, prints the one line, and returns the track to upload (or nil
@@ -637,6 +707,7 @@ function Track.Finish(roundId)
         truncated = r.truncated, degraded = r.degraded,
         t = r.t, players = players, deaths = r.deaths,
         events = #r.events > 0 and r.events or nil,
+        bodies = #r.bodies > 0 and r.bodies or nil,
         parts = PartsOut(r), inputs = #r.inputs > 0 and r.inputs or nil,
     }
 end

@@ -14,7 +14,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { startFlat } from './replayflat'
 import { offerBrowser, levelColour, paintPlain, makeCamera, makeRenderer, makeScene, mapLoader, prepareMovable, prepareProps, prepareWater, boxWithout, type Painted } from './sceneKit'
 import {
-  decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, shownLevels, FADE, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose, fitLabel,
+  decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, shownLevels, FADE, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, bodyAt, killerDiedBefore, reviveSource, revivePose, fitLabel,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
 } from './replaylogic'
 
@@ -106,6 +106,8 @@ async function start(root: HTMLElement) {
       case 'say': return `${e.ch === 'team' ? 'said to their team' : e.ch === 'dead' ? 'said among the dead' : 'said'}: ${e.text}`
       case 'buy': return `bought ${e.item}${e.it ? ' (item)' : ''}`
       case 'found': return `found ${e.of ? 'the body of ' + nick(e.of) : 'a body'}`
+      case 'pickup': return `picked up ${e.of ? 'the body of ' + nick(e.of) : 'a body'}`
+      case 'drop': return `dropped ${e.of ? 'the body of ' + nick(e.of) : 'a body'}`
       default: return `revived${e.by ? ' by ' + nick(e.by) : ''} (${reviveSource(e.how)})`
     }
   }
@@ -113,7 +115,7 @@ async function start(root: HTMLElement) {
   function eventText(e: TrackEvent) {
     if (e.k === 'role') return `${nick(e.p)} became ${e.role} (${e.team})`
     if (e.k === 'say') return `${nick(e.p)}${e.ch === 'team' ? ' (team)' : e.ch === 'dead' ? ' (dead)' : ''}: ${e.text}`
-    if (e.k === 'buy' || e.k === 'found') return `${nick(e.p)} ${ownText(e)}`
+    if (e.k === 'buy' || e.k === 'found' || e.k === 'pickup' || e.k === 'drop') return `${nick(e.p)} ${ownText(e)}`
     return `${nick(e.p)} was revived${e.by ? ' by ' + nick(e.by) : ''} (${reviveSource(e.how)})`
   }
   /** The fact "came back N s after their killer died", when the recorded events show it. */
@@ -131,7 +133,7 @@ async function start(root: HTMLElement) {
   const feedEl = el(root, '[data-feed]')
   const feedWrap = el(root, '[data-feed-wrap]')
   if (feedEl && feedWrap) {
-    const feed = data.events.filter(e => e.k === 'say' || e.k === 'buy' || e.k === 'found')
+    const feed = data.events.filter(e => e.k === 'say' || e.k === 'buy' || e.k === 'found' || e.k === 'pickup' || e.k === 'drop')
     for (const e of feed) {
       const li = document.createElement('li')
       const b = document.createElement('button')
@@ -935,12 +937,13 @@ async function start(root: HTMLElement) {
       const isSel = id === selected
       m.ring.visible = isSel // the selected player is marked on the ground, not by a bigger body
       const death = currentDeath(data.deaths, data.events, id, ms) // a revived player is not dead any more
-      const deathLevel = death && levels.length > 0 && bg.kind !== 'none' ? levelOf(levels, death.at[2]) : 0
+      const body = death ? bodyAt(data.bodies.get(id), death, ms) : null // where the body lies now, which is not always where the player died (RFC 24)
+      const deathLevel = body && levels.length > 0 && bg.kind !== 'none' ? levelOf(levels, body.at[2]) : 0
       m.corpse.visible = !!death && !(typeof upto === 'number' && deathLevel > upto)
-      if (death) {
-        m.corpse.position.set(death.at[0], death.at[1], groundBelow(death.at[0], death.at[1], death.at[2]) ?? death.at[2])
+      if (death && body) {
+        m.corpse.position.set(body.at[0], body.at[1], groundBelow(body.at[0], body.at[1], body.at[2]) ?? body.at[2])
         const last = lastPoseAt(m.segs, death.t)
-        m.corpse.rotation.z = last ? (last.yaw / 256) * Math.PI * 2 : 0
+        m.corpse.rotation.z = (last ? (last.yaw / 256) * Math.PI * 2 : 0) + (body.turn / 180) * Math.PI
       }
       const trail = trailBetween(m.segs, ms - TRAIL_MS, ms)
       const count = trail.length >= 6 ? Math.min(trail.length / 3, TRAIL_POINTS) : 0

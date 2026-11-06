@@ -77,7 +77,9 @@ describe('validateTrack', () => {
     refused(body([{ t: 1, p: A, k: 'buy', item: 'x', it: false }]), /item flag/)
     refused(body([{ t: 1, p: A, k: 'found', of: 'stranger' }]), /not in the round/)
     refused(body([{ t: 1, p: A, k: 'kick' }]), /unknown kind/)
-    refused(body(Array.from({ length: 3841 }, (_, i) => ({ t: i, p: A, k: 'found' }))), /at most 3840/)
+    expect(validateTrack(body([{ t: 1, p: A, k: 'pickup', of: B }, { t: 2, p: A, k: 'drop' }]), round).ok).toBe(true) // RFC 24
+    refused(body([{ t: 1, p: A, k: 'pickup', of: 'stranger' }]), /pickup event names a body/)
+    refused(body(Array.from({ length: 4353 }, (_, i) => ({ t: i, p: A, k: 'found' }))), /at most 4352/)
   })
 
   test('a track without a fingerprint, flags or deaths is fine', () => {

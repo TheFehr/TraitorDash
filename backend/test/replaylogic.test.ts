@@ -1,5 +1,5 @@
 import { expect, test, describe } from 'bun:test'
-import { clipWeights, damp, dampAngle, decodeTrack, cyclesAt, sectorOf, DIRECTIONS, distanceAt, lerpAngle, moveAt, pathOf, velocityAt, SPEEDS, poseAt, lastPoseAt, trailBetween, lerpYaw, levelOf, holdLevel, LEVEL_HOLD_MS, cutHeight, shownLevels, FADE, overheadFade, NO_CUT, chooseBackground, versionMismatch, defaultSelection, teamColour, playerColour, roleColour, clock, type RawTrack } from '../src/replaylogic'
+import { clipWeights, damp, dampAngle, decodeTrack, cyclesAt, sectorOf, DIRECTIONS, distanceAt, lerpAngle, moveAt, pathOf, velocityAt, SPEEDS, poseAt, lastPoseAt, trailBetween, lerpYaw, levelOf, holdLevel, LEVEL_HOLD_MS, cutHeight, shownLevels, FADE, overheadFade, bodyAt, BODY_GAP_MS, NO_CUT, chooseBackground, versionMismatch, defaultSelection, teamColour, playerColour, roleColour, clock, type RawTrack } from '../src/replaylogic'
 
 // RFC 12, 3.5: the logic of the replay that is not drawing.
 
@@ -538,5 +538,44 @@ describe('FADE and overheadFade', () => {
     expect(overheadFade(camZ, head, [0, 200, 100])).toBe(1)
     expect(overheadFade(camZ, head, [FADE.side + 40, 200, 0])).toBe(0) // beside them, outside the side
     expect(overheadFade(camZ, head, [0, 200, -100])).toBe(0)
+  })
+})
+
+describe('bodyAt (RFC 24)', () => {
+  const death = { victim: 'B', attacker: null, t: 1000, at: [80, 80, 0] as [number, number, number], from: null, weapon: null }
+  const pt = (t: number, x: number, yaw = 0) => ({ t, at: [x, 0, 0] as [number, number, number], pitch: 0, yaw, roll: 0 })
+
+  test('decodeTrack makes a path for each player, in time order, in units and degrees', () => {
+    const d = decodeTrack(raw({ bodies: [{ p: 'B', t: 3000, x: 20, y: 0, z: 1, pt: 0, w: 360, r: 0 }, { p: 'B', t: 1500, x: 10, y: 0, z: 1, pt: -40, w: 0, r: 80 }] }))
+    expect(d.bodies.get('B')!.map(b => b.t)).toEqual([1500, 3000])
+    expect(d.bodies.get('B')![0]).toMatchObject({ at: [80, 0, 8], pitch: -10, yaw: 0, roll: 20 })
+    expect(d.bodies.get('B')![1]!.yaw).toBe(90)
+    expect(decodeTrack(raw()).bodies.size).toBe(0)
+  })
+
+  test('without points it is where the player died', () => {
+    expect(bodyAt(undefined, death, 5000)).toEqual({ at: death.at, turn: 0, moved: false })
+    expect(bodyAt([], death, 5000).at).toEqual(death.at)
+  })
+
+  test('the latest point at or before the time, and never one from before the death', () => {
+    const pts = [pt(500, 1), pt(1200, 100), pt(9000, 300)]
+    expect(bodyAt(pts, death, 1100).at).toEqual(death.at) // the point at 500 is from before the death
+    expect(bodyAt(pts, death, 1200).at[0]).toBe(100)
+    expect(bodyAt(pts, death, 5000).at[0]).toBe(100) // 7.8 s to the next: a gap, not drawn between
+    expect(bodyAt(pts, death, 9000).at[0]).toBe(300)
+  })
+
+  test('between two points less than the gap apart it is between them; further apart it jumps', () => {
+    const pts = [pt(1200, 0), pt(1200 + BODY_GAP_MS, 150)]
+    expect(bodyAt(pts, death, 1200 + BODY_GAP_MS / 2).at[0]).toBeCloseTo(75)
+    const far = [pt(1200, 0), pt(1201 + BODY_GAP_MS, 150)]
+    expect(bodyAt(far, death, 1200 + BODY_GAP_MS / 2).at[0]).toBe(0)
+  })
+
+  test('the turn is how far it has turned since its first point, the short way round', () => {
+    const pts = [pt(1200, 0, 350), pt(1400, 0, 20)]
+    expect(bodyAt(pts, death, 1400).turn).toBe(30) // 350 to 20 is 30 degrees, not -330
+    expect(bodyAt(pts, death, 1300).turn).toBeCloseTo(15)
   })
 })

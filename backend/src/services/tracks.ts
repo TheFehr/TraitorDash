@@ -10,7 +10,9 @@ export const MAX_TICKS = 100_000
 export const MAX_TRACK_PLAYERS = 128
 export const MAX_TRACK_DEATHS = 512
 export const MAX_SEGMENTS_PER_PLAYER = 64
-export const MAX_TRACK_EVENTS = 3840
+export const MAX_TRACK_EVENTS = 4352
+/** Where a body lay and which way it was turned, the points of it (RFC 24). */
+export const MAX_TRACK_BODIES = 4096
 export const MAX_SAY_CHARS = 200
 /** Parts that move, their keyframes and the inputs that reach them (RFC 20, 4.3 to 4.5). */
 export const MAX_TRACK_PARTS = 256
@@ -30,6 +32,7 @@ const TICK_STEP_MAX = 60_000 // a tick is at most a minute after the last
 const TIME_MAX = 6 * 60 * 60 * 1000 // a round of at most six hours, in ms
 const PART_POS_MAX = 32768 // a part's position, in whole units (the map reaches +-16384)
 const PART_POS_STEP = 2 * PART_POS_MAX
+const BODY_ANGLE_MAX = 720 // quarter degrees, -720 to 719
 const PART_ANGLE_MAX = 1440 // quarter degrees; the bridge writes -720 to 719, the room is for the sums
 const PART_ANGLE_STEP = 2 * PART_ANGLE_MAX
 
@@ -48,7 +51,7 @@ export interface TrackEvent {
   t: number
   /** The player it happened to. */
   p: string
-  k: 'revive' | 'role' | 'say' | 'buy' | 'found'
+  k: 'revive' | 'role' | 'say' | 'buy' | 'found' | 'pickup' | 'drop'
   /** `role` events: the settled role and team. */
   role?: string
   team?: string
@@ -62,9 +65,14 @@ export interface TrackEvent {
   /** `buy` events: the class of the weapon or item, and whether it is a passive item. */
   item?: string
   it?: boolean
-  /** `found` events: whose body it was, when that player was in the round. */
+  /** `found`, `pickup` and `drop` events: whose body it was, when that player was in the round. */
   of?: string
 }
+/**
+ * One point of a body's path (RFC 24): the player it belonged to, the time in ms, the position of the ragdoll in units / 8 (absolute) and its
+ * turn in quarter degrees (pitch `pt`, yaw `w`, roll `r`, -720 to 719).
+ */
+export interface TrackBody { p: string, t: number, x: number, y: number, z: number, pt: number, w: number, r: number }
 /**
  * One part that moves, as its keyframes (RFC 20, 4.3). `e` is the number the track gives this entity (one for each entity, so two entities that
  * share a model are two parts), `m` the number of its model in the map file, which is the name of its node in the mesh. `k` is the tick index
@@ -85,6 +93,8 @@ export interface Track {
   players: TrackPlayer[]
   deaths: TrackDeath[]
   events: TrackEvent[]
+  /** Absent in a track from before RFC 24 and in one where no body moved. */
+  bodies?: TrackBody[]
   /** Absent in a track recorded without parts (and in every track from before RFC 20). */
   parts?: TrackPart[]
   inputs?: TrackInput[]
@@ -215,10 +225,30 @@ export function validateTrack(body: unknown, round: { roundId: string, map: stri
         if (!named(e.item)) return no('a buy event needs the class of what was bought')
         if (e.it !== undefined && e.it !== true) return no('a buy event has an invalid item flag')
         events.push({ t: e.t, p: e.p, k: 'buy', item: e.item as string, ...(e.it ? { it: true } : {}) })
-      } else if (e.k === 'found') {
-        if (e.of !== undefined && (typeof e.of !== 'string' || !round.players.has(e.of))) return no('a found event names a body of a player who was not in the round')
-        events.push({ t: e.t, p: e.p, k: 'found', ...(e.of !== undefined ? { of: e.of as string } : {}) })
+      } else if (e.k === 'found' || e.k === 'pickup' || e.k === 'drop') {
+        if (e.of !== undefined && (typeof e.of !== 'string' || !round.players.has(e.of))) return no(`a ${e.k} event names a body of a player who was not in the round`)
+        events.push({ t: e.t, p: e.p, k: e.k, ...(e.of !== undefined ? { of: e.of as string } : {}) })
       } else return no('an event has an unknown kind')
+    }
+  }
+
+  // Where the bodies lay (RFC 24, 4.4). Optional, in time order, absolute values, at most MAX_TRACK_BODIES.
+  const bodies: TrackBody[] = []
+  if (b.bodies !== undefined) {
+    if (!Array.isArray(b.bodies) || b.bodies.length > MAX_TRACK_BODIES) return no(`bodies must be at most ${MAX_TRACK_BODIES} entries`)
+    let last = 0
+    for (const n of b.bodies as Record<string, unknown>[]) {
+      if (!n || typeof n !== 'object') return no('a body point must be an object')
+      if (typeof n.p !== 'string' || !round.players.has(n.p)) return no('a body point names a player who was not in the round')
+      if (!isInt(n.t) || n.t < 0 || n.t > TIME_MAX) return no('a body point has an invalid time')
+      if (n.t < last) return no('body points must be in time order')
+      last = n.t
+      const pos = (k: string) => (isInt(n[k]) && Math.abs(n[k] as number) <= POS_MAX ? (n[k] as number) : null)
+      const ang = (k: string) => (isInt(n[k]) && (n[k] as number) >= -BODY_ANGLE_MAX && (n[k] as number) < BODY_ANGLE_MAX ? (n[k] as number) : null)
+      const x = pos('x'), y = pos('y'), z = pos('z'), pt = ang('pt'), w = ang('w'), r = ang('r')
+      if (x === null || y === null || z === null) return no('a body point has an invalid position')
+      if (pt === null || w === null || r === null) return no('a body point has an invalid turn')
+      bodies.push({ p: n.p, t: n.t, x, y, z, pt, w, r })
     }
   }
 
@@ -275,7 +305,7 @@ export function validateTrack(body: unknown, round: { roundId: string, map: stri
   return { ok: true, track: {
     roundId: round.roundId, map: b.map, fingerprint: typeof b.fingerprint === 'string' ? b.fingerprint : null,
     truncated: b.truncated === true, degraded: b.degraded === true, t, players, deaths, events,
-    ...(parts.length > 0 ? { parts } : {}), ...(inputs.length > 0 ? { inputs } : {}),
+    ...(bodies.length > 0 ? { bodies } : {}), ...(parts.length > 0 ? { parts } : {}), ...(inputs.length > 0 ? { inputs } : {}),
   } }
 }
 
