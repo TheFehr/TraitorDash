@@ -19,7 +19,7 @@
 if not SERVER then return end
 
 local running = false
-local MAX_WAIT = 240   -- seconds to reach the active phase and finish (prep time + the round + slack)
+local WAIT_SLACK = 150 -- seconds on top of the round length to reach the active phase and finish (prep time + slack)
 local AFTER_END = 12   -- seconds to let the async stats and track requests go out
 local WATCHED = { "traitordash_track", "traitordash_stats_bots", "bot_zombie" }
 
@@ -79,6 +79,7 @@ concommand.Add("traitordash_track_test", function(ply, _, args)
     local want = math.Clamp(tonumber(args[1]) or 8, 2, 16)
     local seconds = math.Clamp(tonumber(args[2]) or 90, 30, 300)
     local control = tostring(args[3] or ""):lower() == "off"
+    local maxWait = seconds + WAIT_SLACK -- the kills are spread over `seconds`, so the wait follows it
     running = true
 
     local saved = {}
@@ -118,8 +119,8 @@ concommand.Add("traitordash_track_test", function(ply, _, args)
     timer.Create("TraitorDash_TrackTest", 1, 0, function()
         local ok, err = pcall(function()
             if ended then return end
-            if CurTime() - started > MAX_WAIT then
-                return Cleanup(saved, "FAILED: no round finished within " .. MAX_WAIT .. " s")
+            if CurTime() - started > maxWait then
+                return Cleanup(saved, "FAILED: no round finished within " .. maxWait .. " s")
             end
 
             local bots = player.GetBots()

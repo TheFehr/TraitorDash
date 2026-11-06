@@ -234,7 +234,11 @@ describe('it always puts the settings back', () => {
   test('when the round never becomes active: gives up after the wait and restores', () => {
     const r = play(`ACTIVE_AFTER = 100000 Cmd({ "4", "60" }) RunAll(300) OUT = { s = ${SETTINGS_BACK}, bots = #BOTS, hooks = HookCount("StartCommand") }`)
     expect(r.out).toEqual({ s: { track: '0', bots: '0', zombie: '1' }, bots: 0, hooks: 0 })
-    expect(r.printed.join('\n')).toContain('FAILED: no round finished within 240 s')
+    expect(r.printed.join('\n')).toContain('FAILED: no round finished within 210 s')
+  })
+  test('the wait follows the length of the round: 16 bots and 300 s are not given up on at 240 s', () => {
+    const r = play(`ACTIVE_AFTER = 100000 Cmd({ "16", "300" }) RunAll(300) OUT = { bots = #BOTS }`)
+    expect(r.printed.join('\n')).not.toContain('FAILED')
   })
   test('when no traitor was assigned', () => {
     const r = play(`NO_TRAITOR = true Cmd({ "4", "60" }) RunAll(60) OUT = { s = ${SETTINGS_BACK}, bots = #BOTS }`)
