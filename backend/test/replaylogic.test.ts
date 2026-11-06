@@ -1,5 +1,5 @@
 import { expect, test, describe } from 'bun:test'
-import { clipWeights, damp, dampAngle, decodeTrack, cyclesAt, sectorOf, DIRECTIONS, distanceAt, lerpAngle, moveAt, pathOf, velocityAt, SPEEDS, poseAt, lastPoseAt, trailBetween, lerpYaw, levelOf, holdLevel, LEVEL_HOLD_MS, cutHeight, shownLevels, NO_CUT, chooseBackground, versionMismatch, defaultSelection, teamColour, playerColour, roleColour, clock, type RawTrack } from '../src/replaylogic'
+import { clipWeights, damp, dampAngle, decodeTrack, cyclesAt, sectorOf, DIRECTIONS, distanceAt, lerpAngle, moveAt, pathOf, velocityAt, SPEEDS, poseAt, lastPoseAt, trailBetween, lerpYaw, levelOf, holdLevel, LEVEL_HOLD_MS, cutHeight, shownLevels, FADE, NO_CUT, chooseBackground, versionMismatch, defaultSelection, teamColour, playerColour, roleColour, clock, type RawTrack } from '../src/replaylogic'
 
 // RFC 12, 3.5: the logic of the replay that is not drawing.
 
@@ -505,5 +505,13 @@ describe('cutHeight and shownLevels', () => {
     expect(shownLevels(2, true, 'top')).toBe(2)
     expect(shownLevels(2, false, 'follow')).toBe(2) // a level the viewer picked is kept
     expect(shownLevels('all', false, 'follow')).toBe('all')
+  })
+})
+
+describe('FADE', () => {
+  test('only what is near the line from the camera to the player is faded, and nothing beyond the player', () => {
+    expect(FADE.past).toBe(0) // a floor or ledge beyond the player hides nothing of them (it showed the ground through a plank)
+    expect(FADE.base + FADE.gain).toBeLessThanOrEqual(200) // the widest the cone gets, at the camera, was 400
+    expect(FADE.base).toBeGreaterThanOrEqual(60) // wide enough for the body (32 units across) and some margin
   })
 })

@@ -14,7 +14,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { startFlat } from './replayflat'
 import { offerBrowser, levelColour, paintPlain, makeCamera, makeRenderer, makeScene, mapLoader, prepareMovable, prepareProps, prepareWater, boxWithout, type Painted } from './sceneKit'
 import {
-  decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, shownLevels, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose, fitLabel,
+  decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, shownLevels, FADE, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose, fitLabel,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
 } from './replaylogic'
 
@@ -381,12 +381,11 @@ async function start(root: HTMLElement) {
       // allows for the size; a pixel (r = 0) keeps the plain limit
       // nothing is faded at the player or beyond: the last stretch is a fixed 8 units (it was 8% of the line, about 25, and a wall 17 units in front of
       // the player, with their body behind it, stayed solid)
-      // (a floor or a ledge above their feet goes on 240 units past them: it hides whoever stands behind the player, as the ledge in front of a
-      // second player in the same passage did)
-      float last = ceiling > 0.5 ? 1.0 + 240.0 / sqrt(l2) : 1.0 - 8.0 / sqrt(l2);
+      // (a floor or a ledge above their feet could go on past them, to show whoever stands behind the player; it faded planks that hid nothing, so FADE.past is 0)
+      float last = ceiling > 0.5 ? 1.0 + ${FADE.past.toFixed(1)} / sqrt(l2) : 1.0 - 8.0 / sqrt(l2);
       if (t < -0.05 - r / sqrt(l2) || t > last) return 0.0;
       vec3 q = uCam + ab * clamp(t, 0.0, 1.0);
-      float radius = 160.0 + 240.0 * (1.0 - t);
+      float radius = ${FADE.base.toFixed(1)} + ${FADE.gain.toFixed(1)} * (1.0 - t);
       // a floor is faded only where it can hide some of the player: above the line from the camera to their feet (a ledge below the line to the
       // head still hides their legs; one below the line to the feet hides nothing and is what they stand on)
       if (ceiling > 0.5) {

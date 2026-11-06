@@ -211,6 +211,14 @@ export function levelOf(levels: LevelRange[], z: number): number {
   return best
 }
 
+/**
+ * How much of the map between the follow camera and the player is faded (the numbers of `cutAt` in replay.ts): the cone around the line from the camera to the
+ * head is `base` + `gain` * (1 - t) units wide (t: 0 at the camera, 1 at the head), and a floor or ledge above the player's feet is also faded `past` units
+ * beyond them. It was 160, 240 and 240 until 2026-11-06: planks and ledges that hid nothing (a plank in front of the shins, a ledge beyond the player) turned
+ * to dither with the ground showing through, on `ttt_cape_town_revamped` and `ttt_yucatan`; nothing is faded beyond the player any more.
+ */
+export const FADE = { base: 80, gain: 100, past: 0 }
+
 /** No cut: far above any map. */
 export const NO_CUT = 1e9
 
