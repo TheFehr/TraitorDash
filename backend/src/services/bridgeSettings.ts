@@ -46,6 +46,9 @@ export const BRIDGE_SETTINGS: BridgeSetting[] = [
   { name: 'traitordash_track_parts', kind: 'bool', default: '0', group: 'Position tracking', applies: 'next round',
     label: 'Record doors, lifts and traps',
     explain: 'Also records where the parts of the map that move are (doors, lifts, a building that falls) and who opened or set off what, so the replay can show it. Needs position tracking. It adds a few kilobytes to a round (under 20 on a typical one) and costs the game server a look at each part every second, and at every sample while it moves. Off means the replay shows them standing still.' },
+  { name: 'traitordash_track_chat', kind: 'bool', default: '0', group: 'Position tracking', applies: 'next round',
+    label: 'Record what players write in chat',
+    explain: 'Also records every chat line (to everybody, to a team and among the dead) with the round, so the replay can show it. Anyone who is signed in to the dashboard can read it after the round, team chat and dead chat included, so tell your players. Off by default. Needs position tracking.' },
 ]
 
 const BY_NAME = new Map(BRIDGE_SETTINGS.map(s => [s.name, s]))

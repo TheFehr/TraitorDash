@@ -1,5 +1,5 @@
 import { expect, test, describe } from 'bun:test'
-import { clipWeights, damp, dampAngle, decodeTrack, cyclesAt, sectorOf, DIRECTIONS, distanceAt, lerpAngle, moveAt, pathOf, velocityAt, SPEEDS, poseAt, lastPoseAt, trailBetween, lerpYaw, levelOf, chooseBackground, versionMismatch, defaultSelection, teamColour, playerColour, roleColour, clock, type RawTrack } from '../src/replaylogic'
+import { clipWeights, damp, dampAngle, decodeTrack, cyclesAt, sectorOf, DIRECTIONS, distanceAt, lerpAngle, moveAt, pathOf, velocityAt, SPEEDS, poseAt, lastPoseAt, trailBetween, lerpYaw, levelOf, holdLevel, LEVEL_HOLD_MS, chooseBackground, versionMismatch, defaultSelection, teamColour, playerColour, roleColour, clock, type RawTrack } from '../src/replaylogic'
 
 // RFC 12, 3.5: the logic of the replay that is not drawing.
 
@@ -456,5 +456,34 @@ describe('damping (the follow camera)', () => {
     const a = dampAngle(3.0, -3.0, 100, 100) // 3 to -3 is a short step across pi, not six radians back
     expect(a).toBeGreaterThan(3.0)
     expect(dampAngle(0.2, 0.2, 100, 100)).toBeCloseTo(0.2, 9)
+  })
+})
+
+describe('holdLevel', () => {
+  const walk = (raws: [number, number][]) => { let st: ReturnType<typeof holdLevel> | null = null; return raws.map(([ms, raw]) => (st = holdLevel(st, raw, ms)).level) }
+
+  test('going up is at once, so a player who climbed is never hidden by a cut that is one level too low', () => {
+    expect(walk([[0, 1], [200, 1], [400, 2], [600, 2]])).toEqual([1, 1, 2, 2])
+  })
+
+  test('going down waits until the player has been found lower for the hold time', () => {
+    expect(walk([[0, 2], [200, 1], [400, 1], [200 + LEVEL_HOLD_MS - 1, 1]]).slice(0, 3)).toEqual([2, 2, 2])
+    expect(walk([[0, 2], [200, 1], [400, 1], [200 + LEVEL_HOLD_MS, 1]])).toEqual([2, 2, 2, 1])
+  })
+
+  test('on stairs the height crosses the line again and again and the level does not flicker', () => {
+    const raws: [number, number][] = [[0, 2], [100, 1], [200, 2], [300, 1], [400, 2], [500, 1], [600, 2], [700, 1], [800, 2]]
+    expect(walk(raws)).toEqual([2, 2, 2, 2, 2, 2, 2, 2, 2])
+  })
+
+  test('a seek (back in time, or more than 1.5 s ahead), the first call and a level of 0 take the level as it is', () => {
+    expect(walk([[5000, 3], [4000, 1]])).toEqual([3, 1]) // back
+    expect(walk([[0, 3], [3000, 1]])).toEqual([3, 1]) // far ahead
+    expect(walk([[0, 0], [100, 2]])).toEqual([0, 2])
+    expect(walk([[0, 2], [100, 0]])).toEqual([2, 0])
+  })
+
+  test('two lower levels in turn each need their own hold', () => {
+    expect(walk([[0, 3], [100, 2], [300, 1], [600, 1], [700, 1]])).toEqual([3, 3, 3, 3, 1])
   })
 })

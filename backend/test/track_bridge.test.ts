@@ -854,6 +854,7 @@ describe('track.lua: chat, purchases and bodies found (RFC 26)', () => {
 
   test('what the round says, buys and finds is recorded with the time, in order, and sent in a track the backend accepts', () => {
     const r = play(`
+      SetCv("traitordash_track_chat", "1")
       Begin()
       Run(2)
       Fire("PlayerSay", A, "meet at the bridge", false)
@@ -880,6 +881,7 @@ describe('track.lua: chat, purchases and bodies found (RFC 26)', () => {
 
   test('only the players of the round are recorded; a line is cleaned and cut at 200 characters; an empty one is not recorded', () => {
     const r = play(`
+      SetCv("traitordash_track_chat", "1")
       Begin()
       Fire("PlayerSay", SPEC, "I was not in the round", false)
       Fire("PlayerSay", A, "  tab\\there\\nand a new line  ", false)
@@ -916,6 +918,7 @@ describe('track.lua: chat, purchases and bodies found (RFC 26)', () => {
 
   test('each kind has a cap of its own: a chatty round truncates the track but keeps the room for the others', () => {
     const r = play(`
+      SetCv("traitordash_track_chat", "1")
       Begin()
       for i = 1, 1100 do Fire("PlayerSay", A, "line " .. i, false) end
       Fire("TTT2OrderedEquipment", A, "weapon_ttt_c4", false)
@@ -928,14 +931,22 @@ describe('track.lua: chat, purchases and bodies found (RFC 26)', () => {
   })
 
   test('the hooks return nothing, so they cannot block a chat line or a purchase, and nothing is recorded with tracking off', () => {
-    const on = play(`Begin() OUT = { say = FireValues("PlayerSay", A, "hi", false), buy = FireValues("TTT2OrderedEquipment", A, "x", false), found = FireValues("TTTBodyFound", A, B, {}) }`)
+    const on = play(`SetCv("traitordash_track_chat", "1") Begin() OUT = { say = FireValues("PlayerSay", A, "hi", false), buy = FireValues("TTT2OrderedEquipment", A, "x", false), found = FireValues("TTTBodyFound", A, B, {}) }`)
     expect(on.out).toEqual({ say: 0, buy: 0, found: 0 })
     const off = play(`Begin() Fire("PlayerSay", A, "hi", false) Fire("TTTEndRound", WIN_TRAITOR) Accept(1)`, false)
     expect(trackOf(off)).toBeUndefined()
   })
 
   test('a failing hook argument does not hurt the game', () => {
-    const r = play(`Begin() Fire("PlayerSay", nil, nil, nil) Fire("TTTBodyFound", nil, nil, nil) Fire("TTT2OrderedEquipment", nil, nil, nil) Fire("TTTEndRound", WIN_TRAITOR); Accept(1)`)
+    const r = play(`SetCv("traitordash_track_chat", "1") Begin() Fire("PlayerSay", nil, nil, nil) Fire("TTTBodyFound", nil, nil, nil) Fire("TTT2OrderedEquipment", nil, nil, nil) Fire("TTTEndRound", WIN_TRAITOR); Accept(1)`)
     expect(trackOf(r).events).toBeUndefined()
+  })
+
+  test('chat is off by default: nothing said is recorded, but purchases and bodies are; and it is read when the round begins', () => {
+    const off = play(`Begin() Fire("PlayerSay", A, "secret plan", true) Fire("TTT2OrderedEquipment", A, "weapon_ttt_c4", false) Fire("TTTEndRound", WIN_TRAITOR); Accept(1)`)
+    expect(eventsOf(off).map(e => e.k)).toEqual(['buy'])
+    expect(JSON.stringify(trackOf(off))).not.toContain('secret plan')
+    const later = play(`Begin() SetCv("traitordash_track_chat", "1") Fire("PlayerSay", A, "too late", false) Fire("TTTEndRound", WIN_TRAITOR); Accept(1)`)
+    expect(trackOf(later).events).toBeUndefined() // switched on in the middle of a round: from the next one
   })
 })

@@ -60,11 +60,11 @@ describe('the view log page', () => {
   test('the filters narrow it, and a filter with nothing keeps the way out', async () => {
     Store.logView(serverId, U1, 'VIEW_REPLAY', 'round-0001', 90)
     Store.logView(serverId, U2, 'VIEW_MESH', 'ttt_a', 90)
-    const one = await (await get(`/servers/${serverId}/views?player=${U1}`, ADMIN)).text()
+    const one = await (await get(`/servers/${serverId}/views?player=${pidOf(U1)}`, ADMIN)).text()
     expect(one).toContain('round-0001'); expect(one).not.toContain('ttt_a</a>'); expect(one).toContain('All accounts')
     const maps = await (await get(`/servers/${serverId}/views?what=map`, ADMIN)).text()
     expect(maps).not.toContain('round-0001'); expect(maps).toContain('ttt_a')
-    const none = await (await get(`/servers/${serverId}/views?player=${U2}&what=replay`, ADMIN)).text()
+    const none = await (await get(`/servers/${serverId}/views?player=${pidOf(U2)}&what=replay`, ADMIN)).text()
     expect(none).toContain('data-no-views'); expect(none).toContain('All accounts')
     expect(none).toContain(`href="/servers/${serverId}/views?what=replay"`)
   })

@@ -143,10 +143,10 @@ describe('stats pages', () => {
     expect((await get(`/servers/${serverId}/players/${'0'.repeat(16)}`)).status).toBe(302) // an id that was never given out
   })
 
-  test('the old address with a SteamID64 is sent on to the new one, with its query; a SteamID64 that is not a player is not given an id', async () => {
+  test('an address with a SteamID64 is no longer a player page and is not sent on to the new one; a SteamID64 is not given an id by being asked for', async () => {
     const res = await get(`/servers/${serverId}/players/${ALICE}?by=start`, false)
-    expect(res.status).toBe(301)
-    expect(res.headers.get('location')).toBe(`/servers/${serverId}/players/${pidOf(ALICE)}?by=start`)
+    expect(res.status).toBe(302)
+    expect(res.headers.get('location')).toBe(`/servers/${serverId}/stats`)
     expect(pidOf(ALICE)).toMatch(/^[0-9a-f]{16}$/)
     expect(pidOf(ALICE)).toBe(pidOf(ALICE)) // the same each time
     expect(pidOf(ALICE)).not.toContain(ALICE.slice(-8))

@@ -14,7 +14,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { startFlat } from './replayflat'
 import { offerBrowser, levelColour, paintPlain, makeCamera, makeRenderer, makeScene, mapLoader, prepareMovable, prepareProps, prepareWater, boxWithout, type Painted } from './sceneKit'
 import {
-  decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose, fitLabel,
+  decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose, fitLabel,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
 } from './replaylogic'
 
@@ -85,6 +85,7 @@ async function start(root: HTMLElement) {
   let selected = defaultSelection(ids, viewer, data.deaths)
   let camMode: 'orbit' | 'top' | 'follow' = 'orbit'
   let followLevel = true
+  let levelHold: LevelHold | null = null, levelHoldFor: string | null = null // the level the cut follows, held for a moment when the player is found lower (replaylogic: holdLevel)
   let upTo: number | 'all' = 'all'
   // What the drawing behind the page does when something changes: the WebGL scene or the flat canvas sets these.
   const hooks = { paint: () => {}, level: () => {}, walls: (_on: boolean) => {}, leaves: (_on: boolean) => {}, resize: () => {} }
@@ -965,8 +966,9 @@ async function start(root: HTMLElement) {
     // the selected player's level, when following it
     const sel = selected ? lastPoseAt(data.players.get(selected) ?? [], ms) : null
     if (followLevel && sel && levels.length > 0 && bg.kind !== 'none') {
-      const lv = levelOf(levels, sel.z)
-      if (lv !== upTo) { upTo = lv; showLevels() }
+      if (levelHoldFor !== selected) { levelHold = null; levelHoldFor = selected }
+      levelHold = holdLevel(levelHold, levelOf(levels, sel.z), ms)
+      if (levelHold.level !== upTo) { upTo = levelHold.level; showLevels() }
     }
     // follow camera: behind and above, looking where the player looks. It follows the player's place between the samples (not the
     // last sample, which changes five times a second) and settles into it, so it glides; a jump in time puts it straight there.

@@ -33,6 +33,7 @@ local cv_max = CreateConVar("traitordash_track_interval_max", "1", {FCVAR_ARCHIV
 local cv_budget = CreateConVar("traitordash_track_budget_ms", "0.5", {FCVAR_ARCHIVE}, "What one sampling tick may cost on average, in milliseconds.")
 local cv_maxticks = CreateConVar("traitordash_track_max_ticks", "40000", {FCVAR_ARCHIVE}, "The most sampling ticks a round records; a longer round is cut and flagged truncated (1000 to 100000).")
 local cv_parts = CreateConVar("traitordash_track_parts", "0", {FCVAR_ARCHIVE}, "Also record doors, lifts and other parts that move, and who set them off (1/0; needs traitordash_track).")
+local cv_chat = CreateConVar("traitordash_track_chat", "0", {FCVAR_ARCHIVE}, "Also record what players write in chat, for the replay (1/0; needs traitordash_track). Everyone who may open a replay can read it.")
 local cv_debug = CreateConVar("traitordash_stats_debug", "1", {FCVAR_ARCHIVE}, "Log what the stats tracker does (1/0).")
 
 local TIMER = "TraitorDash_Track"
@@ -462,7 +463,7 @@ function Track.Begin(roundId, players)
         id = roundId, t0 = CurTime(), lastMs = 0, t = {}, order = {}, players = {}, deaths = {}, events = {},
         samples = 0, ticks = 0, skipped = 0, interval = mn, minUsed = math.huge, maxUsed = 0,
         ring = {}, costSum = 0, worst = 0, truncated = false, degraded = false, stopped = false,
-        keys = 0, inputs = {}, kinds = {},
+        keys = 0, inputs = {}, kinds = {}, chat = cv_chat:GetBool(),
     }
     for _, e in ipairs(players) do
         if #r.order >= 128 then break end
@@ -552,10 +553,10 @@ local function CleanText(text)
     return s
 end
 
--- A tracked player said something. `ch` is "all" (everybody), "team" (a team's chat, the traitors' among them) or "dead" (what the dead say to each other).
+-- A tracked player said something, when traitordash_track_chat was on as the round began (it is off by default). `ch` is "all" (everybody), "team" (a team's chat, the traitors' among them) or "dead" (what the dead say to each other).
 function Track.Say(ply, text, teamOnly)
     local r = rec
-    if not r or r.stopped then return end
+    if not r or r.stopped or not r.chat then return end
     local sid = SidOf(r, ply)
     if not sid then return end
     local line = CleanText(text)

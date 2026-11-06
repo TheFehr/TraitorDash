@@ -211,6 +211,23 @@ export function levelOf(levels: LevelRange[], z: number): number {
   return best
 }
 
+/** How long the level the cut follows stays after the player is found on a lower one, so stairs and a jump at a boundary do not make it flicker. */
+export const LEVEL_HOLD_MS = 400
+export interface LevelHold { level: number, lower: number, since: number, at: number }
+
+/**
+ * The level the cut follows: a higher level at once (a player who has climbed is never hidden by a cut that is one level too low), a lower one only when the
+ * player has been found on it for `holdMs` in a row (on stairs, or jumping at the boundary, the height crosses the line again and again). The state starts over
+ * for the first call, a jump back in time and a jump of more than 1.5 s forward (a seek), where the level is the raw one.
+ */
+export function holdLevel(state: LevelHold | null, raw: number, ms: number, holdMs = LEVEL_HOLD_MS): LevelHold {
+  if (!state || state.level === 0 || ms < state.at || ms - state.at > 1500 || raw === 0) return { level: raw, lower: -1, since: ms, at: ms }
+  if (raw >= state.level) return { level: raw, lower: -1, since: ms, at: ms }
+  if (state.lower !== raw) return { level: state.level, lower: raw, since: ms, at: ms }
+  if (ms - state.since >= holdMs) return { level: raw, lower: -1, since: ms, at: ms }
+  return { ...state, at: ms }
+}
+
 export type BackgroundKind = 'mesh' | 'plan' | 'none'
 
 /** The best background there is: the map's 3D mesh, else its floor plan as tiles, else nothing (3.5). */
