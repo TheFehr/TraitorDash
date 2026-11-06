@@ -211,6 +211,20 @@ export function levelOf(levels: LevelRange[], z: number): number {
   return best
 }
 
+/** No cut: far above any map. */
+export const NO_CUT = 1e9
+
+/**
+ * The height of the plane that cuts the map away above the chosen level (Source's z), so a level can be looked into from above: a little above its floors.
+ * None (NO_CUT) for "all" and for a level that is not in the list, and none while the follow camera is used: it stands inside the map, where the cut
+ * only slices the tops off tall walls and props and leaves a black band above (seen on `ttt_cape_town_revamped`, 2026-11-06).
+ */
+export function cutHeight(levels: LevelRange[], upTo: number | 'all', above = 128, follow = false): number {
+  if (upTo === 'all' || follow) return NO_CUT
+  const top = levels.find(l => l.index === upTo)
+  return top ? top.hi + above : NO_CUT
+}
+
 /** How long the level the cut follows stays after the player is found on a lower one, so stairs and a jump at a boundary do not make it flicker. */
 export const LEVEL_HOLD_MS = 400
 export interface LevelHold { level: number, lower: number, since: number, at: number }

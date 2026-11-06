@@ -14,7 +14,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { startFlat } from './replayflat'
 import { offerBrowser, levelColour, paintPlain, makeCamera, makeRenderer, makeScene, mapLoader, prepareMovable, prepareProps, prepareWater, boxWithout, type Painted } from './sceneKit'
 import {
-  decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose, fitLabel,
+  decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose, fitLabel,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
 } from './replaylogic'
 
@@ -864,9 +864,8 @@ async function start(root: HTMLElement) {
 
   // ---- levels: the ones above the chosen are hidden and everything is cut a little above its floors
   const showLevels = () => {
-    const top = typeof upTo === 'number' ? levels.find(l => l.index === upTo) : undefined
     for (const l of levelNodes) l.node.visible = upTo === 'all' || l.index <= upTo
-    cut.constant = upTo === 'all' || !top ? 1e9 : top.hi + CUT_ABOVE
+    cut.constant = cutHeight(levels, upTo, CUT_ABOVE, camMode === 'follow')
     markLevels()
   }
   const follow = { x: 0, y: 0, z: 0, yaw: 0, at: 0, ms: 0, who: null as string | null } // where the follow camera is settled
@@ -1006,6 +1005,7 @@ async function start(root: HTMLElement) {
     if (camMode === 'orbit' && mode !== 'orbit') saved = { pos: persp.position.clone(), target: orbit.target.clone() }
     if (mode === 'orbit' && saved) { persp.position.copy(saved.pos); orbit.target.copy(saved.target) }
     camMode = mode
+    showLevels() // the follow camera has no cut
     camera = mode === 'top' ? ortho : persp
     orbit.enabled = mode === 'orbit'
     topControls.enabled = mode === 'top'
