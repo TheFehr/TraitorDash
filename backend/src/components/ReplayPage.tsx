@@ -86,6 +86,7 @@ export const ReplayPage = ({ ctx, server, round, hasTrack, src, pinned, here, pi
               <p data-selected-role style="margin:.2rem 0"></p>
               <ol data-player-events class="list"></ol>
             </section>
+            <section data-feed-wrap hidden class="f c-violet"><h2 class="ft">Chat, shop and bodies</h2><ol data-feed class="list" style="max-height:22rem;overflow:auto"></ol></section>
             <section data-revives-wrap hidden class="f c-mint"><h2 class="ft">Revivals</h2><ol data-revives class="list"></ol></section>
             <section class="f c-red"><h2 class="ft">Deaths</h2><ol data-deaths class="list"></ol></section>
             {admin && (

@@ -98,9 +98,21 @@ async function start(root: HTMLElement) {
   const bgText = { mesh: 'Drawn in the map\'s 3D geometry.', plan: 'Drawn on the map\'s floor plan (no 3D geometry for this map).', none: 'No map is available for this round: positions are drawn on an empty grid.' }[payload.background.kind]
   el(root, '[data-background]')!.textContent = bgText
 
-  /** One line for a revival or a role change. */
+  /** What happened to the player, without the name (a shop item is shown by its class, as the game knows it). */
+  function ownText(e: TrackEvent) {
+    switch (e.k) {
+      case 'role': return `became ${e.role} (${e.team})`
+      case 'say': return `${e.ch === 'team' ? 'said to their team' : e.ch === 'dead' ? 'said among the dead' : 'said'}: ${e.text}`
+      case 'buy': return `bought ${e.item}${e.it ? ' (item)' : ''}`
+      case 'found': return `found ${e.of ? 'the body of ' + nick(e.of) : 'a body'}`
+      default: return `revived${e.by ? ' by ' + nick(e.by) : ''} (${reviveSource(e.how)})`
+    }
+  }
+  /** One line for an event, with the name. */
   function eventText(e: TrackEvent) {
     if (e.k === 'role') return `${nick(e.p)} became ${e.role} (${e.team})`
+    if (e.k === 'say') return `${nick(e.p)}${e.ch === 'team' ? ' (team)' : e.ch === 'dead' ? ' (dead)' : ''}: ${e.text}`
+    if (e.k === 'buy' || e.k === 'found') return `${nick(e.p)} ${ownText(e)}`
     return `${nick(e.p)} was revived${e.by ? ' by ' + nick(e.by) : ''} (${reviveSource(e.how)})`
   }
   /** The fact "came back N s after their killer died", when the recorded events show it. */
@@ -114,6 +126,23 @@ async function start(root: HTMLElement) {
   const trackRevives = data.events.filter(e => e.k === 'revive')
   const revivals: TrackEvent[] = trackRevives.length > 0 ? trackRevives
     : (payload.revives ?? []).filter(v => v.at !== null).map(v => ({ t: (v.at as number) * 1000, p: v.victim, k: 'revive' as const, by: v.reviver ?? undefined, how: v.how ?? undefined, why: v.why ?? undefined }))
+  // Everything said, bought and found in the round, in order (RFC 26).
+  const feedEl = el(root, '[data-feed]')
+  const feedWrap = el(root, '[data-feed-wrap]')
+  if (feedEl && feedWrap) {
+    const feed = data.events.filter(e => e.k === 'say' || e.k === 'buy' || e.k === 'found')
+    for (const e of feed) {
+      const li = document.createElement('li')
+      const b = document.createElement('button')
+      b.type = 'button'
+      b.className = 'lnk'
+      b.textContent = `${clock(e.t)}  ${eventText(e)}`
+      b.addEventListener('click', () => { selected = e.p; seek(e.t - 2000) })
+      li.append(b)
+      feedEl.append(li)
+    }
+    feedWrap.hidden = feed.length === 0
+  }
   const revivesEl = el(root, '[data-revives]')
   const revivesWrap = el(root, '[data-revives-wrap]')
   if (revivesEl && revivesWrap) {
@@ -142,12 +171,12 @@ async function start(root: HTMLElement) {
       const li = document.createElement('li')
       const b = document.createElement('button')
       b.type = 'button'; b.className = 'lnk'
-      b.textContent = `${clock(e.t)}  ${e.k === 'role' ? 'became ' + e.role + ' (' + e.team + ')' : 'revived' + (e.by ? ' by ' + nick(e.by) : '') + ' (' + reviveSource(e.how) + ')'}`
+      b.textContent = `${clock(e.t)}  ${ownText(e)}`
       b.addEventListener('click', () => seek(e.t - 1000))
       li.append(b)
       eventsEl.append(li)
     }
-    if (mine.length === 0) eventsEl.append(text(data.events.length === 0 && !payload.track.events ? 'No role changes or revivals recorded for this track.' : 'No role changes or revivals.', 'li', 'dim'))
+    if (mine.length === 0) eventsEl.append(text(data.events.length === 0 && !payload.track.events ? 'Nothing recorded for this track but where players were.' : 'Nothing recorded for this player.', 'li', 'dim'))
   }
 
   const deathsEl = el(root, '[data-deaths]')
@@ -193,6 +222,7 @@ async function start(root: HTMLElement) {
   }
   // revivals (green) and role changes (violet) beside the deaths
   if (ticks) for (const e of data.events) {
+    if (e.k !== 'revive' && e.k !== 'role') continue // chat, shop and bodies are in the feed, not on the bar
     const t = text('', 'span', `tick ${e.k === 'revive' ? 'tick-revive' : 'tick-role'}`)
     t.style.left = `${data.length ? (e.t / data.length) * 100 : 0}%`
     t.dataset.mark = e.k

@@ -10,7 +10,8 @@ export const MAX_TICKS = 100_000
 export const MAX_TRACK_PLAYERS = 128
 export const MAX_TRACK_DEATHS = 512
 export const MAX_SEGMENTS_PER_PLAYER = 64
-export const MAX_TRACK_EVENTS = 1024
+export const MAX_TRACK_EVENTS = 3840
+export const MAX_SAY_CHARS = 200
 /** Parts that move, their keyframes and the inputs that reach them (RFC 20, 4.3 to 4.5). */
 export const MAX_TRACK_PARTS = 256
 export const MAX_KEYS_PER_PART = 4000
@@ -47,7 +48,7 @@ export interface TrackEvent {
   t: number
   /** The player it happened to. */
   p: string
-  k: 'revive' | 'role'
+  k: 'revive' | 'role' | 'say' | 'buy' | 'found'
   /** `role` events: the settled role and team. */
   role?: string
   team?: string
@@ -55,6 +56,14 @@ export interface TrackEvent {
   by?: string
   how?: string
   why?: string
+  /** `say` events: the line (at most 200 characters) and who could read it: everybody, a team, or the dead. */
+  text?: string
+  ch?: 'all' | 'team' | 'dead'
+  /** `buy` events: the class of the weapon or item, and whether it is a passive item. */
+  item?: string
+  it?: boolean
+  /** `found` events: whose body it was, when that player was in the round. */
+  of?: string
 }
 /**
  * One part that moves, as its keyframes (RFC 20, 4.3). `e` is the number the track gives this entity (one for each entity, so two entities that
@@ -197,6 +206,18 @@ export function validateTrack(body: unknown, round: { roundId: string, map: stri
         if (e.how !== undefined) ev.how = e.how as string
         if (e.why !== undefined) ev.why = e.why as string
         events.push(ev)
+      } else if (e.k === 'say') {
+        if (typeof e.text !== 'string' || e.text.length === 0 || [...e.text].length > MAX_SAY_CHARS) return no(`a say event needs a line of 1 to ${MAX_SAY_CHARS} characters`)
+        if (/[\u0000-\u001f\u007f]/.test(e.text)) return no('a say event cannot hold control characters')
+        if (e.ch !== 'all' && e.ch !== 'team' && e.ch !== 'dead') return no('a say event needs a channel: all, team or dead')
+        events.push({ t: e.t, p: e.p, k: 'say', text: e.text, ch: e.ch })
+      } else if (e.k === 'buy') {
+        if (!named(e.item)) return no('a buy event needs the class of what was bought')
+        if (e.it !== undefined && e.it !== true) return no('a buy event has an invalid item flag')
+        events.push({ t: e.t, p: e.p, k: 'buy', item: e.item as string, ...(e.it ? { it: true } : {}) })
+      } else if (e.k === 'found') {
+        if (e.of !== undefined && (typeof e.of !== 'string' || !round.players.has(e.of))) return no('a found event names a body of a player who was not in the round')
+        events.push({ t: e.t, p: e.p, k: 'found', ...(e.of !== undefined ? { of: e.of as string } : {}) })
       } else return no('an event has an unknown kind')
     }
   }

@@ -39,7 +39,9 @@ local TIMER = "TraitorDash_Track"
 local MAX_TICKS_FLOOR, MAX_TICKS_CEILING = 1000, 100000 -- what traitordash_track_max_ticks is kept between (the backend refuses more than the ceiling)
 local MAX_SEGMENTS = 64          -- per player
 local MAX_DEATHS = 512
-local MAX_EVENTS = 1024         -- revivals and role changes (RFC 14, 4.3)
+-- What happened to players besides moving (RFC 14, 4.3 and RFC 26): each kind has a cap of its own, so a chatty round does not use up the room of the others.
+local EVENT_CAP = { revive = 1024, role = 1024, say = 1024, buy = 512, found = 256 }
+local SAY_LEN = 200             -- characters of a chat line that are kept
 local MAX_PARTS = 256           -- parts that move, per round (RFC 20, 4.3)
 local MAX_KEYS_PART = 4000
 local MAX_KEYS = 50000
@@ -149,9 +151,11 @@ local function RoundMs(r, now)
     return math.min(math.max(Floor((now - r.t0) * 1000), 0), 6 * 3600 * 1000)
 end
 
--- Adds a revival or role-change event (RFC 14, 4.3); beyond the cap the track is marked truncated instead.
+-- Adds an event (RFC 14, 4.3, RFC 26); beyond the cap of its kind the track is marked truncated instead.
 local function AddEvent(r, now, e)
-    if #r.events >= MAX_EVENTS then r.truncated = true return end
+    local n = (r.kinds[e.k] or 0) + 1
+    if n > (EVENT_CAP[e.k] or 0) then r.truncated = true return end
+    r.kinds[e.k] = n
     e.t = RoundMs(r, now)
     r.events[#r.events + 1] = e
 end
@@ -458,7 +462,7 @@ function Track.Begin(roundId, players)
         id = roundId, t0 = CurTime(), lastMs = 0, t = {}, order = {}, players = {}, deaths = {}, events = {},
         samples = 0, ticks = 0, skipped = 0, interval = mn, minUsed = math.huge, maxUsed = 0,
         ring = {}, costSum = 0, worst = 0, truncated = false, degraded = false, stopped = false,
-        keys = 0, inputs = {},
+        keys = 0, inputs = {}, kinds = {},
     }
     for _, e in ipairs(players) do
         if #r.order >= 128 then break end
@@ -530,6 +534,66 @@ function Track.RoleChanged(sid, role, team)
     if not r or r.stopped or not r.players[sid] then return end
     AddEvent(r, CurTime(), { p = sid, k = "role", role = role, team = team })
 end
+
+-- ---- Chat, purchases and bodies found (RFC 26)
+
+-- A chat line as it is kept: control characters are spaces, the ends are trimmed, text that is not valid UTF-8 keeps its ASCII only, and the
+-- line is cut at SAY_LEN characters.
+local function CleanText(text)
+    local s = string.gsub(tostring(text or ""), "[%c\127]", " ")
+    s = string.gsub(string.gsub(s, "^%s+", ""), "%s+$", "")
+    if utf8 and utf8.len then
+        local n = utf8.len(s)
+        if not n then s = string.gsub(s, "[\128-\255]", "?"); n = #s end
+        if n > SAY_LEN then s = string.sub(s, 1, (utf8.offset(s, SAY_LEN + 1) or (SAY_LEN + 1)) - 1) end
+    else
+        s = string.sub(string.gsub(s, "[\128-\255]", "?"), 1, SAY_LEN)
+    end
+    return s
+end
+
+-- A tracked player said something. `ch` is "all" (everybody), "team" (a team's chat, the traitors' among them) or "dead" (what the dead say to each other).
+function Track.Say(ply, text, teamOnly)
+    local r = rec
+    if not r or r.stopped then return end
+    local sid = SidOf(r, ply)
+    if not sid then return end
+    local line = CleanText(text)
+    if line == "" then return end
+    local ch = "all"
+    local alive = ply.IsTerror and ply:IsTerror()
+    if not alive then ch = "dead" elseif teamOnly then ch = "team" end
+    AddEvent(r, CurTime(), { p = sid, k = "say", text = line, ch = ch })
+end
+
+-- A tracked player bought a weapon or an item in the shop. TTT2 runs the hook under two names, so the same purchase within a second is one.
+function Track.Buy(ply, item, isItem)
+    local r = rec
+    if not r or r.stopped then return end
+    local sid = SidOf(r, ply)
+    if not sid then return end
+    local name = string.sub(string.gsub(tostring(item or ""), "[^%w_.%-]", ""), 1, 64)
+    if name == "" then return end
+    local p, now = r.players[sid], RoundMs(r, CurTime())
+    if p.lastBuy == name and p.lastBuyAt and now - p.lastBuyAt < 1000 then return end
+    p.lastBuy, p.lastBuyAt = name, now
+    AddEvent(r, CurTime(), { p = sid, k = "buy", item = name, it = isItem and true or nil })
+end
+
+-- A tracked player found (searched) the body of a player. `of` is the dead player when they were in the round.
+function Track.Found(finder, dead)
+    local r = rec
+    if not r or r.stopped then return end
+    local sid = SidOf(r, finder)
+    if not sid then return end
+    AddEvent(r, CurTime(), { p = sid, k = "found", of = SidOf(r, dead) })
+end
+
+-- The hooks return nothing, so they can never block or change what they watch.
+hook.Add("PlayerSay", "TraitorDash_TrackSay", function(ply, text, teamOnly) pcall(Track.Say, ply, text, teamOnly) end)
+hook.Add("TTT2OrderedEquipment", "TraitorDash_TrackBuy", function(ply, item, isItem) pcall(Track.Buy, ply, item, isItem) end)
+hook.Add("TTTOrderedEquipment", "TraitorDash_TrackBuyClassic", function(ply, item, isItem) pcall(Track.Buy, ply, item, isItem) end)
+hook.Add("TTTBodyFound", "TraitorDash_TrackFound", function(finder, dead) pcall(Track.Found, finder, dead) end)
 
 -- The round is over: stops the timer, prints the one line, and returns the track to upload (or nil
 -- when there is nothing to send). `fingerprint` of the map is added when it is known.

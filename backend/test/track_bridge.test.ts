@@ -848,3 +848,94 @@ describe('track.lua: parts that move (RFC 20, 4.3 and 4.4)', () => {
     }
   })
 })
+
+describe('track.lua: chat, purchases and bodies found (RFC 26)', () => {
+  const eventsOf = (r: Run) => trackOf(r).events as any[]
+
+  test('what the round says, buys and finds is recorded with the time, in order, and sent in a track the backend accepts', () => {
+    const r = play(`
+      Begin()
+      Run(2)
+      Fire("PlayerSay", A, "meet at the bridge", false)
+      Fire("PlayerSay", A, "traitor here", true)
+      Run(1)
+      Fire("TTT2OrderedEquipment", A, "weapon_ttt_c4", false)
+      Fire("TTTBodyFound", B, C, {})
+      B.alive = false
+      Fire("PlayerSay", B, "I am dead", false)
+      Fire("TTTEndRound", WIN_TRAITOR); Accept(1)
+    `)
+    const ev = eventsOf(r)
+    expect(ev.map(e => e.k)).toEqual(['say', 'say', 'buy', 'found', 'say'])
+    expect(ev[0]).toMatchObject({ p: A, k: 'say', text: 'meet at the bridge', ch: 'all', t: 400 })
+    expect(ev[1]).toMatchObject({ ch: 'team', text: 'traitor here' })
+    expect(ev[2]).toMatchObject({ p: A, k: 'buy', item: 'weapon_ttt_c4' })
+    expect(ev[2].it).toBeUndefined()
+    expect(ev[3]).toMatchObject({ p: B, k: 'found', of: C })
+    expect(ev[4]).toMatchObject({ p: B, ch: 'dead' })
+    expect(ev.map(e => e.t)).toEqual([...ev.map(e => e.t)].sort((a, b) => a - b))
+    const players = new Set([A, B, C])
+    expect(validateTrack(trackOf(r), { roundId: trackOf(r).round_id, map: trackOf(r).map, players }).ok).toBe(true) // what the bridge sends, the backend takes
+  })
+
+  test('only the players of the round are recorded; a line is cleaned and cut at 200 characters; an empty one is not recorded', () => {
+    const r = play(`
+      Begin()
+      Fire("PlayerSay", SPEC, "I was not in the round", false)
+      Fire("PlayerSay", A, "  tab\\there\\nand a new line  ", false)
+      Fire("PlayerSay", A, "   ", false)
+      Fire("PlayerSay", A, string.rep("a", 500), false)
+      Fire("PlayerSay", B, string.rep("\\195\\164", 300), false)
+      Fire("PlayerSay", C, "bad \\255 byte", false)
+      Fire("TTTEndRound", WIN_TRAITOR); Accept(1)
+    `)
+    const ev = eventsOf(r)
+    expect(ev).toHaveLength(4)
+    expect(ev[0].text).toBe('tab here and a new line')
+    expect(ev[1].text).toBe('a'.repeat(200))
+    expect([...ev[2].text]).toHaveLength(200) // 200 characters of two bytes each, cut on a character
+    expect(ev[2].text).toBe('ä'.repeat(200))
+    expect(ev[3].text).toBe('bad ? byte')
+  })
+
+  test('the same purchase seen under both names of the hook is one; a passive item says so; a different one is another', () => {
+    const r = play(`
+      Begin()
+      Fire("TTT2OrderedEquipment", A, "weapon_ttt_c4", false)
+      Fire("TTTOrderedEquipment", A, "weapon_ttt_c4", false)
+      Run(6)
+      Fire("TTT2OrderedEquipment", A, "item_ttt_radar", true)
+      Fire("TTT2OrderedEquipment", A, "bad name!;", false)
+      Fire("TTT2OrderedEquipment", A, "", false)
+      Fire("TTTEndRound", WIN_TRAITOR); Accept(1)
+    `)
+    const ev = eventsOf(r)
+    expect(ev.map(e => e.item)).toEqual(['weapon_ttt_c4', 'item_ttt_radar', 'badname'])
+    expect(ev[1].it).toBe(true)
+  })
+
+  test('each kind has a cap of its own: a chatty round truncates the track but keeps the room for the others', () => {
+    const r = play(`
+      Begin()
+      for i = 1, 1100 do Fire("PlayerSay", A, "line " .. i, false) end
+      Fire("TTT2OrderedEquipment", A, "weapon_ttt_c4", false)
+      Fire("TTTEndRound", WIN_TRAITOR); Accept(1)
+    `)
+    const t = trackOf(r)
+    expect(t.events.filter((e: any) => e.k === 'say')).toHaveLength(1024)
+    expect(t.events.filter((e: any) => e.k === 'buy')).toHaveLength(1)
+    expect(t.truncated).toBe(true)
+  })
+
+  test('the hooks return nothing, so they cannot block a chat line or a purchase, and nothing is recorded with tracking off', () => {
+    const on = play(`Begin() OUT = { say = FireValues("PlayerSay", A, "hi", false), buy = FireValues("TTT2OrderedEquipment", A, "x", false), found = FireValues("TTTBodyFound", A, B, {}) }`)
+    expect(on.out).toEqual({ say: 0, buy: 0, found: 0 })
+    const off = play(`Begin() Fire("PlayerSay", A, "hi", false) Fire("TTTEndRound", WIN_TRAITOR) Accept(1)`, false)
+    expect(trackOf(off)).toBeUndefined()
+  })
+
+  test('a failing hook argument does not hurt the game', () => {
+    const r = play(`Begin() Fire("PlayerSay", nil, nil, nil) Fire("TTTBodyFound", nil, nil, nil) Fire("TTT2OrderedEquipment", nil, nil, nil) Fire("TTTEndRound", WIN_TRAITOR); Accept(1)`)
+    expect(trackOf(r).events).toBeUndefined()
+  })
+})

@@ -50,6 +50,36 @@ describe('validateTrack', () => {
     }
   })
 
+  test('chat, purchases and bodies found are kept as they are sent, and anything else is refused (RFC 26)', () => {
+    const body = (events: unknown[]) => ({ ...good(), events })
+    const ok = validateTrack(body([
+      { t: 100, p: A, k: 'say', text: 'hello there', ch: 'all' },
+      { t: 200, p: A, k: 'say', text: 'traitors only', ch: 'team' },
+      { t: 300, p: B, k: 'buy', item: 'weapon_ttt_c4' },
+      { t: 400, p: B, k: 'buy', item: 'item_ttt_radar', it: true },
+      { t: 500, p: A, k: 'found', of: B },
+      { t: 600, p: A, k: 'found' },
+    ]), round)
+    expect(ok.ok).toBe(true)
+    if (ok.ok) expect(ok.track.events).toEqual([
+      { t: 100, p: A, k: 'say', text: 'hello there', ch: 'all' }, { t: 200, p: A, k: 'say', text: 'traitors only', ch: 'team' },
+      { t: 300, p: B, k: 'buy', item: 'weapon_ttt_c4' }, { t: 400, p: B, k: 'buy', item: 'item_ttt_radar', it: true },
+      { t: 500, p: A, k: 'found', of: B }, { t: 600, p: A, k: 'found' },
+    ])
+    refused(body([{ t: 1, p: A, k: 'say', text: '', ch: 'all' }]), /1 to 200 characters/)
+    refused(body([{ t: 1, p: A, k: 'say', text: 'x'.repeat(201), ch: 'all' }]), /1 to 200 characters/)
+    expect(validateTrack(body([{ t: 1, p: A, k: 'say', text: 'ä'.repeat(200), ch: 'dead' }]), round).ok).toBe(true) // characters, not bytes
+    refused(body([{ t: 1, p: A, k: 'say', text: 'a\nb', ch: 'all' }]), /control characters/)
+    refused(body([{ t: 1, p: A, k: 'say', text: 'hi', ch: 'everyone' }]), /channel/)
+    refused(body([{ t: 1, p: A, k: 'say', text: 'hi' }]), /channel/)
+    refused(body([{ t: 1, p: 'stranger', k: 'say', text: 'hi', ch: 'all' }]), /not in the round/)
+    refused(body([{ t: 1, p: A, k: 'buy', item: 'bad name;' }]), /class of what was bought/)
+    refused(body([{ t: 1, p: A, k: 'buy', item: 'x', it: false }]), /item flag/)
+    refused(body([{ t: 1, p: A, k: 'found', of: 'stranger' }]), /not in the round/)
+    refused(body([{ t: 1, p: A, k: 'kick' }]), /unknown kind/)
+    refused(body(Array.from({ length: 3841 }, (_, i) => ({ t: i, p: A, k: 'found' }))), /at most 3840/)
+  })
+
   test('a track without a fingerprint, flags or deaths is fine', () => {
     const { fingerprint, truncated, degraded, deaths, ...rest } = good()
     const r = validateTrack(rest, round)

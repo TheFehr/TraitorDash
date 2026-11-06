@@ -12,7 +12,11 @@ export interface RawTrack {
   /** Revivals and role changes (RFC 14); absent in tracks stored before it. */
   events?: TrackEvent[]
 }
-export interface TrackEvent { t: number, p: string, k: 'revive' | 'role', role?: string, team?: string, by?: string, how?: string, why?: string }
+export interface TrackEvent {
+  t: number, p: string, k: 'revive' | 'role' | 'say' | 'buy' | 'found', role?: string, team?: string, by?: string, how?: string, why?: string
+  /** say: the line and who could read it; buy: the class and whether it is a passive item; found: whose body (RFC 26) */
+  text?: string, ch?: 'all' | 'team' | 'dead', item?: string, it?: boolean, of?: string
+}
 
 /** One run of consecutive samples of one player, in Source units and degrees-in-256ths, at real times. */
 export interface Segment { t: number[], x: number[], y: number[], z: number[], a: number[], /** As `RawSegment.s`; zeros for a track without it. */ s: number[] }
