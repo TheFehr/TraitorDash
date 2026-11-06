@@ -22,7 +22,7 @@ function model() {
 }
 
 describe('soupOf', () => {
-  const soup = soupOf(model(), 'textured')
+  const soup = soupOf(model())
 
   test('one entry for each triangle: floor, wall and water, with their kind and level', () => {
     expect(soup.n).toBe(3)
@@ -43,14 +43,9 @@ describe('soupOf', () => {
     expect(soup.max.map(v => Math.round(v) + 0)).toEqual([100, 50, 64])
   })
 
-  test('colours: plain by default and per colouring on demand', () => {
+  test('a surface with no texture is the plain floor or wall colour', () => {
     expect(soup.base[0]).toBe(0xcfc6b0)
     expect(soup.base[1]).toBe(0xa59d8c)
-    soup.recolour('levels')
-    expect(soup.base[1]).toBe(0x9999a6) // a wall in the Levels colouring
-    expect(soup.base[0]).not.toBe(0xcfc6b0)
-    soup.recolour('textured')
-    expect(soup.base[0]).toBe(0xcfc6b0)
   })
 
   test('the largest triangle comes first in the size order', () => {

@@ -380,7 +380,7 @@ export const MapViewPage = ({ ctx, server, map, name, next, plan, geometry }: Ma
       {hasView && geometry?.info && (
         <div class="f c-green mt12">
           <h2 class="ft">3D view</h2>
-          <div data-mapview data-src={`${mapPath(id, name)}/mesh.glb`} data-storeys={geometry.info.storeys === false ? '0' : '1'}>
+          <div data-mapview data-src={`${mapPath(id, name)}/mesh.glb`}>
             <div class="view">
               <canvas aria-label={`3D view of ${name}`}></canvas>
               <p data-status>This view needs JavaScript.</p>
@@ -397,12 +397,6 @@ export const MapViewPage = ({ ctx, server, map, name, next, plan, geometry }: Ma
                 <button type="button" data-view="orbit" class="tog">3D</button>
                 <button type="button" data-view="top" class="tog">From above</button>
               </span>
-              <span role="group" aria-label="Colour">
-                <span class="cap">Colour</span>
-                <button type="button" data-colour="textured" aria-pressed="true" class="tog">Textured</button>
-                <button type="button" data-colour="height" aria-pressed="false" class="tog">Height</button>
-                <button type="button" data-colour="levels" aria-pressed="false" class="tog">Levels</button>
-              </span>
               <label><input type="checkbox" data-walls checked /> Walls</label>
               {geometry.info.water ? <label><input type="checkbox" data-water checked /> Water</label> : null}
               {geometry.info.props?.placed ? <label><input type="checkbox" data-props checked /> Props</label> : null}
@@ -411,7 +405,7 @@ export const MapViewPage = ({ ctx, server, map, name, next, plan, geometry }: Ma
               {geometry.info.detached ? <label><input type="checkbox" data-parts /> Parts apart</label> : null}
               {geometry.info.spawns ? <label><input type="checkbox" data-spawns /> Spawns</label> : null}
             </div>
-            <p class="foot dark">Drag to turn, scroll or pinch to zoom, right-drag to move. A simplified map (no glass): it shows the layout, not what a player could see.{geometry.info.movable ? ' Movable parts (doors, lifts, a collapsing building) are drawn where the map file puts them, a door shut.' : ''} Colour: Textured shows the textures of the map (the largest ones as pictures, the next as a plain colour), Height tints the plain greys by height, Levels gives each storey its own colour, lowest green; those two have none of the textures' colour.</p>
+            <p class="foot dark">Drag to turn, scroll or pinch to zoom, right-drag to move. A simplified map (no glass): it shows the layout, not what a player could see.{geometry.info.movable ? ' Movable parts (doors, lifts, a collapsing building) are drawn where the map file puts them, a door shut.' : ''}</p>
           </div>
         </div>
       )}

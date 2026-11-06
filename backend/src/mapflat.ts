@@ -1,6 +1,6 @@
 /// <reference lib="dom" />
 import { Color, type BufferGeometry, Mesh, MeshStandardMaterial, Object3D } from 'three'
-import { applyColouring, mapLoader, COLOURINGS, heightColours, offerBrowser, saveColouring, savedColouring, type Colouring, type Painted } from './sceneKit'
+import { mapLoader, offerBrowser, paintPlain, type Painted } from './sceneKit'
 
 // RFC 19, 3.2: the 3D view of a map on a plain 2D canvas, for a browser without WebGL (the game's window). The painter's
 // algorithm: every triangle of the map is turned to the camera, the triangles are put in order from far to near and filled
@@ -22,7 +22,7 @@ export interface Soup {
   n: number
   pos: Float32Array // nine numbers each
   normal: Float32Array // three each, unit
-  base: Uint32Array // the colour in the current colouring, 0xrrggbb
+  base: Uint32Array // the colour, 0xrrggbb
   level: Uint8Array
   wall: Uint8Array
   water: Uint8Array
@@ -32,13 +32,11 @@ export interface Soup {
   max: [number, number, number]
   /** The triangles from the largest to the smallest, so a picture of the first third has the fewest holes. */
   bySize: Uint32Array
-  /** Sets `base` for a colouring. */
-  recolour: (mode: Colouring) => void
   levels: number[]
 }
 
 /** The triangles of a loaded model: the levels (floors and walls) and the water. The model is Y-up; Source's y is minus three's z. */
-export function soupOf(model: Object3D, mode: Colouring): Soup {
+export function soupOf(model: Object3D): Soup {
   model.updateMatrixWorld(true)
   const nodes: { index: number, node: Object3D }[] = []
   model.traverse(o => { const m = /^level-(\d+)$/.exec(o.name); if (m && !nodes.some(l => l.node === o)) nodes.push({ index: Number(m[1]), node: o }) })
@@ -51,7 +49,7 @@ export function soupOf(model: Object3D, mode: Colouring): Soup {
     mesh.material = mesh.material.clone()
     painted.push({ mesh, wall: mesh.material.name === 'wall', level: l.index })
   })
-  heightColours(painted)
+  paintPlain(painted)
   const water: Mesh[] = []
   model.getObjectByName('water')?.traverse(o => { if ((o as Mesh).isMesh) water.push(o as Mesh) })
 
@@ -61,7 +59,7 @@ export function soupOf(model: Object3D, mode: Colouring): Soup {
   const soup: Soup = {
     n, pos: new Float32Array(n * 9), normal: new Float32Array(n * 3), base: new Uint32Array(n),
     level: new Uint8Array(n), wall: new Uint8Array(n), water: new Uint8Array(n),
-    bySize: new Uint32Array(n), hi: new Map(), min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity], recolour: () => {}, levels: nodes.map(l => l.index),
+    bySize: new Uint32Array(n), hi: new Map(), min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity], levels: nodes.map(l => l.index),
   }
   for (const l of nodes) { const hi = Number(l.node.userData.hi); if (Number.isFinite(hi)) soup.hi.set(l.index, hi) }
 
@@ -111,20 +109,10 @@ export function soupOf(model: Object3D, mode: Colouring): Soup {
   // three keeps colours in linear light and turns them back when it draws; the canvas wants the screen's values
   const tmp = new Color()
   const hexOf = (r: number, g: number, b: number) => tmp.setRGB(r, g, b).getHex()
-  soup.recolour = (m: Colouring) => {
-    applyColouring(painted, m, Math.max(1, nodes.length))
-    for (const r of ranges) {
-      const mat = r.p.mesh.material
-      const own = mat.vertexColors ? r.p.mesh.geometry.getAttribute('color') : null
-      const plain = hexOf(mat.color.r, mat.color.g, mat.color.b)
-      for (let t = r.from; t < r.to; t++) {
-        if (!own) { soup.base[t] = plain; continue }
-        const a = r.a[(t - r.from) * 3]!, b = r.a[(t - r.from) * 3 + 1]!, c = r.a[(t - r.from) * 3 + 2]!
-        soup.base[t] = hexOf((own.getX(a) + own.getX(b) + own.getX(c)) / 3, (own.getY(a) + own.getY(b) + own.getY(c)) / 3, (own.getZ(a) + own.getZ(b) + own.getZ(c)) / 3)
-      }
-    }
+  for (const r of ranges) {
+    const mat = r.p.mesh.material
+    soup.base.fill(hexOf(mat.color.r, mat.color.g, mat.color.b), r.from, r.to)
   }
-  soup.recolour(mode)
   return soup
 }
 
@@ -152,7 +140,7 @@ export function startMapFlat(root: HTMLElement, canvas: HTMLCanvasElement, say: 
 
   function run(model: Object3D) {
     const g = ctx2d!
-    const soup = soupOf(model, savedColouring(root.dataset.storeys === '0' ? 'height' : 'textured'))
+    const soup = soupOf(model)
     if (soup.n === 0) { say('This map has nothing to draw.'); return }
     const centre: [number, number, number] = [(soup.min[0] + soup.max[0]) / 2, (soup.min[1] + soup.max[1]) / 2, (soup.min[2] + soup.max[2]) / 2]
     const radius = Math.hypot(soup.max[0] - soup.min[0], soup.max[1] - soup.min[1], soup.max[2] - soup.min[2]) / 2 || 1
@@ -293,12 +281,6 @@ export function startMapFlat(root: HTMLElement, canvas: HTMLCanvasElement, say: 
     }))
     root.querySelector<HTMLInputElement>('[data-walls]')?.addEventListener('change', e => { walls = (e.target as HTMLInputElement).checked; paint() })
     root.querySelector<HTMLInputElement>('[data-water]')?.addEventListener('change', e => { water = (e.target as HTMLInputElement).checked; paint() })
-    root.querySelectorAll<HTMLElement>('[data-colour]').forEach(b => b.addEventListener('click', () => {
-      const mode = (b.dataset.colour ?? 'textured') as Colouring
-      if (!(COLOURINGS as string[]).includes(mode)) return
-      saveColouring(mode); soup.recolour(mode); mark('[data-colour]', 'colour', mode); paint()
-    }))
-    mark('[data-colour]', 'colour', savedColouring(root.dataset.storeys === '0' ? 'height' : 'textured'))
     // what this view does not draw
     for (const sel of ['[data-props]', '[data-foliage]', '[data-movable]', '[data-parts]', '[data-spawns]']) root.querySelector(sel)?.closest('label')?.setAttribute('hidden', '')
 

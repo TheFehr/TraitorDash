@@ -265,12 +265,11 @@ describe('the 3D view on the map page', () => {
     expect(html).toContain('data-level="all"')
   })
 
-  test('has the Colour choice (Textured first and pressed), no water switch for a map without water, and no Download GLB', async () => {
+  test('has no colour choice, no water switch for a map without water, and no Download GLB', async () => {
     await toggle(serverId, 'ttt_a', true)
     await geo.runGeometryQueue(writer(file))
     const html = await page()
-    expect(html.match(/data-colour="(textured|height|levels)"/g)).toEqual(['data-colour="textured"', 'data-colour="height"', 'data-colour="levels"'])
-    expect(html).toMatch(/data-colour="textured" aria-pressed="true"/)
+    expect(html).not.toContain('data-colour')
     expect(html).not.toContain('data-water')
     expect(html).not.toContain('Download GLB')
     expect(html).toContain('data-walls')
@@ -315,17 +314,14 @@ describe('the 3D view on the map page', () => {
     expect(html).toContain('Movable parts (doors, lifts')
   })
 
-  test('a map without storeys (a hill) has no level buttons, says why, and tells the viewer', async () => {
+  test('a map without storeys (a hill) has no level buttons and says why', async () => {
     await toggle(serverId, 'ttt_a', true)
     await geo.runGeometryQueue(writer(file))
-    expect(await page()).toContain('data-storeys="1"')
     const info = JSON.parse((db.prepare('SELECT info FROM map_geometry').get() as any).info)
     db.run('UPDATE map_geometry SET info = ?', [JSON.stringify({ ...info, storeys: false })])
     const html = await page()
-    expect(html).toContain('data-storeys="0"')
     expect(html).not.toContain('data-level=')
     expect(html).toContain('no level buttons')
-    expect(html).toContain('data-colour="height"')
   })
 
   test('says so on the page when a rebuild failed and the earlier mesh is kept', async () => {

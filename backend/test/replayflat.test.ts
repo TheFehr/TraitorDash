@@ -23,7 +23,7 @@ function model() {
 
 describe('flatten', () => {
   test('floors become triangles and walls lines, in Source\'s x and y, for their level', () => {
-    const flat = flatten(model(), 'textured', 1)
+    const flat = flatten(model())
     expect(flat.layers.map(l => l.index)).toEqual([1])
     const floors = [...flat.layers[0]!.floors.values()].flat()
     expect(floors.map(v => Math.round(v) + 0)).toEqual([0, 0, 100, 0, 0, 50])
@@ -35,7 +35,7 @@ describe('flatten', () => {
   })
 
   test('a map with no level nodes has nothing to draw', () => {
-    const flat = flatten(new Group(), 'textured', 1)
+    const flat = flatten(new Group())
     expect(flat.layers).toEqual([])
     expect(Number.isFinite(flat.min[0])).toBe(false)
   })

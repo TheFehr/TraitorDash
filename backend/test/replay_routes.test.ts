@@ -260,8 +260,7 @@ describe('the replay page', () => {
     // the leaves of the map's plants are a switch, on: drawn with their textures (Yucatan, 2026-11-05)
     expect(r.text).toContain('<input type="checkbox" data-leaves="true" checked=""/> Leaves')
     expect(r.text).toContain('<input type="checkbox" data-walls="true" checked=""/> Walls')
-    // the colouring has a switch here as on the map page, so the page does not just use the last choice made there
-    for (const m of ['textured', 'height', 'levels']) expect(r.text).toContain(`data-colour="${m}"`)
+    expect(r.text).not.toContain('data-colour') // no colour switch: the map is always textured
     expect(r.text).toContain('data-cam="top"')
     expect(r.text).toContain('not what they could see') // the fixed line: it is not a line-of-sight source
     expect(r.text).not.toContain('data-pin')

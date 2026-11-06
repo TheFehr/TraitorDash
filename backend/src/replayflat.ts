@@ -1,7 +1,7 @@
 /// <reference lib="dom" />
 import { Color, type BufferGeometry, type Mesh, type MeshStandardMaterial, type Object3D } from 'three'
 import { hex } from './teamColours'
-import { applyColouring, mapLoader, heightColours, levelColour, savedColouring, type Painted } from './sceneKit'
+import { mapLoader, levelColour, paintPlain, type Painted } from './sceneKit'
 import { currentDeath, lastPoseAt, levelOf, poseAt, revivePose, trailBetween, type Decoded, type LevelRange, type TrackEvent } from './replaylogic'
 
 // RFC 19, 3.1: the replay drawn from above on a plain 2D canvas, for a browser without WebGL (the game's window). The map's
@@ -52,7 +52,7 @@ export interface Flat { layers: Layer[], water: number[], min: [number, number],
 const push = (m: Map<number, number[]>, key: number, ...v: number[]) => { const a = m.get(key); if (a) a.push(...v); else m.set(key, v) }
 
 /** The floors and walls of a loaded model as flat shapes. Heights are not kept: from above only where a thing is matters, and the levels say what covers what. */
-export function flatten(model: Object3D, colouring: ReturnType<typeof savedColouring>, levelCount: number): Flat {
+export function flatten(model: Object3D): Flat {
   model.updateMatrixWorld(true)
   const nodes: { index: number, node: Object3D }[] = []
   model.traverse(o => { const m = /^level-(\d+)$/.exec(o.name); if (m && !nodes.some(l => l.node === o)) nodes.push({ index: Number(m[1]), node: o }) })
@@ -65,8 +65,7 @@ export function flatten(model: Object3D, colouring: ReturnType<typeof savedColou
     mesh.material = mesh.material.clone()
     painted.push({ mesh, wall: mesh.material.name === 'wall', level: l.index })
   })
-  heightColours(painted)
-  applyColouring(painted, colouring, levelCount)
+  paintPlain(painted)
 
   const min: [number, number] = [Infinity, Infinity], max: [number, number] = [-Infinity, -Infinity]
   const see = (x: number, y: number) => { if (x < min[0]) min[0] = x; if (x > max[0]) max[0] = x; if (y < min[1]) min[1] = y; if (y > max[1]) max[1] = y }
@@ -178,7 +177,7 @@ export async function startFlat(host: FlatHost): Promise<void> {
     try {
       const buf = await fetch(bg.meshUrl, { credentials: 'same-origin' }).then(r => { if (!r.ok) throw new Error(String(r.status)); return r.arrayBuffer() })
       const model = await new Promise<Object3D>((ok, fail) => mapLoader().parse(buf, '', x => ok(x.scene), fail))
-      flat = flatten(model, savedColouring(), Math.max(1, levels.length))
+      flat = flatten(model)
     } catch {
       host.say('The map could not be loaded; the positions are drawn without it.')
     }

@@ -12,7 +12,7 @@ import { clone as cloneRig } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { startFlat } from './replayflat'
-import { applyColouring, meshesOf, propLook, offerBrowser, heightColours, levelColour, makeCamera, makeRenderer, makeScene, mapLoader, prepareMovable, prepareProps, prepareWater, savedColouring, saveColouring, COLOURINGS, boxWithout, type Colouring, type Painted } from './sceneKit'
+import { offerBrowser, levelColour, paintPlain, makeCamera, makeRenderer, makeScene, mapLoader, prepareMovable, prepareProps, prepareWater, boxWithout, type Painted } from './sceneKit'
 import {
   decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose, fitLabel,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
@@ -448,7 +448,7 @@ async function start(root: HTMLElement) {
       const model = await new Promise<Object3D>((ok, fail) => mapLoader().parse(buf, '', g => ok(g.scene), fail))
       model.traverse(o => { const m = LEVEL_NAME.exec(o.name); if (m && !levelNodes.some(l => l.node === o)) levelNodes.push({ index: Number(m[1]), node: o }) })
       levelNodes.sort((a, b) => a.index - b.index)
-      // The same colouring as the map page (the choice made there, Textured without one), and the same water.
+      // The same look as the map page, and the same water.
       const painted: Painted[] = []
       for (const l of levelNodes) l.node.traverse(o => {
         if (!(o as Mesh).isMesh) return
@@ -464,11 +464,11 @@ async function start(root: HTMLElement) {
       })
       prepareWater(model, cut)
       const props = prepareProps(model, cut)
-      const movableNode = prepareMovable(model, cut)
+      prepareMovable(model, cut)
       // Parts apart from the map (RFC 18, 4.4) are not drawn in the replay.
       const apart = model.getObjectByName('detached')
       if (apart) apart.visible = false
-      heightColours(painted)
+      paintPlain(painted)
       scene.add(model)
       model.updateMatrixWorld(true)
       // Hundreds of props are hundreds of draw calls, which is what a phone is slowest at: the props of one material are drawn as one mesh
@@ -477,19 +477,6 @@ async function start(root: HTMLElement) {
       groundMeshes.push(...painted.filter(q => !q.wall).map(q => q.mesh), ...mergedSolid, ...props.solid.filter(m => m.visible))
       const mergedLeaves = mergeDrawn(model, props.foliage)
       leafMeshes.push(...mergedLeaves, ...props.foliage.filter(m => m.visible)) // the ones that could not be merged stay as they are
-      const propMeshes = [...leafMeshes, ...mergedSolid, ...props.solid, ...meshesOf(movableNode)]
-      // The colour switch, as on the map page: the choice is remembered, and the page starts with the one made last.
-      const colour = (mode: Colouring) => {
-        applyColouring(painted, mode, levelNodes.length)
-        propLook(propMeshes, mode === 'textured')
-        root.querySelectorAll<HTMLElement>('[data-colour]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.colour === mode)))
-        render()
-      }
-      root.querySelectorAll<HTMLElement>('[data-colour]').forEach(b => b.addEventListener('click', () => {
-        const mode = (b.dataset.colour ?? 'textured') as Colouring
-        if ((COLOURINGS as string[]).includes(mode)) { saveColouring(mode); colour(mode) }
-      }))
-      colour(savedColouring())
       const leavesBox = el<HTMLInputElement>(root, '[data-leaves]')
       for (const m of leafMeshes) m.visible = !!leavesBox?.checked
       if (leafMeshes.length === 0) leavesBox?.closest('label')?.setAttribute('hidden', '')
