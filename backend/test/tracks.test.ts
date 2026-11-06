@@ -288,4 +288,27 @@ describe('what a server keeps', () => {
     expect(parseLimit('1e3', 100, 'x').ok).toBe(false)
     expect(parseLimit('2.5', 100, 'x').ok).toBe(false)
   })
+
+  describe('things that moved (RFC 20, 4.8)', () => {
+    const thing = (over: Record<string, unknown> = {}) => ({ e: 1, c: 'prop_physics', mdl: 'models/props_junk/wood_crate001a.mdl', b: [-8, -8, 0, 8, 8, 32], k: [0, 1], x: [100, 80], y: [100, 0], z: [0, 0], p: [0, 0], w: [0, 0], r: [0, 0], ...over })
+    const withThings = (things: unknown[]) => ({ ...good(), things })
+    test('a valid list is stored; weapons and prop doors are classes; the map id and the gone tick are kept', () => {
+      const ok = validateTrack(withThings([thing({ id: 12, g: 3 }), thing({ e: 2, c: 'weapon_zm_shotgun' }), thing({ e: 3, c: 'prop_door_rotating' })]), round)
+      expect(ok.ok).toBe(true)
+      if (ok.ok) expect(ok.track.things!.map(t => [t.e, t.c, t.id, t.g])).toEqual([[1, 'prop_physics', 12, 3], [2, 'weapon_zm_shotgun', undefined, undefined], [3, 'prop_door_rotating', undefined, undefined]])
+      const none = validateTrack(good(), round)
+      if (none.ok) expect(none.track.things).toBeUndefined()
+    })
+    test('every check refuses', () => {
+      for (const [bad, why] of [
+        [thing({ c: 'func_door' }), /class/], [thing({ c: 'weapon_' }), /class/], [thing({ mdl: '../x.mdl' }), /model/], [thing({ mdl: 'a b' }), /model/],
+        [thing({ b: [8, 0, 0, -8, 1, 1] }), /bounds/], [thing({ b: [0, 0, 0] }), /bounds/], [thing({ id: -1 }), /map id/],
+        [thing({ e: 0 }), /own whole number/], [thing({ k: [] , x: [], y: [], z: [], p: [], w: [], r: [] }), /keyframes/], [thing({ k: [0, 0] }), /in order/],
+        [thing({ x: [100] }), /same length/], [thing({ x: [100, 99999] }), /range|outside/], [thing({ g: 0 }), /gone/], [thing({ g: 9999 }), /gone/],
+      ] as [unknown, RegExp][]) refused(withThings([bad]), why)
+      refused(withThings([thing(), thing()]), /own whole number/)
+      refused(withThings(Array.from({ length: 257 }, (_, i) => thing({ e: i + 1 }))), /at most 256/)
+      refused({ ...good(), things: 'x' }, /at most 256/)
+    })
+  })
 })

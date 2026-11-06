@@ -12,8 +12,13 @@ export interface RawTrack {
   /** Revivals and role changes (RFC 14); absent in tracks stored before it. */
   events?: TrackEvent[]
   /** Where bodies lay (RFC 24); absent in tracks from before it. */
+  /** Props, prop doors and weapons that moved (RFC 20, 4.8); absent in tracks without them. */
+  things?: RawThing[]
   bodies?: { p: string, t: number, x: number, y: number, z: number, pt: number, w: number, r: number }[]
 }
+export interface RawThing { e: number, c: string, mdl: string, b: number[], id?: number, g?: number, k: number[], x: number[], y: number[], z: number[], p: number[], w: number[], r: number[] }
+/** A thing that moved, decoded: keyframes at real times, positions in units and angles in degrees; `from` is when it first shows, `until` when it is gone (Infinity when it stayed). */
+export interface Thing { e: number, c: string, model: string, bounds: number[], mapId: number | null, from: number, until: number, t: number[], x: number[], y: number[], z: number[], pitch: number[], yaw: number[], roll: number[] }
 export interface TrackEvent {
   t: number, p: string, k: 'revive' | 'role' | 'say' | 'buy' | 'found' | 'pickup' | 'drop', role?: string, team?: string, by?: string, how?: string, why?: string
   /** say: the line and who could read it; buy: the class and whether it is a passive item; found, pickup, drop: whose body (RFC 26, RFC 24) */
@@ -33,6 +38,8 @@ export interface Decoded {
   events: TrackEvent[]
   /** The path of each player's body, in time order (RFC 24); empty for a track without any. */
   bodies: Map<string, BodyPoint[]>
+  /** Things that moved (RFC 20, 4.8); empty for a track without any. */
+  things: Thing[]
 }
 /** One point of a body's path: ms, position in units, and the turn in degrees. */
 export interface BodyPoint { t: number, at: [number, number, number], pitch: number, yaw: number, roll: number }
@@ -102,7 +109,15 @@ export function decodeTrack(raw: RawTrack): Decoded {
     list.push({ t: b.t, at: [b.x * UNITS, b.y * UNITS, b.z * UNITS], pitch: b.pt / 4, yaw: b.w / 4, roll: b.r / 4 })
     bodies.set(b.p, list)
   }
-  return { times, length: times.length ? times[times.length - 1]! : 0, players, deaths, events, bodies }
+  const things: Thing[] = (raw.things ?? []).map(q => {
+    const ticks = cumulative(q.k)
+    const t = ticks.map(i => times[i] ?? times[times.length - 1] ?? 0)
+    return {
+      e: q.e, c: q.c, model: q.mdl, bounds: q.b, mapId: q.id ?? null, from: t[0]!, until: q.g === undefined ? Infinity : times[q.g] ?? Infinity,
+      t, x: cumulative(q.x), y: cumulative(q.y), z: cumulative(q.z), pitch: cumulative(q.p).map(a => a / 4), yaw: cumulative(q.w).map(a => a / 4), roll: cumulative(q.r).map(a => a / 4),
+    }
+  })
+  return { times, length: times.length ? times[times.length - 1]! : 0, players, deaths, events, bodies, things }
 }
 
 export interface Pose { x: number, y: number, z: number, /** Heading in 256ths of a turn, 0-255. */ yaw: number }
@@ -378,6 +393,20 @@ export function bodyAt(points: BodyPoint[] | undefined, death: Death, ms: number
     }
   }
   return { at: a.at, turn: wrap180(a.yaw - base.yaw), moved: true }
+}
+
+/**
+ * Where a thing is at `ms` and how it is turned, in degrees, or null when it is not there: before its first keyframe, and from the tick it was gone
+ * (RFC 20, 4.8). Between two keyframes the pose is drawn between them; a turn goes the short way round.
+ */
+export function thingAt(th: Thing, ms: number): { at: [number, number, number], pitch: number, yaw: number, roll: number } | null {
+  if (ms < th.from || ms >= th.until) return null
+  let i = 0
+  while (i + 1 < th.t.length && th.t[i + 1]! <= ms) i++
+  const j = Math.min(i + 1, th.t.length - 1)
+  const f = j > i && th.t[j]! > th.t[i]! ? (ms - th.t[i]!) / (th.t[j]! - th.t[i]!) : 0
+  const mix = (a: number[]) => a[i]! + (a[j]! - a[i]!) * f
+  return { at: [mix(th.x), mix(th.y), mix(th.z)], pitch: lerpDeg(th.pitch[i]!, th.pitch[j]!, f), yaw: lerpDeg(th.yaw[i]!, th.yaw[j]!, f), roll: lerpDeg(th.roll[i]!, th.roll[j]!, f) }
 }
 
 /** How far before a revival the killer's death may be to be mentioned (RFC 14, 4.4). */

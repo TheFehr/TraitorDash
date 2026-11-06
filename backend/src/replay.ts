@@ -2,7 +2,7 @@
 import {
   WebGLRenderer, OrthographicCamera, Box3, Vector3, Color, Group, Mesh, MeshStandardMaterial, MeshBasicMaterial,
   SphereGeometry, CylinderGeometry, RingGeometry, DoubleSide, ConeGeometry, BoxGeometry, InstancedMesh, Matrix4, Object3D, Plane, Sprite,
-  SpriteMaterial, CanvasTexture, Raycaster, BufferGeometry, Float32BufferAttribute, Line, LineSegments, LineBasicMaterial, AnimationMixer, BufferAttribute, type Material, type AnimationAction, type AnimationClip,
+  SpriteMaterial, CanvasTexture, Raycaster, BufferGeometry, Float32BufferAttribute, Line, LineSegments, EdgesGeometry, LineBasicMaterial, AnimationMixer, BufferAttribute, type Material, type AnimationAction, type AnimationClip,
   type Camera, type MeshStandardMaterial as StdMat,
 } from 'three'
 import { hex } from './teamColours'
@@ -14,7 +14,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { startFlat } from './replayflat'
 import { offerBrowser, levelColour, paintPlain, makeCamera, makeRenderer, makeScene, mapLoader, prepareMovable, prepareProps, prepareWater, boxWithout, type Painted } from './sceneKit'
 import {
-  decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, shownLevels, FADE, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, bodyAt, killerDiedBefore, reviveSource, revivePose, fitLabel,
+  decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, shownLevels, FADE, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, bodyAt, thingAt, killerDiedBefore, reviveSource, revivePose, fitLabel,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
 } from './replaylogic'
 
@@ -888,6 +888,20 @@ async function start(root: HTMLElement) {
   // Pins and names are the same size on the screen. A perspective camera does that by itself
   // (sizeAttenuation off); an orthographic one does not, so there they are sized by what the view shows.
   const spriteUnit = () => (camera === ortho ? ((ortho.top - ortho.bottom) / ortho.zoom) / (2 * Math.tan((persp.fov * Math.PI) / 360)) : 1)
+  // ---- props, prop doors and weapons that moved (RFC 20, 4.8): a box of the size of the model's bounds, where the track says it is. The model itself is not loaded.
+  const THING_COLOUR = { weapon: 0xf59e0b, door: 0xa16207, prop: 0x9ca3af }
+  const thingBoxes = data.things.map(th => {
+    const [x0, y0, z0, x1, y1, z1] = th.bounds as [number, number, number, number, number, number]
+    const geo = new BoxGeometry(Math.max(x1 - x0, 2), Math.max(y1 - y0, 2), Math.max(z1 - z0, 2))
+    geo.translate((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2)
+    const kind = th.c.startsWith('weapon_') ? 'weapon' : th.c === 'prop_door_rotating' ? 'door' : 'prop'
+    const box = new Group()
+    box.rotation.order = 'ZYX' // Source's angle: yaw about z, then pitch about y, then roll about x
+    box.add(new Mesh(geo, new MeshStandardMaterial({ color: THING_COLOUR[kind], roughness: 0.8, transparent: true, opacity: 0.85 })), new LineSegments(new EdgesGeometry(geo), new LineBasicMaterial({ color: 0x111827 })))
+    box.visible = false
+    world.add(box)
+    return { th, box }
+  })
   const apply = () => {
     const unit = spriteUnit(), top = camera === ortho
     for (const [id, m] of markers) {
@@ -965,6 +979,16 @@ async function start(root: HTMLElement) {
       const from = by ? lastPoseAt(by.segs, ms) : null
       v.line.visible = fresh && !!from && v.pose !== null
       if (v.line.visible && from && v.pose) v.line.geometry.setAttribute('position', new Float32BufferAttribute([from.x, from.y, from.z + 40, v.pose.x, v.pose.y, v.pose.z + 40], 3))
+    }
+    const upThings = shown()
+    for (const { th, box } of thingBoxes) {
+      const at = thingAt(th, ms)
+      const level = at && levels.length > 0 && bg.kind !== 'none' ? levelOf(levels, at.at[2]) : 0
+      box.visible = !!at && !(typeof upThings === 'number' && level > upThings)
+      if (at) {
+        box.position.set(at.at[0], at.at[1], at.at[2])
+        box.rotation.set((at.roll / 180) * Math.PI, (at.pitch / 180) * Math.PI, (at.yaw / 180) * Math.PI)
+      }
     }
     listEvents()
     const panel = el(root, '[data-selected-role]')

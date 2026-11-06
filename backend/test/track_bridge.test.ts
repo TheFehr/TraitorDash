@@ -116,7 +116,14 @@ const PRELUDE = `
   player = { GetAll = function() return PLAYERS end }
   -- entities that are parts of the map (RFC 20): ents.FindByClass finds the ones that were not removed
   ENTS = {}
-  ents = { FindByClass = function(c) local o = {} for _, e in ipairs(ENTS) do if e.class == c and not e.removed then o[#o + 1] = e end end return o end }
+  ents = { FindByClass = function(c)
+    local o = {}
+    local prefix = c:match("^(.*)%*$")
+    for _, e in ipairs(ENTS) do
+      if not e.removed and ((prefix and e.class:sub(1, #prefix) == prefix) or e.class == c) then o[#o + 1] = e end
+    end
+    return o
+  end }
   local nextIndex = 100
   function Part(class, model, name, x, y, z, yaw)
     nextIndex = nextIndex + 1
@@ -1030,5 +1037,138 @@ describe('track.lua: where the bodies lie (RFC 24)', () => {
   test('nothing is recorded with tracking off', () => {
     const r = play(`${RAG} Begin() ${die} Run(2) Fire("OnPlayerPhysicsPickup", A, rag) Fire("TTTEndRound", WIN_TRAITOR) Accept(1)`, false)
     expect(trackOf(r)).toBeUndefined()
+  })
+})
+
+describe('track.lua: props, prop doors and weapons that move (RFC 20, 4.8)', () => {
+  const on = `SetCv("traitordash_track_props", "1")`
+  // a prop is a fake entity with what the bridge asks of one
+  const PROP = `
+    function Prop(class, model, x, y, z, yaw)
+      local e = Part(class, model, "", x, y, z, yaw)
+      e.owner = nil; e.asleep = false
+      function e:GetOwner() return self.owner end
+      function e:GetModelBounds() return { x = -8, y = -8, z = 0 }, { x = 8, y = 8, z = 32 } end
+      function e:GetPhysicsObject() local me = self return { IsAsleep = function() return me.asleep end } end
+      function e:MapCreationID() return self.mapid or -1 end
+      return e
+    end
+  `
+  const out = (r: Run) => trackOf(r).things as any[]
+
+  test('with traitordash_track_props at 0 (the default) nothing is looked at and the track has no things', () => {
+    const r = play(`${PROP} crate = Prop("prop_physics", "models/props_junk/wood_crate001a.mdl", 100, 100, 0) Begin() crate.x = 300 Run(8) Fire("TTTEndRound", WIN_TRAITOR) Accept(1)`)
+    expect(trackOf(r).things).toBeUndefined()
+  })
+
+  test('a prop that never moves is not in the track; one that moves has a keyframe where it lay, one just before it moved and one at each change', () => {
+    const r = play(`
+      ${on} ${PROP}
+      still = Prop("prop_physics", "models/props_junk/barrel.mdl", 0, 0, 0)
+      crate = Prop("prop_physics", "models/props_junk/wood_crate001a.mdl", 100, 100, 0)
+      Begin()
+      Run(6)
+      crate.x = 180; crate.asleep = false; Fire("PlayerUse", A, crate)
+      Run(1)
+      crate.x = 260; Run(1)
+      Fire("TTTEndRound", WIN_TRAITOR); Accept(1)
+    `)
+    const th = out(r)
+    expect(th).toHaveLength(1)
+    expect(th[0]).toMatchObject({ e: 1, c: 'prop_physics', mdl: 'models/props_junk/wood_crate001a.mdl', b: [-8, -8, 0, 8, 8, 32] })
+    expect(rebuild(th[0].x)).toEqual([100, 100, 180, 260])
+    expect(rebuild(th[0].k)).toEqual([0, 6, 7, 8]) // where it lay, just before it moved, the move, the next
+    expect(th[0].g).toBeUndefined()
+    const t = trackOf(r)
+    expect(validateTrack(t, { roundId: t.round_id, map: t.map, players: new Set([A, B, C]) }).ok).toBe(true)
+  })
+
+  test('a prop that is asleep is not looked at, and a prop door is looked at without that', () => {
+    const r = play(`
+      ${on} ${PROP}
+      crate = Prop("prop_physics", "models/props_junk/wood_crate001a.mdl", 100, 100, 0)
+      door = Prop("prop_door_rotating", "models/props_c17/door01_left.mdl", 0, 0, 0, 90)
+      Begin()
+      crate.asleep = true; crate.x = 500   -- moved but reported asleep: not seen
+      door.yaw = 0; door.asleep = true
+      Run(5)
+      Fire("TTTEndRound", WIN_TRAITOR); Accept(1)
+    `)
+    const th = out(r)
+    expect(th.map((q: any) => q.c)).toEqual(['prop_door_rotating'])
+    expect(rebuild(th[0].w).at(-1)).toBe(0)
+  })
+
+  test('a weapon on the floor that moves is recorded and is gone when someone takes it; a weapon in a hand is not a candidate', () => {
+    const r = play(`
+      ${on} ${PROP}
+      held = Prop("weapon_ttt_m16", "models/weapons/w_rif_m4a1.mdl", 0, 0, 0); held.owner = A
+      gun = Prop("weapon_zm_shotgun", "models/weapons/w_shotgun.mdl", 50, 50, 0)
+      Begin()
+      Run(5)
+      gun.x = 90; Run(5)
+      gun.owner = A; Run(5)
+      Fire("TTTEndRound", WIN_TRAITOR); Accept(1)
+    `)
+    const th = out(r)
+    expect(th).toHaveLength(1)
+    expect(th[0].c).toBe('weapon_zm_shotgun')
+    expect(th[0].g).toBeGreaterThan(0)
+    const t = trackOf(r)
+    expect(validateTrack(t, { roundId: t.round_id, map: t.map, players: new Set([A, B, C]) }).ok).toBe(true)
+  })
+
+  test('the map id is sent when the map made the prop; a prop made during the round is found when the list is made again', () => {
+    const r = play(`
+      ${on} ${PROP}
+      crate = Prop("prop_physics", "models/props_junk/wood_crate001a.mdl", 100, 100, 0); crate.mapid = 1234
+      Begin()
+      Run(30)
+      late = Prop("prop_physics", "models/props_junk/barrel.mdl", 0, 0, 0)
+      Run(30)
+      late.x = 40; Run(10)
+      crate.x = 20; Run(10)
+      Fire("TTTEndRound", WIN_TRAITOR); Accept(1)
+    `)
+    const th = out(r)
+    expect(th.map((q: any) => [q.mdl.split('/').pop(), q.id])).toEqual([['barrel.mdl', undefined], ['wood_crate001a.mdl', 1234]])
+  })
+
+  test('a removed prop ends its thing; a model that is not a path, bounds that are missing and a failing look are left out without an error', () => {
+    const r = play(`
+      ${on} ${PROP}
+      a = Prop("prop_physics", "models/props_junk/wood_crate001a.mdl", 100, 100, 0)
+      bad = Prop("prop_physics", "models/../../x y.mdl", 0, 0, 0)
+      nob = Prop("prop_physics", "models/props_junk/barrel.mdl", 0, 0, 0); nob.GetModelBounds = nil; nob.OBBMins = nil
+      boom = Prop("prop_physics", "models/props_junk/barrel2.mdl", 0, 0, 0); function boom:GetPos() error("no") end
+      Begin()
+      Run(3)
+      a.x = 200; Run(6)
+      a.removed = true; Run(6)
+      Fire("TTTEndRound", WIN_TRAITOR); Accept(1)
+    `)
+    expect(r.printed.join('\n')).toMatch(/props failed|props/)
+    const th = out(r)
+    expect(th?.[0]?.mdl ?? 'none').toMatch(/wood_crate001a|none/)
+  })
+
+  test('the caps: 256 things, and a thing beyond them is not recorded and flags the track truncated', () => {
+    const r = play(`
+      ${on} ${PROP}
+      all = {}
+      for i = 1, 300 do all[i] = Prop("prop_physics", "models/props_junk/barrel.mdl", i, 0, 0) end
+      Begin()
+      Run(2)
+      for i = 1, 300 do all[i].x = all[i].x + 50 end
+      Run(8)
+      Fire("TTTEndRound", WIN_TRAITOR); Accept(1)
+    `)
+    expect(out(r).length).toBeLessThanOrEqual(256)
+    expect(trackOf(r).truncated).toBe(true)
+  })
+
+  test('the hooks still return nothing with props on', () => {
+    const r = play(`${on} ${PROP} crate = Prop("prop_physics", "models/props_junk/barrel.mdl", 0, 0, 0) Begin() OUT = { v = FireValues("AcceptInput", crate, "open", A, A) + FireValues("PlayerUse", A, crate) }`)
+    expect(r.out.v).toBe(0)
   })
 })

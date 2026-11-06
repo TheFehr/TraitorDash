@@ -1,5 +1,5 @@
 import { expect, test, describe } from 'bun:test'
-import { clipWeights, damp, dampAngle, decodeTrack, cyclesAt, sectorOf, DIRECTIONS, distanceAt, lerpAngle, moveAt, pathOf, velocityAt, SPEEDS, poseAt, lastPoseAt, trailBetween, lerpYaw, levelOf, holdLevel, LEVEL_HOLD_MS, cutHeight, shownLevels, FADE, overheadFade, bodyAt, BODY_GAP_MS, NO_CUT, chooseBackground, versionMismatch, defaultSelection, teamColour, playerColour, roleColour, clock, type RawTrack } from '../src/replaylogic'
+import { clipWeights, damp, dampAngle, decodeTrack, cyclesAt, sectorOf, DIRECTIONS, distanceAt, lerpAngle, moveAt, pathOf, velocityAt, SPEEDS, poseAt, lastPoseAt, trailBetween, lerpYaw, levelOf, holdLevel, LEVEL_HOLD_MS, cutHeight, shownLevels, FADE, overheadFade, bodyAt, thingAt, BODY_GAP_MS, NO_CUT, chooseBackground, versionMismatch, defaultSelection, teamColour, playerColour, roleColour, clock, type RawTrack } from '../src/replaylogic'
 
 // RFC 12, 3.5: the logic of the replay that is not drawing.
 
@@ -577,5 +577,34 @@ describe('bodyAt (RFC 24)', () => {
     const pts = [pt(1200, 0, 350), pt(1400, 0, 20)]
     expect(bodyAt(pts, death, 1400).turn).toBe(30) // 350 to 20 is 30 degrees, not -330
     expect(bodyAt(pts, death, 1300).turn).toBeCloseTo(15)
+  })
+})
+
+describe('thingAt (RFC 20, 4.8)', () => {
+  const crate = { e: 1, c: 'prop_physics', mdl: 'models/x.mdl', b: [-8, -8, 0, 8, 8, 32], k: [1, 2], x: [10, 20], y: [0, 0], z: [0, 0], p: [0, 0], w: [350 * 4, 40 * 4], r: [0, 0] }
+  const decoded = (over: Record<string, unknown> = {}) => decodeTrack(raw({ things: [{ ...crate, ...over }] })).things[0]!
+
+  test('decodeTrack turns the tick indexes into times and the quarter degrees into degrees', () => {
+    const th = decoded()
+    expect(th.t).toEqual([200, 600]) // ticks 1 and 3 of [0, 200, 400, 600, ...]
+    expect(th.x).toEqual([10, 30])
+    expect(th.yaw).toEqual([350, 390])
+    expect(th).toMatchObject({ model: 'models/x.mdl', mapId: null, from: 200, until: Infinity })
+    expect(decodeTrack(raw()).things).toEqual([])
+  })
+
+  test('it is not there before its first keyframe, is between two keyframes in between, and stays at the last one', () => {
+    const th = decoded()
+    expect(thingAt(th, 100)).toBeNull()
+    expect(thingAt(th, 200)!.at[0]).toBe(10)
+    expect(thingAt(th, 400)!.at[0]).toBe(20)
+    expect((thingAt(th, 400)!.yaw % 360 + 360) % 360).toBeCloseTo(10) // 350 to 30 the short way round is 40 degrees; halfway, 10
+    expect(thingAt(th, 5000)!.at[0]).toBe(30)
+  })
+
+  test('it is gone from the tick it was gone', () => {
+    const th = decoded({ g: 4 }) // tick 4 is at 800 ms
+    expect(thingAt(th, 799)).not.toBeNull()
+    expect(thingAt(th, 800)).toBeNull()
   })
 })

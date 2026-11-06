@@ -19,6 +19,13 @@ export const MAX_TRACK_PARTS = 256
 export const MAX_KEYS_PER_PART = 4000
 export const MAX_TRACK_KEYS = 50_000
 export const MAX_TRACK_INPUTS = 1024
+/** Props, doors that are props, and weapons on the floor, as things that move (RFC 20, stage 4; RFC 24, stage 4). */
+export const MAX_TRACK_THINGS = 256
+export const MAX_KEYS_PER_THING = 2000
+export const MAX_THING_KEYS = 30_000
+export const THING_CLASSES: ReadonlySet<string> = new Set(['prop_physics', 'prop_physics_multiplayer', 'prop_door_rotating'])
+const WEAPON_CLASS = /^weapon_[A-Za-z0-9_]{1,56}$/
+const MODEL_PATH = /^[A-Za-z0-9_./-]{1,128}$/
 /** The classes of RFC 18 that are drawn as parts that can move, and the inputs that are recorded when they reach one. */
 export const PART_CLASSES: ReadonlySet<string> = new Set(['func_door', 'func_door_rotating', 'func_movelinear', 'func_rotating', 'func_tracktrain', 'func_physbox', 'func_physbox_multiplayer'])
 export const PART_INPUTS: ReadonlySet<string> = new Set(['open', 'close', 'toggle', 'lock', 'unlock', 'use', 'setposition', 'startforward', 'startbackward', 'stop', 'reverse', 'start'])
@@ -82,6 +89,12 @@ export interface TrackBody { p: string, t: number, x: number, y: number, z: numb
 export interface TrackPart { e: number, m: number, c: string, n?: string, k: number[], x: number[], y: number[], z: number[], p: number[], w: number[], r: number[] }
 /** What was asked of a part, and by whom (RFC 20, 4.4): `v` says whether it came as an input to the entity or as a player's use. */
 export interface TrackInput { t: number, e: number, i: string, v: 'input' | 'use', by?: string }
+/**
+ * One prop, prop door or weapon that moved (RFC 20, 4.8). `e` is its number in the track, `c` its class, `mdl` its model file, `b` the bounds of the model
+ * as [min x, y, z, max x, y, z] in whole units, `id` its number in the map file when the map made it. `k` is the tick index of each keyframe, the pose arrays
+ * as for parts. `g` is the tick at which it was gone (removed, or taken into a hand); absent when it stayed to the end.
+ */
+export interface TrackThing { e: number, c: string, mdl: string, b: number[], id?: number, g?: number, k: number[], x: number[], y: number[], z: number[], p: number[], w: number[], r: number[] }
 export interface Track {
   roundId: string
   map: string
@@ -98,6 +111,8 @@ export interface Track {
   /** Absent in a track recorded without parts (and in every track from before RFC 20). */
   parts?: TrackPart[]
   inputs?: TrackInput[]
+  /** Absent in a track without them (RFC 20, stage 4). */
+  things?: TrackThing[]
 }
 
 export type TrackCheck = { ok: true, track: Track } | { ok: false, error: string }
@@ -283,6 +298,41 @@ export function validateTrack(body: unknown, round: { roundId: string, map: stri
       parts.push(q.n !== undefined ? { e: q.e, m: q.m, c: q.c, n: q.n, k, x, y, z, p, w, r } : { e: q.e, m: q.m, c: q.c, k, x, y, z, p, w, r })
     }
   }
+  // Props, prop doors and weapons that moved (RFC 20, 4.8). Optional: only the bridge with traitordash_track_props on sends them.
+  const things: TrackThing[] = []
+  if (b.things !== undefined) {
+    if (!Array.isArray(b.things) || b.things.length > MAX_TRACK_THINGS) return no(`things must be at most ${MAX_TRACK_THINGS} entries`)
+    const ids = new Set<number>()
+    let keys = 0
+    for (const q of b.things as Record<string, unknown>[]) {
+      if (!q || typeof q !== 'object') return no('a thing must be an object')
+      if (!isInt(q.e) || q.e < 1 || q.e > 65535 || ids.has(q.e)) return no('a thing needs its own whole number e from 1 to 65535')
+      ids.add(q.e)
+      if (typeof q.c !== 'string' || !(THING_CLASSES.has(q.c) || WEAPON_CLASS.test(q.c))) return no('a thing has a class that is not recorded')
+      if (typeof q.mdl !== 'string' || !MODEL_PATH.test(q.mdl) || q.mdl.includes('..')) return no('a thing needs a model path')
+      const bounds = ints(q.b, 6, 6, -POS_MAX, POS_MAX)
+      if (!bounds || bounds[0]! > bounds[3]! || bounds[1]! > bounds[4]! || bounds[2]! > bounds[5]!) return no('a thing needs bounds as six whole numbers, the least first')
+      if (q.id !== undefined && (!isInt(q.id) || q.id < 0 || q.id > 2_147_483_647)) return no('a thing has an invalid map id')
+      const k = ints(q.k, 1, MAX_KEYS_PER_THING, 0, t.length - 1)
+      if (!k) return no(`a thing needs 1-${MAX_KEYS_PER_THING} keyframes, each a tick of the track`)
+      for (let i = 1; i < k.length; i++) if (k[i]! < 1) return no('the keyframes of a thing must come in order, one at most for each tick')
+      if (!rebuilds(k, 0, t.length - 1)) return no('a keyframe is past the last tick')
+      const x = ints(q.x, k.length, k.length, -PART_POS_STEP, PART_POS_STEP)
+      const y = ints(q.y, k.length, k.length, -PART_POS_STEP, PART_POS_STEP)
+      const z = ints(q.z, k.length, k.length, -PART_POS_STEP, PART_POS_STEP)
+      const p = ints(q.p, k.length, k.length, -PART_ANGLE_STEP, PART_ANGLE_STEP)
+      const w = ints(q.w, k.length, k.length, -PART_ANGLE_STEP, PART_ANGLE_STEP)
+      const r = ints(q.r, k.length, k.length, -PART_ANGLE_STEP, PART_ANGLE_STEP)
+      if (!x || !y || !z || !p || !w || !r) return no('the arrays of a thing must be whole numbers in range and of the same length')
+      if (!rebuilds(x, -PART_POS_MAX, PART_POS_MAX) || !rebuilds(y, -PART_POS_MAX, PART_POS_MAX) || !rebuilds(z, -PART_POS_MAX, PART_POS_MAX)) return no('a thing is outside the map')
+      if (!rebuilds(p, -PART_ANGLE_MAX, PART_ANGLE_MAX) || !rebuilds(w, -PART_ANGLE_MAX, PART_ANGLE_MAX) || !rebuilds(r, -PART_ANGLE_MAX, PART_ANGLE_MAX)) return no('an angle of a thing is out of range')
+      const lastKey = k.reduce((a, n) => a + n, 0)
+      if (q.g !== undefined && (!isInt(q.g) || q.g < lastKey || q.g > t.length - 1)) return no('a thing is gone before its last keyframe or after the last tick')
+      keys += k.length
+      if (keys > MAX_THING_KEYS) return no(`the things have more than ${MAX_THING_KEYS} keyframes in all`)
+      things.push({ e: q.e, c: q.c, mdl: q.mdl, b: bounds, ...(q.id !== undefined ? { id: q.id as number } : {}), ...(q.g !== undefined ? { g: q.g as number } : {}), k, x, y, z, p, w, r })
+    }
+  }
   const inputs: TrackInput[] = []
   if (b.inputs !== undefined) {
     if (!Array.isArray(b.inputs) || b.inputs.length > MAX_TRACK_INPUTS) return no(`inputs must be at most ${MAX_TRACK_INPUTS} entries`)
@@ -305,7 +355,7 @@ export function validateTrack(body: unknown, round: { roundId: string, map: stri
   return { ok: true, track: {
     roundId: round.roundId, map: b.map, fingerprint: typeof b.fingerprint === 'string' ? b.fingerprint : null,
     truncated: b.truncated === true, degraded: b.degraded === true, t, players, deaths, events,
-    ...(bodies.length > 0 ? { bodies } : {}), ...(parts.length > 0 ? { parts } : {}), ...(inputs.length > 0 ? { inputs } : {}),
+    ...(bodies.length > 0 ? { bodies } : {}), ...(parts.length > 0 ? { parts } : {}), ...(things.length > 0 ? { things } : {}), ...(inputs.length > 0 ? { inputs } : {}),
   } }
 }
 

@@ -33,6 +33,7 @@ local cv_max = CreateConVar("traitordash_track_interval_max", "1", {FCVAR_ARCHIV
 local cv_budget = CreateConVar("traitordash_track_budget_ms", "0.5", {FCVAR_ARCHIVE}, "What one sampling tick may cost on average, in milliseconds.")
 local cv_maxticks = CreateConVar("traitordash_track_max_ticks", "40000", {FCVAR_ARCHIVE}, "The most sampling ticks a round records; a longer round is cut and flagged truncated (1000 to 100000).")
 local cv_parts = CreateConVar("traitordash_track_parts", "0", {FCVAR_ARCHIVE}, "Also record doors, lifts and other parts that move, and who set them off (1/0; needs traitordash_track).")
+local cv_props = CreateConVar("traitordash_track_props", "0", {FCVAR_ARCHIVE}, "Also record props, prop doors and weapons on the floor that move (1/0; needs traitordash_track).")
 local cv_chat = CreateConVar("traitordash_track_chat", "0", {FCVAR_ARCHIVE}, "Also record what players write in chat, for the replay (1/0; needs traitordash_track). Everyone who may open a replay can read it.")
 local cv_debug = CreateConVar("traitordash_stats_debug", "1", {FCVAR_ARCHIVE}, "Log what the stats tracker does (1/0).")
 
@@ -50,6 +51,11 @@ local MAX_PARTS = 256           -- parts that move, per round (RFC 20, 4.3)
 local MAX_KEYS_PART = 4000
 local MAX_KEYS = 50000
 local MAX_INPUTS = 1024
+local MAX_THINGS = 256              -- props, prop doors and weapons that moved, per round (RFC 20, 4.8)
+local MAX_KEYS_THING = 2000
+local MAX_THING_KEYS = 30000
+local MAX_CANDIDATES = 768          -- entities looked at to see whether they move
+local THING_CLASSES = { prop_physics = true, prop_physics_multiplayer = true, prop_door_rotating = true }
 local FULL_SCAN = 5                -- every part is looked at on every fifth tick; an active one on every tick
 local LIST_REFRESH = 25            -- the list of parts is made again on every 25th tick (a map creates and removes some during a round)
 local QUIET = 2                    -- ticks without a change after which a part is not active any more
@@ -82,7 +88,7 @@ local function MaxTicks()
 end
 
 local function EstimateBytes(r)
-    return r.samples * BYTES_PER_SAMPLE + #r.t * 6 + #r.deaths * 120 + #r.events * 100 + #r.bodies * 40 + r.keys * 36 + #r.inputs * 90
+    return r.samples * BYTES_PER_SAMPLE + #r.t * 6 + #r.deaths * 120 + #r.events * 100 + #r.bodies * 40 + r.keys * 36 + (r.thingKeys or 0) * 36 + #(r.thingList or {}) * 120 + #r.inputs * 90
 end
 
 -- `at` is where the player really was, when it is known and `GetPos` would say something else: a dead player's position is the
@@ -295,8 +301,10 @@ end
 -- before anything else, so the many inputs of a busy map cost almost nothing.
 local function OnInput(ent, input, activator, caller)
     local r = rec
-    if not r or r.stopped or not r.partByEnt or not IsValid(ent) then return end
-    local part = r.partByEnt[ent:EntIndex()]
+    if not r or r.stopped or not IsValid(ent) then return end
+    local cand = r.candByEnt and r.candByEnt[ent:EntIndex()]
+    if cand then cand.quiet = QUIET + 1 end -- something was done to a prop or a prop door: it is looked at every tick for a while
+    local part = r.partByEnt and r.partByEnt[ent:EntIndex()]
     if not part then return end
     part.quiet = QUIET + 1 -- an input makes the part active
     local name = string.lower(tostring(input))
@@ -309,8 +317,10 @@ end
 -- It is sent again for as long as the key is held; AddInput makes that one entry. It ends without a value as well (false would stop the use).
 local function OnUse(ply, ent)
     local r = rec
-    if not r or r.stopped or not r.partByEnt or not IsValid(ent) then return end
-    local part = r.partByEnt[ent:EntIndex()]
+    if not r or r.stopped or not IsValid(ent) then return end
+    local cand = r.candByEnt and r.candByEnt[ent:EntIndex()]
+    if cand then cand.quiet = QUIET + 1 end
+    local part = r.partByEnt and r.partByEnt[ent:EntIndex()]
     if not part then return end
     part.quiet = QUIET + 1
     AddInput(r, part, "use", ply, "use")
@@ -320,6 +330,157 @@ local function StartParts(r)
     r.partList, r.partByEnt, r.partTick = {}, {}, 0
     hook.Add("AcceptInput", HOOK_ID, function(ent, input, activator, caller) pcall(OnInput, ent, input, activator, caller) end)
     hook.Add("PlayerUse", HOOK_ID, function(ply, ent) pcall(OnUse, ply, ent) end)
+end
+
+-- ---- Props, prop doors and weapons that move (RFC 20, 4.8; RFC 24, stage 4)
+-- Every prop of the three classes and every weapon lying on the floor is a candidate. A candidate costs a look at its pose: every fifth tick
+-- for all of them, every tick while something was done to it. A candidate that never moves is never written to the track. One that does gets
+-- a keyframe of the pose it was first seen in (so the replay does not slide it from the start) and then a keyframe at each change.
+
+-- The model's bounds as six whole units, or nil.
+local function BoundsOf(ent)
+    local ok, a, b = pcall(function() return ent:GetModelBounds() end)
+    if not ok or not a or not b then
+        ok, a, b = pcall(function() return ent:OBBMins(), ent:OBBMaxs() end)
+    end
+    if not ok or not a or not b then return nil end
+    return { Floor(a.x), Floor(a.y), Floor(a.z), Floor(b.x), Floor(b.y), Floor(b.z) }
+end
+
+local function IsWeaponOnFloor(ent, class)
+    if string.sub(class, 1, 7) ~= "weapon_" then return false end
+    return not IsValid(ent:GetOwner())
+end
+
+local function Adopt(r, ent, tick)
+    if not IsValid(ent) then return end
+    local idx = ent:EntIndex()
+    if r.candByEnt[idx] or r.candCount >= MAX_CANDIDATES then return end
+    local class = ent:GetClass()
+    if not THING_CLASSES[class] and not IsWeaponOnFloor(ent, class) then return end
+    local model = ent:GetModel()
+    if type(model) ~= "string" or not string.match(model, "^[%w_./%-]+$") or #model > 128 or string.find(model, "..", 1, true) then return end
+    local bounds = BoundsOf(ent)
+    if not bounds then return end
+    local pos, ang = ent:GetPos(), ent:GetAngles()
+    local mid = nil
+    if ent.MapCreationID then
+        local ok, v = pcall(ent.MapCreationID, ent)
+        if ok and type(v) == "number" and v >= 0 then mid = v end
+    end
+    local cand = {
+        ent = ent, idx = idx, c = class, mdl = model, b = bounds, id = mid, quiet = 0, tick = tick,
+        weapon = string.sub(class, 1, 7) == "weapon_", physics = class ~= "prop_door_rotating" and string.sub(class, 1, 7) ~= "weapon_",
+        rest = { Floor(pos.x), Floor(pos.y), Floor(pos.z), Quarter(ang.p), Quarter(ang.y), Quarter(ang.r) }, restTick = tick,
+    }
+    r.candByEnt[idx] = cand
+    r.candList[#r.candList + 1] = cand
+    r.candCount = r.candCount + 1
+end
+
+local function RefreshThings(r, tick)
+    for class in pairs(THING_CLASSES) do
+        for _, ent in ipairs(ents.FindByClass(class)) do Adopt(r, ent, tick) end
+    end
+    for _, ent in ipairs(ents.FindByClass("weapon_*")) do Adopt(r, ent, tick) end
+end
+
+local function WriteThingKey(r, th, tick, x, y, z, p, w, ro)
+    if th.nk >= MAX_KEYS_THING or r.thingKeys >= MAX_THING_KEYS then
+        th.stopped = true
+        r.truncated = true
+        return false
+    end
+    local n = th.nk + 1
+    th.k[n], th.x[n], th.y[n], th.z[n] = tick - th.lastKey, x - th.wx, y - th.wy, z - th.wz
+    th.p[n], th.w[n], th.r[n] = p - th.wp, w - th.ww, ro - th.wr
+    th.nk, th.lastKey = n, tick
+    th.wx, th.wy, th.wz, th.wp, th.ww, th.wr = x, y, z, p, w, ro
+    r.thingKeys = r.thingKeys + 1
+    return true
+end
+
+local function LookThing(r, cand, tick)
+    local ent = cand.ent
+    local th = cand.thing
+    if not IsValid(ent) or (cand.weapon and IsValid(ent:GetOwner())) then
+        -- removed, or picked up (a weapon in a hand moves with the player): the thing is gone from this tick
+        if th then th.g = tick end
+        cand.gone = true
+        if r.candByEnt[cand.idx] == cand then r.candByEnt[cand.idx] = nil end
+        r.candCount = r.candCount - 1
+        return
+    end
+    if cand.physics and cand.quiet == 0 then
+        local phys = ent:GetPhysicsObject()
+        if IsValid(phys) and phys:IsAsleep() then return end -- a prop at rest has not moved
+    end
+    local pos, ang = ent:GetPos(), ent:GetAngles()
+    local x, y, z = Floor(pos.x), Floor(pos.y), Floor(pos.z)
+    local p, w, ro = Quarter(ang.p), Quarter(ang.y), Quarter(ang.r)
+    if not th then
+        local rest = cand.rest
+        if x == rest[1] and y == rest[2] and z == rest[3] and p == rest[4] and w == rest[5] and ro == rest[6] then
+            if cand.quiet > 0 then cand.quiet = cand.quiet - 1 end
+            return
+        end
+        if #r.thingList >= MAX_THINGS or r.thingKeys >= MAX_THING_KEYS then
+            r.truncated = true
+            cand.stopped = true
+            return
+        end
+        th = {
+            e = #r.thingList + 1, c = cand.c, mdl = cand.mdl, b = cand.b, id = cand.id,
+            nk = 0, lastKey = 0, k = {}, x = {}, y = {}, z = {}, p = {}, w = {}, r = {},
+            wx = 0, wy = 0, wz = 0, wp = 0, ww = 0, wr = 0,
+        }
+        r.thingList[th.e] = th
+        cand.thing = th
+        WriteThingKey(r, th, cand.restTick, rest[1], rest[2], rest[3], rest[4], rest[5], rest[6])
+        if tick - 1 > cand.restTick then WriteThingKey(r, th, tick - 1, rest[1], rest[2], rest[3], rest[4], rest[5], rest[6]) end -- held until just before it moved
+        WriteThingKey(r, th, tick, x, y, z, p, w, ro)
+        cand.quiet = QUIET
+    elseif th.stopped then
+        return
+    elseif x ~= th.wx or y ~= th.wy or z ~= th.wz or p ~= th.wp or w ~= th.ww or ro ~= th.wr then
+        if th.lastKey < tick - 1 then WriteThingKey(r, th, tick - 1, th.wx, th.wy, th.wz, th.wp, th.ww, th.wr) end
+        WriteThingKey(r, th, tick, x, y, z, p, w, ro)
+        cand.quiet = QUIET
+    elseif cand.quiet > 0 then
+        cand.quiet = cand.quiet - 1
+    end
+end
+
+-- The things at one tick: those that were touched or are moving on every tick, all candidates on every fifth.
+local function SampleThings(r, tick)
+    r.thingTick = r.thingTick + 1
+    local n = r.thingTick
+    if n == 1 or n % LIST_REFRESH == 0 then RefreshThings(r, tick) end
+    local full = n == 1 or n % FULL_SCAN == 0
+    local list, keep = r.candList, {}
+    for _, cand in ipairs(list) do
+        if not cand.gone and not cand.stopped then
+            if full or cand.quiet > 0 then LookThing(r, cand, tick) end
+            if not cand.gone then keep[#keep + 1] = cand end
+        end
+    end
+    r.candList = keep
+end
+
+local function StartThings(r)
+    r.candList, r.candByEnt, r.candCount, r.thingList, r.thingKeys, r.thingTick = {}, {}, 0, {}, 0, 0
+    hook.Add("AcceptInput", HOOK_ID, function(ent, input, activator, caller) pcall(OnInput, ent, input, activator, caller) end)
+    hook.Add("PlayerUse", HOOK_ID, function(ply, ent) pcall(OnUse, ply, ent) end)
+end
+
+local function ThingsOut(r)
+    local out = {}
+    for _, th in ipairs(r.thingList or {}) do
+        if th.nk > 0 then
+            out[#out + 1] = { e = th.e, c = th.c, mdl = th.mdl, b = th.b, id = th.id, g = th.g, k = th.k, x = th.x, y = th.y, z = th.z, p = th.p, w = th.w, r = th.r }
+        end
+    end
+    return #out > 0 and out or nil
 end
 
 -- What `Finish` sends of the parts: nil when there are none.
@@ -387,6 +548,13 @@ local function SampleAll(r, now, also)
         end
     end
     SampleBodies(r, now)
+    if r.candList and not r.thingsOff then
+        local ok, err = pcall(SampleThings, r, idx - 1)
+        if not ok then
+            r.thingsOff = true
+            print("[TraitorDash:track] recording the props failed, they are left out: " .. tostring(err))
+        end
+    end
     if r.partList and not r.partsOff then
         -- (also called from Begin and Death, outside the timer's own pcall: a failure here ends the parts, never the round)
         local ok, err = pcall(SampleParts, r, idx - 1)
@@ -509,6 +677,7 @@ function Track.Begin(roundId, players)
     end
     rec = r
     if cv_parts:GetBool() then StartParts(r) end
+    if cv_props:GetBool() then StartThings(r) end
     SampleAll(r, r.t0) -- where everybody stands at the start
     timer.Create(TIMER, r.interval, 0, SafeTick)
     Dbg(string.format("recording round %s: %d players, interval %.2f-%.2f s", roundId, #r.order, mn, select(2, Settings())))
@@ -679,6 +848,7 @@ function Track.Finish(roundId)
         "[TraitorDash:track] round %s: %d ticks (%d samples, %d skipped), interval %.2f-%.2f s, tick cost avg %.3f ms worst %.3f ms, about %d KB%s%s",
         r.id, #r.t, r.samples, r.skipped, r.minUsed == math.huge and 0 or r.minUsed, r.maxUsed, avg * 1000, r.worst * 1000,
         math.floor(EstimateBytes(r) / 1024), r.truncated and ", TRUNCATED" or "", r.degraded and ", DEGRADED" or ""))
+    if r.thingList then print(string.format("[TraitorDash:track] props: %d moved, %d keyframes", #r.thingList, r.thingKeys)) end
     if r.partList then print(string.format("[TraitorDash:track] parts: %d, %d keyframes, %d inputs", #r.partList, r.keys, #r.inputs)) end
 
     local players = {}
@@ -708,7 +878,7 @@ function Track.Finish(roundId)
         t = r.t, players = players, deaths = r.deaths,
         events = #r.events > 0 and r.events or nil,
         bodies = #r.bodies > 0 and r.bodies or nil,
-        parts = PartsOut(r), inputs = #r.inputs > 0 and r.inputs or nil,
+        parts = PartsOut(r), things = ThingsOut(r), inputs = #r.inputs > 0 and r.inputs or nil,
     }
 end
 
