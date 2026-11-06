@@ -1,5 +1,5 @@
 import { expect, test, describe } from 'bun:test'
-import { clipWeights, damp, dampAngle, decodeTrack, cyclesAt, sectorOf, DIRECTIONS, distanceAt, lerpAngle, moveAt, pathOf, velocityAt, SPEEDS, poseAt, lastPoseAt, trailBetween, lerpYaw, levelOf, holdLevel, LEVEL_HOLD_MS, cutHeight, NO_CUT, chooseBackground, versionMismatch, defaultSelection, teamColour, playerColour, roleColour, clock, type RawTrack } from '../src/replaylogic'
+import { clipWeights, damp, dampAngle, decodeTrack, cyclesAt, sectorOf, DIRECTIONS, distanceAt, lerpAngle, moveAt, pathOf, velocityAt, SPEEDS, poseAt, lastPoseAt, trailBetween, lerpYaw, levelOf, holdLevel, LEVEL_HOLD_MS, cutHeight, shownLevels, NO_CUT, chooseBackground, versionMismatch, defaultSelection, teamColour, playerColour, roleColour, clock, type RawTrack } from '../src/replaylogic'
 
 // RFC 12, 3.5: the logic of the replay that is not drawing.
 
@@ -488,23 +488,22 @@ describe('holdLevel', () => {
   })
 })
 
-describe('cutHeight', () => {
+describe('cutHeight and shownLevels', () => {
   const levels = [{ index: 1, lo: 0, hi: 100 }, { index: 2, lo: 200, hi: 300 }, { index: 3, lo: 400, hi: 500 }]
 
-  test('a level with another above it is cut a little above its floors', () => {
+  test('a level is cut a little above its floors; all, a level that is not there and a map with no levels are not cut', () => {
     expect(cutHeight(levels, 1)).toBe(228)
-    expect(cutHeight(levels, 2)).toBe(428)
-  })
-
-  test('all, a level that is not there and a map with no levels are not cut', () => {
+    expect(cutHeight(levels, 3)).toBe(628)
     expect(cutHeight(levels, 'all')).toBe(NO_CUT)
     expect(cutHeight(levels, 9)).toBe(NO_CUT)
     expect(cutHeight([], 1)).toBe(NO_CUT)
   })
 
-  test('the top level is cut for the orbit and top cameras (to look into it), and not for the follow camera, which stands inside the map', () => {
-    expect(cutHeight(levels, 3)).toBe(628)
-    expect(cutHeight([{ index: 1, lo: 0, hi: 100 }], 1)).toBe(228)
-    for (const n of [1, 2, 3, 'all'] as const) expect(cutHeight(levels, n, 128, true)).toBe(NO_CUT)
+  test('the follow camera that follows the player\'s level shows everything; every other case keeps the level that is chosen', () => {
+    expect(shownLevels(2, true, 'follow')).toBe('all')
+    expect(shownLevels(2, true, 'orbit')).toBe(2) // the cutaway, to look into a building from outside
+    expect(shownLevels(2, true, 'top')).toBe(2)
+    expect(shownLevels(2, false, 'follow')).toBe(2) // a level the viewer picked is kept
+    expect(shownLevels('all', false, 'follow')).toBe('all')
   })
 })

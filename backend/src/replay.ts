@@ -14,7 +14,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { startFlat } from './replayflat'
 import { offerBrowser, levelColour, paintPlain, makeCamera, makeRenderer, makeScene, mapLoader, prepareMovable, prepareProps, prepareWater, boxWithout, type Painted } from './sceneKit'
 import {
-  decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose, fitLabel,
+  decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, shownLevels, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, killerDiedBefore, reviveSource, revivePose, fitLabel,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
 } from './replaylogic'
 
@@ -250,7 +250,7 @@ async function start(root: HTMLElement) {
   } else levelBar?.closest('[data-levels-wrap]')?.setAttribute('hidden', '')
   const followBox = el<HTMLInputElement>(root, '[data-follow-level]')
   const syncFollowBox = () => { if (followBox) followBox.checked = followLevel }
-  followBox?.addEventListener('change', () => { followLevel = followBox.checked; changed() })
+  followBox?.addEventListener('change', () => { followLevel = followBox.checked; showLevels(); changed() })
   el<HTMLInputElement>(root, '[data-walls]')?.addEventListener('change', e => hooks.walls((e.target as HTMLInputElement).checked))
   el<HTMLInputElement>(root, '[data-leaves]')?.addEventListener('change', e => hooks.leaves((e.target as HTMLInputElement).checked))
 
@@ -863,9 +863,11 @@ async function start(root: HTMLElement) {
   }
 
   // ---- levels: the ones above the chosen are hidden and everything is cut a little above its floors
+  const shown = () => shownLevels(upTo, followLevel, camMode) // what is drawn: the chosen level and below, or everything for the follow camera that follows the player's level
   const showLevels = () => {
-    for (const l of levelNodes) l.node.visible = upTo === 'all' || l.index <= upTo
-    cut.constant = cutHeight(levels, upTo, CUT_ABOVE, camMode === 'follow')
+    const upto = shown()
+    for (const l of levelNodes) l.node.visible = upto === 'all' || l.index <= upto
+    cut.constant = cutHeight(levels, upto, CUT_ABOVE)
     markLevels()
   }
   const follow = { x: 0, y: 0, z: 0, yaw: 0, at: 0, ms: 0, who: null as string | null } // where the follow camera is settled
@@ -896,8 +898,9 @@ async function start(root: HTMLElement) {
       const p = poseAt(m.segs, ms)
       // A player on a level above the one shown would float in the air; one below is hidden by the floor, so its name is dimmed.
       const lv = p && levels.length > 0 && bg.kind !== 'none' ? levelOf(levels, p.z) : 0
-      const above = typeof upTo === 'number' && lv > upTo
-      const dim = typeof upTo === 'number' && lv > 0 && lv < upTo
+      const upto = shown()
+      const above = typeof upto === 'number' && lv > upto
+      const dim = typeof upto === 'number' && lv > 0 && lv < upto
       // a dead player is the body where they fell, not also the figure of their last sample (the two are both there at the moment of death)
       m.group.visible = p !== null && !above && currentDeath(data.deaths, data.events, id, ms) === null
       ;(m.label.material as SpriteMaterial).opacity = dim ? 0.35 : 1
@@ -924,7 +927,7 @@ async function start(root: HTMLElement) {
       m.ring.visible = isSel // the selected player is marked on the ground, not by a bigger body
       const death = currentDeath(data.deaths, data.events, id, ms) // a revived player is not dead any more
       const deathLevel = death && levels.length > 0 && bg.kind !== 'none' ? levelOf(levels, death.at[2]) : 0
-      m.corpse.visible = !!death && !(typeof upTo === 'number' && deathLevel > upTo)
+      m.corpse.visible = !!death && !(typeof upto === 'number' && deathLevel > upto)
       if (death) {
         m.corpse.position.set(death.at[0], death.at[1], groundBelow(death.at[0], death.at[1], death.at[2]) ?? death.at[2])
         const last = lastPoseAt(m.segs, death.t)
@@ -1005,7 +1008,7 @@ async function start(root: HTMLElement) {
     if (camMode === 'orbit' && mode !== 'orbit') saved = { pos: persp.position.clone(), target: orbit.target.clone() }
     if (mode === 'orbit' && saved) { persp.position.copy(saved.pos); orbit.target.copy(saved.target) }
     camMode = mode
-    showLevels() // the follow camera has no cut
+    showLevels() // the follow camera shows every level while it follows the player's
     camera = mode === 'top' ? ortho : persp
     orbit.enabled = mode === 'orbit'
     topControls.enabled = mode === 'top'

@@ -216,14 +216,23 @@ export const NO_CUT = 1e9
 
 /**
  * The height of the plane that cuts the map away above the chosen level (Source's z), so a level can be looked into from above: a little above its floors.
- * None (NO_CUT) for "all" and for a level that is not in the list, and none while the follow camera is used: it stands inside the map, where the cut
- * only slices the tops off tall walls and props and leaves a black band above (seen on `ttt_cape_town_revamped`, 2026-11-06).
+ * None (NO_CUT) for "all" and for a level that is not in the list.
  */
-export function cutHeight(levels: LevelRange[], upTo: number | 'all', above = 128, follow = false): number {
-  if (upTo === 'all' || follow) return NO_CUT
+export function cutHeight(levels: LevelRange[], upTo: number | 'all', above = 128): number {
+  if (upTo === 'all') return NO_CUT
   const top = levels.find(l => l.index === upTo)
   return top ? top.hi + above : NO_CUT
 }
+
+/**
+ * The level the map is shown up to. The levels above the one chosen are hidden, which is a cutaway for looking into a building from outside (the orbit and
+ * top cameras). The follow camera stands inside the map, and hiding the levels above the player there takes the tops off the walls and leaves props floating in a
+ * black void (seen on `ttt_cape_town_revamped`, `ttt_yucatan`, `ttt_lttp_kakariko_a5_fixed`, `ttt_airbus_b3` and `ttt_pwp_v4`, 2026-11-06): while the follow camera
+ * follows the player's level, nothing is hidden, and what is between the camera and the player is faded out by the line-of-sight fade instead. A level the viewer
+ * picked on the level bar is kept in every camera.
+ */
+export const shownLevels = (upTo: number | 'all', followLevel: boolean, camera: 'orbit' | 'top' | 'follow'): number | 'all' =>
+  camera === 'follow' && followLevel ? 'all' : upTo
 
 /** How long the level the cut follows stays after the player is found on a lower one, so stairs and a jump at a boundary do not make it flicker. */
 export const LEVEL_HOLD_MS = 400
