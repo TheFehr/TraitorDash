@@ -47,6 +47,25 @@ Store.cleanupPairingCodes()
 setInterval(() => Store.cleanupPairingCodes(), 60 * 60_000).unref()
 
 // Static Assets
+// The scripts carry the version of the code in their address (`?v=`, CaseFile.tsx), so one with a version is kept for a week and is never asked for again;
+// without one it is asked for each time. Sent gzipped where the browser accepts it (the map view is about 660 KB, a quarter of that compressed), once per file.
+const publicGzip = new Map<string, Uint8Array>()
+app.use('/public/*', async (c, next) => {
+  await next()
+  if (c.res.status !== 200) return
+  c.res.headers.set('Cache-Control', c.req.query('v') ? 'public, max-age=604800, immutable' : 'no-cache')
+  c.res.headers.set('Vary', 'Accept-Encoding')
+  const type = c.res.headers.get('Content-Type') ?? ''
+  if (!/\bgzip\b/.test(c.req.header('Accept-Encoding') ?? '') || !/javascript|css|json|svg/.test(type) || c.res.headers.has('Content-Encoding')) return
+  const raw = new Uint8Array(await c.res.arrayBuffer())
+  const key = `${c.req.path}\u0000${raw.length}\u0000${Bun.hash(raw).toString(36)}`
+  let gz = publicGzip.get(key)
+  if (!gz) { gz = gzipSync(raw); if (publicGzip.size >= 32) publicGzip.delete(publicGzip.keys().next().value!); publicGzip.set(key, gz) }
+  const headers = new Headers(c.res.headers)
+  headers.set('Content-Encoding', 'gzip')
+  headers.delete('Content-Length')
+  c.res = new Response(gz as Uint8Array<ArrayBuffer>, { status: 200, headers })
+})
 app.use('/public/*', serveStatic({ root: './src' }))
 // The role pages' fonts (src/fonts, SIL OFL): public, and a file never changes under its name.
 app.use('/fonts/*', async (c, next) => {
