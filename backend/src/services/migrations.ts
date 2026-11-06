@@ -492,6 +492,21 @@ export const migrations: Array<(db: Database) => void> = [
       )
     `)
   },
+  // v28 (RFC 25): a player's page has an id of its own, not the SteamID64. The players seen so far get theirs now; the others when first needed.
+  (db) => {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS player_ids (
+        pid TEXT PRIMARY KEY,
+        steam_id TEXT NOT NULL UNIQUE,
+        created_at INTEGER NOT NULL
+      )
+    `)
+    const insert = db.prepare('INSERT OR IGNORE INTO player_ids (pid, steam_id, created_at) VALUES (?, ?, ?)')
+    const now = Date.now()
+    for (const r of db.query('SELECT DISTINCT steam_id AS id FROM round_players').all() as { id: string }[]) {
+      insert.run(Array.from(crypto.getRandomValues(new Uint8Array(8)), b => b.toString(16).padStart(2, '0')).join(''), r.id, now)
+    }
+  },
 ]
 
 /** Brings `db` up to the latest schema, in one transaction. */

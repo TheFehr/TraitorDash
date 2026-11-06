@@ -5,7 +5,7 @@ process.env.TRAITORDASH_DB = ':memory:'
 process.env.SESSION_SECRET = 'test-secret-test-secret-test-secret-0'
 process.env.ADMIN_STEAM_IDS = '76561198000000000'
 
-let app: any, Store: any, stats: any, serverId: string, cookie: string
+let pidOf: (s: string) => string, app: any, Store: any, stats: any, serverId: string, cookie: string
 
 const ALICE = '76561198000000001'
 const BOB = '76561198000000002'
@@ -19,6 +19,7 @@ beforeAll(async () => {
   app = (await import('../src/index')).default
   Store = (await import('../src/services/Store')).Store
   stats = await import('../src/services/stats')
+  pidOf = (await import('../src/services/playerIds')).pidOf
   serverId = Store.addServer('Stats').id
   cookie = (await serializeSigned('steam_id', '76561198000000000', 'test-secret-test-secret-test-secret-0')).split(';')[0]!
 
@@ -83,7 +84,7 @@ describe('stats pages', () => {
   const get = (path: string, withCookie = true) => app.fetch(new Request(`http://x${path}`, { headers: withCookie ? { Cookie: cookie } : {} }))
 
   test('are public: a guest sees the stats, but no link into the rule settings', async () => {
-    for (const path of [`/servers/${serverId}/stats`, `/servers/${serverId}/players/${ALICE}`]) {
+    for (const path of [`/servers/${serverId}/stats`, `/servers/${serverId}/players/${pidOf(ALICE)}`]) {
       const res = await get(path, false)
       expect(res.status).toBe(200)
       expect(await res.text()).not.toContain(`href="/servers/${serverId}"`)
@@ -112,7 +113,8 @@ describe('stats pages', () => {
     expect(overview).toContain('Round stats')
     expect(overview).toContain('timelimit')
     expect(leaders).toContain('Alice (renamed)')
-    expect(leaders).toContain(`/servers/${serverId}/players/${ALICE}`)
+    expect(leaders).toContain(`/servers/${serverId}/players/${pidOf(ALICE)}`)
+    expect(leaders).not.toContain(`/players/${ALICE}`) // no SteamID64 in an address (RFC 25)
     expect(rounds).toContain('ttt_a')
     for (const html of [overview, leaders, rounds]) expect(html).not.toContain('Bot04')
     expect(rounds).toContain('datetime=') // the exact time, on hover
@@ -129,15 +131,28 @@ describe('stats pages', () => {
     expect(html).toContain('Including bot test rounds')
     expect(html).toMatch(/href="[^"]*sort=wins[^"]*"/)
     for (const link of html.match(/href="[^"]*sort=wins[^"]*"/g)!) expect(link).toContain('bots=1')
-    expect((await get(`/servers/${serverId}/players/${BOT}?bots=1`)).status).toBe(200)
+    expect((await get(`/servers/${serverId}/players/${pidOf(BOT)}?bots=1`)).status).toBe(200)
   })
 
   test('a player page renders, and unknown or bot players go back to the overview', async () => {
-    const html = await (await get(`/servers/${serverId}/players/${ALICE}`)).text()
+    const html = await (await get(`/servers/${serverId}/players/${pidOf(ALICE)}`)).text()
     expect(html).toContain('Alice (renamed)')
     expect(html).toContain('By role')
-    expect((await get(`/servers/${serverId}/players/${BOT}`)).status).toBe(302)
+    expect((await get(`/servers/${serverId}/players/${pidOf(BOT)}`)).status).toBe(302)
     expect((await get(`/servers/${serverId}/players/nobody`)).status).toBe(302)
+    expect((await get(`/servers/${serverId}/players/${'0'.repeat(16)}`)).status).toBe(302) // an id that was never given out
+  })
+
+  test('the old address with a SteamID64 is sent on to the new one, with its query; a SteamID64 that is not a player is not given an id', async () => {
+    const res = await get(`/servers/${serverId}/players/${ALICE}?by=start`, false)
+    expect(res.status).toBe(301)
+    expect(res.headers.get('location')).toBe(`/servers/${serverId}/players/${pidOf(ALICE)}?by=start`)
+    expect(pidOf(ALICE)).toMatch(/^[0-9a-f]{16}$/)
+    expect(pidOf(ALICE)).toBe(pidOf(ALICE)) // the same each time
+    expect(pidOf(ALICE)).not.toContain(ALICE.slice(-8))
+    const stranger = '76561198099999999'
+    expect((await get(`/servers/${serverId}/players/${stranger}`, false)).status).toBe(302)
+    expect(await (await import('../src/services/Database')).default.query('SELECT 1 FROM player_ids WHERE steam_id = ?').get(stranger)).toBeNull()
   })
 
   test('a server with no rounds says so', async () => {

@@ -1,4 +1,5 @@
 import { Shell } from './CaseFile'
+import { pidOf } from '../services/playerIds'
 import { Crumbs } from './kit'
 import { AdminDashboard } from './AdminDashboard'
 import { ServerDashboard } from './ServerDashboard'
@@ -96,7 +97,7 @@ export const ViewLogPage = ({ steamId, server, log, now }: { steamId: string, se
   const base = `/servers/${server.id}/views`
   const to = (p: { player?: string | null, action?: string | null }) => {
     const q = new URLSearchParams()
-    if (p.player) q.set('player', p.player)
+    if (p.player) q.set('player', pidOf(p.player))
     if (p.action) q.set('what', p.action)
     return q.size ? `${base}?${q}` : base
   }
@@ -140,7 +141,7 @@ export const ViewLogPage = ({ steamId, server, log, now }: { steamId: string, se
                 {log.rows.map(r => (
                   <tr>
                     <td><When iso={iso(r.timestamp)} now={now} /></td>
-                    <td><a href={`/servers/${server.id}/players/${r.steamId}`}>{r.steamId}</a></td>
+                    <td><a href={`/servers/${server.id}/players/${pidOf(r.steamId)}`}>{r.steamId}</a></td>
                     <td>{r.action === 'VIEW_REPLAY'
                       ? <>Replay of <a href={`/servers/${server.id}/rounds/${encodeURIComponent(r.what)}`}>{r.what}</a></>
                       : <>3D map <a href={`/servers/${server.id}/maps/${encodeURIComponent(r.what)}`} title={r.what}>{prettyMap(r.what)}</a></>}</td>

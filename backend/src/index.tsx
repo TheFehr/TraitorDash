@@ -19,6 +19,7 @@ import { buildRoleView, listRoles, parsePlayers, publicRoles, publicRoleSettings
 import { RoleListPage, RolePage, RoleNotFound } from './components/RolePublic'
 import { HomePage } from './components/HomePage'
 import { MapsPage, MapFilePage, MapViewPage, nextOf, type KillzonesView } from './components/MapPages'
+import { isPid, pidOf, steamIdOf } from './services/playerIds'
 import { renderKillzonesSvg, squaresOf, hottest, storeysOf, baseOfMap, baseOfPlan, rootSizeOf, footprintOfMap, footprintOfPlan, listedStoreys } from './services/killzones'
 import { flattened, storeyAt } from './maps/topdown'
 import { NAME } from './services/validators'
@@ -180,7 +181,7 @@ app.get('/servers/:serverId/views', async (c) => {
   const { serverId, server } = found
   const player = c.req.query('player')
   const what = c.req.query('what')
-  const who = player && STEAM_ID.test(player) ? player : null
+  const who = player && isPid(player) ? steamIdOf(player) : player && STEAM_ID.test(player) ? player : null
   const action = what === 'replay' ? 'VIEW_REPLAY' as const : what === 'map' ? 'VIEW_MESH' as const : null
   const log = Store.getViews(serverId, { steamId: who ?? undefined, action: action ?? undefined })
   c.header('Cache-Control', 'no-store')
@@ -623,7 +624,14 @@ app.get('/servers/:serverId/players/:playerId', async (c) => {
   const serverId = c.req.param('serverId')
   const server = Store.getServerById(serverId)
   const by = stats.parseBy(c.req.query('by'))
-  const player = server && stats.getPlayer(serverId, c.req.param('playerId'), { by })
+  const asked = c.req.param('playerId')
+  const steamId = isPid(asked) ? steamIdOf(asked) : null
+  // The address a player's page had before it got an id of its own (a SteamID64): sent on to the new one, so a saved link still works.
+  if (server && !steamId && stats.getPlayer(serverId, asked, { by })) {
+    const q = new URL(c.req.url).search
+    return c.redirect(`/servers/${serverId}/players/${pidOf(asked)}${q}`, 301)
+  }
+  const player = server && steamId && stats.getPlayer(serverId, steamId, { by })
   const bots = c.req.query('bots') === '1'
   const ctx = await ctxOf(c)
   if (!server || !player || (stats.isBotId(player.steamId) && !bots)) return c.redirect(link(ctx, `/servers/${serverId}/stats`))

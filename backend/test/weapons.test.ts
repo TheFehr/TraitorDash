@@ -319,7 +319,7 @@ describe('the pages', () => {
 
   test("a player's page has the weapons table", async () => {
     await sendOk(round())
-    const r = await text(`/servers/${serverId}/players/${A}`)
+    const r = await text(`/servers/${serverId}/players/${(await import('../src/services/playerIds')).pidOf(A)}`)
     expect(r.text).toContain('data-player-weapons'); expect(r.text).toContain('M16')
   })
 

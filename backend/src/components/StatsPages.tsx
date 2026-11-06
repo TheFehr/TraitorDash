@@ -1,4 +1,5 @@
 import { Sections, Shell } from './CaseFile'
+import { pidOf } from '../services/playerIds'
 import { Bar, Crumbs, Num, ServerName, Pills, Result, Tabs, When, WinTable, Who, adminOf, link, qs, rateClass, teamHex, type Ctx } from './kit'
 import { signinUrl } from '../middleware/session'
 import { clock, duration, kd, mb, pct } from '../format'
@@ -154,7 +155,7 @@ export const StatsPage = (p: StatsPageProps) => {
                 {p.leaders.map((l, i) => (
                   <tr>
                     <td class="dim">{i + 1}</td>
-                    <td><a href={link(ctx, `${here(id)}/players/${l.steamId}`, { bots: p.bots })}>{l.nick}</a></td>
+                    <td><a href={link(ctx, `${here(id)}/players/${pidOf(l.steamId)}`, { bots: p.bots })}>{l.nick}</a></td>
                     <td class="r">{l.rounds}</td><td class="r">{l.wins}</td>
                     <td class="r"><span class={rateClass(l.wins, l.rounds)}>{pct(l.wins, l.rounds)}</span></td>
                     <td class="r">{l.kills}</td><td class="r">{l.deaths}</td><td class="r dim">{kd(l.kills, l.deaths)}</td>
@@ -347,7 +348,7 @@ export const RoundPage = ({ ctx, server, round, deaths, firstBlood, hasReplay, c
               const role = pl.endRole ?? pl.role
               return (
                 <tr>
-                  <td><a href={link(ctx, `${here(id)}/players/${pl.id}`, { bots })}>{pl.nick ?? pl.id}</a></td>
+                  <td><a href={link(ctx, `${here(id)}/players/${pidOf(pl.id)}`, { bots })}>{pl.nick ?? pl.id}</a></td>
                   <td><span class="dots"><span><i style={`--c:${colours[role ?? ''] ?? '#9ca3af'}`}></i>{role ?? '–'}</span></span>{pl.endRole && pl.role && pl.endRole !== pl.role && <span class="dim"> (was {pl.role})</span>}</td>
                   <td><span class={pl.won ? 'good' : 'bad'}>{pl.won ? 'Won' : 'Lost'}</span> <span class="dim">{pl.survived ? 'survived' : 'died'}</span></td>
                 </tr>
@@ -382,7 +383,7 @@ export interface PlayerPageProps {
 
 export const PlayerPage = ({ ctx, server, player, by = 'end', bots, weapons }: PlayerPageProps) => {
   const id = server.id
-  const path = `${here(id)}/players/${player.steamId}`
+  const path = `${here(id)}/players/${pidOf(player.steamId)}`
   return (
     <Shell title={`${player.nick} | ${server.name}`} embed={ctx.embed} viewer={ctx.viewer}>
       <Crumbs><ServerName ctx={ctx} server={server} /> / <a href={link(ctx, `${here(id)}/stats`, { view: 'leaders', bots })}>Round stats</a></Crumbs>

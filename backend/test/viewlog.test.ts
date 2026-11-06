@@ -11,12 +11,13 @@ process.env.OPEN_SIGNIN = '1'
 // All test files share one process, so what is set in the environment is taken away again.
 afterAll(() => { delete process.env.OPEN_SIGNIN })
 
-let app: any, Store: any
+let pidOf: (s: string) => string, app: any, Store: any
 const ADMIN = '76561198000000000', U1 = '76561198000000041', U2 = '76561198000000042'
 let serverId: string
 
 beforeAll(async () => {
   app = (await import('../src/index')).app
+  pidOf = (await import('../src/services/playerIds')).pidOf
   Store = (await import('../src/services/Store')).Store
 })
 beforeEach(() => { serverId = (Store.addServer('Views') as any).id })
@@ -53,7 +54,7 @@ describe('the view log page', () => {
     expect(t).toContain(U1)
     expect(t).toContain(`/servers/${serverId}/rounds/round-0001`)
     expect(t).toContain(`/servers/${serverId}/maps/ttt_airbus_b3`)
-    expect(t).toContain(`views?player=${U1}`)
+    expect(t).toContain(`views?player=${pidOf(U1)}`); expect(t).not.toContain(`views?player=${U1}`) // the player's page id, not the SteamID64
   })
 
   test('the filters narrow it, and a filter with nothing keeps the way out', async () => {
