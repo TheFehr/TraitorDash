@@ -323,8 +323,11 @@ describe('the limits (RFC 18, 7): over one, the biggest models go first, and the
     expect(report).toMatchObject({ drawnPlacements: 4, dropped: 2, triangles: 24 }) // 2+2+10+10 fit; the two places of the 40-triangle model do not
   })
 
-  test('the triangle budget holds the props of the largest real maps (693 000 on the water park, which lost its slide at 600 000)', () => {
-    expect(PROP_LIMITS.maxTriangles).toBeGreaterThanOrEqual(1_000_000)
+  test('the limits are far above the largest real map (955 000 triangles, 2 037 places, 377 models; the water park lost its slide at 600 000), so a map is drawn whole', () => {
+    expect(PROP_LIMITS.maxTriangles).toBeGreaterThanOrEqual(3_000_000)
+    expect(PROP_LIMITS.maxPlacements).toBeGreaterThanOrEqual(10_000)
+    expect(PROP_LIMITS.maxModels).toBeGreaterThanOrEqual(2000)
+    expect(PROP_LIMITS.maxModelTriangles).toBeGreaterThanOrEqual(200_000)
   })
 
   test('distinct models', async () => {
