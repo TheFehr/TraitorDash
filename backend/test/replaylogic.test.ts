@@ -1,5 +1,5 @@
 import { expect, test, describe } from 'bun:test'
-import { clipWeights, damp, dampAngle, decodeTrack, cyclesAt, sectorOf, DIRECTIONS, distanceAt, lerpAngle, moveAt, pathOf, velocityAt, SPEEDS, poseAt, lastPoseAt, trailBetween, lerpYaw, levelOf, holdLevel, LEVEL_HOLD_MS, cutHeight, shownLevels, FADE, NO_CUT, chooseBackground, versionMismatch, defaultSelection, teamColour, playerColour, roleColour, clock, type RawTrack } from '../src/replaylogic'
+import { clipWeights, damp, dampAngle, decodeTrack, cyclesAt, sectorOf, DIRECTIONS, distanceAt, lerpAngle, moveAt, pathOf, velocityAt, SPEEDS, poseAt, lastPoseAt, trailBetween, lerpYaw, levelOf, holdLevel, LEVEL_HOLD_MS, cutHeight, shownLevels, FADE, overheadFade, NO_CUT, chooseBackground, versionMismatch, defaultSelection, teamColour, playerColour, roleColour, clock, type RawTrack } from '../src/replaylogic'
 
 // RFC 12, 3.5: the logic of the replay that is not drawing.
 
@@ -508,10 +508,35 @@ describe('cutHeight and shownLevels', () => {
   })
 })
 
-describe('FADE', () => {
-  test('only what is near the line from the camera to the player is faded, and nothing beyond the player', () => {
-    expect(FADE.past).toBe(0) // a floor or ledge beyond the player hides nothing of them (it showed the ground through a plank)
-    expect(FADE.base + FADE.gain).toBeLessThanOrEqual(200) // the widest the cone gets, at the camera, was 400
+describe('FADE and overheadFade', () => {
+  test('the cone is narrow: it was up to 400 units wide at the camera', () => {
+    expect(FADE.base + FADE.gain).toBeLessThanOrEqual(200)
     expect(FADE.base).toBeGreaterThanOrEqual(60) // wide enough for the body (32 units across) and some margin
+  })
+
+  // the camera 300 units behind the player and 100 above their eyes, looking along +x; the eyes at y 64
+  const cam: [number, number, number] = [-300, 164, 0], head: [number, number, number] = [0, 64, 0]
+
+  test('beyond the player, what is above their head is faded and what is at their height or below is not (a plank hid nothing)', () => {
+    expect(overheadFade(cam, head, [100, 200, 0])).toBe(1) // a roof just beyond them
+    expect(overheadFade(cam, head, [100, 64 + FADE.headroom - 1, 0])).toBe(0) // below the head room
+    expect(overheadFade(cam, head, [100, 30, 0])).toBe(0) // a plank at the shins
+    expect(overheadFade(cam, head, [100, -50, 0])).toBe(0) // the ground
+  })
+
+  test('only within the box beyond and beside the player: not before them, not far beyond, not far to the side', () => {
+    expect(overheadFade(cam, head, [-100, 200, 0])).toBe(0) // before them
+    expect(overheadFade(cam, head, [FADE.past + 10, 200, 0])).toBe(0)
+    expect(overheadFade(cam, head, [100, 200, FADE.side + 10])).toBe(0)
+    expect(overheadFade(cam, head, [100, 200, -FADE.side - 10])).toBe(0)
+    const edge = overheadFade(cam, head, [0.8 * FADE.past, 200, 0])
+    expect(edge).toBeGreaterThan(0); expect(edge).toBeLessThan(1) // it fades out at the edge, not at once
+  })
+
+  test('the box follows the way the camera looks', () => {
+    const camZ: [number, number, number] = [0, 164, -300] // looking along +z
+    expect(overheadFade(camZ, head, [0, 200, 100])).toBe(1)
+    expect(overheadFade(camZ, head, [FADE.side + 40, 200, 0])).toBe(0) // beside them, outside the side
+    expect(overheadFade(camZ, head, [0, 200, -100])).toBe(0)
   })
 })

@@ -213,11 +213,30 @@ export function levelOf(levels: LevelRange[], z: number): number {
 
 /**
  * How much of the map between the follow camera and the player is faded (the numbers of `cutAt` in replay.ts): the cone around the line from the camera to the
- * head is `base` + `gain` * (1 - t) units wide (t: 0 at the camera, 1 at the head), and a floor or ledge above the player's feet is also faded `past` units
- * beyond them. It was 160, 240 and 240 until 2026-11-06: planks and ledges that hid nothing (a plank in front of the shins, a ledge beyond the player) turned
- * to dither with the ground showing through, on `ttt_cape_town_revamped` and `ttt_yucatan`; nothing is faded beyond the player any more.
+ * head is `base` + `gain` * (1 - t) units wide (t: 0 at the camera, 1 at the head). Beyond the player only a floor or ledge that is above their head is faded (a roof, an
+ * overhang), for `past` units along the way the camera looks and `side` units to each side, from `headroom` units above the eyes. It was 160, 240 and a floor or
+ * ledge anywhere above the player's feet up to 240 units beyond them until 2026-11-06: planks and ledges at shin height that hid nothing turned to dither
+ * with the ground showing through, on `ttt_cape_town_revamped` and `ttt_yucatan`.
  */
-export const FADE = { base: 80, gain: 100, past: 0 }
+export const FADE = { base: 80, gain: 100, past: 240, side: 160, headroom: 16 }
+
+const smooth = (a: number, b: number, x: number) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t) }
+
+/**
+ * How much a floor or ledge at `p` beyond the player is faded (0 to 1), in the three.js coordinates of the replay (y is up): only what is above the head, and
+ * only within `past` units beyond the player and `side` units to either side of the way the camera looks. The same formula is in `cutAt` (replay.ts).
+ */
+export function overheadFade(cam: [number, number, number], head: [number, number, number], p: [number, number, number]): number {
+  if (p[1] < head[1] + FADE.headroom) return 0
+  let dx = head[0] - cam[0], dz = head[2] - cam[2]
+  const len = Math.hypot(dx, dz)
+  if (len < 1e-3) { dx = 1; dz = 0 } else { dx /= len; dz /= len }
+  const rx = p[0] - head[0], rz = p[2] - head[2]
+  const along = rx * dx + rz * dz
+  if (along < 0) return 0 // before the player: the cone's business
+  const sx = rx - dx * along, sz = rz - dz * along
+  return (1 - smooth(0.6 * FADE.past, FADE.past, along)) * (1 - smooth(0.6 * FADE.side, FADE.side, Math.hypot(sx, sz)))
+}
 
 /** No cut: far above any map. */
 export const NO_CUT = 1e9

@@ -381,8 +381,18 @@ async function start(root: HTMLElement) {
       // allows for the size; a pixel (r = 0) keeps the plain limit
       // nothing is faded at the player or beyond: the last stretch is a fixed 8 units (it was 8% of the line, about 25, and a wall 17 units in front of
       // the player, with their body behind it, stayed solid)
-      // (a floor or a ledge above their feet could go on past them, to show whoever stands behind the player; it faded planks that hid nothing, so FADE.past is 0)
-      float last = ceiling > 0.5 ? 1.0 + ${FADE.past.toFixed(1)} / sqrt(l2) : 1.0 - 8.0 / sqrt(l2);
+      // beyond the player a floor is faded only where it is above their head, within a box beyond and beside them (overheadFade in replaylogic.ts)
+      if (ceiling > 0.5 && t > 1.0) {
+        if (p.y < uHead.y + ${FADE.headroom.toFixed(1)}) return 0.0;
+        vec2 dir = ab.xz; float dl = length(dir); dir = dl < 0.001 ? vec2(1.0, 0.0) : dir / dl;
+        vec2 rel = p.xz - uHead.xz;
+        float along = dot(rel, dir);
+        if (along < 0.0) return 0.0;
+        float side = length(rel - dir * along);
+        return (1.0 - smoothstep(${(0.6 * FADE.past).toFixed(1)}, ${FADE.past.toFixed(1)}, along)) * (1.0 - smoothstep(${(0.6 * FADE.side).toFixed(1)}, ${FADE.side.toFixed(1)}, side));
+      }
+      float last = 1.0 - 8.0 / sqrt(l2);
+      if (ceiling > 0.5) last = 1.0;
       if (t < -0.05 - r / sqrt(l2) || t > last) return 0.0;
       vec3 q = uCam + ab * clamp(t, 0.0, 1.0);
       float radius = ${FADE.base.toFixed(1)} + ${FADE.gain.toFixed(1)} * (1.0 - t);
