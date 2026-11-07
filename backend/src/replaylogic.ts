@@ -409,6 +409,29 @@ export function thingAt(th: Thing, ms: number): { at: [number, number, number], 
   return { at: [mix(th.x), mix(th.y), mix(th.z)], pitch: lerpDeg(th.pitch[i]!, th.pitch[j]!, f), yaw: lerpDeg(th.yaw[i]!, th.yaw[j]!, f), roll: lerpDeg(th.roll[i]!, th.roll[j]!, f) }
 }
 
+/** How far a prop of the map may be from the place a thing started at, in units, to be taken for the same prop (RFC 20, 4.8). */
+export const PROP_MATCH_UNITS = 2
+
+/**
+ * Which of the map's prop nodes (`places`, in Source units) are the props that moved in this round: for each thing of a physics prop, the nearest
+ * unused place within PROP_MATCH_UNITS of where the thing started. The mesh keeps every prop as a node of its own, but not which entity it is;
+ * the entity stood where the map put it, so the place is the join. Returns the indexes of `places`.
+ */
+export function movedProps(things: Thing[], places: { x: number, y: number, z: number }[]): number[] {
+  const taken = new Set<number>()
+  for (const th of things) {
+    if (!th.c.startsWith('prop_physics') || th.t.length === 0) continue
+    let best = -1, bestD = PROP_MATCH_UNITS
+    places.forEach((q, i) => {
+      if (taken.has(i)) return
+      const d = Math.hypot(q.x - th.x[0]!, q.y - th.y[0]!, q.z - th.z[0]!)
+      if (d <= bestD) { best = i; bestD = d }
+    })
+    if (best >= 0) taken.add(best)
+  }
+  return [...taken]
+}
+
 /** How far before a revival the killer's death may be to be mentioned (RFC 14, 4.4). */
 export const KILLER_WINDOW_MS = 30000
 

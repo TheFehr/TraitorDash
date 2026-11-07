@@ -14,7 +14,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { startFlat } from './replayflat'
 import { offerBrowser, levelColour, paintPlain, makeCamera, makeRenderer, makeScene, mapLoader, prepareMovable, prepareProps, prepareWater, boxWithout, type Painted } from './sceneKit'
 import {
-  decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, shownLevels, FADE, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, bodyAt, thingAt, killerDiedBefore, reviveSource, revivePose, fitLabel,
+  decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, shownLevels, FADE, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, bodyAt, thingAt, movedProps, killerDiedBefore, reviveSource, revivePose, fitLabel,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
 } from './replaylogic'
 
@@ -506,6 +506,15 @@ async function start(root: HTMLElement) {
       })
       prepareWater(model, cut)
       const props = prepareProps(model, cut)
+      // A prop of the map that moved in this round is drawn by its box (RFC 20, 4.8), so it is taken out of the map where it stood, before the props are merged.
+      const propNodes = model.getObjectByName('props')?.children ?? []
+      const moved = movedProps(data.things, propNodes.map(n => ({ x: n.position.x, y: n.position.y, z: n.position.z })))
+      if (moved.length > 0) {
+        const out = new Set<Object3D>()
+        for (const i of moved) { propNodes[i]!.visible = false; propNodes[i]!.traverse(o => out.add(o)) }
+        props.solid = props.solid.filter(m => !out.has(m))
+        props.foliage = props.foliage.filter(m => !out.has(m))
+      }
       prepareMovable(model, cut)
       // Parts apart from the map (RFC 18, 4.4) are not drawn in the replay.
       const apart = model.getObjectByName('detached')

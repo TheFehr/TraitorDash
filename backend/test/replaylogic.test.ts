@@ -1,5 +1,5 @@
 import { expect, test, describe } from 'bun:test'
-import { clipWeights, damp, dampAngle, decodeTrack, cyclesAt, sectorOf, DIRECTIONS, distanceAt, lerpAngle, moveAt, pathOf, velocityAt, SPEEDS, poseAt, lastPoseAt, trailBetween, lerpYaw, levelOf, holdLevel, LEVEL_HOLD_MS, cutHeight, shownLevels, FADE, overheadFade, bodyAt, thingAt, BODY_GAP_MS, NO_CUT, chooseBackground, versionMismatch, defaultSelection, teamColour, playerColour, roleColour, clock, type RawTrack } from '../src/replaylogic'
+import { clipWeights, damp, dampAngle, decodeTrack, cyclesAt, sectorOf, DIRECTIONS, distanceAt, lerpAngle, moveAt, pathOf, velocityAt, SPEEDS, poseAt, lastPoseAt, trailBetween, lerpYaw, levelOf, holdLevel, LEVEL_HOLD_MS, cutHeight, shownLevels, FADE, overheadFade, bodyAt, thingAt, movedProps, BODY_GAP_MS, NO_CUT, chooseBackground, versionMismatch, defaultSelection, teamColour, playerColour, roleColour, clock, type RawTrack } from '../src/replaylogic'
 
 // RFC 12, 3.5: the logic of the replay that is not drawing.
 
@@ -606,5 +606,21 @@ describe('thingAt (RFC 20, 4.8)', () => {
     const th = decoded({ g: 4 }) // tick 4 is at 800 ms
     expect(thingAt(th, 799)).not.toBeNull()
     expect(thingAt(th, 800)).toBeNull()
+  })
+})
+
+describe('movedProps (RFC 20, 4.8)', () => {
+  const thing = (c: string, x: number, y: number, z: number) => decodeTrack(raw({ things: [{ e: 1, c, mdl: 'models/x.mdl', b: [0, 0, 0, 1, 1, 1], k: [0], x: [x], y: [y], z: [z], p: [0], w: [0], r: [0] }] })).things[0]!
+  const places = [{ x: 100, y: 100, z: 0 }, { x: 101, y: 100, z: 0 }, { x: 500, y: 0, z: 0 }]
+
+  test('the nearest place within two units of where a physics prop started is the prop', () => {
+    expect(movedProps([thing('prop_physics', 100.5, 100, 0)], places)).toEqual([1])
+    expect(movedProps([thing('prop_physics_multiplayer', 500, 1, 0)], places)).toEqual([2])
+  })
+  test('nothing is taken when nothing is near, for a door, a weapon, or a place already taken', () => {
+    expect(movedProps([thing('prop_physics', 300, 300, 0)], places)).toEqual([])
+    expect(movedProps([thing('prop_door_rotating', 100, 100, 0), thing('weapon_zm_shotgun', 100, 100, 0)], places)).toEqual([])
+    const a = thing('prop_physics', 100, 100, 0)
+    expect(movedProps([a, { ...a, e: 2 }], places).sort()).toEqual([0, 1]) // the second takes the next nearest, not the same place twice
   })
 })
