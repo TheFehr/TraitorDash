@@ -507,6 +507,10 @@ export const migrations: Array<(db: Database) => void> = [
       insert.run(Array.from(crypto.getRandomValues(new Uint8Array(8)), b => b.toString(16).padStart(2, '0')).join(''), r.id, now)
     }
   },
+  // v29 (RFC 10): the dashboard's map cooldown can be turned off per server. NULL and 1 are on (as it has always been), 0 is off.
+  (db) => {
+    db.run('ALTER TABLE servers ADD COLUMN map_cooldown INTEGER')
+  },
 ]
 
 /** Brings `db` up to the latest schema, in one transaction. */

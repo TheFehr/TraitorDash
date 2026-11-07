@@ -472,6 +472,19 @@ app.get('/servers/:serverId/maps/:map/plan.json', async (c) => {
   return c.body(plan, 200, { 'Content-Type': 'application/json' })
 })
 
+/** Whether the maps page shows the vote's cooldown (RFC 10, 4.5). Admins only, audited. The vote itself is not changed. */
+app.post('/servers/:serverId/maps/cooldown', async (c) => {
+  const steamId = await getAdminId(c)
+  if (!steamId) return c.text('Unauthorized', 401)
+  const serverId = c.req.param('serverId')
+  if (!Store.getServerById(serverId)) return c.text('Not found', 404)
+  const form = await c.req.parseBody()
+  const on = form.on === '1'
+  Store.setMapCooldown(serverId, on)
+  Store.audit(serverId, steamId, on ? 'MAP_COOLDOWN_SHOWN' : 'MAP_COOLDOWN_IGNORED', '')
+  return c.redirect(`/servers/${serverId}/maps`)
+})
+
 /** Exact geometry on or off for one map (RFC 11, 3.1). Admins only; the operator switch must be on. */
 app.post('/servers/:serverId/maps/:map/geometry', async (c) => {
   const steamId = await getAdminId(c)

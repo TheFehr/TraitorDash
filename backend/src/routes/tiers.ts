@@ -38,6 +38,7 @@ export const TIERS: Record<string, Tier> = {
   'GET /servers/:serverId/maps/:map/plan.json': 'admin',
   'POST /servers/:serverId/maps/:map/geometry': 'admin',
   'POST /servers/:serverId/tracks/limits': 'admin',
+  'POST /servers/:serverId/maps/cooldown': 'admin',
   'POST /servers/:serverId/rounds/:roundId/pin': 'admin',
   'POST /servers/:serverId/rounds/:roundId/delete': 'admin',
   'POST /servers/:serverId/rounds/delete-bots': 'admin',

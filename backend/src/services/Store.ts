@@ -53,6 +53,16 @@ export interface MapRow {
 export interface MapsState {
   current: string | null, next: string | null, gamemode: string | null, pattern: string | null
   poolBasis: string | null, configSource: string | null, voteAddon: boolean, reportedAt: string
+  /** Whether the dashboard shows and counts the vote's cooldown (RFC 10, 4.5); the vote itself is not changed. */
+  cooldown: boolean
+}
+/**
+ * A map as the dashboard shows it with the cooldown turned off (RFC 10, 4.5): not on cooldown, and votable when it only was held back by the cooldown
+ * (in the pool, not the running map). The running map keeps what the vote said, since whether it may be offered is the vote's own setting.
+ */
+export function applyCooldown(m: MapRow, cooldown: boolean): MapRow {
+  if (cooldown || m.onCooldown !== true) return m
+  return { ...m, onCooldown: false, votable: m.votable === true || (m.inVotePool === true && m.isCurrent !== true) ? true : m.votable }
 }
 export interface MapsReport {
   current: string | null, next: string | null, gamemode: string | null, pattern: string | null
@@ -440,20 +450,31 @@ export class Store {
     })()
   }
 
+  /** Whether the dashboard shows the map cooldown for the server: on unless an admin turned it off (RFC 10, 4.5). */
+  static getMapCooldown(serverId: string): boolean {
+    const row = db.prepare('SELECT map_cooldown AS v FROM servers WHERE id = ?').get(serverId) as { v: number | null } | null
+    return row?.v !== 0
+  }
+
+  static setMapCooldown(serverId: string, on: boolean) {
+    db.prepare('UPDATE servers SET map_cooldown = ? WHERE id = ?').run(on ? 1 : 0, serverId)
+  }
+
   /** The server's latest map report: its maps (by name) and the state around them. `state` is null before the first report. */
   static getMaps(serverId: string): { state: MapsState | null, maps: MapRow[] } {
     const bool = (v: number | null) => (v === null ? null : v === 1)
+    const cooldown = Store.getMapCooldown(serverId)
     const rows = db.prepare('SELECT * FROM server_maps WHERE server_id = ? ORDER BY name').all(serverId) as any[]
     const st = db.prepare('SELECT * FROM server_map_state WHERE server_id = ?').get(serverId) as any
     return {
-      maps: rows.map(r => ({
+      maps: rows.map(r => applyCooldown({
         name: r.name, size: r.size, fingerprint: r.fingerprint,
         matchesGamemode: bool(r.matches_gamemode), inCycle: bool(r.in_cycle), onCooldown: bool(r.on_cooldown),
         isCurrent: bool(r.is_current), inVotePool: bool(r.in_vote_pool), votable: bool(r.votable),
-      })),
+      }, cooldown)),
       state: st ? {
         current: st.current_map, next: st.next_map, gamemode: st.gamemode, pattern: st.pattern,
-        poolBasis: st.pool_basis, configSource: st.config_source, voteAddon: st.vote_addon === 1, reportedAt: st.reported_at,
+        poolBasis: st.pool_basis, configSource: st.config_source, voteAddon: st.vote_addon === 1, reportedAt: st.reported_at, cooldown,
       } : null,
     }
   }
