@@ -17,10 +17,11 @@ export interface BridgeSettingsState {
 const GROUPS: BridgeSetting['group'][] = ['Round stats', 'Position tracking']
 /** The names the dashboard's own settings have in the form (never a name the game server knows). */
 const STORAGE = { count: 'storage_count', mb: 'storage_mb' } as const
+const COOLDOWN = 'maps_cooldown' // the dashboard's own switch for the vote's map cooldown (RFC 10, 4.5)
 const parse = (s: BridgeSetting, raw: string): boolean | number => (s.kind === 'bool' ? raw !== '0' : Number(raw))
 const same = (a: string, b: string) => (Number.isFinite(Number(a)) && Number.isFinite(Number(b)) ? Number(a) === Number(b) : a === b)
 
-export const ServerSettingsForm = ({ serverId, state, storage, now }: { serverId: string, state: BridgeSettingsState, storage: TracksInfo, now?: number }) => {
+export const ServerSettingsForm = ({ serverId, state, storage, mapCooldown = true, now }: { serverId: string, state: BridgeSettingsState, storage: TracksInfo, mapCooldown?: boolean, now?: number }) => {
   const reported = state.reportedAt !== null
   const initial: Record<string, boolean | number> = {}
   for (const s of BRIDGE_SETTINGS) initial[s.name] = parse(s, state.values[s.name]?.value ?? s.default)
@@ -28,8 +29,8 @@ export const ServerSettingsForm = ({ serverId, state, storage, now }: { serverId
   const kinds = Object.fromEntries(BRIDGE_SETTINGS.map(s => [s.name, s.kind]))
   // the dashboard's own: the server's own limit as text (empty is the instance's default)
   const own = { [STORAGE.count]: storage.limits.own.count === null ? '' : String(storage.limits.own.count), [STORAGE.mb]: storage.limits.own.mb === null ? '' : String(storage.limits.own.mb) }
-  Object.assign(initial, own)
-  Object.assign(defaults, { [STORAGE.count]: '', [STORAGE.mb]: '' })
+  Object.assign(initial, own, { [COOLDOWN]: mapCooldown })
+  Object.assign(defaults, { [STORAGE.count]: '', [STORAGE.mb]: '', [COOLDOWN]: true })
 
   const xData = `{
     initial: ${JSON.stringify(initial)},
@@ -82,11 +83,12 @@ export const ServerSettingsForm = ({ serverId, state, storage, now }: { serverId
           const body = new URLSearchParams();
           body.set('count', String(this.current.storage_count).trim());
           body.set('mb', String(this.current.storage_mb).trim());
+          body.set('cooldown', this.current.maps_cooldown ? '1' : '0');
           const res = await fetch(this.limitsUrl, { method: 'POST', body, headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
           const data = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
           for (const k of kept) this.initial[k] = this.current[k];
-          said.push('the replay limits are saved');
+          said.push('the dashboard settings are saved');
         }
         this.ok = true;
         this.message = said.join('; ');
@@ -145,6 +147,7 @@ export const ServerSettingsForm = ({ serverId, state, storage, now }: { serverId
             </>
           ))}
           <StorageFields storage={storage} />
+          <MapCooldownField />
         </form>
         <DeleteBotRounds serverId={serverId} bots={storage.botRounds} />
       </section>
@@ -226,6 +229,26 @@ const StorageField = ({ name, label, unit, shown, ceiling, explain }: { name: st
       <button type="button" class="ab" x-show={`current['${name}'] !== defaults['${name}']`} x-cloak="true" x-on:click={`current['${name}'] = defaults['${name}']`}>Reset to default</button>
     </div>
     <input type="number" id={name} aria-label={label} min="0" max={ceiling} step="1" inputmode="numeric" placeholder={`default (${shown})`} {...{ 'x-model': `current['${name}']` }} />
+  </div>
+)
+
+/** The dashboard's own switch for the vote's map cooldown (RFC 10, 4.5): a switch like the others, saved with them, applied at once. */
+const MapCooldownField = () => (
+  <div id="maps-cooldown" data-maps-cooldown>
+    <h3>Maps</h3>
+    <div class="fld row" data-setting={COOLDOWN}>
+      <div>
+        <label class="fl" for={COOLDOWN}>
+          Show the vote's map cooldown{' '}
+          <span class="src live" title="Kept by the dashboard">dashboard</span>
+          <span class="src missing" x-cloak="true" title="Not at its default" {...{ 'x-show': `!atDefault('${COOLDOWN}')` }}> changed</span>
+        </label>
+        <span class="hint">On: a map that is on the vote addon's cooldown list is marked on the maps page and not counted as votable. Off: it is not marked, and a map in the pool that only the cooldown held back counts as votable. This changes only what the dashboard shows, not the vote on the game server.</span>
+        <span class="hint">Takes effect at once. Default on.</span>
+        <button type="button" class="ab" x-show={`current['${COOLDOWN}'] !== defaults['${COOLDOWN}']`} x-cloak="true" x-on:click={`current['${COOLDOWN}'] = defaults['${COOLDOWN}']`}>Reset to default</button>
+      </div>
+      <input type="checkbox" class="switch" id={COOLDOWN} aria-label="Show the vote's map cooldown" x-model={`current['${COOLDOWN}']`} />
+    </div>
   </div>
 )
 

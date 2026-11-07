@@ -59,29 +59,33 @@ describe('the map cooldown switch', () => {
     expect(applyCooldown(report.maps[2]!, false)).toBe(report.maps[2]!)
   })
 
-  test('an admin sees the switch and the page follows it; nobody else sees it or can use it', async () => {
-    const before = await (await get(`/servers/${serverId}/maps`, ADMIN)).text()
-    expect(before).toContain('data-cooldown-form'); expect(before).toContain('Cooldown</i>')
-    const r = await post(`/servers/${serverId}/maps/cooldown`, 'on=0', ADMIN)
-    expect(r.status).toBe(302)
+  test('the switch is on the settings page, saved with the replay limits; the maps page follows it; nobody else can use it', async () => {
+    const page = await (await get(`/servers/${serverId}/settings`, ADMIN)).text()
+    expect(page).toContain('data-maps-cooldown'); expect(page).toContain('id="maps_cooldown"'); expect(page).toContain('&quot;maps_cooldown&quot;:true')
+    expect(await (await get(`/servers/${serverId}/maps`, ADMIN)).text()).toContain('Cooldown</i>')
+    const r = await post(`/api/track-limits/${serverId}`, 'count=&mb=&cooldown=0', ADMIN)
+    expect(r.status).toBe(200)
+    expect((await r.json()).map_cooldown).toBe(false)
     expect(Store.getMapCooldown(serverId)).toBe(false)
     const after = await (await get(`/servers/${serverId}/maps`, ADMIN)).text()
-    expect(after).not.toContain('Cooldown</i>'); expect(after).toContain('ignored')
-    expect((await get(`/servers/${serverId}/maps`)).status).toBe(200)
-    expect(await (await get(`/servers/${serverId}/maps`, USER)).text()).not.toContain('data-cooldown-form')
-    for (const as of [null, USER]) {
-      const denied = await post(`/servers/${serverId}/maps/cooldown`, 'on=1', as)
-      expect(denied.status).toBe(401)
-    }
+    expect(after).not.toContain('Cooldown</i>'); expect(after).toContain('data-cooldown-ignored')
+    expect(await (await get(`/servers/${serverId}/settings`, ADMIN)).text()).toContain('&quot;maps_cooldown&quot;:false')
+    expect(await (await get(`/servers/${serverId}/maps`, USER)).text()).not.toContain('data-cooldown-ignored')
+    for (const as of [null, USER]) expect((await post(`/api/track-limits/${serverId}`, 'count=&mb=&cooldown=1', as)).status).toBe(401)
     expect(Store.getMapCooldown(serverId)).toBe(false)
-    expect((await post('/servers/nope/maps/cooldown', 'on=1', ADMIN)).status).toBe(404)
-    await post(`/servers/${serverId}/maps/cooldown`, 'on=1', ADMIN)
+    await post(`/api/track-limits/${serverId}`, 'count=&mb=', ADMIN) // a save that does not say leaves it as it is
+    expect(Store.getMapCooldown(serverId)).toBe(false)
+    await post(`/api/track-limits/${serverId}`, 'count=&mb=&cooldown=1', ADMIN)
     expect(Store.getMapCooldown(serverId)).toBe(true)
   })
 
-  test('a change is audited', async () => {
-    await post(`/servers/${serverId}/maps/cooldown`, 'on=0', ADMIN)
-    const log = Store.getAuditLog ? Store.getAuditLog(serverId) : []
-    if (log.length) expect(JSON.stringify(log)).toContain('MAP_COOLDOWN_IGNORED')
+  test('a change is audited, and a save that changes nothing is not', async () => {
+    const db = (await import('../src/services/Database')).default as any
+    const audit = () => db.query("SELECT action FROM audit_log WHERE server_id = ? AND action LIKE 'MAP_COOLDOWN_%'").all(serverId).map((r: any) => r.action)
+    await post(`/api/track-limits/${serverId}`, 'count=&mb=&cooldown=1', ADMIN)
+    expect(audit()).toEqual([])
+    await post(`/api/track-limits/${serverId}`, 'count=&mb=&cooldown=0', ADMIN)
+    await post(`/api/track-limits/${serverId}`, 'count=&mb=&cooldown=0', ADMIN)
+    expect(audit()).toEqual(['MAP_COOLDOWN_IGNORED'])
   })
 })

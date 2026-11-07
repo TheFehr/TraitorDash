@@ -69,14 +69,14 @@ export const RoleConfigPage = ({ steamId, server, roleName, roles, schema, live,
 )
 
 /** The settings of a server (RFC 23): the bridge's own and the dashboard's, on one page, for admins. */
-export const ServerSettingsPage = ({ steamId, server, roles, state, storage, onlineAdmins }: { steamId: string, server: { id: string, name: string }, roles: any[], state: BridgeSettingsState, storage: TracksInfo, onlineAdmins?: string[] }) => (
+export const ServerSettingsPage = ({ steamId, server, roles, state, storage, mapCooldown = true, onlineAdmins }: { steamId: string, server: { id: string, name: string }, roles: any[], state: BridgeSettingsState, storage: TracksInfo, mapCooldown?: boolean, onlineAdmins?: string[] }) => (
   <Admin title={`Settings | ${server.name}`} steamId={steamId}>
     <div class="lay">
       <Sidebar serverId={server.id} roles={roles} />
       <div>
         <Crumbs><a href="/">Dashboard</a> / <a href={`/servers/${server.id}`}>{server.name}</a> / Settings</Crumbs>
         <OnlineAdminsNotice admins={onlineAdmins} />
-        <ServerSettingsForm serverId={server.id} state={state} storage={storage} />
+        <ServerSettingsForm serverId={server.id} state={state} storage={storage} mapCooldown={mapCooldown} />
       </div>
     </div>
   </Admin>

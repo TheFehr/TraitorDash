@@ -758,7 +758,15 @@ api.post('/track-limits/:serverId', async (c) => {
   if (!mb.ok) return c.json({ error: mb.error }, 400)
   Store.setTrackLimits(serverId, count.value, mb.value)
   Store.audit(serverId, c.get('adminId'), 'TRACK_LIMITS_CHANGED', `count=${count.value ?? 'default'} mb=${mb.value ?? 'default'}`)
-  return c.json({ success: true, limits: Store.getTrackLimits(serverId) })
+  // The dashboard's other own setting of the page travels with it: whether the maps page shows the vote's cooldown (RFC 10, 4.5). Only when it was sent and changed.
+  if (body.cooldown === '0' || body.cooldown === '1') {
+    const on = body.cooldown === '1'
+    if (on !== Store.getMapCooldown(serverId)) {
+      Store.setMapCooldown(serverId, on)
+      Store.audit(serverId, c.get('adminId'), on ? 'MAP_COOLDOWN_SHOWN' : 'MAP_COOLDOWN_IGNORED', '')
+    }
+  }
+  return c.json({ success: true, limits: Store.getTrackLimits(serverId), map_cooldown: Store.getMapCooldown(serverId) })
 })
 
 /** Who the bridge's token belongs to (RFC 15, 4.5): the server's id, which the public role pages' addresses contain. Nothing else. */

@@ -118,16 +118,11 @@ export const MapsPage = ({ ctx, server, state, maps, activity, showAll, plans, m
               <Num label="Votable now" value={known ? maps.filter(m => m.votable === true).length : '–'} />
               <Num label="Running map" value={state.current ? prettyMap(state.current) : '–'} />
             </div>
-            {admin && (
-              <form method="post" action={`/servers/${id}/maps/cooldown`} class="inline" data-cooldown-form>
-                <span class="foot">
-                  The vote's cooldown is <b>{state.cooldown ? 'shown' : 'ignored'}</b> on this page.
-                  {state.cooldown ? ' Maps on the vote\'s cooldown list are marked and not counted as votable.' : ' Maps on the vote\'s cooldown list are not marked and are counted as votable.'}
-                  {' '}This changes only what the dashboard shows, not the vote on the game server.
-                </span>
-                <input type="hidden" name="on" value={state.cooldown ? '0' : '1'} />
-                <button type="submit" class="btn">{state.cooldown ? 'Ignore the cooldown' : 'Show the cooldown'}</button>
-              </form>
+            {admin && !state.cooldown && (
+              <p class="foot" data-cooldown-ignored>
+                The vote's cooldown is ignored on this page, so maps on its list are not marked and count as votable. The vote on the game server is not changed.
+                {' '}<a href={`/servers/${id}/settings#maps-cooldown`}>Settings</a>
+              </p>
             )}
             {admin && progress && progress.pending > 0 && (
               <p class="foot" data-geometry-progress>
