@@ -79,6 +79,8 @@ local function PlayerId(ply)
     end
     return ply:SteamID64()
 end
+TraitorDash.StatsOn = function() return cv_enabled:GetBool() end
+TraitorDash.PlayerId = PlayerId -- the position tracking records the players of the preparation under the same ids (track.lua, Track.Prepare)
 
 local function Begin()
     round = { id = NewRoundId(), startedAt = os.time(), players = {}, deaths = {}, order = {}, revives = {}, notes = {}, settling = {}, dmg = {}, damage = {} }

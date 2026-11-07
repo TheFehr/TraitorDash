@@ -81,7 +81,11 @@ async function start(root: HTMLElement) {
   const colourOf = (id: string, at = 0) => { const st = stateOf(id, at); return playerColour(payload.colours ?? {}, st.role, st.team) }
 
   // ---- state
-  let ms = 0, playing = false, speed = 1, last = 0
+  // The time counts from the round's start; the preparation recorded before it has negative times and shows with a minus (RFC 12, 3.7).
+  const stamp = (t: number) => (t < 0 ? `-${clock(-t)}` : clock(t))
+  const span = Math.max(data.length - data.start, 1) // what the bar covers: the preparation and the round
+  const place = (t: number) => `${((t - data.start) / span) * 100}%`
+  let ms = data.start, playing = false, speed = 1, last = 0
   let selected = defaultSelection(ids, viewer, data.deaths)
   let camMode: 'orbit' | 'top' | 'follow' = 'orbit'
   let followLevel = true
@@ -139,7 +143,7 @@ async function start(root: HTMLElement) {
       const b = document.createElement('button')
       b.type = 'button'
       b.className = 'lnk'
-      b.textContent = `${clock(e.t)}  ${eventText(e)}`
+      b.textContent = `${stamp(e.t)}  ${eventText(e)}`
       b.addEventListener('click', () => { selected = e.p; seek(e.t - 2000) })
       li.append(b)
       feedEl.append(li)
@@ -155,7 +159,7 @@ async function start(root: HTMLElement) {
       b.type = 'button'
       b.className = 'lnk'
       const fact = killerFact(e)
-      b.textContent = `${clock(e.t)}  ${eventText(e)}${fact ? ' — ' + fact : ''}`
+      b.textContent = `${stamp(e.t)}  ${eventText(e)}${fact ? ' — ' + fact : ''}`
       b.addEventListener('click', () => { selected = e.p; seek(e.t - 3000) })
       li.append(b)
       revivesEl.append(li)
@@ -174,7 +178,7 @@ async function start(root: HTMLElement) {
       const li = document.createElement('li')
       const b = document.createElement('button')
       b.type = 'button'; b.className = 'lnk'
-      b.textContent = `${clock(e.t)}  ${ownText(e)}`
+      b.textContent = `${stamp(e.t)}  ${ownText(e)}`
       b.addEventListener('click', () => seek(e.t - 1000))
       li.append(b)
       eventsEl.append(li)
@@ -183,14 +187,14 @@ async function start(root: HTMLElement) {
   }
 
   const deathsEl = el(root, '[data-deaths]')
-  const seek = (t: number) => { ms = Math.max(0, Math.min(data.length, t)); changed() }
+  const seek = (t: number) => { ms = Math.max(data.start, Math.min(data.length, t)); changed() }
   for (const d of data.deaths) {
     if (!deathsEl) break
     const li = document.createElement('li')
     const b = document.createElement('button')
     b.type = 'button'
     b.className = 'lnk'
-    b.textContent = `${clock(d.t)}  ${nick(d.victim)}${d.attacker ? ' ← ' + nick(d.attacker) : ''}${d.weapon ? ' (' + d.weapon + ')' : ''}`
+    b.textContent = `${stamp(d.t)}  ${nick(d.victim)}${d.attacker ? ' ← ' + nick(d.attacker) : ''}${d.weapon ? ' (' + d.weapon + ')' : ''}`
     b.addEventListener('click', () => { selected = d.victim; seek(d.t - 3000) })
     li.append(b)
     deathsEl.append(li)
@@ -215,21 +219,21 @@ async function start(root: HTMLElement) {
     chips.set(id, { dot, role: roleEl })
   }
   const scrub = el<HTMLInputElement>(root, '[data-scrub]')!
-  scrub.max = String(data.length); scrub.value = '0'
+  scrub.min = String(data.start); scrub.max = String(data.length); scrub.value = String(data.start)
   const ticks = el(root, '[data-ticks]')
   if (ticks) for (const d of data.deaths) {
     const t = text('', 'span', 'tick')
-    t.style.left = `${data.length ? (d.t / data.length) * 100 : 0}%`
-    t.title = `${clock(d.t)} ${nick(d.victim)} died`
+    t.style.left = place(d.t)
+    t.title = `${stamp(d.t)} ${nick(d.victim)} died`
     ticks.append(t)
   }
   // revivals (green) and role changes (violet) beside the deaths
   if (ticks) for (const e of data.events) {
     if (e.k !== 'revive' && e.k !== 'role') continue // chat, shop and bodies are in the feed, not on the bar
     const t = text('', 'span', `tick ${e.k === 'revive' ? 'tick-revive' : 'tick-role'}`)
-    t.style.left = `${data.length ? (e.t / data.length) * 100 : 0}%`
+    t.style.left = place(e.t)
     t.dataset.mark = e.k
-    t.title = `${clock(e.t)} ${eventText(e)}`
+    t.title = `${stamp(e.t)} ${eventText(e)}`
     ticks.append(t)
   }
   const timeEl = el(root, '[data-time]')!
@@ -283,7 +287,7 @@ async function start(root: HTMLElement) {
     if (ms >= data.length) { setPlaying(false); return }
     requestAnimationFrame(loop)
   }
-  playBtn.addEventListener('click', () => { if (!playing && ms >= data.length) ms = 0; setPlaying(!playing) })
+  playBtn.addEventListener('click', () => { if (!playing && ms >= data.length) ms = data.start; setPlaying(!playing) })
   scrub.addEventListener('input', () => { ms = Number(scrub.value); setPlaying(playing); changed() })
   root.querySelectorAll<HTMLElement>('[data-speed]').forEach(b => b.addEventListener('click', () => {
     speed = SPEEDS.includes(Number(b.dataset.speed)) ? Number(b.dataset.speed) : 1
@@ -331,7 +335,7 @@ async function start(root: HTMLElement) {
           panel.textContent = selected && st ? `${nick(selected)}: ${st.role ?? 'role unknown'}${st.was.length ? ' (was ' + st.was.join(', ') + ')' : ''}${st.team ? ', ' + st.team : ''}` : ''
         }
         scrub.value = String(ms)
-        timeEl.textContent = `${clock(ms)} / ${clock(data.length)}`
+        timeEl.textContent = `${stamp(ms)} / ${stamp(data.length)}`
       },
       hooks,
     })
@@ -1039,7 +1043,7 @@ async function start(root: HTMLElement) {
       persp.lookAt(tmp)
     } else lineOfSight.uHead.value.copy(lineOfSight.uCam.value) // no line of sight, nothing is faded
     scrub.value = String(ms)
-    setText(timeEl, `${clock(ms)} / ${clock(data.length)}`)
+    setText(timeEl, `${stamp(ms)} / ${stamp(data.length)}`)
     render()
   }
   function changed() { hooks.paint() }

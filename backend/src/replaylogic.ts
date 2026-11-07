@@ -6,6 +6,8 @@
 /** What the backend stores: tick times as differences, per player segments with first-value-then-differences. */
 export interface RawSegment { from: number, x: number[], y: number[], z: number[], a: number[], /** How the player moves, for each sample, as bits: 1 crouching, 2 in the air, 4 in water; absent in older tracks. */ s?: number[] }
 export interface RawTrack {
+  /** ms from the first sample to the round's start: the preparation recorded before it (RFC 12, 3.7); absent when there is none. */
+  begin?: number
   t: number[]
   players: { id: string, segments: RawSegment[] }[]
   deaths: { victim: string, attacker: string | null, t: number, vx: number, vy: number, vz: number, ax: number | null, ay: number | null, az: number | null, weapon: string | null }[]
@@ -30,8 +32,10 @@ export interface Segment { t: number[], x: number[], y: number[], z: number[], a
 export interface Decoded {
   /** Times in ms since the round began, for every tick. */
   times: number[]
-  /** The last tick's time: how long the track is. */
+  /** The last tick's time: how long the round is. Times are counted from the round's start, so the preparation before it has negative times. */
   length: number
+  /** The first sample's time: 0, or minus the preparation that was recorded. */
+  start: number
   players: Map<string, Segment[]>
   deaths: Death[]
   /** In time order; empty for a track without any. */
@@ -79,7 +83,8 @@ function correctDeathHeight(segments: Segment[], d: Death): void {
 
 /** Rebuilds absolute times and positions from the stored differences. */
 export function decodeTrack(raw: RawTrack): Decoded {
-  const times = cumulative(raw.t)
+  const begin = raw.begin ?? 0
+  const times = cumulative(raw.t).map(v => v - begin) // the round's start is 0; the preparation before it is negative
   const players = new Map<string, Segment[]>()
   for (const p of raw.players) {
     const segs: Segment[] = []
@@ -95,18 +100,18 @@ export function decodeTrack(raw: RawTrack): Decoded {
     players.set(p.id, segs)
   }
   const deaths: Death[] = raw.deaths.map(d => ({
-    victim: d.victim, attacker: d.attacker, t: d.t,
+    victim: d.victim, attacker: d.attacker, t: d.t - begin,
     at: [d.vx * UNITS, d.vy * UNITS, d.vz * UNITS],
     from: d.attacker !== null && d.ax !== null && d.ay !== null && d.az !== null ? [d.ax * UNITS, d.ay * UNITS, d.az * UNITS] : null,
     weapon: d.weapon,
   }))
   deaths.sort((a, b) => a.t - b.t)
   for (const d of deaths) correctDeathHeight(players.get(d.victim) ?? [], d)
-  const events = [...(raw.events ?? [])].sort((a, b) => a.t - b.t)
+  const events = (raw.events ?? []).map(e => ({ ...e, t: e.t - begin })).sort((a, b) => a.t - b.t)
   const bodies = new Map<string, BodyPoint[]>()
   for (const b of [...(raw.bodies ?? [])].sort((a, c) => a.t - c.t)) {
     const list = bodies.get(b.p) ?? []
-    list.push({ t: b.t, at: [b.x * UNITS, b.y * UNITS, b.z * UNITS], pitch: b.pt / 4, yaw: b.w / 4, roll: b.r / 4 })
+    list.push({ t: b.t - begin, at: [b.x * UNITS, b.y * UNITS, b.z * UNITS], pitch: b.pt / 4, yaw: b.w / 4, roll: b.r / 4 })
     bodies.set(b.p, list)
   }
   const things: Thing[] = (raw.things ?? []).map(q => {
@@ -117,7 +122,7 @@ export function decodeTrack(raw: RawTrack): Decoded {
       t, x: cumulative(q.x), y: cumulative(q.y), z: cumulative(q.z), pitch: cumulative(q.p).map(a => a / 4), yaw: cumulative(q.w).map(a => a / 4), roll: cumulative(q.r).map(a => a / 4),
     }
   })
-  return { times, length: times.length ? times[times.length - 1]! : 0, players, deaths, events, bodies, things }
+  return { times, length: times.length ? times[times.length - 1]! : 0, start: times.length ? times[0]! : 0, players, deaths, events, bodies, things }
 }
 
 export interface Pose { x: number, y: number, z: number, /** Heading in 256ths of a turn, 0-255. */ yaw: number }

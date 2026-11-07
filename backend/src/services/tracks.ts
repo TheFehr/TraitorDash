@@ -99,6 +99,8 @@ export interface Track {
   roundId: string
   map: string
   fingerprint: string | null
+  /** Milliseconds from the first sample to the round's start: the preparation before it (RFC 12, 3.7). 0 when the recording began with the round. */
+  begin?: number
   truncated: boolean
   degraded: boolean
   /** Tick times in ms since the round began, as differences. */
@@ -150,7 +152,9 @@ export function validateTrack(body: unknown, round: { roundId: string, map: stri
 
   const t = ints(b.t, 1, MAX_TICKS, 0, TICK_STEP_MAX)
   if (!t) return no(`t must be 1-${MAX_TICKS} whole numbers, each a step of at most ${TICK_STEP_MAX} ms`)
-  if (t.reduce((a, n) => a + n, 0) > TIME_MAX) return no('the track is longer than six hours')
+  const total = t.reduce((a, n) => a + n, 0)
+  if (total > TIME_MAX) return no('the track is longer than six hours')
+  if (b.begin !== undefined && (!isInt(b.begin) || b.begin < 0 || b.begin > total)) return no('begin must be a whole number of ms from 0 to the length of the track')
 
   if (!Array.isArray(b.players) || b.players.length === 0 || b.players.length > MAX_TRACK_PLAYERS) return no(`players must be 1-${MAX_TRACK_PLAYERS} entries`)
   const seen = new Set<string>()
@@ -355,7 +359,7 @@ export function validateTrack(body: unknown, round: { roundId: string, map: stri
   return { ok: true, track: {
     roundId: round.roundId, map: b.map, fingerprint: typeof b.fingerprint === 'string' ? b.fingerprint : null,
     truncated: b.truncated === true, degraded: b.degraded === true, t, players, deaths, events,
-    ...(bodies.length > 0 ? { bodies } : {}), ...(parts.length > 0 ? { parts } : {}), ...(things.length > 0 ? { things } : {}), ...(inputs.length > 0 ? { inputs } : {}),
+    ...(bodies.length > 0 ? { bodies } : {}), ...(typeof b.begin === 'number' && b.begin > 0 ? { begin: b.begin } : {}), ...(parts.length > 0 ? { parts } : {}), ...(things.length > 0 ? { things } : {}), ...(inputs.length > 0 ? { inputs } : {}),
   } }
 }
 

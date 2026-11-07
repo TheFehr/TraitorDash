@@ -311,4 +311,16 @@ describe('what a server keeps', () => {
       refused({ ...good(), things: 'x' }, /at most 256/)
     })
   })
+
+  test('begin is the preparation before the round: a whole number from 0 to the length of the track (RFC 12, 3.7)', () => {
+    const ok = validateTrack({ ...good(), begin: 400 }, round)
+    expect(ok.ok).toBe(true)
+    if (ok.ok) expect(ok.track.begin).toBe(400)
+    const none = validateTrack(good(), round)
+    if (none.ok) expect(none.track.begin).toBeUndefined()
+    refused({ ...good(), begin: -1 }, /begin/)
+    refused({ ...good(), begin: 1.5 }, /begin/)
+    refused({ ...good(), begin: 10_000_000 }, /begin/)
+    refused({ ...good(), begin: '5' }, /begin/)
+  })
 })

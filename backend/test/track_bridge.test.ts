@@ -475,7 +475,7 @@ describe('track.lua: caps', () => {
       SetCv("traitordash_track_interval_max", "1")
       PLAYERS = { SPEC }
       for i = 1, 127 do
-        local p = setmetatable({ sid = tostring(76561198100000000 + i) }, { __index = A })
+        local p = setmetatable({ sid = "7656119810" .. string.format("%07d", i) }, { __index = A })
         p.x, p.y, p.z, p.yaw, p.alive = i * 8, 0, 0, 0, true
         PLAYERS[#PLAYERS + 1] = p
       end
@@ -1170,5 +1170,81 @@ describe('track.lua: props, prop doors and weapons that move (RFC 20, 4.8)', () 
   test('the hooks still return nothing with props on', () => {
     const r = play(`${on} ${PROP} crate = Prop("prop_physics", "models/props_junk/barrel.mdl", 0, 0, 0) Begin() OUT = { v = FireValues("AcceptInput", crate, "open", A, A) + FireValues("PlayerUse", A, crate) }`)
     expect(r.out.v).toBe(0)
+  })
+})
+
+describe('track.lua: the preparation before the round (RFC 12, 3.7)', () => {
+  test('recording starts with the preparation; the round starts later, and the track says how long after the first sample', () => {
+    const r = play(`
+      Fire("TTTPrepareRound")
+      Run(3)
+      A.x = 900
+      Run(2)
+      Fire("TTTBeginRound")
+      Run(2)
+      Fire("TTTEndRound", WIN_TRAITOR); Accept(1)
+    `)
+    const t = trackOf(r)
+    expect(t.begin).toBe(1000) // five ticks of 200 ms before the round began
+    expect(t.t).toHaveLength(8) // the start of the preparation, five ticks, then two after the round began
+    expect(rebuild(segOf(t, A).x).slice(0, 6)).toEqual([100, 100, 100, 100, 113, 113]) // x 800 / 8 then 900 / 8 (rounded)
+    expect(t.round_id).toBeTruthy()
+    const players = new Set([A, B, C])
+    expect(validateTrack(t, { roundId: t.round_id, map: t.map, players }).ok).toBe(true)
+  })
+
+  test('a recording that begins with the round has no begin, and no extra tick is made when the round starts in the same moment', () => {
+    const r = play(`Begin() Run(2) Fire("TTTEndRound", WIN_TRAITOR) Accept(1)`)
+    const t = trackOf(r)
+    expect(t.begin).toBeUndefined()
+    expect(t.t).toHaveLength(3)
+  })
+
+  test('players of the preparation who are not in the round are not in the track, nor what refers to them', () => {
+    const r = play(`
+      CORPSE = nil
+      Fire("TTTPrepareRound")
+      Run(2)
+      C.alive = false -- Cara is a spectator when the round begins
+      Fire("TTTBeginRound")
+      Run(2)
+      Fire("PlayerSay", C, "hello", false)
+      Fire("TTTEndRound", WIN_TRAITOR); Accept(1)
+    `)
+    const t = trackOf(r)
+    expect(t.players.map((p: any) => p.id).sort()).toEqual([A, B].sort())
+    const check = validateTrack(t, { roundId: t.round_id, map: t.map, players: new Set([A, B]) })
+    expect(check.ok).toBe(true)
+  })
+
+  test('someone who comes in during the preparation is recorded from then on', () => {
+    const r = play(`
+      B.alive = false
+      Fire("TTTPrepareRound")
+      Run(2)
+      B.alive = true
+      Run(2)
+      Fire("TTTBeginRound")
+      Run(1)
+      Fire("TTTEndRound", WIN_TRAITOR); Accept(1)
+    `)
+    const t = trackOf(r)
+    const b = segOf(t, B)
+    expect(b.from).toBe(3) // from the first tick after they came in (ticks 0 to 2 were before)
+  })
+
+  test('traitordash_track_prep at 0 records from the round start as before; a stats switch of 0 starts nothing; a round that never starts is dropped after five minutes', () => {
+    const off = play(`SetCv("traitordash_track_prep", "0") Fire("TTTPrepareRound") OUT = { timers = Count() } Run(1) Fire("TTTBeginRound") Run(2) Fire("TTTEndRound", WIN_TRAITOR) Accept(1)`)
+    expect(off.out.timers).toBe(0)
+    expect(trackOf(off).begin).toBeUndefined()
+    const noStats = play(`SetCv("traitordash_stats", "0") Fire("TTTPrepareRound") OUT = { timers = Count() }`)
+    expect(noStats.out.timers).toBe(0)
+    const never = play(`Fire("TTTPrepareRound") Run(1) NOW = NOW + 400 Run(1) OUT = { timers = Count() }`)
+    expect(never.out.timers).toBe(0)
+  })
+
+  test('with tracking off nothing is started', () => {
+    const r = play(`Fire("TTTPrepareRound") OUT = { timers = Count() }`, false)
+    expect(r.out.timers).toBe(0)
   })
 })

@@ -624,3 +624,27 @@ describe('movedProps (RFC 20, 4.8)', () => {
     expect(movedProps([a, { ...a, e: 2 }], places).sort()).toEqual([0, 1]) // the second takes the next nearest, not the same place twice
   })
 })
+
+describe('the preparation before the round (RFC 12, 3.7)', () => {
+  test('times count from the round start: the preparation is negative, the length is the round, and everything shifts the same', () => {
+    const d = decodeTrack(raw({
+      begin: 400,
+      events: [{ t: 700, p: 'A', k: 'role', role: 'traitor', team: 'traitors' }],
+      bodies: [{ p: 'B', t: 1000, x: 1, y: 1, z: 1, pt: 0, w: 0, r: 0 }],
+    }))
+    expect(d.times).toEqual([-400, -200, 0, 200, 400, 600])
+    expect(d.start).toBe(-400)
+    expect(d.length).toBe(600) // the preparation is not part of the round's length
+    expect(d.players.get('A')![0]!.t[0]).toBe(-400)
+    expect(d.events[0]!.t).toBe(300)
+    expect(d.deaths.map(x => x.t).sort((a, b) => a - b)).toEqual([-300, 500]) // 100 and 900 before the shift
+    expect(d.bodies.get('B')![0]!.t).toBe(600)
+  })
+
+  test('a track without a preparation is as before', () => {
+    const d = decodeTrack(raw())
+    expect(d.start).toBe(0)
+    expect(d.times[0]).toBe(0)
+    expect(d.length).toBe(1000)
+  })
+})

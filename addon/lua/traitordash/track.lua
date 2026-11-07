@@ -32,6 +32,7 @@ local cv_min = CreateConVar("traitordash_track_interval_min", "0.2", {FCVAR_ARCH
 local cv_max = CreateConVar("traitordash_track_interval_max", "1", {FCVAR_ARCHIVE}, "Slowest sampling interval in seconds.")
 local cv_budget = CreateConVar("traitordash_track_budget_ms", "0.5", {FCVAR_ARCHIVE}, "What one sampling tick may cost on average, in milliseconds.")
 local cv_maxticks = CreateConVar("traitordash_track_max_ticks", "40000", {FCVAR_ARCHIVE}, "The most sampling ticks a round records; a longer round is cut and flagged truncated (1000 to 100000).")
+local cv_prep = CreateConVar("traitordash_track_prep", "1", {FCVAR_ARCHIVE}, "Also record the preparation before the round starts; the replay shows it before the round's time 0 (1/0; needs traitordash_track).")
 local cv_parts = CreateConVar("traitordash_track_parts", "0", {FCVAR_ARCHIVE}, "Also record doors, lifts and other parts that move, and who set them off (1/0; needs traitordash_track).")
 local cv_props = CreateConVar("traitordash_track_props", "0", {FCVAR_ARCHIVE}, "Also record props, prop doors and weapons on the floor that move (1/0; needs traitordash_track).")
 local cv_chat = CreateConVar("traitordash_track_chat", "0", {FCVAR_ARCHIVE}, "Also record what players write in chat, for the replay (1/0; needs traitordash_track). Everyone who may open a replay can read it.")
@@ -64,6 +65,7 @@ local MAX_BYTES = 8 * 1024 * 1024
 local SAFE_BYTES = 7 * 1024 * 1024 -- the size estimate at which recording stops, a margin below the cap
 local BYTES_PER_SAMPLE = 18
 local RING = 10                  -- ticks the average cost is taken over
+local PREP_MAX = 300             -- seconds a preparation may be recorded without the round starting; then it is dropped
 local STEP_MAX = 60000           -- the longest step between two ticks the backend accepts, ms
 
 local rec = nil                  -- the round being recorded, or nil
@@ -527,7 +529,28 @@ local function SampleBodies(r, now)
     end
 end
 
+local function AddPlayer(r, sid, ply)
+    if r.players[sid] then r.players[sid].ply = ply return end
+    if #r.order >= 128 then return end
+    r.order[#r.order + 1] = sid
+    r.players[sid] = { ply = ply, segs = {} }
+end
+
+-- During the preparation the round has no players yet (they are chosen when it begins), so everybody who takes part now is recorded, and a
+-- player who comes in later is added: the same ids as the round report (TraitorDash.PlayerId).
+local function AddPrepPlayers(r)
+    local id = TraitorDash.PlayerId
+    if not id then return end
+    for _, ply in ipairs(player.GetAll()) do
+        if IsValid(ply) and ply:IsTerror() then
+            local sid = id(ply)
+            if sid then AddPlayer(r, sid, ply) end
+        end
+    end
+end
+
 local function SampleAll(r, now, also)
+    if r.prep then AddPrepPlayers(r) end
     local idx = AddTick(r, now)
     for _, sid in ipairs(r.order) do
         local p = r.players[sid]
@@ -624,6 +647,12 @@ local function Tick()
         return
     end
     local t0 = SysTime()
+    if r.prep and CurTime() - r.t0 > PREP_MAX then
+        rec = nil
+        RemoveTimer()
+        Dbg("the round did not start within " .. PREP_MAX .. " s of the preparation; recording dropped")
+        return
+    end
 
     if #r.t >= MaxTicks() then r.truncated = true StopSampling(r, "the tick cap was reached") return end
     if EstimateBytes(r) > SAFE_BYTES then r.truncated = true StopSampling(r, "the size cap was reached") return end
@@ -656,25 +685,66 @@ local function SafeTick()
     end
 end
 
+local function NewRecording(roundId)
+    local mn = Settings()
+    return {
+        id = roundId, t0 = CurTime(), lastMs = 0, t = {}, order = {}, players = {}, deaths = {}, events = {},
+        samples = 0, ticks = 0, skipped = 0, interval = mn, minUsed = math.huge, maxUsed = 0,
+        ring = {}, costSum = 0, worst = 0, truncated = false, degraded = false, stopped = false,
+        keys = 0, inputs = {}, bodies = {}, kinds = {}, chat = cv_chat:GetBool(), begin = 0,
+    }
+end
+
+-- The preparation starts (TTTPrepareRound): recording begins now, so the replay can show the players before the round (RFC 12, 3.7). The round's
+-- start is noted when it begins (Track.Begin); the replay counts its time from there and shows the preparation as negative time.
+function Track.Prepare()
+    rec = nil
+    RemoveTimer()
+    if not cv_track:GetBool() or not cv_prep:GetBool() then return end
+    if noEndpointOn == game.GetMap() then return end
+    if TraitorDash.StatsOn and not TraitorDash.StatsOn() then return end -- no round will be reported, so nothing would adopt this recording
+    local r = NewRecording(nil)
+    r.prep = true
+    rec = r
+    AddPrepPlayers(r)
+    SampleAll(r, r.t0)
+    timer.Create(TIMER, r.interval, 0, SafeTick)
+    Dbg("recording the preparation")
+end
+
 -- The round begins. `players` is a list of { sid = SteamID64 (or the bot's test id), ply = the player }.
 function Track.Begin(roundId, players)
+    local prep = rec
+    if prep and prep.prep and not prep.stopped and cv_track:GetBool() then
+        -- the preparation was recorded: it becomes the start of this round's track, and the round starts now
+        local r = prep
+        r.id, r.prep, r.chat = roundId, false, cv_chat:GetBool()
+        r.begin = RoundMs(r, CurTime())
+        r.members = {}
+        for _, e in ipairs(players) do
+            r.members[e.sid] = true
+            AddPlayer(r, e.sid, e.ply)
+        end
+        if cv_parts:GetBool() then StartParts(r) end
+        if cv_props:GetBool() then StartThings(r) end
+        if RoundMs(r, CurTime()) > r.lastMs then
+            SampleAll(r, CurTime()) -- where everybody stands at the start
+        else -- a tick just took them: only the parts and props that were started now are looked at, in that tick
+            local tick = #r.t - 1
+            if r.partList then pcall(SampleParts, r, tick) end
+            if r.candList then pcall(SampleThings, r, tick) end
+        end
+        Dbg(string.format("recording round %s: %d players, the preparation before it %.1f s", roundId, #r.order, r.begin / 1000))
+        return
+    end
     rec = nil
     RemoveTimer()
     if not cv_track:GetBool() then return end
     if noEndpointOn == game.GetMap() then return end
 
     local mn = Settings()
-    local r = {
-        id = roundId, t0 = CurTime(), lastMs = 0, t = {}, order = {}, players = {}, deaths = {}, events = {},
-        samples = 0, ticks = 0, skipped = 0, interval = mn, minUsed = math.huge, maxUsed = 0,
-        ring = {}, costSum = 0, worst = 0, truncated = false, degraded = false, stopped = false,
-        keys = 0, inputs = {}, bodies = {}, kinds = {}, chat = cv_chat:GetBool(),
-    }
-    for _, e in ipairs(players) do
-        if #r.order >= 128 then break end
-        r.order[#r.order + 1] = e.sid
-        r.players[e.sid] = { ply = e.ply, segs = {} }
-    end
+    local r = NewRecording(roundId)
+    for _, e in ipairs(players) do AddPlayer(r, e.sid, e.ply) end
     rec = r
     if cv_parts:GetBool() then StartParts(r) end
     if cv_props:GetBool() then StartThings(r) end
@@ -851,14 +921,37 @@ function Track.Finish(roundId)
     if r.thingList then print(string.format("[TraitorDash:track] props: %d moved, %d keyframes", #r.thingList, r.thingKeys)) end
     if r.partList then print(string.format("[TraitorDash:track] parts: %d, %d keyframes, %d inputs", #r.partList, r.keys, #r.inputs)) end
 
+    -- Who took part in the round: the players recorded in the preparation who were not in it (spectators, those who left) are not sent.
+    local function In(sid) return sid ~= nil and r.players[sid] ~= nil and (r.members == nil or r.members[sid] == true) end
     local players = {}
     for _, sid in ipairs(r.order) do
         local p = r.players[sid]
-        if #p.segs > 0 then
+        if In(sid) and #p.segs > 0 then
             local segs = {}
             for i, c in ipairs(p.segs) do segs[i] = { from = c.from, x = c.x, y = c.y, z = c.z, a = c.a, s = c.s } end
             players[#players + 1] = { id = sid, segments = segs }
         end
+    end
+    local function Only(list, key, strip)
+        local out = {}
+        for _, e in ipairs(list) do
+            if In(e[key]) then
+                for _, f in ipairs(strip or {}) do if e[f] ~= nil and not In(e[f]) then e[f] = nil end end
+                out[#out + 1] = e
+            end
+        end
+        return out
+    end
+    local deaths = Only(r.deaths, "victim")
+    for _, d in ipairs(deaths) do
+        if d.attacker ~= nil and not In(d.attacker) then d.attacker, d.ax, d.ay, d.az = nil, nil, nil, nil end
+    end
+    local events = Only(r.events, "p", { "by", "of" })
+    local bodies = Only(r.bodies, "p")
+    local inputs = {}
+    for _, e in ipairs(r.inputs) do
+        if e.by ~= nil and not In(e.by) then e.by = nil end
+        inputs[#inputs + 1] = e
     end
     if #players == 0 or #r.t == 0 then return nil end
 
@@ -875,10 +968,10 @@ function Track.Finish(roundId)
     return {
         round_id = r.id, map = game.GetMap(), fingerprint = fingerprint,
         truncated = r.truncated, degraded = r.degraded,
-        t = r.t, players = players, deaths = r.deaths,
-        events = #r.events > 0 and r.events or nil,
-        bodies = #r.bodies > 0 and r.bodies or nil,
-        parts = PartsOut(r), things = ThingsOut(r), inputs = #r.inputs > 0 and r.inputs or nil,
+        t = r.t, players = players, deaths = deaths, begin = r.begin > 0 and r.begin or nil,
+        events = #events > 0 and events or nil,
+        bodies = #bodies > 0 and bodies or nil,
+        parts = PartsOut(r), things = ThingsOut(r), inputs = #inputs > 0 and inputs or nil,
     }
 end
 
@@ -921,6 +1014,8 @@ end
 hook.Add("TTTPrepareRound", "TraitorDash_TrackReset", function()
     rec = nil
     RemoveTimer()
+    local ok, err = pcall(Track.Prepare)
+    if not ok then print("[TraitorDash:track] could not start the preparation: " .. tostring(err)) end
 end)
 
 concommand.Add("traitordash_track_status", function(ply)
