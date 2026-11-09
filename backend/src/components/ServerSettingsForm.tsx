@@ -15,6 +15,9 @@ export interface BridgeSettingsState {
 }
 
 const GROUPS: BridgeSetting['group'][] = ['Round stats', 'Position tracking']
+/** The groups of the page in order, as the jump bar and the sections name them (2026-11-09). The ids of the last two were the anchors of their own before. */
+const IDS = { 'Round stats': 'round-stats', 'Position tracking': 'position-tracking', storage: 'replay-storage', maps: 'maps-cooldown' } as const
+const SECTIONS: NonNullable<BridgeSetting['section']>[] = ['Core', 'What else to record']
 /** The names the dashboard's own settings have in the form (never a name the game server knows). */
 const STORAGE = { count: 'storage_count', mb: 'storage_mb' } as const
 const COOLDOWN = 'maps_cooldown' // the dashboard's own switch for the vote's map cooldown (RFC 10, 4.5)
@@ -27,6 +30,14 @@ export const ServerSettingsForm = ({ serverId, state, storage, mapCooldown = tru
   for (const s of BRIDGE_SETTINGS) initial[s.name] = parse(s, state.values[s.name]?.value ?? s.default)
   const defaults: Record<string, boolean | number> = Object.fromEntries(BRIDGE_SETTINGS.map(s => [s.name, parse(s, s.default)]))
   const kinds = Object.fromEntries(BRIDGE_SETTINGS.map(s => [s.name, s.kind]))
+  // which group of the page each field belongs to, for the dot on the jump bar
+  const groupOf: Record<string, string> = Object.fromEntries(BRIDGE_SETTINGS.map(s => [s.name, IDS[s.group]]))
+  groupOf[STORAGE.count] = IDS.storage; groupOf[STORAGE.mb] = IDS.storage; groupOf[COOLDOWN] = IDS.maps
+  const jump = [
+    ...GROUPS.map(g => ({ id: IDS[g], title: g, count: BRIDGE_SETTINGS.filter(s => s.group === g).length })),
+    { id: IDS.storage, title: 'Replay storage', count: 2 },
+    { id: IDS.maps, title: 'Maps', count: 1 },
+  ]
   // the dashboard's own: the server's own limit as text (empty is the instance's default)
   const own = { [STORAGE.count]: storage.limits.own.count === null ? '' : String(storage.limits.own.count), [STORAGE.mb]: storage.limits.own.mb === null ? '' : String(storage.limits.own.mb) }
   Object.assign(initial, own, { [COOLDOWN]: mapCooldown })
@@ -39,6 +50,20 @@ export const ServerSettingsForm = ({ serverId, state, storage, mapCooldown = tru
     kinds: ${JSON.stringify(kinds)},
     url: ${JSON.stringify(`/api/bridge-settings/${serverId}`)},
     limitsUrl: ${JSON.stringify(`/api/track-limits/${serverId}`)},
+    groupOf: ${JSON.stringify(groupOf)},
+    active: ${JSON.stringify(IDS['Round stats'])},
+    groupDirty(id) { return this.dirtyKeys().some(k => this.groupOf[k] === id); },
+    init() {
+      const els = Array.from(document.querySelectorAll('[data-group]'));
+      if (!('IntersectionObserver' in window) || els.length === 0) return;
+      const seen = new Set();
+      const io = new IntersectionObserver(entries => {
+        for (const e of entries) { if (e.isIntersecting) seen.add(e.target.id); else seen.delete(e.target.id); }
+        const first = els.find(el => seen.has(el.id));
+        if (first) this.active = first.id;
+      }, { rootMargin: '-60px 0px -60% 0px' });
+      els.forEach(el => io.observe(el));
+    },
     sent: {},
     sentAt: 0,
     pending: ${JSON.stringify(state.pending)},
@@ -139,13 +164,29 @@ export const ServerSettingsForm = ({ serverId, state, storage, mapCooldown = tru
             : <span data-not-reported>The game server has not reported its settings. It needs the current bridge; once it connects they appear here and can be changed.</span>}
         </p>
 
-        <form id="settings-form" novalidate {...{ 'x-on:submit.prevent': 'save()' }}>
-          {GROUPS.map(group => (
-            <>
-              <h3>{group}</h3>
-              {BRIDGE_SETTINGS.filter(s => s.group === group).map(s => <SettingField s={s} reported={reported} saved={state.values[s.name]?.saved ?? null} running={state.values[s.name]?.value} />)}
-            </>
+        <nav class="jump" aria-label="Jump to a group of settings" data-jump>
+          <span class="lead">Jump to</span>
+          {jump.map(j => (
+            <a href={`#${j.id}`} data-jump-to={j.id} {...{ 'x-bind:aria-current': `active === '${j.id}' ? 'true' : 'false'` }}>
+              {j.title} <span>{j.count}</span>
+              <span class="dot" x-cloak="true" aria-label="unsaved changes" {...{ 'x-show': `groupDirty('${j.id}')` }}> ●</span>
+            </a>
           ))}
+        </nav>
+
+        <form id="settings-form" novalidate {...{ 'x-on:submit.prevent': 'save()' }}>
+          {GROUPS.map(group => {
+            const here = BRIDGE_SETTINGS.filter(s => s.group === group)
+            const field = (s: BridgeSetting) => <SettingField s={s} reported={reported} saved={state.values[s.name]?.saved ?? null} running={state.values[s.name]?.value} />
+            return (
+              <div id={IDS[group]} data-group>
+                <h3>{group} <small class="muted">{here.length} settings</small></h3>
+                {here.some(s => s.section)
+                  ? SECTIONS.map(sec => <><p class="sub">{sec}</p>{here.filter(s => s.section === sec).map(field)}</>)
+                  : here.map(field)}
+              </div>
+            )
+          })}
           <StorageFields storage={storage} />
           <MapCooldownField />
         </form>
@@ -202,7 +243,7 @@ const SettingField = ({ s, reported, saved, running }: { s: BridgeSetting, repor
 
 /** How much room the replays use and the two limits (RFC 12, 3.4): fields like the others, saved with them, applied at once. */
 const StorageFields = ({ storage: t }: { storage: TracksInfo }) => (
-  <div id="replay-storage" data-storage>
+  <div id="replay-storage" data-storage data-group>
     <h3>Replay storage</h3>
     <p class="muted" data-tracks-usage>
       {t.count} {t.count === 1 ? 'track' : 'tracks'}, {(t.bytes / 1048576).toFixed(1)} MB used of {t.limits.count} tracks / {t.limits.mb} MB
@@ -234,7 +275,7 @@ const StorageField = ({ name, label, unit, shown, ceiling, explain }: { name: st
 
 /** The dashboard's own switch for the vote's map cooldown (RFC 10, 4.5): a switch like the others, saved with them, applied at once. */
 const MapCooldownField = () => (
-  <div id="maps-cooldown" data-maps-cooldown>
+  <div id="maps-cooldown" data-maps-cooldown data-group>
     <h3>Maps</h3>
     <div class="fld row" data-setting={COOLDOWN}>
       <div>

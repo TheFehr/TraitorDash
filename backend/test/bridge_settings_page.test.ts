@@ -82,6 +82,30 @@ describe('the page', () => {
     const t = await (await get(`/servers/${server.id}`, ADMIN)).text()
     expect(t).toContain(`href="/servers/${server.id}/settings"`); expect(t).toContain('data-server-settings')
   })
+
+  test('has a jump bar to each group, with the count, and every link leads to a section that is on the page (2026-11-09)', async () => {
+    const t = await (await get(`/servers/${server.id}/settings`, ADMIN)).text()
+    const bar = t.slice(t.indexOf('data-jump'), t.indexOf('id="settings-form"'))
+    const links = [...bar.matchAll(/data-jump-to="([a-z-]+)"/g)].map(m => m[1])
+    expect(links).toEqual(['round-stats', 'position-tracking', 'replay-storage', 'maps-cooldown'])
+    for (const id of links) expect(t).toContain(`id="${id}"`)
+    expect((t.match(/<div[^>]* data-group/g) ?? []).length).toBe(4)
+    expect(bar).toContain(`Round stats <span>${BRIDGE_SETTINGS.filter(s => s.group === 'Round stats').length}</span>`)
+    expect(bar).toContain(`Position tracking <span>${BRIDGE_SETTINGS.filter(s => s.group === 'Position tracking').length}</span>`)
+    expect(t).toContain('&quot;traitordash_track_prep&quot;:&quot;position-tracking&quot;'); expect(t).toContain('&quot;maps_cooldown&quot;:&quot;maps-cooldown&quot;') // which group a changed field marks
+  })
+
+  test('Position tracking is split in two: the sampling, then what else is recorded', async () => {
+    const t = await (await get(`/servers/${server.id}/settings`, ADMIN)).text()
+    const at = (x: string) => t.indexOf(x)
+    expect(at('>Core<')).toBeGreaterThan(at('id="position-tracking"'))
+    expect(at('>What else to record<')).toBeGreaterThan(at('data-setting="traitordash_track_max_ticks"'))
+    for (const n of ['traitordash_track', 'traitordash_track_interval_min', 'traitordash_track_budget_ms']) expect(at(`data-setting="${n}"`)).toBeLessThan(at('>What else to record<'))
+    for (const n of ['traitordash_track_prep', 'traitordash_track_parts', 'traitordash_track_props', 'traitordash_track_chat']) expect(at(`data-setting="${n}"`)).toBeGreaterThan(at('>What else to record<'))
+    expect(at('>Core<')).toBeLessThan(at('>What else to record<'))
+    expect(t.indexOf('>Core<', at('>Core<') + 1)).toBe(-1) // Round stats has no split
+  })
+
 })
 
 describe('the state the page asks for while it waits', () => {

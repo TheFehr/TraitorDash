@@ -11,6 +11,8 @@ export interface BridgeSetting {
   max?: number
   unit?: string
   group: 'Round stats' | 'Position tracking'
+  /** A group with many settings is split in two on the page (2026-11-09); absent in a group that is not. */
+  section?: 'Core' | 'What else to record'
   label: string
   /** What it does and what it costs, in plain words. */
   explain: string
@@ -28,31 +30,31 @@ export const BRIDGE_SETTINGS: BridgeSetting[] = [
   { name: 'traitordash_stats_bots', kind: 'bool', default: '0', group: 'Round stats', applies: 'next round',
     label: 'Record rounds with bots',
     explain: 'Rounds in which bots played are normally left out of the statistics. On records them too, which is useful for testing and clutters the history on a live server.' },
-  { name: 'traitordash_track', kind: 'bool', default: '0', group: 'Position tracking', applies: 'next round',
+  { name: 'traitordash_track', section: 'Core', kind: 'bool', default: '0', group: 'Position tracking', applies: 'next round',
     label: 'Record positions for the replay',
     explain: 'Samples where every player is, aims and shoots, which is what the round replay is made of. Every round with tracking takes space in the dashboard database, and each sample takes the game server a little time. Off means rounds have no replay.' },
-  { name: 'traitordash_track_interval_min', kind: 'number', default: '0.2', min: 0.05, max: 2, unit: 's', group: 'Position tracking', applies: 'at once',
+  { name: 'traitordash_track_interval_min', section: 'Core', kind: 'number', default: '0.2', min: 0.05, max: 2, unit: 's', group: 'Position tracking', applies: 'at once',
     label: 'Shortest time between samples',
     explain: 'How often positions are sampled while players move. A lower number makes a smoother replay and a bigger track, and costs the game server a little more at each sample. The default (0.2 s) is five samples a second; 0.1 s is ten and 0.05 s is twenty (a round is then cut off after 33 minutes).' },
-  { name: 'traitordash_track_interval_max', kind: 'number', default: '1', min: 0.2, max: 5, unit: 's', group: 'Position tracking', applies: 'at once',
+  { name: 'traitordash_track_interval_max', section: 'Core', kind: 'number', default: '1', min: 0.2, max: 5, unit: 's', group: 'Position tracking', applies: 'at once',
     label: 'Longest time between samples',
     explain: 'When nothing much happens (players standing still) the time between samples grows up to this. Keep it at or above the shortest time. A lower number makes a slightly bigger track.' },
-  { name: 'traitordash_track_budget_ms', kind: 'number', default: '0.5', min: 0.05, max: 5, unit: 'ms', group: 'Position tracking', applies: 'at once',
+  { name: 'traitordash_track_budget_ms', section: 'Core', kind: 'number', default: '0.5', min: 0.05, max: 5, unit: 'ms', group: 'Position tracking', applies: 'at once',
     label: 'Time the sampling may take',
     explain: 'How long one sample may take on the game server before the sampling slows itself down. A higher number lets it keep a fast rate on a busy server and costs frame time; a lower one protects the frame rate and may thin out the replay.' },
-  { name: 'traitordash_track_max_ticks', kind: 'int', default: '40000', min: 1000, max: 100000, unit: 'ticks', group: 'Position tracking', applies: 'at once',
+  { name: 'traitordash_track_max_ticks', section: 'Core', kind: 'int', default: '40000', min: 1000, max: 100000, unit: 'ticks', group: 'Position tracking', applies: 'at once',
     label: 'Most ticks a round records',
     explain: 'A limit so that a round that never ends does not record for ever: a longer round is cut there and its replay says so. At 0.2 s between samples 40,000 ticks is about two hours and a half, at 0.05 s it is 33 minutes. A higher number allows longer replays and bigger tracks.' },
-  { name: 'traitordash_track_prep', kind: 'bool', default: '1', group: 'Position tracking', applies: 'next round',
+  { name: 'traitordash_track_prep', section: 'What else to record', kind: 'bool', default: '1', group: 'Position tracking', applies: 'next round',
     label: 'Record the preparation before the round',
     explain: 'Starts recording when the preparation begins, so the replay shows the players walking to their places before the round starts. The round\'s own time still starts at 0 and its length is unchanged; the preparation shows as negative time before it. Costs a few more samples per round (a preparation of 30 seconds is about 150 samples per player). Needs position tracking.' },
-  { name: 'traitordash_track_parts', kind: 'bool', default: '0', group: 'Position tracking', applies: 'next round',
+  { name: 'traitordash_track_parts', section: 'What else to record', kind: 'bool', default: '0', group: 'Position tracking', applies: 'next round',
     label: 'Record doors, lifts and traps',
     explain: 'Also records where the parts of the map that move are (doors, lifts, a building that falls) and who opened or set off what, so the replay can show it. Needs position tracking. It adds a few kilobytes to a round (under 20 on a typical one) and costs the game server a look at each part every second, and at every sample while it moves. Off means the replay shows them standing still.' },
-  { name: 'traitordash_track_props', kind: 'bool', default: '0', group: 'Position tracking', applies: 'next round',
+  { name: 'traitordash_track_props', section: 'What else to record', kind: 'bool', default: '0', group: 'Position tracking', applies: 'next round',
     label: 'Record props, prop doors and dropped weapons that move',
     explain: 'Also records the crates, barrels, prop doors and weapons on the floor that move during the round (a crate someone carried, a door someone opened, a weapon that was dropped), so the replay can show them as boxes. Things that stay where they are cost nothing in the track. Needs position tracking. It costs the game server a look at the props of the map every fifth sample, and at every sample for those that are moving.' },
-  { name: 'traitordash_track_chat', kind: 'bool', default: '0', group: 'Position tracking', applies: 'next round',
+  { name: 'traitordash_track_chat', section: 'What else to record', kind: 'bool', default: '0', group: 'Position tracking', applies: 'next round',
     label: 'Record what players write in chat',
     explain: 'Also records every chat line (to everybody, to a team and among the dead) with the round, so the replay can show it. Anyone who is signed in to the dashboard can read it after the round, team chat and dead chat included, so tell your players. Off by default. Needs position tracking.' },
 ]
