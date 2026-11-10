@@ -43,6 +43,17 @@ export const VoicePage = ({ ctx, server, enabled }: VoicePageProps) => {
             <p class="muted" style="margin-top:.35rem">Holding a key to talk needs a small desktop app (a browser tab cannot hear a key while the game has the focus); it comes later.</p>
           </div>
 
+          <div>
+            <div class="cap">Noise filter</div>
+            <div class="row" role="group" aria-label="Noise filter">
+              <button type="button" data-filter="on" aria-pressed="true" class="tog">On</button>
+              <button type="button" data-filter="off" aria-pressed="false" class="tog">Off</button>
+              <button type="button" data-monitor aria-pressed="false" class="tog">Hear myself</button>
+              <span data-filter-note class="muted"></span>
+            </div>
+            <p class="muted" style="margin-top:.35rem">The filter (RNNoise) takes fans, keys and other noise out of your voice before it is sent. "Hear myself" plays your microphone back to you as the others hear it: use headphones, or it will howl.</p>
+          </div>
+
           <div data-vad-box>
             <div class="cap">Level and sensitivity</div>
             <div class="row">

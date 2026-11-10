@@ -318,95 +318,182 @@ describe('the page\'s code', () => {
     expect(src.lastIndexOf('function start(')).toBeLessThan(call)
   })
 
-  // The page's code is bundled the way the build bundles it and run against a stand-in page; livekit-client (it needs a real browser)
-  // is replaced by a small fake whose microphone behaves as LiveKit's does: mute() switches the track off, a copy made then is off too.
+  // The page's code is bundled the way the build bundles it and run against a stand-in page. livekit-client and the noise filter (both need
+  // a real browser) are replaced by small fakes. The fake microphone behaves as LiveKit's does: mute() switches the track off, and a copy
+  // made then is off too.
   const LIVEKIT_FAKE = `
     export const RoomEvent = { TrackSubscribed: 'ts', TrackUnsubscribed: 'tu', ParticipantConnected: 'pc', ParticipantDisconnected: 'pd', Reconnecting: 'rc', Reconnected: 'rd', Disconnected: 'dc' }
     export class Room {
-      constructor() { this.remoteParticipants = new Map(); this.localParticipant = { publishTrack: async (t) => { globalThis.__log.push('published') } } }
+      constructor() { this.remoteParticipants = new Map(); this.localParticipant = { publishTrack: async (t) => { globalThis.__log.push('published ' + (t === globalThis.__mic ? 'raw' : 'filtered')) } } }
       on() {} async connect(url, token, opts) { globalThis.__log.push('connect autoSubscribe=' + opts.autoSubscribe) } async startAudio() {} async disconnect() {}
     }
+    export class LocalAudioTrack {
+      constructor(t) { this.mediaStreamTrack = t }
+      async mute() { this.mediaStreamTrack.enabled = false; globalThis.__log.push('mute') }
+      async unmute() { this.mediaStreamTrack.enabled = true; globalThis.__log.push('unmute') }
+      stop() {}
+    }
     export const createLocalAudioTrack = async () => globalThis.__mic
+  `
+  const RNNOISE_FAKE = `
+    export const loadRnnoise = async (urls) => { globalThis.__log.push('load ' + urls.url + ' ' + urls.simdUrl); if (globalThis.__rnnoiseFails) throw new Error('no wasm'); return new ArrayBuffer(1) }
+    export class RnnoiseWorkletNode { constructor(ctx, o) { globalThis.__log.push('rnnoise maxChannels=' + o.maxChannels); this.connect = () => {} } }
   `
   async function load() {
     const built = await Bun.build({
       entrypoints: [new URL('../src/voice.ts', import.meta.url).pathname], format: 'iife',
-      plugins: [{ name: 'stub-livekit', setup(b) {
+      plugins: [{ name: 'stubs', setup(b) {
         b.onResolve({ filter: /^livekit-client$/ }, () => ({ path: 'livekit-client', namespace: 'stub' }))
-        b.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({ loader: 'js', contents: LIVEKIT_FAKE }))
+        b.onResolve({ filter: /^@sapphi-red\/web-noise-suppressor$/ }, () => ({ path: 'rnnoise', namespace: 'stub' }))
+        b.onLoad({ filter: /.*/, namespace: 'stub' }, (a) => ({ loader: 'js', contents: a.path === 'rnnoise' ? RNNOISE_FAKE : LIVEKIT_FAKE }))
       } }],
     })
     expect(built.success).toBe(true)
     const code = await built.outputs[0]!.text()
 
     const listeners: Record<string, Record<string, Function>> = {}
+    const attrs: Record<string, Record<string, string>> = {}
     const el = (name: string, extra: Record<string, unknown> = {}) => {
-      listeners[name] = {}
-      return { style: {} as Record<string, string>, dataset: {}, classList: { toggle() {}, remove() {} }, textContent: '', value: '12', disabled: false,
-        appendChild() {}, addEventListener(t: string, fn: Function) { listeners[name]![t] = fn }, setAttribute() {}, getAttribute: () => null, ...extra }
+      listeners[name] = {}; attrs[name] = {}
+      return { style: {} as Record<string, string>, dataset: {} as Record<string, string>, classList: { toggle() {}, remove() {} }, textContent: '', value: '12', disabled: false,
+        appendChild() {}, addEventListener(t: string, fn: Function) { listeners[name]![t] = fn },
+        setAttribute(k: string, v: string) { attrs[name]![k] = v }, getAttribute: (k: string) => attrs[name]![k] ?? null, ...extra }
     }
     const parts: Record<string, any> = {}
-    for (const sel of ['[data-join]', '[data-status]', '[data-level]', '[data-marker]', '[data-speaking]', '[data-threshold]', '[data-count]', '[data-audio]', '[data-vad-box]', '[data-ptt-box]', '[data-ptt-key]']) parts[sel] = el(sel)
+    for (const sel of ['[data-join]', '[data-status]', '[data-level]', '[data-marker]', '[data-speaking]', '[data-threshold]', '[data-count]', '[data-audio]', '[data-vad-box]', '[data-ptt-box]', '[data-ptt-key]', '[data-monitor]', '[data-filter-note]']) parts[sel] = el(sel)
     const modes = [el('vad', { dataset: { mode: 'vad' } }), el('ptt', { dataset: { mode: 'ptt' }, disabled: true })]
-    const root = { dataset: { token: '/servers/x/voice/token' }, querySelector: (s: string) => parts[s], querySelectorAll: () => modes }
+    const filters = [el('on', { dataset: { filter: 'on' } }), el('off', { dataset: { filter: 'off' } })]
+    attrs['on']!['aria-pressed'] = 'true'; attrs['off']!['aria-pressed'] = 'false'
+    const root = { dataset: { token: '/servers/x/voice/token' }, querySelector: (s: string) => parts[s],
+      querySelectorAll: (s: string) => (s.includes('data-filter') ? filters : modes) }
     const timers: Function[] = []
     const win = { addEventListener() {}, setInterval: (fn: Function) => { timers.push(fn); return timers.length }, clearInterval() {} }
     const store = new Map<string, string>([['mode', 'ptt']]) // a saved choice of the disabled mode
     const local = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v) } }
-    return { code, parts, modes, listeners, win, local, timers }
+    const run = (extra: Record<string, unknown> = {}) => {
+      const names = ['document', 'window', 'localStorage', ...Object.keys(extra)]
+      return new Function(...names, code)({ querySelector: () => root }, win, local, ...Object.values(extra))
+    }
+    return { run, parts, modes, filters, listeners, attrs, timers, local, store }
   }
 
   test('runs as the browser runs it: bundled, against a page with its parts, it starts without an error and wires the buttons', async () => {
     const page = await load()
-    expect(() => new Function('document', 'window', 'localStorage', page.code)({ querySelector: () => ({ dataset: { token: 't' }, querySelector: (s: string) => page.parts[s], querySelectorAll: () => page.modes }) }, page.win, page.local)).not.toThrow()
+    expect(() => page.run()).not.toThrow()
     expect(page.listeners['[data-join]']!.click).toBeInstanceOf(Function)
     expect(page.listeners['[data-threshold]']!.input).toBeInstanceOf(Function)
     expect(page.parts['[data-marker]'].style.left).toBe('12%') // the line where the microphone opens is placed
     // the disabled mode is not taken from a saved choice: nothing was switched to it
-    const pressed: string[] = []
-    page.modes.forEach(m => { m.setAttribute = ((_: string, v: string) => pressed.push(`${(m.dataset as any).mode}=${v}`)) as any })
     page.listeners['vad']!.click!()
-    expect(pressed).toEqual(['vad=true', 'ptt=false'])
+    expect([page.modes[0]!.getAttribute('aria-pressed'), page.modes[1]!.getAttribute('aria-pressed')]).toEqual(['true', 'false'])
   })
 
-  test('a join: the audio context is made in the click, the meter listens to a copy that stays on, and speaking opens the microphone', async () => {
-    const page = await load()
+  /** Everything a join needs: the fake microphone, audio context, fetch; returns what the test looks at. */
+  function setup(opts: { rnnoiseFails?: boolean } = {}) {
     const log: string[] = []
-    let contexts = 0
     const g = globalThis as any
-    g.__log = log
-    // the published track, as LiveKit leaves it after mute(): switched off; a copy made from it starts off too
-    const original: any = { enabled: true, clone() { const c: any = { enabled: this.enabled, stopped: false, stop() { this.stopped = true } }; original.copy = c; return c }, stop() {} }
-    g.__mic = { mediaStreamTrack: original, async mute() { original.enabled = false; log.push('mute') }, async unmute() { original.enabled = true; log.push('unmute') }, stop() {} }
+    g.__log = log; g.__rnnoiseFails = !!opts.rnnoiseFails
+    const track = (enabled: boolean) => ({ enabled, copy: null as any, stopped: false, stop() { this.stopped = true },
+      clone() { const c = track(this.enabled); this.copy = c; return c } })
+    const rawTrack = track(true)
+    g.__mic = { mediaStreamTrack: rawTrack, async mute() { rawTrack.enabled = false; log.push('mute') }, async unmute() { rawTrack.enabled = true; log.push('unmute') }, stop() { log.push('raw stopped') } }
+    const outTrack = track(true) // the filtered output: what is sent
+    const gains: { gain: { value: number } }[] = []
+    const gate = { contexts: 0, rate: 0 }
     let sourceTracks: any[] = []
     class FakeContext {
-      constructor() { contexts++ }
+      destination = {}
+      audioWorklet = { addModule: async (u: string) => { log.push('worklet ' + u) } }
+      constructor(o: { sampleRate: number }) { gate.contexts++; gate.rate = o.sampleRate }
       async resume() { log.push('resume') } async close() {}
+      createGain() { const n = { gain: { value: 1 }, connect() {} }; gains.push(n); return n }
+      createMediaStreamDestination() { return { stream: { getAudioTracks: () => [outTrack] } } }
       createAnalyser() { return { fftSize: 0, getFloatTimeDomainData: (buf: Float32Array) => buf.fill(sourceTracks.length && sourceTracks.every(t => t.enabled) ? 0.1 : 0) } }
       createMediaStreamSource(stream: any) { sourceTracks = stream.tracks; return { connect() {} } }
     }
     class FakeStream { constructor(public tracks: any[]) {} }
     const fetchFake = async () => ({ ok: true, json: async () => ({ url: 'wss://lk.test', token: 'tok' }) })
+    return { log, g, rawTrack, outTrack, gains, gate, globals: { AudioContext: FakeContext, MediaStream: FakeStream, fetch: fetchFake }, done() { delete g.__log; delete g.__mic; delete g.__rnnoiseFails } }
+  }
 
-    new Function('document', 'window', 'localStorage', 'AudioContext', 'MediaStream', 'fetch', page.code)(
-      { querySelector: () => ({ dataset: { token: '/t' }, querySelector: (s: string) => page.parts[s], querySelectorAll: () => page.modes }) },
-      page.win, page.local, FakeContext, FakeStream, fetchFake)
-
+  test('a join: the context is made in the click at 48 kHz, the microphone goes through the filter, the meter listens to a copy that stays on, and speaking opens the microphone', async () => {
+    const page = await load()
+    const t = setup()
+    page.run(t.globals)
     page.listeners['[data-join]']!.click!()
-    expect(contexts).toBe(1) // made synchronously in the click, before any await: a context made later starts suspended
+    expect(t.gate).toEqual({ contexts: 1, rate: 48000 }) // made synchronously in the click, before any await: a context made later starts suspended
     await new Promise(r => setTimeout(r, 30))
-    expect(log).toContain('connect autoSubscribe=false') // the dashboard decides who is heard, not the page
-    expect(log).toContain('published')
-    expect(log).toContain('resume')
+    expect(t.log).toContain('connect autoSubscribe=false') // the dashboard decides who is heard, not the page
+    expect(t.log).toContain('load /public/rnnoise/rnnoise.wasm /public/rnnoise/rnnoise_simd.wasm')
+    expect(t.log).toContain('worklet /public/rnnoise/worklet.js')
+    expect(t.log).toContain('published filtered') // what is sent is the filter's output, not the raw microphone
     expect(page.parts['[data-status]'].textContent).toBe('Connected.')
-    expect(original.enabled).toBe(false) // closed until the player speaks
-    expect(original.copy.enabled).toBe(true) // but what the meter listens to is on
+    expect(page.parts['[data-filter-note]'].textContent).toBe('')
+    expect(t.outTrack.enabled).toBe(false) // closed until the player speaks
+    expect(t.outTrack.copy.enabled).toBe(true) // but what the meter listens to is on
 
-    expect(page.timers).toHaveLength(1)
     page.timers[0]!() // one look of the meter: speech at level 40, the threshold is 12
     expect(parseFloat(page.parts['[data-level]'].style.width)).toBeCloseTo(40, 3)
-    expect(log.at(-1)).toBe('unmute')
-    delete g.__log; delete g.__mic
+    expect(t.log.at(-1)).toBe('unmute')
+    expect(t.outTrack.enabled).toBe(true)
+    t.done()
+  })
+
+  test('the filter switch and "Hear myself" change the gains at once, and "Hear myself" starts off', async () => {
+    const page = await load()
+    const t = setup()
+    page.run(t.globals)
+    page.listeners['[data-join]']!.click!()
+    await new Promise(r => setTimeout(r, 30))
+    const [dry, wet, monitor] = t.gains.map(n => n.gain)
+    expect([dry!.value, wet!.value, monitor!.value]).toEqual([0, 1, 0]) // filter on, monitor off
+    page.listeners['off']!.click!()
+    expect([dry!.value, wet!.value]).toEqual([1, 0])
+    expect(page.store.get('td_voice_filter')).toBe('off') // remembered
+    page.listeners['on']!.click!()
+    expect([dry!.value, wet!.value]).toEqual([0, 1])
+    page.listeners['[data-monitor]']!.click!()
+    expect(monitor!.value).toBe(1)
+    expect(page.attrs['[data-monitor]']!['aria-pressed']).toBe('true')
+    page.listeners['[data-monitor]']!.click!()
+    expect(monitor!.value).toBe(0)
+    t.done()
+  })
+
+  test('when the filter cannot start the microphone is sent as it is, the join still works, and the page says so', async () => {
+    const page = await load()
+    const t = setup({ rnnoiseFails: true })
+    const warn = console.warn; console.warn = () => {}
+    try {
+      page.run(t.globals)
+      page.listeners['[data-join]']!.click!()
+      await new Promise(r => setTimeout(r, 30))
+    } finally { console.warn = warn }
+    expect(t.log).toContain('published raw')
+    expect(page.parts['[data-status]'].textContent).toBe('Connected.')
+    expect(page.parts['[data-filter-note]'].textContent).toContain('could not start')
+    expect(page.filters.every(f => f.disabled)).toBe(true)
+    // the meter and the detection still work, on a copy of the raw microphone
+    page.timers[0]!()
+    expect(parseFloat(page.parts['[data-level]'].style.width)).toBeCloseTo(40, 3)
+    t.done()
+  })
+})
+
+describe('the noise filter files', () => {
+  test('the build copies the worklet and the two WebAssembly files to where the page asks for them, and they exist', async () => {
+    const root = new URL('..', import.meta.url).pathname
+    const pkg = JSON.parse(await Bun.file(root + 'package.json').text())
+    const copy: string = pkg.scripts['copy:rnnoise']
+    expect(pkg.scripts['build:js']).toContain('bun run copy:rnnoise')
+    const src = await Bun.file(root + 'src/voice.ts').text()
+    for (const [from, to] of [['dist/rnnoise/workletProcessor.js', 'worklet.js'], ['dist/rnnoise.wasm', 'rnnoise.wasm'], ['dist/rnnoise_simd.wasm', 'rnnoise_simd.wasm']] as const) {
+      expect(copy).toContain(from)
+      expect(src).toContain(`/public/rnnoise/${to}`) // the address the page loads is the name the build gives
+      expect(await Bun.file(root + 'node_modules/@sapphi-red/web-noise-suppressor/' + from).exists()).toBe(true)
+    }
+    expect(copy).toContain('LICENSE') // MIT, and the licence of RNNoise is in the package's: it goes along
+    expect(await Bun.file(root + '.gitignore').text()).toContain('src/public/rnnoise/')
   })
 })
 
@@ -476,6 +563,7 @@ describe('the routes', () => {
     expect(t).not.toContain('type="radio"'); expect(t).not.toContain('<meter')
     expect(t).not.toContain(CFG.secret); expect(t).not.toContain(CFG.key)
     expect(res.headers.get('content-security-policy')).toContain("connect-src 'self' wss://lk.test https://lk.test;")
+    expect(res.headers.get('content-security-policy')).toContain("script-src 'self' 'wasm-unsafe-eval';") // the noise filter (WebAssembly)
     expect((await get('/servers/nope/voice', ADMIN)).status).toBe(302)
   })
 

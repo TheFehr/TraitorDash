@@ -1,4 +1,5 @@
-import { Room, RoomEvent, createLocalAudioTrack, type LocalAudioTrack, type RemoteTrack } from 'livekit-client'
+import { Room, RoomEvent, LocalAudioTrack, createLocalAudioTrack, type RemoteTrack } from 'livekit-client'
+import { loadRnnoise, RnnoiseWorkletNode } from '@sapphi-red/web-noise-suppressor'
 
 // The voice page's code (RFC 27). It joins the server's room with a token from the dashboard, publishes the microphone, and plays
 // what the media server sends it. It subscribes to nothing itself (autoSubscribe off): the dashboard decides, from the round, who
@@ -7,6 +8,29 @@ import { Room, RoomEvent, createLocalAudioTrack, type LocalAudioTrack, type Remo
 const store = {
   get(k: string): string | null { try { return localStorage.getItem('td_voice_' + k) } catch { return null } },
   set(k: string, v: string) { try { localStorage.setItem('td_voice_' + k, v) } catch { /* private window: the choice is not kept */ } },
+}
+
+interface Chain { out: MediaStreamTrack, setFilter(on: boolean): void, setMonitor(on: boolean): void }
+
+// The microphone through the noise filter (RNNoise, in the browser; its files are copied to /public/rnnoise by the build). `dry` and
+// `wet` are two ways to the same output and the player's choice opens one of them; the filter runs either way, so switching is at once.
+// `monitor` plays the output to the player, to judge the filter on their own (one account cannot join twice). The filter needs 48 kHz.
+async function buildChain(c: AudioContext, raw: MediaStreamTrack): Promise<Chain> {
+  const src = c.createMediaStreamSource(new MediaStream([raw]))
+  const dest = c.createMediaStreamDestination()
+  const dry = c.createGain(), wet = c.createGain(), monitor = c.createGain()
+  monitor.gain.value = 0
+  const wasmBinary = await loadRnnoise({ url: '/public/rnnoise/rnnoise.wasm', simdUrl: '/public/rnnoise/rnnoise_simd.wasm' })
+  await c.audioWorklet.addModule('/public/rnnoise/worklet.js')
+  const filter = new RnnoiseWorkletNode(c, { maxChannels: 2, wasmBinary })
+  src.connect(dry); dry.connect(dest); dry.connect(monitor)
+  src.connect(filter); filter.connect(wet); wet.connect(dest); wet.connect(monitor)
+  monitor.connect(c.destination)
+  return {
+    out: dest.stream.getAudioTracks()[0]!,
+    setFilter(on) { wet.gain.value = on ? 1 : 0; dry.gain.value = on ? 0 : 1 },
+    setMonitor(on) { monitor.gain.value = on ? 1 : 0 },
+  }
 }
 
 function start(root: HTMLElement) {
@@ -23,11 +47,16 @@ function start(root: HTMLElement) {
   const pttBox = $('[data-ptt-box]')
   const pttKey = $<HTMLInputElement>('[data-ptt-key]')
   const modes = Array.from(root.querySelectorAll<HTMLButtonElement>('[data-mode]'))
+  const filters = Array.from(root.querySelectorAll<HTMLButtonElement>('[data-filter]'))
+  const monitorBtn = $<HTMLButtonElement>('[data-monitor]')
+  const filterNote = $('[data-filter-note]')
 
   let room: Room | null = null
   let mic: LocalAudioTrack | null = null
   let ctx: AudioContext | null = null
   let tap: MediaStreamTrack | null = null
+  let rawMic: LocalAudioTrack | null = null // what the microphone gives; `mic` is what is sent (the same, or the filtered output)
+  let chain: Chain | null = null
   let timer = 0
   let open = false
   let heldUntil = 0
@@ -35,6 +64,9 @@ function start(root: HTMLElement) {
 
   const mode = () => (modes.find(m => m.getAttribute('aria-pressed') === 'true')?.dataset.mode === 'ptt' ? 'ptt' : 'vad')
   const pick = (which: string) => modes.forEach(m => m.setAttribute('aria-pressed', String(m.dataset.mode === which)))
+  const filterOn = () => filters.find(f => f.getAttribute('aria-pressed') === 'true')?.dataset.filter !== 'off'
+  const pickFilter = (which: string) => filters.forEach(f => f.setAttribute('aria-pressed', String(f.dataset.filter === which)))
+  const monitorOn = () => monitorBtn.getAttribute('aria-pressed') === 'true'
   const showMarker = () => { marker.style.left = threshold.value + '%' }
   const showMode = () => { vadBox.style.display = mode() === 'vad' ? '' : 'none'; pttBox.style.display = mode() === 'ptt' ? '' : 'none' }
 
@@ -42,7 +74,10 @@ function start(root: HTMLElement) {
   const savedMode = store.get('mode'); if (savedMode === 'ptt' && !modes.find(m => m.dataset.mode === 'ptt')?.disabled) pick('ptt') // the button is off for now: a saved choice of it is ignored
   const savedThr = store.get('threshold'); if (savedThr && /^\d+$/.test(savedThr)) threshold.value = savedThr
   const savedKey = store.get('key'); if (savedKey && savedKey.length === 1) pttKey.value = savedKey
+  if (store.get('filter') === 'off') pickFilter('off')
   showMode(); showMarker()
+  filters.forEach(f => f.addEventListener('click', () => { pickFilter(f.dataset.filter!); store.set('filter', filterOn() ? 'on' : 'off'); chain?.setFilter(filterOn()) }))
+  monitorBtn.addEventListener('click', () => { monitorBtn.setAttribute('aria-pressed', String(!monitorOn())); chain?.setMonitor(monitorOn()) }) // not remembered: it starts off at every join
   modes.forEach(m => m.addEventListener('click', () => { pick(m.dataset.mode!); store.set('mode', mode()); showMode() }))
   threshold.addEventListener('input', () => { store.set('threshold', threshold.value); showMarker() })
   pttKey.addEventListener('input', () => { pttKey.value = pttKey.value.slice(-1).toLowerCase(); store.set('key', pttKey.value) })
@@ -95,7 +130,11 @@ function start(root: HTMLElement) {
     window.clearInterval(timer)
     setOpen(false)
     mic?.stop(); mic = null
+    rawMic?.stop(); rawMic = null; chain = null
     tap?.stop(); tap = null
+    monitorBtn.setAttribute('aria-pressed', 'false')
+    filters.forEach(f => { f.disabled = false })
+    filterNote.textContent = ''
     await ctx?.close().catch(() => {}); ctx = null
     const leaving = room; room = null // before the disconnect, whose event would otherwise call this again
     await leaving?.disconnect()
@@ -110,7 +149,7 @@ function start(root: HTMLElement) {
   const enter = async () => {
     join.disabled = true
     status.textContent = 'Connecting…'
-    ctx = new AudioContext() // here, in the click, not after the awaits below: a browser starts an audio context that is made later suspended
+    ctx = new AudioContext({ sampleRate: 48000 }) // (the noise filter needs 48 kHz) here, in the click, not after the awaits below: a browser starts an audio context that is made later suspended
     try {
       const res = await fetch(root.dataset.token!, { method: 'POST', credentials: 'same-origin' })
       if (!res.ok) throw new Error(res.status === 503 ? 'Voice chat is not set up.' : res.status === 401 ? 'Sign in first.' : `The dashboard said ${res.status}.`)
@@ -127,7 +166,19 @@ function start(root: HTMLElement) {
       await r.connect(url, token, { autoSubscribe: false })
       room = r
       await r.startAudio().catch(() => {})
-      mic = await createLocalAudioTrack({ echoCancellation: true, noiseSuppression: true, autoGainControl: true })
+      rawMic = await createLocalAudioTrack({ echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1, sampleRate: 48000 })
+      try {
+        await ctx!.resume().catch(() => {})
+        chain = await buildChain(ctx!, rawMic.mediaStreamTrack)
+        chain.setFilter(filterOn()); chain.setMonitor(monitorOn())
+        mic = new LocalAudioTrack(chain.out, undefined, true)
+      } catch (err) {
+        // The filter is an extra: when it cannot start (the files, WebAssembly, the sample rate) the microphone goes out as it is.
+        console.warn('voice: the noise filter did not start', err)
+        chain = null; mic = rawMic
+        filters.forEach(f => { f.disabled = true })
+        filterNote.textContent = 'The noise filter could not start; your microphone is sent as it is.'
+      }
       await r.localParticipant.publishTrack(mic, { name: 'microphone' })
       await mic.mute() // closed until the player speaks or holds the key
       await watch(mic)

@@ -633,8 +633,9 @@ app.get('/servers/:serverId/voice', async (c) => {
   const over = limited(c)
   if (over) return over
   const cfg = voiceConfig()
-  // The page may reach the media server and nothing else besides this site (the policy of every page names what it may connect to).
-  return respond(c, ctx, <VoicePage ctx={ctx} server={server} enabled={!!cfg} />, { scripts: !!cfg, connect: cfg ? [cfg.url, cfg.url.replace(/^ws/i, 'http')] : [] })
+  // The page may reach the media server and nothing else besides this site (the policy of every page names what it may connect to), and may
+  // compile WebAssembly (the noise filter, RNNoise); no other page may.
+  return respond(c, ctx, <VoicePage ctx={ctx} server={server} enabled={!!cfg} />, { scripts: !!cfg, wasm: !!cfg, connect: cfg ? [cfg.url, cfg.url.replace(/^ws/i, 'http')] : [] })
 })
 
 export const voiceTokenLimiter = new RateLimiter(20, 60_000)
