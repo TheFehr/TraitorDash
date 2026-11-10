@@ -306,6 +306,56 @@ describe('the routing', () => {
   })
 })
 
+describe('the page\'s code', () => {
+  test('starts only after everything it uses at once is defined (it crashed with "store is undefined" when it did not)', async () => {
+    const src = await Bun.file(new URL('../src/voice.ts', import.meta.url)).text()
+    const call = src.indexOf('if (root) start(root)')
+    expect(call).toBeGreaterThan(-1)
+    for (const top of src.matchAll(/^const (\w+) =/gm)) {
+      if (top[1] === 'root') continue
+      expect(src.indexOf(top[0]), top[1]).toBeLessThan(call)
+    }
+    expect(src.lastIndexOf('function start(')).toBeLessThan(call)
+  })
+
+  test('runs as the browser runs it: bundled, against a page with its parts, it starts without an error and wires the buttons', async () => {
+    // livekit-client is stubbed (it needs a real browser); everything else is the real file, bundled the way the build bundles it.
+    const built = await Bun.build({
+      entrypoints: [new URL('../src/voice.ts', import.meta.url).pathname], format: 'iife',
+      plugins: [{ name: 'stub-livekit', setup(b) {
+        b.onResolve({ filter: /^livekit-client$/ }, () => ({ path: 'livekit-client', namespace: 'stub' }))
+        b.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({ loader: 'js', contents: 'export class Room {}; export const RoomEvent = {}; export const createLocalAudioTrack = async () => ({});' }))
+      } }],
+    })
+    expect(built.success).toBe(true)
+    const code = await built.outputs[0]!.text()
+
+    const listeners: Record<string, Record<string, Function>> = {}
+    const el = (name: string, extra: Record<string, unknown> = {}) => {
+      listeners[name] = {}
+      return { style: {}, dataset: {}, classList: { toggle() {}, remove() {} }, textContent: '', value: '12', disabled: false,
+        addEventListener(t: string, fn: Function) { listeners[name]![t] = fn }, setAttribute() {}, getAttribute: () => null, ...extra }
+    }
+    const parts: Record<string, any> = {}
+    for (const sel of ['[data-join]', '[data-status]', '[data-level]', '[data-marker]', '[data-speaking]', '[data-threshold]', '[data-count]', '[data-audio]', '[data-vad-box]', '[data-ptt-box]', '[data-ptt-key]']) parts[sel] = el(sel)
+    const modes = [el('vad', { dataset: { mode: 'vad' } }), el('ptt', { dataset: { mode: 'ptt' }, disabled: true })]
+    const root = { dataset: { token: '/servers/x/voice/token' }, querySelector: (s: string) => parts[s], querySelectorAll: () => modes }
+    const win = { addEventListener() {}, setInterval() { return 1 }, clearInterval() {} }
+    const store = new Map<string, string>([['mode', 'ptt']]) // a saved choice of the disabled mode
+    const local = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v) } }
+
+    expect(() => new Function('document', 'window', 'localStorage', code)({ querySelector: () => root }, win, local)).not.toThrow()
+    expect(listeners['[data-join]']!.click).toBeInstanceOf(Function)
+    expect(listeners['[data-threshold]']!.input).toBeInstanceOf(Function)
+    expect(parts['[data-marker]'].style.left).toBe('12%') // the line where the microphone opens is placed
+    // the disabled mode is not taken from a saved choice: nothing was switched to it
+    const pressed: string[] = []
+    modes.forEach(m => { m.setAttribute = ((_: string, v: string) => pressed.push(`${(m.dataset as any).mode}=${v}`)) as any })
+    listeners['vad']!.click!()
+    expect(pressed).toEqual(['vad=true', 'ptt=false'])
+  })
+})
+
 describe('the routes', () => {
   let app: any, api: any, Store: any, server: { id: string, token: string }
   const cookieFor = async (id: string) => (await serializeSigned('steam_id', id, SECRET)).split(';')[0]!

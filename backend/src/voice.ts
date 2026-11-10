@@ -4,9 +4,6 @@ import { Room, RoomEvent, createLocalAudioTrack, type LocalAudioTrack, type Remo
 // what the media server sends it. It subscribes to nothing itself (autoSubscribe off): the dashboard decides, from the round, who
 // each player hears, so nothing here knows who is alive. The microphone opens by the player's voice (default) or by a held key.
 
-const root = document.querySelector<HTMLElement>('[data-voice]')
-if (root) start(root)
-
 const store = {
   get(k: string): string | null { try { return localStorage.getItem('td_voice_' + k) } catch { return null } },
   set(k: string, v: string) { try { localStorage.setItem('td_voice_' + k, v) } catch { /* private window: the choice is not kept */ } },
@@ -141,3 +138,8 @@ function start(root: HTMLElement) {
   join.addEventListener('click', () => { void (room ? leave() : enter()) })
   window.addEventListener('pagehide', () => { void room?.disconnect() })
 }
+
+// Last, after every top-level `const` above: the bundle runs this file from the top, and `start` uses `store` at once. Called before
+// `store` was defined, it crashed with "store is undefined" and the page did nothing.
+const root = document.querySelector<HTMLElement>('[data-voice]')
+if (root) start(root)
