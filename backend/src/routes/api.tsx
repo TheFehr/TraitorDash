@@ -14,6 +14,7 @@ import { NONCE, signResponse } from '../services/signing'
 import { FINGERPRINT, NAME, ROUND_ID, STEAM_ID, STEAM_ID64, WSID } from '../services/validators'
 import { bridgeSetting, checkSettingValue, cleanReport, formatSettingCommand } from '../services/bridgeSettings'
 import { makeGameKey, KEY_TTL_SECONDS } from '../services/gameKey'
+import { parseVoiceState, voiceHub } from '../services/voice'
 
 type Variables = {
   server: {
@@ -470,6 +471,21 @@ const text = (v: unknown, max: number) => (typeof v === 'string' && v.length > 0
 const oneOf = (v: unknown, allowed: string[]) => (typeof v === 'string' && allowed.includes(v) ? v : null)
 
 // A server reports its maps a few times per session; this only stops a runaway or hostile client.
+// The game server's state for voice chat (RFC 27): the round's phase and the whole list of the living, sent when either changes
+// and every few seconds besides. At most a few a second; a refused one is made good by the next.
+export const voiceLimiter = new RateLimiter(60, 10_000)
+
+api.post('/v1/voice', getServer, async (c) => {
+  const server = c.get('server')
+  const wait = voiceLimiter.hit(server.id)
+  if (wait > 0) return tooMany(c, wait, 'Too many voice states; slow down')
+  const read = await readJson(c, 16 * 1024)
+  if (read.tooLarge) return c.json({ error: 'Too large' }, 413)
+  const parsed = parseVoiceState(read.body)
+  if (typeof parsed === 'string') return c.json({ error: parsed }, 400)
+  return c.json({ ok: true, result: voiceHub.setState(server.id, parsed) })
+})
+
 export const mapsLimiter = new RateLimiter(6, 60_000)
 
 api.post('/v1/maps', getServer, async (c) => {

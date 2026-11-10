@@ -8,6 +8,7 @@ dist
 src/public/frontend.js
 src/public/mapview.js
 src/public/replay.js
+src/public/voice.js
 
 # code coverage
 coverage

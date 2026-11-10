@@ -9,6 +9,8 @@ import { Store, viewLogDays } from './services/Store'
 import { buildReplay } from './services/replay'
 import { refreshAllWorkshopText } from './services/workshopText'
 import { ReplayPage } from './components/ReplayPage'
+import { VoicePage } from './components/VoicePage'
+import { joinToken, roomOf, voiceConfig, voiceHub } from './services/voice'
 import { gzipSync } from 'node:zlib'
 import { getRolesWithState } from './services/roles'
 import { getAdminId, getSession, openSignin, signinUrl, safeNext, type Session } from './middleware/session'
@@ -620,6 +622,36 @@ app.get('/servers/:serverId/rounds/:roundId/replay', async (c) => {
     { scripts: !!track })
 })
 
+/** The voice page (RFC 27): signed-in users only; in the game nobody is sent to the Steam login. */
+app.get('/servers/:serverId/voice', async (c) => {
+  const found = serverOf(c)
+  if (!found) return c.redirect('/')
+  const { serverId, server } = found
+  const ctx = await ctxOf(c)
+  const here = `/servers/${serverId}/voice`
+  if (!ctx.viewer) return c.redirect(signinOr(here, `/servers/${serverId}/stats`))
+  const over = limited(c)
+  if (over) return over
+  const cfg = voiceConfig()
+  // The page may reach the media server and nothing else besides this site (the policy of every page names what it may connect to).
+  return respond(c, ctx, <VoicePage ctx={ctx} server={server} enabled={!!cfg} />, { scripts: !!cfg, connect: cfg ? [cfg.url, cfg.url.replace(/^ws/i, 'http')] : [] })
+})
+
+export const voiceTokenLimiter = new RateLimiter(20, 60_000)
+
+/** A token to join the server's voice room as the signed-in player (their SteamID64 is their name there, which is how the rules find them). */
+app.post('/servers/:serverId/voice/token', async (c) => {
+  const session = await getSession(c)
+  if (!session) return c.json({ error: 'Sign-in required', signin: '/auth/steam' }, 401)
+  const serverId = c.req.param('serverId')
+  if (!Store.getServerById(serverId)) return c.json({ error: 'Not found' }, 404)
+  const cfg = voiceConfig()
+  if (!cfg) return c.json({ error: 'Voice chat is not set up' }, 503)
+  if (voiceTokenLimiter.hit(session.steamId) > 0) return c.json({ error: 'Too many requests; slow down' }, 429)
+  voiceHub.watch(serverId)
+  return c.json({ url: cfg.url, token: joinToken(cfg, roomOf(serverId), session.steamId, session.steamId) })
+})
+
 app.get('/servers/:serverId/players/:playerId', async (c) => {
   const serverId = c.req.param('serverId')
   const server = Store.getServerById(serverId)
@@ -771,6 +803,11 @@ if (import.meta.main) {
     process.exit(1)
   }
   Store.enforceAllTrackLimits()
+  // Voice chat (RFC 27): the loop that keeps the media server's subscriptions in step with the round. Idle until a player joins.
+  if (voiceConfig()) {
+    voiceHub.start()
+    console.log('[Voice] Voice chat is on.')
+  }
   // Views of gated content are kept for VIEW_LOG_DAYS (RFC 13, 6.3): cleaned now and once a day.
   Store.cleanupViewLog()
   setInterval(() => Store.cleanupViewLog(), 24 * 3600 * 1000).unref()

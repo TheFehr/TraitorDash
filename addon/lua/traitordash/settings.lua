@@ -27,6 +27,7 @@ TraitorDash.SettingList = {
     { name = "traitordash_track_parts",          kind = "bool",   default = "0" },
     { name = "traitordash_track_props",          kind = "bool",   default = "0" },
     { name = "traitordash_track_chat",           kind = "bool",   default = "0" },
+    { name = "traitordash_voice",                kind = "bool",   default = "0" },
 }
 
 local BY_NAME = {}

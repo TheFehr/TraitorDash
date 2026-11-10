@@ -10,7 +10,7 @@ export interface BridgeSetting {
   min?: number
   max?: number
   unit?: string
-  group: 'Round stats' | 'Position tracking'
+  group: 'Round stats' | 'Position tracking' | 'Voice chat'
   /** A group with many settings is split in two on the page (2026-11-09); absent in a group that is not. */
   section?: 'Core' | 'What else to record'
   label: string
@@ -57,6 +57,9 @@ export const BRIDGE_SETTINGS: BridgeSetting[] = [
   { name: 'traitordash_track_chat', section: 'What else to record', kind: 'bool', default: '0', group: 'Position tracking', applies: 'next round',
     label: 'Record what players write in chat',
     explain: 'Also records every chat line (to everybody, to a team and among the dead) with the round, so the replay can show it. Anyone who is signed in to the dashboard can read it after the round, team chat and dead chat included, so tell your players. Off by default. Needs position tracking.' },
+  { name: 'traitordash_voice', kind: 'bool', default: '0', group: 'Voice chat', applies: 'at once',
+    label: 'Tell the dashboard who is alive, for its voice chat',
+    explain: "Sends the dashboard the phase of the round and the list of the living players (nothing else: no role, team or position), a few times a minute and at every death and revival, so its voice chat can let the living hear the living and the dead hear everyone. Off means the dashboard's voice chat lets everyone hear everyone. Needs the dashboard's voice chat to be set up." },
 ]
 
 const BY_NAME = new Map(BRIDGE_SETTINGS.map(s => [s.name, s]))

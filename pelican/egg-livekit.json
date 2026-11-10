@@ -1,0 +1,107 @@
+{
+  "_comment": "Maintained in the TraitorDash repository (pelican/). Import it in the panel under Admin > Eggs.",
+  "meta": {
+    "version": "PLCN_v3",
+    "update_url": "https://raw.githubusercontent.com/TheFehr/TraitorDash/main/pelican/egg-livekit.json"
+  },
+  "exported_at": "2026-11-10T00:00:00+00:00",
+  "name": "TraitorDash LiveKit",
+  "author": "traitordash.opt237@passmail.net",
+  "uuid": "1698858b-48c6-45c1-bbd3-3958ea772b8d",
+  "description": "The LiveKit media server the dashboard's voice chat uses (RFC 27): downloaded from LiveKit's own release, with the keys and ports from the variables. The server's primary allocation is the signalling port (put a TLS proxy in front of it); two more allocations carry the media.",
+  "icon": null,
+  "tags": [],
+  "features": [],
+  "docker_images": {
+    "Debian": "ghcr.io/parkervcp/yolks:debian"
+  },
+  "file_denylist": [],
+  "startup_commands": {
+    "Default": "cd /home/container && if [ -n \"{{NODE_IP}}\" ]; then IP='\"use_external_ip\":false,\"node_ip\":\"{{NODE_IP}}\"'; else IP='\"use_external_ip\":true'; fi && printf '{\"port\":{{SERVER_PORT}},\"rtc\":{\"tcp_port\":{{RTC_TCP_PORT}},\"udp_port\":{{RTC_UDP_PORT}},%s} }' \"$IP\" > config.yaml && LIVEKIT_KEYS=\"$LIVEKIT_API_KEY: $LIVEKIT_API_SECRET\" ./bin/livekit-server --config config.yaml"
+  },
+  "config": {
+    "files": "{}",
+    "startup": "{\n    \"done\": [\n        \"starting LiveKit server\"\n    ]\n}",
+    "logs": "{}",
+    "stop": "^C"
+  },
+  "scripts": {
+    "installation": {
+      "script": "#!/bin/bash\n# TraitorDash LiveKit installation (RFC 27)\n#\n# Downloads the LiveKit server (Apache-2.0, https://github.com/livekit/livekit) from its upstream release into bin/. It is not\n# shipped with TraitorDash and runs only as a separate program. The version and a SHA-256 per CPU architecture are pinned: a\n# different file is refused. Changing the version means changing this script; a new release is a decision, not an accident.\n# Unlike the dashboard's helper download this one is the whole point of the egg, so a failed download fails the install.\nDIR=\"${SERVER_DIR:-/mnt/server}\"\nmkdir -p \"$DIR/bin\"\n\nVERSION=\"1.13.11\"\ncase \"$(uname -m)\" in\n    x86_64)          ARCH=\"amd64\"; SUM=\"1e9ee90ca301e1842b2887fc77cb122759756a9c8aeb4334ee91de3325ec43fb\" ;;\n    aarch64|arm64)   ARCH=\"arm64\"; SUM=\"2af6ce091d6b3c79d1677f8ff1bbb91a8007f40b2325c059b52d38383c0830b6\" ;;\n    armv7l|armv8l)   ARCH=\"armv7\"; SUM=\"5f663a6498c3d81ef2dce55a3a1e7815aacfe78207e469abc0bd9c5b5ca5070b\" ;;\n    *) echo \"LiveKit: no build for $(uname -m).\"; exit 1 ;;\nesac\n\nTMP=\"$(mktemp -d)\"\ntrap 'rm -rf \"$TMP\"' EXIT\nURL=\"https://github.com/livekit/livekit/releases/download/v${VERSION}/livekit_${VERSION}_linux_${ARCH}.tar.gz\"\necho \"LiveKit: downloading ${VERSION} (${ARCH})\"\nif ! curl -fsSL --retry 3 -o \"$TMP/lk.tar.gz\" \"$URL\"; then\n    echo \"LiveKit: the download failed; reinstall the server to try again.\"\n    exit 1\nfi\nif ! echo \"${SUM}  $TMP/lk.tar.gz\" | sha256sum -c --quiet -; then\n    echo \"LiveKit: the downloaded file does not match the pinned checksum and was discarded.\"\n    exit 1\nfi\nmkdir -p \"$TMP/x\"\ntar -xzf \"$TMP/lk.tar.gz\" -C \"$TMP/x\"\nBIN=\"$(find \"$TMP/x\" -type f -name livekit-server | head -n 1)\"\nif [ -z \"$BIN\" ]; then\n    echo \"LiveKit: the download holds no livekit-server.\"\n    exit 1\nfi\ncp \"$BIN\" \"$DIR/bin/livekit-server\"\nchmod 755 \"$DIR/bin/livekit-server\"\nLICENSE_FILE=\"$(find \"$TMP/x\" -type f -name 'LICENSE*' | head -n 1)\"\n[ -n \"$LICENSE_FILE\" ] && cp \"$LICENSE_FILE\" \"$DIR/bin/livekit-server.LICENSE\"\necho \"LiveKit: ${VERSION} installed in bin/.\"\n",
+      "container": "ghcr.io/parkervcp/installers:debian",
+      "entrypoint": "bash"
+    }
+  },
+  "variables": [
+    {
+      "sort": 1,
+      "name": "API key",
+      "description": "The key the dashboard (LIVEKIT_API_KEY) and the media server share; letters, digits, dash and underscore, for example a word you make up. Not secret on its own.",
+      "env_variable": "LIVEKIT_API_KEY",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": [
+        "required",
+        "string",
+        "regex:/^[A-Za-z0-9_-]{4,64}$/"
+      ]
+    },
+    {
+      "sort": 2,
+      "name": "API secret",
+      "description": "The secret that goes with the key (LIVEKIT_API_SECRET on the dashboard), at least 32 random characters, for example from openssl rand -hex 32. Admin-only.",
+      "env_variable": "LIVEKIT_API_SECRET",
+      "default_value": "",
+      "user_viewable": false,
+      "user_editable": false,
+      "rules": [
+        "required",
+        "string",
+        "min:32",
+        "regex:/^[A-Za-z0-9_-]+$/"
+      ]
+    },
+    {
+      "sort": 3,
+      "name": "Media port (TCP)",
+      "description": "A second allocation of this server: the port for media over TCP, for players whose network blocks UDP. 1024 or higher, and the same as the allocation.",
+      "env_variable": "RTC_TCP_PORT",
+      "default_value": "7881",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": [
+        "required",
+        "integer",
+        "between:1024,65535"
+      ]
+    },
+    {
+      "sort": 4,
+      "name": "Media port (UDP)",
+      "description": "A third allocation of this server: the one port all media goes through over UDP. 1024 or higher, the same as the allocation, and open to the internet for UDP.",
+      "env_variable": "RTC_UDP_PORT",
+      "default_value": "7882",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": [
+        "required",
+        "integer",
+        "between:1024,65535"
+      ]
+    },
+    {
+      "sort": 5,
+      "name": "Public IP address",
+      "description": "Leave empty to let the server find its public address itself (it asks a STUN server). Fill in the node's public IPv4 address if that finds the wrong one, for example behind NAT.",
+      "env_variable": "NODE_IP",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": [
+        "nullable",
+        "ip"
+      ]
+    }
+  ]
+}

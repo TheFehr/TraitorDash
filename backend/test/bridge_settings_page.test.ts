@@ -87,9 +87,9 @@ describe('the page', () => {
     const t = await (await get(`/servers/${server.id}/settings`, ADMIN)).text()
     const bar = t.slice(t.indexOf('data-jump'), t.indexOf('id="settings-form"'))
     const links = [...bar.matchAll(/data-jump-to="([a-z-]+)"/g)].map(m => m[1])
-    expect(links).toEqual(['round-stats', 'position-tracking', 'replay-storage', 'maps-cooldown'])
+    expect(links).toEqual(['round-stats', 'position-tracking', 'voice-chat', 'replay-storage', 'maps-cooldown'])
     for (const id of links) expect(t).toContain(`id="${id}"`)
-    expect((t.match(/<div[^>]* data-group/g) ?? []).length).toBe(4)
+    expect((t.match(/<div[^>]* data-group/g) ?? []).length).toBe(5)
     expect(bar).toContain(`Round stats <span>${BRIDGE_SETTINGS.filter(s => s.group === 'Round stats').length}</span>`)
     expect(bar).toContain(`Position tracking <span>${BRIDGE_SETTINGS.filter(s => s.group === 'Position tracking').length}</span>`)
     expect(t).toContain('&quot;traitordash_track_prep&quot;:&quot;position-tracking&quot;'); expect(t).toContain('&quot;maps_cooldown&quot;:&quot;maps-cooldown&quot;') // which group a changed field marks

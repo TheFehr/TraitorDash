@@ -17,9 +17,9 @@ export const pageLimiter = new RateLimiter(Number(process.env.ROLE_PAGE_LIMIT) |
  * scripts (the replay, the 3D view, the confirmation of a delete) gets `script-src 'self'`, and the
  * connections and images those scripts need; never an inline script and never another site.
  */
-export const pageHeaders = (scripts = false): Record<string, string> => ({
+export const pageHeaders = (scripts = false, connect: string[] = []): Record<string, string> => ({
   'Content-Security-Policy': scripts
-    ? "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+    ? `default-src 'none'; script-src 'self'; connect-src ${["'self'", ...connect].join(' ')}; style-src 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`
     : "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; font-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
   'X-Content-Type-Options': 'nosniff',
   // Not `no-referrer`: under it Firefox sends `Origin: null` with a form post, which the cross-site check
@@ -56,8 +56,8 @@ export const limited = (c: any) => {
  * The answer for a page: its headers, and an ETag so a repeat costs nothing. What the page shows
  * depends on who asks, so no shared cache may keep it; an admin's page is checked on every request.
  */
-export function respond(c: any, ctx: Ctx, page: { toString(): string }, opts: { scripts?: boolean, status?: 200 | 404 } = {}) {
-  const headers = pageHeaders(opts.scripts)
+export function respond(c: any, ctx: Ctx, page: { toString(): string }, opts: { scripts?: boolean, status?: 200 | 404, connect?: string[] } = {}) {
+  const headers = pageHeaders(opts.scripts, opts.connect)
   if (ctx.embed) headers['X-Robots-Tag'] = 'noindex'
   const html = '<!DOCTYPE html>' + page.toString()
   if (opts.status && opts.status !== 200) {

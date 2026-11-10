@@ -5,8 +5,8 @@
   "private": true,
   "scripts": {
     "dev": "bun run --hot src/index.tsx",
-    "watch:js": "bun build src/frontend.ts --outdir src/public --watch & bun build src/confirm.ts --outdir src/public --watch & bun build src/mapview.ts --outdir src/public --format=iife --watch & bun build src/replay.ts --outdir src/public --format=iife --watch",
-    "build:js": "bun build src/frontend.ts --outdir src/public --minify && bun build src/confirm.ts --outdir src/public --minify && bun build src/mapview.ts --outdir src/public --minify --format=iife && bun build src/replay.ts --outdir src/public --minify --format=iife && bun run scripts/oldbrowsers.ts src/public/frontend.js src/public/confirm.js src/public/mapview.js src/public/replay.js",
+    "watch:js": "bun build src/frontend.ts --outdir src/public --watch & bun build src/confirm.ts --outdir src/public --watch & bun build src/mapview.ts --outdir src/public --format=iife --watch & bun build src/replay.ts --outdir src/public --format=iife --watch & bun build src/voice.ts --outdir src/public --format=iife --watch",
+    "build:js": "bun build src/frontend.ts --outdir src/public --minify && bun build src/confirm.ts --outdir src/public --minify && bun build src/mapview.ts --outdir src/public --minify --format=iife && bun build src/replay.ts --outdir src/public --minify --format=iife && bun build src/voice.ts --outdir src/public --minify --format=iife && bun run scripts/oldbrowsers.ts src/public/frontend.js src/public/confirm.js src/public/mapview.js src/public/replay.js",
     "build": "bun run build:js",
     "source-hash": "bun run scripts/source-hash.ts",
     "prepare": "cd .. && husky backend/.husky || true"
@@ -26,6 +26,7 @@
     "alpinejs": "^3.15.12",
     "fengari": "^0.1.5",
     "hono": "^4.12.18",
-    "htmx.org": "^2.0.10"
+    "htmx.org": "^2.0.10",
+    "livekit-client": "^2.23.0"
   }
 }
