@@ -41,15 +41,25 @@ describe('pelican/egg-livekit.json', () => {
     expect(JSON.stringify(egg)).not.toMatch(/api[_-]?secret["']?\s*[:=]\s*["'][A-Za-z0-9]{16,}/i)
   })
 
-  test('the ports are the ones the dashboard documents, and the secret never goes into the config file', () => {
+  test('the ports are the ones the dashboard documents; the key and secret are not in the command (the console prints it) nor in the config file', () => {
     expect(vars.RTC_TCP_PORT.default_value).toBe('7881')
     expect(vars.RTC_UDP_PORT.default_value).toBe('7882')
-    expect(startup).toContain('LIVEKIT_KEYS=')
+    expect(startup).toContain('LIVEKIT_KEYS="$LIVEKIT_API_KEY: $LIVEKIT_API_SECRET"')
+    expect(startup).not.toContain('{{LIVEKIT_API_SECRET}}')
+    expect(startup).not.toContain('{{LIVEKIT_API_KEY}}')
     expect(startup.split('> config.yaml')[0]).not.toContain('LIVEKIT_API_SECRET')
+  })
+
+  test('no closing double brace in the command: the panel reads it as the end of a variable', () => {
+    expect(startup.replace(/\{\{\w+\}\}/g, '')).not.toContain('}}')
   })
 })
 
 describe('the startup command', () => {
+  // Run the way the panel's image does it (the yolks entrypoint): `echo -e ${STARTUP}` through sed, then `eval ${...}`, both unquoted, so
+  // every newline and run of spaces in the command becomes one space. A command that worked only with its spaces intact failed on the
+  // real server ("mapping values are not allowed in this context": the config was one line of YAML).
+  const ENTRYPOINT = 'MODIFIED_STARTUP=$(echo -e ${STARTUP} | sed -e \'s/{{/${/g\' -e \'s/}}/}/g\')\neval ${MODIFIED_STARTUP}\n'
   const run = (values: Record<string, string>) => {
     const dir = tmp()
     fs.mkdirSync(path.join(dir, 'bin'))
@@ -57,8 +67,9 @@ describe('the startup command', () => {
     fs.writeFileSync(path.join(dir, 'bin/livekit-server'), '#!/bin/sh\necho "KEYS=$LIVEKIT_KEYS"\necho "ARGS=$*"\n')
     fs.chmodSync(path.join(dir, 'bin/livekit-server'), 0o755)
     let cmd = startup.replace('cd /home/container', `cd ${dir}`)
-    for (const [k, v] of Object.entries(values)) cmd = cmd.replaceAll(`{{${k}}}`, v)
-    const r = spawnSync('sh', ['-c', cmd], { encoding: 'utf8' })
+    for (const [k, v] of Object.entries(values)) if (!k.startsWith('LIVEKIT_')) cmd = cmd.replaceAll(`{{${k}}}`, v)
+    const env = { PATH: process.env.PATH!, STARTUP: cmd, LIVEKIT_API_KEY: values.LIVEKIT_API_KEY!, LIVEKIT_API_SECRET: values.LIVEKIT_API_SECRET! }
+    const r = spawnSync('bash', ['-c', ENTRYPOINT], { encoding: 'utf8', env })
     const config = fs.existsSync(path.join(dir, 'config.yaml')) ? fs.readFileSync(path.join(dir, 'config.yaml'), 'utf8') : ''
     fs.rmSync(dir, { recursive: true, force: true })
     return { ...r, config }
@@ -68,21 +79,28 @@ describe('the startup command', () => {
   test('writes a config with the three ports, finding the public address itself, and starts the server with the keys from the environment', () => {
     const r = run(base)
     expect(r.status).toBe(0)
-    expect(r.config).toBe('port: 7880\nrtc:\n  tcp_port: 7881\n  udp_port: 7882\n  use_external_ip: true\n')
+    expect(JSON.parse(r.config)).toEqual({ port: 7880, rtc: { tcp_port: 7881, udp_port: 7882, use_external_ip: true } })
     expect(r.config).not.toContain('port_range')
     expect(r.stdout).toContain(`KEYS=devkey: ${'a'.repeat(32)}`)
     expect(r.stdout).toContain('ARGS=--config config.yaml')
   })
 
-  test('with a public address given, uses it and does not ask STUN', () => {
-    const r = run({ ...base, NODE_IP: '203.0.113.7' })
-    expect(r.config).toBe('port: 7880\nrtc:\n  tcp_port: 7881\n  udp_port: 7882\n  use_external_ip: false\n  node_ip: 203.0.113.7\n')
+  test('the config is one line that no collapsing of spaces can break, and it is valid YAML of the shape LiveKit reads', () => {
+    const r = run(base)
+    expect(r.config.trim().split('\n')).toHaveLength(1)
+    expect(Bun.YAML.parse(r.config)).toEqual({ port: 7880, rtc: { tcp_port: 7881, udp_port: 7882, use_external_ip: true } })
   })
 
-  test('the config is valid YAML of the shape LiveKit reads', () => {
+  test('with a public address given, uses it and does not ask STUN', () => {
+    const r = run({ ...base, NODE_IP: '203.0.113.7' })
+    expect(JSON.parse(r.config)).toEqual({ port: 7880, rtc: { tcp_port: 7881, udp_port: 7882, use_external_ip: false, node_ip: '203.0.113.7' } })
+  })
+
+  test('neither the key nor the secret is written to the config file or printed by the command', () => {
     const r = run(base)
-    const parsed = Bun.YAML.parse(r.config) as any
-    expect(parsed).toEqual({ port: 7880, rtc: { tcp_port: 7881, udp_port: 7882, use_external_ip: true } })
+    expect(r.config).not.toContain('devkey')
+    expect(r.config).not.toContain('a'.repeat(32))
+    expect(startup).not.toContain('devkey')
   })
 })
 

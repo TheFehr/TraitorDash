@@ -17,7 +17,7 @@
   },
   "file_denylist": [],
   "startup_commands": {
-    "Default": "cd /home/container && { printf 'port: {{SERVER_PORT}}\\nrtc:\\n  tcp_port: {{RTC_TCP_PORT}}\\n  udp_port: {{RTC_UDP_PORT}}\\n'; if [ -n \"{{NODE_IP}}\" ]; then printf '  use_external_ip: false\\n  node_ip: {{NODE_IP}}\\n'; else printf '  use_external_ip: true\\n'; fi; } > config.yaml && LIVEKIT_KEYS=\"{{LIVEKIT_API_KEY}}: {{LIVEKIT_API_SECRET}}\" ./bin/livekit-server --config config.yaml"
+    "Default": "cd /home/container && if [ -n \"{{NODE_IP}}\" ]; then IP='\"use_external_ip\":false,\"node_ip\":\"{{NODE_IP}}\"'; else IP='\"use_external_ip\":true'; fi && printf '{\"port\":{{SERVER_PORT}},\"rtc\":{\"tcp_port\":{{RTC_TCP_PORT}},\"udp_port\":{{RTC_UDP_PORT}},%s} }' \"$IP\" > config.yaml && LIVEKIT_KEYS=\"$LIVEKIT_API_KEY: $LIVEKIT_API_SECRET\" ./bin/livekit-server --config config.yaml"
   },
   "config": {
     "files": "{}",
