@@ -27,6 +27,7 @@ function start(root: HTMLElement) {
   let room: Room | null = null
   let mic: LocalAudioTrack | null = null
   let ctx: AudioContext | null = null
+  let tap: MediaStreamTrack | null = null
   let timer = 0
   let open = false
   let heldUntil = 0
@@ -54,11 +55,16 @@ function start(root: HTMLElement) {
   }
 
   // The microphone's level, 0 to 100, from the time-domain signal (the root mean square, stretched so ordinary speech reaches the middle).
-  const watch = (track: LocalAudioTrack) => {
-    ctx = new AudioContext()
-    const analyser = ctx.createAnalyser()
+  const watch = async (track: LocalAudioTrack) => {
+    const c = ctx! // made by the click that started the join, so the browser lets it run; it may still be asked to resume
+    await c.resume().catch(() => {})
+    // LiveKit's mute() switches the published track off (enabled = false). The meter, and the voice detection that opens the
+    // microphone, must listen to a copy that stays on: on the track itself they heard silence for ever and the microphone never opened.
+    tap = track.mediaStreamTrack.clone()
+    tap.enabled = true
+    const analyser = c.createAnalyser()
     analyser.fftSize = 1024
-    ctx.createMediaStreamSource(new MediaStream([track.mediaStreamTrack])).connect(analyser)
+    c.createMediaStreamSource(new MediaStream([tap])).connect(analyser)
     const buf = new Float32Array(analyser.fftSize)
     timer = window.setInterval(() => {
       analyser.getFloatTimeDomainData(buf)
@@ -89,6 +95,7 @@ function start(root: HTMLElement) {
     window.clearInterval(timer)
     setOpen(false)
     mic?.stop(); mic = null
+    tap?.stop(); tap = null
     await ctx?.close().catch(() => {}); ctx = null
     const leaving = room; room = null // before the disconnect, whose event would otherwise call this again
     await leaving?.disconnect()
@@ -103,6 +110,7 @@ function start(root: HTMLElement) {
   const enter = async () => {
     join.disabled = true
     status.textContent = 'Connecting…'
+    ctx = new AudioContext() // here, in the click, not after the awaits below: a browser starts an audio context that is made later suspended
     try {
       const res = await fetch(root.dataset.token!, { method: 'POST', credentials: 'same-origin' })
       if (!res.ok) throw new Error(res.status === 503 ? 'Voice chat is not set up.' : res.status === 401 ? 'Sign in first.' : `The dashboard said ${res.status}.`)
@@ -122,7 +130,7 @@ function start(root: HTMLElement) {
       mic = await createLocalAudioTrack({ echoCancellation: true, noiseSuppression: true, autoGainControl: true })
       await r.localParticipant.publishTrack(mic, { name: 'microphone' })
       await mic.mute() // closed until the player speaks or holds the key
-      watch(mic)
+      await watch(mic)
       people()
       join.textContent = 'Leave voice'
       status.textContent = 'Connected.'

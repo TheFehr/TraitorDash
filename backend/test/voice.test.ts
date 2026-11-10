@@ -318,13 +318,22 @@ describe('the page\'s code', () => {
     expect(src.lastIndexOf('function start(')).toBeLessThan(call)
   })
 
-  test('runs as the browser runs it: bundled, against a page with its parts, it starts without an error and wires the buttons', async () => {
-    // livekit-client is stubbed (it needs a real browser); everything else is the real file, bundled the way the build bundles it.
+  // The page's code is bundled the way the build bundles it and run against a stand-in page; livekit-client (it needs a real browser)
+  // is replaced by a small fake whose microphone behaves as LiveKit's does: mute() switches the track off, a copy made then is off too.
+  const LIVEKIT_FAKE = `
+    export const RoomEvent = { TrackSubscribed: 'ts', TrackUnsubscribed: 'tu', ParticipantConnected: 'pc', ParticipantDisconnected: 'pd', Reconnecting: 'rc', Reconnected: 'rd', Disconnected: 'dc' }
+    export class Room {
+      constructor() { this.remoteParticipants = new Map(); this.localParticipant = { publishTrack: async (t) => { globalThis.__log.push('published') } } }
+      on() {} async connect(url, token, opts) { globalThis.__log.push('connect autoSubscribe=' + opts.autoSubscribe) } async startAudio() {} async disconnect() {}
+    }
+    export const createLocalAudioTrack = async () => globalThis.__mic
+  `
+  async function load() {
     const built = await Bun.build({
       entrypoints: [new URL('../src/voice.ts', import.meta.url).pathname], format: 'iife',
       plugins: [{ name: 'stub-livekit', setup(b) {
         b.onResolve({ filter: /^livekit-client$/ }, () => ({ path: 'livekit-client', namespace: 'stub' }))
-        b.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({ loader: 'js', contents: 'export class Room {}; export const RoomEvent = {}; export const createLocalAudioTrack = async () => ({});' }))
+        b.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({ loader: 'js', contents: LIVEKIT_FAKE }))
       } }],
     })
     expect(built.success).toBe(true)
@@ -333,26 +342,71 @@ describe('the page\'s code', () => {
     const listeners: Record<string, Record<string, Function>> = {}
     const el = (name: string, extra: Record<string, unknown> = {}) => {
       listeners[name] = {}
-      return { style: {}, dataset: {}, classList: { toggle() {}, remove() {} }, textContent: '', value: '12', disabled: false,
-        addEventListener(t: string, fn: Function) { listeners[name]![t] = fn }, setAttribute() {}, getAttribute: () => null, ...extra }
+      return { style: {} as Record<string, string>, dataset: {}, classList: { toggle() {}, remove() {} }, textContent: '', value: '12', disabled: false,
+        appendChild() {}, addEventListener(t: string, fn: Function) { listeners[name]![t] = fn }, setAttribute() {}, getAttribute: () => null, ...extra }
     }
     const parts: Record<string, any> = {}
     for (const sel of ['[data-join]', '[data-status]', '[data-level]', '[data-marker]', '[data-speaking]', '[data-threshold]', '[data-count]', '[data-audio]', '[data-vad-box]', '[data-ptt-box]', '[data-ptt-key]']) parts[sel] = el(sel)
     const modes = [el('vad', { dataset: { mode: 'vad' } }), el('ptt', { dataset: { mode: 'ptt' }, disabled: true })]
     const root = { dataset: { token: '/servers/x/voice/token' }, querySelector: (s: string) => parts[s], querySelectorAll: () => modes }
-    const win = { addEventListener() {}, setInterval() { return 1 }, clearInterval() {} }
+    const timers: Function[] = []
+    const win = { addEventListener() {}, setInterval: (fn: Function) => { timers.push(fn); return timers.length }, clearInterval() {} }
     const store = new Map<string, string>([['mode', 'ptt']]) // a saved choice of the disabled mode
     const local = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v) } }
+    return { code, parts, modes, listeners, win, local, timers }
+  }
 
-    expect(() => new Function('document', 'window', 'localStorage', code)({ querySelector: () => root }, win, local)).not.toThrow()
-    expect(listeners['[data-join]']!.click).toBeInstanceOf(Function)
-    expect(listeners['[data-threshold]']!.input).toBeInstanceOf(Function)
-    expect(parts['[data-marker]'].style.left).toBe('12%') // the line where the microphone opens is placed
+  test('runs as the browser runs it: bundled, against a page with its parts, it starts without an error and wires the buttons', async () => {
+    const page = await load()
+    expect(() => new Function('document', 'window', 'localStorage', page.code)({ querySelector: () => ({ dataset: { token: 't' }, querySelector: (s: string) => page.parts[s], querySelectorAll: () => page.modes }) }, page.win, page.local)).not.toThrow()
+    expect(page.listeners['[data-join]']!.click).toBeInstanceOf(Function)
+    expect(page.listeners['[data-threshold]']!.input).toBeInstanceOf(Function)
+    expect(page.parts['[data-marker]'].style.left).toBe('12%') // the line where the microphone opens is placed
     // the disabled mode is not taken from a saved choice: nothing was switched to it
     const pressed: string[] = []
-    modes.forEach(m => { m.setAttribute = ((_: string, v: string) => pressed.push(`${(m.dataset as any).mode}=${v}`)) as any })
-    listeners['vad']!.click!()
+    page.modes.forEach(m => { m.setAttribute = ((_: string, v: string) => pressed.push(`${(m.dataset as any).mode}=${v}`)) as any })
+    page.listeners['vad']!.click!()
     expect(pressed).toEqual(['vad=true', 'ptt=false'])
+  })
+
+  test('a join: the audio context is made in the click, the meter listens to a copy that stays on, and speaking opens the microphone', async () => {
+    const page = await load()
+    const log: string[] = []
+    let contexts = 0
+    const g = globalThis as any
+    g.__log = log
+    // the published track, as LiveKit leaves it after mute(): switched off; a copy made from it starts off too
+    const original: any = { enabled: true, clone() { const c: any = { enabled: this.enabled, stopped: false, stop() { this.stopped = true } }; original.copy = c; return c }, stop() {} }
+    g.__mic = { mediaStreamTrack: original, async mute() { original.enabled = false; log.push('mute') }, async unmute() { original.enabled = true; log.push('unmute') }, stop() {} }
+    let sourceTracks: any[] = []
+    class FakeContext {
+      constructor() { contexts++ }
+      async resume() { log.push('resume') } async close() {}
+      createAnalyser() { return { fftSize: 0, getFloatTimeDomainData: (buf: Float32Array) => buf.fill(sourceTracks.length && sourceTracks.every(t => t.enabled) ? 0.1 : 0) } }
+      createMediaStreamSource(stream: any) { sourceTracks = stream.tracks; return { connect() {} } }
+    }
+    class FakeStream { constructor(public tracks: any[]) {} }
+    const fetchFake = async () => ({ ok: true, json: async () => ({ url: 'wss://lk.test', token: 'tok' }) })
+
+    new Function('document', 'window', 'localStorage', 'AudioContext', 'MediaStream', 'fetch', page.code)(
+      { querySelector: () => ({ dataset: { token: '/t' }, querySelector: (s: string) => page.parts[s], querySelectorAll: () => page.modes }) },
+      page.win, page.local, FakeContext, FakeStream, fetchFake)
+
+    page.listeners['[data-join]']!.click!()
+    expect(contexts).toBe(1) // made synchronously in the click, before any await: a context made later starts suspended
+    await new Promise(r => setTimeout(r, 30))
+    expect(log).toContain('connect autoSubscribe=false') // the dashboard decides who is heard, not the page
+    expect(log).toContain('published')
+    expect(log).toContain('resume')
+    expect(page.parts['[data-status]'].textContent).toBe('Connected.')
+    expect(original.enabled).toBe(false) // closed until the player speaks
+    expect(original.copy.enabled).toBe(true) // but what the meter listens to is on
+
+    expect(page.timers).toHaveLength(1)
+    page.timers[0]!() // one look of the meter: speech at level 40, the threshold is 12
+    expect(parseFloat(page.parts['[data-level]'].style.width)).toBeCloseTo(40, 3)
+    expect(log.at(-1)).toBe('unmute')
+    delete g.__log; delete g.__mic
   })
 })
 
