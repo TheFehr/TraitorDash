@@ -285,12 +285,12 @@ form.add{display:flex;flex-wrap:wrap;gap:.7rem;margin-top:.5rem}
 form.add input{flex:1;min-width:14rem}
 .cfg{display:flex;flex-direction:column;gap:1.4rem}
 .cfg form{display:flex;flex-direction:column;gap:.7rem;margin-top:.8rem}
-.jump{position:sticky;top:0;z-index:20;display:flex;gap:1.1rem;align-items:baseline;overflow-x:auto;white-space:nowrap;background:var(--bg,#f6f1e7);border-bottom:1px solid var(--deep,#1f2328);padding:.1rem .2rem;margin-top:.8rem}
+.jump{position:sticky;top:0;z-index:20;display:flex;gap:1.1rem;align-items:baseline;overflow-x:auto;white-space:nowrap;background:#221e18;border-bottom:1px solid var(--edge);padding:.1rem .2rem;margin-top:.8rem}
 .jump .lead{font-size:.8rem;opacity:.75}
-.jump a{font-weight:600;font-size:.9rem;text-decoration:none;color:inherit;opacity:.75;padding:.55rem .15rem;border-bottom:3px solid transparent}
-.jump a[aria-current=true]{opacity:1;border-bottom-color:var(--bad,#b42318)}
+.jump a{font-weight:600;font-size:.9rem;text-decoration:none;color:var(--paper);opacity:.75;padding:.55rem .15rem;border-bottom:3px solid transparent}
+.jump a[aria-current=true]{opacity:1;border-bottom-color:var(--bad)}
 .jump a span{font-weight:400}
-.jump .dot{color:var(--bad,#b42318)}
+.jump .dot{color:var(--bad)}
 .cfg [data-group]{scroll-margin-top:3.4rem}
 .cfg .sub{font-size:.78rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;opacity:.75;margin:.9rem 0 0}
 @media (prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}
