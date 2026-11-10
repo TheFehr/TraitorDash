@@ -60,6 +60,9 @@ export const BRIDGE_SETTINGS: BridgeSetting[] = [
   { name: 'traitordash_voice', kind: 'bool', default: '0', group: 'Voice chat', applies: 'at once',
     label: 'Tell the dashboard who is alive, for its voice chat',
     explain: "Sends the dashboard the phase of the round and the list of the living players (nothing else: no role, team or position), a few times a minute and at every death and revival, so its voice chat can let the living hear the living and the dead hear everyone. Off means the dashboard's voice chat lets everyone hear everyone. Needs the dashboard's voice chat to be set up." },
+  { name: 'traitordash_voice_mute_game', kind: 'bool', default: '0', group: 'Voice chat', applies: 'at once',
+    label: 'Turn off the voice chat of the game itself',
+    explain: "Switches the voice chat of the game itself off (sv_voiceenable 0) while this is on, so a player who is on the dashboard's voice chat does not hear everyone twice. Switching this off puts back what it was if this changed it; if server.cfg already said 0 it stays 0. Everyone who is not on the dashboard's voice chat cannot talk at all while it is on, so turn it on only when your players use it." },
 ]
 
 const BY_NAME = new Map(BRIDGE_SETTINGS.map(s => [s.name, s]))

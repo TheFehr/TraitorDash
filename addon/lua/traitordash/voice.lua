@@ -17,6 +17,8 @@ TraitorDash.Voice = Voice
 
 local cv_voice = CreateConVar("traitordash_voice", "0", {FCVAR_ARCHIVE}, "Send the round phase and the list of the living to the dashboard for its voice chat (1/0).")
 
+local cv_mute = CreateConVar("traitordash_voice_mute_game", "0", {FCVAR_ARCHIVE}, "Turn the game's own voice off (sv_voiceenable 0) while the dashboard's voice chat is used (1/0).")
+
 local TIMER = "TraitorDash_VoiceState"
 local CHECK_EVERY = 0.5 -- seconds between looks at who is alive
 local REPEAT_EVERY = 5  -- seconds before an unchanged state is sent again
@@ -109,13 +111,36 @@ local function Apply()
     if cv_voice:GetBool() then Start() else Stop() end
 end
 
+-- The game's own voice (RFC 27, 6): with traitordash_voice_mute_game on, sv_voiceenable is held at 0, so a player who is on the dashboard's
+-- voice chat does not hear everyone twice. What it was is remembered only when this file changed it: if server.cfg already says 0,
+-- switching this off leaves it 0; if this turned it off, switching this off puts back what it was. server.cfg runs again at every map, so
+-- the value is asserted again when a round is prepared.
+local savedVoiceEnable = nil
+local function ApplyGameVoice()
+    local sv = GetConVar and GetConVar("sv_voiceenable")
+    if not sv or not RunConsoleCommand then return end
+    if cv_mute:GetBool() then
+        if sv:GetInt() ~= 0 then
+            if savedVoiceEnable == nil then savedVoiceEnable = sv:GetString() end
+            RunConsoleCommand("sv_voiceenable", "0")
+        end
+    elseif savedVoiceEnable ~= nil then
+        RunConsoleCommand("sv_voiceenable", savedVoiceEnable)
+        savedVoiceEnable = nil
+    end
+end
+local function SafeApplyGameVoice()
+    local ok, err = pcall(ApplyGameVoice)
+    if not ok then print("[TraitorDash:voice] could not set the game's voice: " .. tostring(err)) end
+end
+
 -- The round's own events make the change known at once instead of at the next look (a revival: the player is alive again, so
 -- the group changes now). The look itself does the work, so a hook that fires twice changes nothing.
 local function Soon()
     if cv_voice:GetBool() then timer.Simple(0, SafeCheck) end
 end
 
-hook.Add("TTTPrepareRound", "TraitorDash_VoicePrepare", function() hookPhase = "prep"; Soon() end)
+hook.Add("TTTPrepareRound", "TraitorDash_VoicePrepare", function() hookPhase = "prep"; Soon(); SafeApplyGameVoice() end)
 hook.Add("TTTBeginRound", "TraitorDash_VoiceBegin", function() hookPhase = "active"; Soon() end)
 hook.Add("TTTEndRound", "TraitorDash_VoiceEnd", function() hookPhase = "over"; Soon() end)
 hook.Add("TTT2PostPlayerDeath", "TraitorDash_VoiceDeath", Soon)
@@ -125,8 +150,10 @@ hook.Add("TTT2AddedEvent", "TraitorDash_VoiceEvent", Soon)
 
 if cvars and cvars.AddChangeCallback then
     cvars.AddChangeCallback("traitordash_voice", function() Apply() end, "TraitorDash_VoiceSwitch")
+    cvars.AddChangeCallback("traitordash_voice_mute_game", function() SafeApplyGameVoice() end, "TraitorDash_VoiceMuteGame")
 end
 Apply()
+SafeApplyGameVoice()
 
 concommand.Add("traitordash_voice_status", function(ply)
     if IsValid(ply) and not ply:IsSuperAdmin() then return end

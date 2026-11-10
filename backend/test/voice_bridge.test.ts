@@ -89,10 +89,16 @@ const PRELUDE = `
   SPEC = mkply("76561198000000009"); SPEC.alive = false
   PLAYERS = { C, A, B, BOT, SPEC }
   player = { GetAll = function() return PLAYERS end }
+
+  -- the game's own voice switch, and the console commands the bridge gives
+  SV = { sv_voiceenable = "1" }
+  CMDS = {}
+  function GetConVar(n) return { GetInt = function() return tonumber(SV[n]) or 0 end, GetString = function() return SV[n] end } end
+  function RunConsoleCommand(n, v) CMDS[#CMDS + 1] = n .. " " .. v SV[n] = v end
 `
 
 interface Msg { url: string, auth: string, body: any }
-function play(script: string, opts: { on?: boolean, load?: boolean } = {}) {
+function play(script: string, opts: { on?: boolean, mute?: boolean, sv?: string } = {}) {
   const L = lauxlib.luaL_newstate()
   lualib.luaL_openlibs(L)
   addJsonDecode(L)
@@ -102,6 +108,8 @@ function play(script: string, opts: { on?: boolean, load?: boolean } = {}) {
   try {
     run(PRELUDE)
     if (opts.on !== false) run('CVARS.traitordash_voice = "1"')
+    if (opts.mute) run('CVARS.traitordash_voice_mute_game = "1"')
+    if (opts.sv !== undefined) run(`SV.sv_voiceenable = "${opts.sv}"`)
     run(read('voice.lua'))
     run(script)
     run(`
@@ -220,6 +228,41 @@ describe('voice.lua', () => {
     expect(r.printed.some(l => l.includes('error') && l.includes('IsTerror failed'))).toBe(true)
     expect(r.sent).toHaveLength(1)
     expect(r.sent[0]!.body.alive).toEqual([A, B, C])
+  })
+
+  describe('the game\'s own voice (traitordash_voice_mute_game)', () => {
+    test('is left alone by default', () => {
+      expect(play('OUT = { cmds = CMDS, sv = SV.sv_voiceenable }').out).toEqual({ cmds: [], sv: '1' })
+    })
+
+    test('when on, holds sv_voiceenable at 0, and switching it off puts back what it was', () => {
+      const r = play(`
+        local at_start = SV.sv_voiceenable
+        SetCv("traitordash_voice_mute_game", "0")
+        OUT = { at_start = at_start, cmds = CMDS, sv = SV.sv_voiceenable }
+      `, { mute: true })
+      expect(r.out).toEqual({ at_start: '0', cmds: ['sv_voiceenable 0', 'sv_voiceenable 1'], sv: '1' })
+    })
+
+    test('switched on while the bridge runs (from the settings page) it acts at once', () => {
+      const r = play('SetCv("traitordash_voice_mute_game", "1") OUT = { cmds = CMDS, sv = SV.sv_voiceenable }')
+      expect(r.out).toEqual({ cmds: ['sv_voiceenable 0'], sv: '0' })
+    })
+
+    test('when server.cfg already says 0 it gives no command, and switching it off leaves 0', () => {
+      const r = play('SetCv("traitordash_voice_mute_game", "0") OUT = { cmds = CMDS, sv = SV.sv_voiceenable }', { mute: true, sv: '0' })
+      expect(r.out).toEqual({ cmds: [], sv: '0' })
+    })
+
+    test('is asserted again when a round is prepared, after a map change ran server.cfg again', () => {
+      const r = play('SV.sv_voiceenable = "1" Fire("TTTPrepareRound") OUT = { cmds = CMDS, sv = SV.sv_voiceenable }', { mute: true })
+      expect(r.out).toEqual({ cmds: ['sv_voiceenable 0', 'sv_voiceenable 0'], sv: '0' })
+    })
+
+    test('does not depend on the state messages: it works with traitordash_voice off', () => {
+      const r = play('OUT = { cmds = CMDS, sent = #SENT }', { on: false, mute: true })
+      expect(r.out).toEqual({ cmds: ['sv_voiceenable 0'], sent: 0 })
+    })
   })
 
   test('a failed send is dropped: the connection error changes nothing', () => {
