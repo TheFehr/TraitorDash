@@ -41,7 +41,7 @@ function start(root: HTMLElement) {
   const showMode = () => { vadBox.style.display = mode() === 'vad' ? '' : 'none'; pttBox.style.display = mode() === 'ptt' ? '' : 'none' }
 
   // What was chosen last time.
-  const savedMode = store.get('mode'); if (savedMode === 'ptt') pick('ptt')
+  const savedMode = store.get('mode'); if (savedMode === 'ptt' && !modes.find(m => m.dataset.mode === 'ptt')?.disabled) pick('ptt') // the button is off for now: a saved choice of it is ignored
   const savedThr = store.get('threshold'); if (savedThr && /^\d+$/.test(savedThr)) threshold.value = savedThr
   const savedKey = store.get('key'); if (savedKey && savedKey.length === 1) pttKey.value = savedKey
   showMode(); showMarker()

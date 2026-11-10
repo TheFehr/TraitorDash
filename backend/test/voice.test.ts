@@ -367,6 +367,7 @@ describe('the routes', () => {
     expect(t).toContain(`data-token="/servers/${server.id}/voice/token"`)
     // the same kind of controls as the replay's (buttons that are pressed), not browser radios with their labels stacked under them
     expect(t).toContain('data-mode="vad" aria-pressed="true"'); expect(t).toContain('data-mode="ptt" aria-pressed="false"')
+    expect(t).toMatch(/<button[^>]*data-mode="ptt"[^>]* disabled/) // holding a key cannot work from a browser tab while the game has the focus: stage 2 (the desktop app)
     expect(t).toContain('data-level'); expect(t).toContain('data-marker'); expect(t).toContain('data-threshold')
     expect(t).not.toContain('type="radio"'); expect(t).not.toContain('<meter')
     expect(t).not.toContain(CFG.secret); expect(t).not.toContain(CFG.key)

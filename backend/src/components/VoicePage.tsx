@@ -38,8 +38,9 @@ export const VoicePage = ({ ctx, server, enabled }: VoicePageProps) => {
             <div class="cap">Microphone opens</div>
             <div class="row" role="group" aria-label="How the microphone opens">
               <button type="button" data-mode="vad" aria-pressed="true" class="tog">By your voice</button>
-              <button type="button" data-mode="ptt" aria-pressed="false" class="tog">Hold a key</button>
+              <button type="button" data-mode="ptt" aria-pressed="false" class="tog" disabled title="Needs the desktop app, which comes later">Hold a key</button>
             </div>
+            <p class="muted" style="margin-top:.35rem">Holding a key to talk needs a small desktop app (a browser tab cannot hear a key while the game has the focus); it comes later.</p>
           </div>
 
           <div data-vad-box>
