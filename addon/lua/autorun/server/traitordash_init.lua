@@ -17,6 +17,10 @@ if SERVER then
     local okTrack, errTrack = pcall(include, "traitordash/track.lua")
     if not okTrack then print("[TraitorDash] Position tracking failed to load: " .. tostring(errTrack)) end
 
+    -- Voice chat state for the dashboard (RFC 27): the phase and the list of the living. Off by default (traitordash_voice).
+    local okVo, errVo = pcall(include, "traitordash/voice.lua")
+    if not okVo then print("[TraitorDash] Voice state failed to load: " .. tostring(errVo)) end
+
     -- A console tool for measuring the server's frame time (RFC 12); it does nothing until started.
     local okFt, errFt = pcall(include, "traitordash/frametime.lua")
     if not okFt then print("[TraitorDash] Frame-time tool failed to load: " .. tostring(errFt)) end

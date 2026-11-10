@@ -14,9 +14,9 @@ export interface BridgeSettingsState {
   pending: string[]
 }
 
-const GROUPS: BridgeSetting['group'][] = ['Round stats', 'Position tracking']
+const GROUPS: BridgeSetting['group'][] = ['Round stats', 'Position tracking', 'Voice chat']
 /** The groups of the page in order, as the jump bar and the sections name them (2026-11-09). The ids of the last two were the anchors of their own before. */
-const IDS = { 'Round stats': 'round-stats', 'Position tracking': 'position-tracking', storage: 'replay-storage', maps: 'maps-cooldown' } as const
+const IDS = { 'Round stats': 'round-stats', 'Position tracking': 'position-tracking', 'Voice chat': 'voice-chat', storage: 'replay-storage', maps: 'maps-cooldown' } as const
 const SECTIONS: NonNullable<BridgeSetting['section']>[] = ['Core', 'What else to record']
 /** The names the dashboard's own settings have in the form (never a name the game server knows). */
 const STORAGE = { count: 'storage_count', mb: 'storage_mb' } as const
