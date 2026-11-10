@@ -51,6 +51,19 @@ describe('pelican/egg-traitordash.json', () => {
     expect(vars.SESSION_SECRET.default_value).toBe('')
     expect(vars.ADMIN_STEAM_IDS.default_value).toBe('')
   })
+
+  test('the voice chat settings the app reads (RFC 27) are declared, empty by default, and the secret is admin-only', () => {
+    // The panel passes only declared variables into the container, so an undeclared one never reaches the app.
+    const voice = fs.readFileSync(path.join(root, 'backend/src/services/voice.ts'), 'utf8')
+    for (const name of ['LIVEKIT_URL', 'LIVEKIT_API_URL', 'LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET']) {
+      expect(voice).toContain(`env.${name}`)
+      expect(vars[name], name).toBeDefined()
+      expect(vars[name].default_value).toBe('')
+      expect(vars[name].rules).toContain('nullable')
+    }
+    expect(vars.LIVEKIT_API_SECRET.user_viewable).toBe(false)
+    expect(vars.LIVEKIT_API_SECRET.user_editable).toBe(false)
+  })
 })
 
 describe('the installer script (exact map geometry, RFC 11)', () => {

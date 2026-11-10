@@ -196,6 +196,62 @@
         "string",
         "in:0,1"
       ]
+    },
+    {
+      "sort": 13,
+      "name": "Voice chat: media server address",
+      "description": "The address players' browsers use to reach the LiveKit media server, wss://... through its TLS proxy (RFC 27). Empty turns voice chat off.",
+      "env_variable": "LIVEKIT_URL",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": [
+        "nullable",
+        "string",
+        "max:200"
+      ]
+    },
+    {
+      "sort": 14,
+      "name": "Voice chat: media server address for the backend",
+      "description": "Only if the backend reaches LiveKit by another address than players do, for example http://192.168.1.10:7880 on the same node. Empty means the same host as the address above, over https.",
+      "env_variable": "LIVEKIT_API_URL",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": [
+        "nullable",
+        "string",
+        "max:200"
+      ]
+    },
+    {
+      "sort": 15,
+      "name": "Voice chat: API key",
+      "description": "The key set in the LiveKit server's egg (LIVEKIT_API_KEY there).",
+      "env_variable": "LIVEKIT_API_KEY",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": [
+        "nullable",
+        "string",
+        "max:64"
+      ]
+    },
+    {
+      "sort": 16,
+      "name": "Voice chat: API secret",
+      "description": "The secret that goes with the key, the same as in the LiveKit server's egg. Admin-only.",
+      "env_variable": "LIVEKIT_API_SECRET",
+      "default_value": "",
+      "user_viewable": false,
+      "user_editable": false,
+      "rules": [
+        "nullable",
+        "string",
+        "max:128"
+      ]
     }
   ]
 }
