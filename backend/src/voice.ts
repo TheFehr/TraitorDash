@@ -16,7 +16,8 @@ function start(root: HTMLElement) {
   const $ = <T extends HTMLElement>(sel: string) => root.querySelector<T>(sel)!
   const join = $<HTMLButtonElement>('[data-join]')
   const status = $('[data-status]')
-  const level = $<HTMLMeterElement>('[data-level]')
+  const level = $<HTMLElement>('[data-level]')
+  const marker = $<HTMLElement>('[data-marker]')
   const speaking = $('[data-speaking]')
   const threshold = $<HTMLInputElement>('[data-threshold]')
   const count = $('[data-count]')
@@ -24,7 +25,7 @@ function start(root: HTMLElement) {
   const vadBox = $('[data-vad-box]')
   const pttBox = $('[data-ptt-box]')
   const pttKey = $<HTMLInputElement>('[data-ptt-key]')
-  const modes = Array.from(root.querySelectorAll<HTMLInputElement>('[data-mode]'))
+  const modes = Array.from(root.querySelectorAll<HTMLButtonElement>('[data-mode]'))
 
   let room: Room | null = null
   let mic: LocalAudioTrack | null = null
@@ -34,16 +35,18 @@ function start(root: HTMLElement) {
   let heldUntil = 0
   let keyDown = false
 
-  const mode = () => (modes.find(m => m.checked)?.value === 'ptt' ? 'ptt' : 'vad')
+  const mode = () => (modes.find(m => m.getAttribute('aria-pressed') === 'true')?.dataset.mode === 'ptt' ? 'ptt' : 'vad')
+  const pick = (which: string) => modes.forEach(m => m.setAttribute('aria-pressed', String(m.dataset.mode === which)))
+  const showMarker = () => { marker.style.left = threshold.value + '%' }
   const showMode = () => { vadBox.style.display = mode() === 'vad' ? '' : 'none'; pttBox.style.display = mode() === 'ptt' ? '' : 'none' }
 
   // What was chosen last time.
-  const savedMode = store.get('mode'); if (savedMode === 'ptt') modes.forEach(m => { m.checked = m.value === 'ptt' })
+  const savedMode = store.get('mode'); if (savedMode === 'ptt') pick('ptt')
   const savedThr = store.get('threshold'); if (savedThr && /^\d+$/.test(savedThr)) threshold.value = savedThr
   const savedKey = store.get('key'); if (savedKey && savedKey.length === 1) pttKey.value = savedKey
-  showMode()
-  modes.forEach(m => m.addEventListener('change', () => { store.set('mode', mode()); showMode() }))
-  threshold.addEventListener('input', () => store.set('threshold', threshold.value))
+  showMode(); showMarker()
+  modes.forEach(m => m.addEventListener('click', () => { pick(m.dataset.mode!); store.set('mode', mode()); showMode() }))
+  threshold.addEventListener('input', () => { store.set('threshold', threshold.value); showMarker() })
   pttKey.addEventListener('input', () => { pttKey.value = pttKey.value.slice(-1).toLowerCase(); store.set('key', pttKey.value) })
 
   const setOpen = (want: boolean) => {
@@ -65,7 +68,8 @@ function start(root: HTMLElement) {
       let sum = 0
       for (const v of buf) sum += v * v
       const lvl = Math.min(100, Math.sqrt(sum / buf.length) * 400)
-      level.value = lvl
+      level.style.width = lvl + '%'
+      level.classList.toggle('open', open)
       const now = Date.now()
       if (mode() === 'vad') {
         if (lvl > Number(threshold.value)) heldUntil = now + 400 // a short tail, so the ends of words are not cut
@@ -92,7 +96,8 @@ function start(root: HTMLElement) {
     const leaving = room; room = null // before the disconnect, whose event would otherwise call this again
     await leaving?.disconnect()
     audioBox.textContent = ''
-    level.value = 0
+    level.style.width = '0'
+    level.classList.remove('open')
     people()
     join.textContent = 'Join voice'
     status.textContent = 'Not connected.'

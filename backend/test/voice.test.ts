@@ -365,6 +365,10 @@ describe('the routes', () => {
     const t = await res.text()
     expect(t).toContain('data-voice'); expect(t).toContain('data-join'); expect(t).toContain('/public/voice.js')
     expect(t).toContain(`data-token="/servers/${server.id}/voice/token"`)
+    // the same kind of controls as the replay's (buttons that are pressed), not browser radios with their labels stacked under them
+    expect(t).toContain('data-mode="vad" aria-pressed="true"'); expect(t).toContain('data-mode="ptt" aria-pressed="false"')
+    expect(t).toContain('data-level'); expect(t).toContain('data-marker'); expect(t).toContain('data-threshold')
+    expect(t).not.toContain('type="radio"'); expect(t).not.toContain('<meter')
     expect(t).not.toContain(CFG.secret); expect(t).not.toContain(CFG.key)
     expect(res.headers.get('content-security-policy')).toContain("connect-src 'self' wss://lk.test https://lk.test;")
     expect((await get('/servers/nope/voice', ADMIN)).status).toBe(302)
