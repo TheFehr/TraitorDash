@@ -677,6 +677,12 @@ export class Store {
     return kept.ids.map(id => (nick.get(serverId, id) as { nick: string } | null)?.nick ?? id)
   }
 
+  /** The latest nick a round of this server knows for a player, or null. */
+  static getNick(serverId: string, steamId: string): string | null {
+    const row = db.prepare('SELECT nick FROM round_players WHERE server_id = ? AND steam_id = ? AND nick IS NOT NULL AND nick <> \'\' ORDER BY rowid DESC LIMIT 1').get(serverId, steamId) as { nick: string } | null
+    return row?.nick ?? null
+  }
+
   static updateHeartbeat(serverId: string) {
     const update = db.prepare('UPDATE servers SET last_seen = ? WHERE id = ?')
     update.run(new Date().toISOString(), serverId)

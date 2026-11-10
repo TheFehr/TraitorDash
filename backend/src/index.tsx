@@ -650,7 +650,7 @@ app.post('/servers/:serverId/voice/token', async (c) => {
   if (!cfg) return c.json({ error: 'Voice chat is not set up' }, 503)
   if (voiceTokenLimiter.hit(session.steamId) > 0) return c.json({ error: 'Too many requests; slow down' }, 429)
   voiceHub.watch(serverId)
-  return c.json({ url: cfg.url, token: joinToken(cfg, roomOf(serverId), session.steamId, session.steamId) })
+  return c.json({ url: cfg.url, token: joinToken(cfg, roomOf(serverId), session.steamId, (Store.getNick(serverId, session.steamId) ?? session.steamId).slice(0, 64)) })
 })
 
 app.get('/servers/:serverId/players/:playerId', async (c) => {

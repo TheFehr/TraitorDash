@@ -195,6 +195,9 @@ html.theater{overflow:hidden}
 .vc .tog{margin-right:0;padding:.3rem .9rem;font-size:1rem}
 .vc input[type=range]{width:11rem;accent-color:var(--ink);margin:0}
 .vc input[type=text]{width:3rem;text-align:center}
+.vc .person{display:flex;flex-wrap:wrap;gap:.4rem 1rem;align-items:center;padding:.25rem 0;border-top:1px solid var(--dim)}
+.vc .pname{min-width:9rem;font-weight:700;overflow-wrap:anywhere}
+.vc .pct{min-width:3rem;text-align:right}
 .lvl{position:relative;width:12rem;height:.9rem;background:#fff8e6;border:1px solid var(--dim)}
 .lvl i{display:block;height:100%;width:0;background:var(--ink2)}
 .lvl i.open{background:#256b30}

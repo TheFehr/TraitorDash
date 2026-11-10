@@ -324,8 +324,8 @@ describe('the page\'s code', () => {
   const LIVEKIT_FAKE = `
     export const RoomEvent = { TrackSubscribed: 'ts', TrackUnsubscribed: 'tu', ParticipantConnected: 'pc', ParticipantDisconnected: 'pd', Reconnecting: 'rc', Reconnected: 'rd', Disconnected: 'dc' }
     export class Room {
-      constructor() { this.remoteParticipants = new Map(); this.localParticipant = { publishTrack: async (t) => { globalThis.__log.push('published ' + (t === globalThis.__mic ? 'raw' : 'filtered')) } } }
-      on() {} async connect(url, token, opts) { globalThis.__log.push('connect autoSubscribe=' + opts.autoSubscribe) } async startAudio() {} async disconnect() {}
+      constructor() { globalThis.__room = this; globalThis.__handlers = {}; this.remoteParticipants = new Map(); this.localParticipant = { publishTrack: async (t) => { globalThis.__log.push('published ' + (t === globalThis.__mic ? 'raw' : 'filtered')) } } }
+      on(ev, fn) { globalThis.__handlers[ev] = fn } async connect(url, token, opts) { globalThis.__log.push('connect autoSubscribe=' + opts.autoSubscribe) } async startAudio() {} async disconnect() {}
     }
     export class LocalAudioTrack {
       constructor(t) { this.mediaStreamTrack = t }
@@ -359,7 +359,15 @@ describe('the page\'s code', () => {
         appendChild() {}, addEventListener(t: string, fn: Function) { listeners[name]![t] = fn },
         setAttribute(k: string, v: string) { attrs[name]![k] = v }, getAttribute: (k: string) => attrs[name]![k] ?? null, ...extra }
     }
+    const node = () => {
+      const n: any = { style: {}, children: [] as any[], attrs: {} as Record<string, string>, listeners: {} as Record<string, Function>, className: '', value: '', _text: '',
+        appendChild(c: any) { n.children.push(c) }, addEventListener(t: string, f: Function) { n.listeners[t] = f },
+        setAttribute(k: string, v: string) { n.attrs[k] = v }, getAttribute: (k: string) => n.attrs[k] ?? null, remove() {} }
+      Object.defineProperty(n, 'textContent', { get: () => n._text, set: (v: string) => { n._text = v; if (v === '') n.children = [] } })
+      return n
+    }
     const parts: Record<string, any> = {}
+    parts['[data-people]'] = node()
     for (const sel of ['[data-join]', '[data-status]', '[data-level]', '[data-marker]', '[data-speaking]', '[data-threshold]', '[data-count]', '[data-audio]', '[data-vad-box]', '[data-ptt-box]', '[data-ptt-key]', '[data-monitor]', '[data-filter-note]']) parts[sel] = el(sel)
     const modes = [el('vad', { dataset: { mode: 'vad' } }), el('ptt', { dataset: { mode: 'ptt' }, disabled: true })]
     const filters = [el('on', { dataset: { filter: 'on' } }), el('off', { dataset: { filter: 'off' } })]
@@ -372,9 +380,9 @@ describe('the page\'s code', () => {
     const local = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v) } }
     const run = (extra: Record<string, unknown> = {}) => {
       const names = ['document', 'window', 'localStorage', ...Object.keys(extra)]
-      return new Function(...names, code)({ querySelector: () => root }, win, local, ...Object.values(extra))
+      return new Function(...names, code)({ querySelector: () => root, createElement: () => node() }, win, local, ...Object.values(extra))
     }
-    return { run, parts, modes, filters, listeners, attrs, timers, local, store }
+    return { run, parts, modes, filters, listeners, attrs, timers, local, store, node }
   }
 
   test('runs as the browser runs it: bundled, against a page with its parts, it starts without an error and wires the buttons', async () => {
@@ -413,7 +421,7 @@ describe('the page\'s code', () => {
     }
     class FakeStream { constructor(public tracks: any[]) {} }
     const fetchFake = async () => ({ ok: true, json: async () => ({ url: 'wss://lk.test', token: 'tok' }) })
-    return { log, g, rawTrack, outTrack, gains, gate, globals: { AudioContext: FakeContext, MediaStream: FakeStream, fetch: fetchFake }, done() { delete g.__log; delete g.__mic; delete g.__rnnoiseFails } }
+    return { log, g, rawTrack, outTrack, gains, gate, globals: { AudioContext: FakeContext, MediaStream: FakeStream, fetch: fetchFake }, done() { delete g.__log; delete g.__mic; delete g.__rnnoiseFails; delete g.__room; delete g.__handlers } }
   }
 
   test('a join: the context is made in the click at 48 kHz, the microphone goes through the filter, the meter listens to a copy that stays on, and speaking opens the microphone', async () => {
@@ -457,6 +465,56 @@ describe('the page\'s code', () => {
     expect(page.attrs['[data-monitor]']!['aria-pressed']).toBe('true')
     page.listeners['[data-monitor]']!.click!()
     expect(monitor!.value).toBe(0)
+    t.done()
+  })
+
+  test('people: everyone on the voice chat is listed with a volume and a mute that act on their audio, are remembered by SteamID64, and apply when their track comes', async () => {
+    const page = await load()
+    const t = setup()
+    const BOB = '76561198000000002', CARA = '76561198000000003'
+    page.store.set('td_voice_vol_' + CARA, '25') // chosen on an earlier visit
+    page.run(t.globals)
+    page.listeners['[data-join]']!.click!()
+    await new Promise(r => setTimeout(r, 30))
+    const g = globalThis as any
+    g.__room.remoteParticipants.set(BOB, { identity: BOB, name: 'Bob' })
+    g.__room.remoteParticipants.set(CARA, { identity: CARA, name: '' })
+    g.__handlers.pc() // a participant connected
+    const rows = page.parts['[data-people]'].children
+    expect(rows).toHaveLength(2)
+    const [name, slider, pct, mute] = rows[0].children
+    expect(name.textContent).toBe('Bob') // by name when the token had one
+    expect(rows[1].children[0].textContent).toBe(CARA) // else by SteamID64
+    expect(slider.value).toBe('100'); expect(rows[1].children[1].value).toBe('25') // the default, and what was remembered
+    expect(page.parts['[data-count]'].textContent).toBe('3')
+
+    // the track of Bob arrives: his volume is applied to the audio element, and moves with the slider
+    const audio = { volume: 1, remove() {} }
+    const trackOf = (el: any) => ({ attach: () => el, detach: () => [el] })
+    g.__handlers.ts(trackOf(audio), {}, { identity: BOB })
+    expect(audio.volume).toBe(1)
+    slider.value = '40'; slider.listeners.input()
+    expect(audio.volume).toBeCloseTo(0.4); expect(pct.textContent).toBe('40%')
+    expect(page.store.get('td_voice_vol_' + BOB)).toBe('40')
+    mute.listeners.click()
+    expect(audio.volume).toBe(0); expect(mute.attrs['aria-pressed']).toBe('true')
+    mute.listeners.click()
+    expect(audio.volume).toBeCloseTo(0.4)
+
+    // Cara's track arrives later (the game lets her be heard): her remembered volume is on it at once
+    const caraAudio = { volume: 1, remove() {} }
+    g.__handlers.ts(trackOf(caraAudio), {}, { identity: CARA })
+    expect(caraAudio.volume).toBeCloseTo(0.25)
+    // and when the track goes the setting stays: the next one gets it again
+    g.__handlers.tu(trackOf(caraAudio), {}, { identity: CARA })
+    const again = { volume: 1, remove() {} }
+    g.__handlers.ts(trackOf(again), {}, { identity: CARA })
+    expect(again.volume).toBeCloseTo(0.25)
+
+    // someone leaves: the list is made again without them
+    g.__room.remoteParticipants.delete(BOB)
+    g.__handlers.pd()
+    expect(page.parts['[data-people]'].children).toHaveLength(1)
     t.done()
   })
 
@@ -578,6 +636,19 @@ describe('the routes', () => {
     expect(url).toBe('wss://lk.test')
     const claims = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString())
     expect(claims).toMatchObject({ iss: 'devkey', sub: ADMIN, video: { room: roomOf(server.id), canPublish: true, canSubscribe: true } })
+  })
+
+  test('the token carries the nick a round knows for the player (for the others\' list), else the SteamID64', async () => {
+    configureVoice(CFG)
+    const nameIn = async () => {
+      const { token } = await (await postToken(`/servers/${server.id}/voice/token`, ADMIN)).json()
+      return JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).name
+    }
+    expect(await nameIn()).toBe(ADMIN)
+    const round = await api.request('/v1/round', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${server.token}` },
+      body: JSON.stringify({ round_id: 'round-nick-001', map: 'ttt_example', result: 'innocents', duration: 300, players: [{ steam_id: ADMIN, nick: 'Phil', role: 'innocent', team: 'innocents' }], deaths: [] }) })
+    expect(round.status).toBe(200)
+    expect(await nameIn()).toBe('Phil')
   })
 
   test('tokens are limited per account', async () => {

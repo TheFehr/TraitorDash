@@ -72,6 +72,12 @@ export const VoicePage = ({ ctx, server, enabled }: VoicePageProps) => {
             </div>
           </div>
 
+          <div>
+            <div class="cap">People</div>
+            <div data-people></div>
+            <p class="muted" style="margin-top:.35rem">Everyone on the voice chat is listed, whether or not you can hear them right now (during a round the game decides that). Your volumes and mutes are remembered on this device.</p>
+          </div>
+
           <div data-audio style="display:none"></div>
         </div>
       )}

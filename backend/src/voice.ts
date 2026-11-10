@@ -50,6 +50,7 @@ function start(root: HTMLElement) {
   const filters = Array.from(root.querySelectorAll<HTMLButtonElement>('[data-filter]'))
   const monitorBtn = $<HTMLButtonElement>('[data-monitor]')
   const filterNote = $('[data-filter-note]')
+  const peopleBox = $('[data-people]')
 
   let room: Room | null = null
   let mic: LocalAudioTrack | null = null
@@ -57,6 +58,7 @@ function start(root: HTMLElement) {
   let tap: MediaStreamTrack | null = null
   let rawMic: LocalAudioTrack | null = null // what the microphone gives; `mic` is what is sent (the same, or the filtered output)
   let chain: Chain | null = null
+  const playing = new Map<string, HTMLMediaElement>() // the audio of each player who is being heard, by SteamID64
   let timer = 0
   let open = false
   let heldUntil = 0
@@ -124,7 +126,32 @@ function start(root: HTMLElement) {
   window.addEventListener('keyup', (e) => { if (keyOf(e) === pttKey.value) keyDown = false })
   window.addEventListener('blur', () => { keyDown = false })
 
-  const people = () => { count.textContent = String(room ? room.remoteParticipants.size + 1 : 0) }
+  // Each player's volume (0 to 100) and mute, kept on this device by SteamID64. The audio element's volume is what is set: the browser
+  // does not take more than 100. A track comes and goes as the game lets the player be heard or not; the setting stays with the player.
+  const volumeOf = (id: string) => { const v = store.get('vol_' + id); const n = v === null ? 100 : Number(v); return Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : 100 }
+  const mutedOf = (id: string) => store.get('mute_' + id) === '1'
+  const applyVolume = (id: string) => { const el = playing.get(id); if (el) el.volume = mutedOf(id) ? 0 : volumeOf(id) / 100 }
+
+  const renderPeople = () => {
+    peopleBox.textContent = ''
+    if (!room) return
+    for (const p of room.remoteParticipants.values()) {
+      const id = p.identity
+      const row = document.createElement('div'); row.className = 'person'
+      const name = document.createElement('span'); name.className = 'pname'; name.textContent = p.name || id
+      const slider = document.createElement('input'); slider.type = 'range'; slider.min = '0'; slider.max = '100'; slider.step = '5'
+      slider.value = String(volumeOf(id)); slider.setAttribute('aria-label', 'Volume of ' + (p.name || id))
+      const pct = document.createElement('span'); pct.className = 'pct muted'; pct.textContent = slider.value + '%'
+      const mute = document.createElement('button'); mute.type = 'button'; mute.className = 'tog'; mute.textContent = 'Mute'
+      mute.setAttribute('aria-pressed', String(mutedOf(id)))
+      slider.addEventListener('input', () => { store.set('vol_' + id, slider.value); pct.textContent = slider.value + '%'; applyVolume(id) })
+      mute.addEventListener('click', () => { const now = !mutedOf(id); store.set('mute_' + id, now ? '1' : '0'); mute.setAttribute('aria-pressed', String(now)); applyVolume(id) })
+      row.appendChild(name); row.appendChild(slider); row.appendChild(pct); row.appendChild(mute)
+      peopleBox.appendChild(row)
+    }
+  }
+
+  const people = () => { count.textContent = String(room ? room.remoteParticipants.size + 1 : 0); renderPeople() }
 
   const leave = async () => {
     window.clearInterval(timer)
@@ -139,6 +166,7 @@ function start(root: HTMLElement) {
     const leaving = room; room = null // before the disconnect, whose event would otherwise call this again
     await leaving?.disconnect()
     audioBox.textContent = ''
+    playing.clear()
     level.style.width = '0'
     level.classList.remove('open')
     people()
@@ -156,8 +184,8 @@ function start(root: HTMLElement) {
       const { url, token } = await res.json() as { url: string, token: string }
       // The browser's own processing: echo cancellation, noise suppression, level control (RFC 27, 3).
       const r = new Room({ audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
-      r.on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => { audioBox.appendChild(track.attach()) })
-      r.on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => { track.detach().forEach(el => el.remove()) })
+      r.on(RoomEvent.TrackSubscribed, (track: RemoteTrack, _pub: unknown, who: { identity: string }) => { const el = track.attach(); audioBox.appendChild(el); playing.set(who.identity, el); applyVolume(who.identity) })
+      r.on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack, _pub: unknown, who: { identity: string }) => { track.detach().forEach(el => el.remove()); playing.delete(who.identity) })
       r.on(RoomEvent.ParticipantConnected, people)
       r.on(RoomEvent.ParticipantDisconnected, people)
       r.on(RoomEvent.Reconnecting, () => { status.textContent = 'Reconnecting…' })
