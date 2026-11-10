@@ -37,3 +37,26 @@ line matches the one the app prints, and so on).
    startup command (`BASE_URL=...`, `SESSION_SECRET=...`, `SUPER_ADMINS=...`) are no longer used: the startup
    command is now the egg's own.
 3. Restart. The files and the SQLite database in the volume are untouched.
+
+## The media server for voice chat (RFC 27)
+
+`egg-livekit.json` runs the [LiveKit](https://livekit.io) media server that the dashboard's voice chat uses, as a Pelican server of its
+own next to the dashboard's (two servers, one node; each egg runs one program). The installer downloads LiveKit's own release
+(a pinned version, a SHA-256 per CPU architecture; a file that does not match fails the install), the startup command writes the
+config from the variables and starts it with the keys in the environment, so the secret is not in a file.
+
+1. Import the egg (Admin > Eggs > Import). Create a server from it with **three allocations**: the primary one is the signalling
+   port (7880), the other two the media ports for TCP (7881) and UDP (7882); the numbers must be those of the allocations, and the
+   UDP one must be open to the internet.
+2. Fill in the variables: an API key, an API secret (at least 32 random characters), and the node's public address only if
+   the server cannot find it itself (it asks a STUN server).
+3. Put a TLS proxy in front of the signalling port: browsers will only open `wss://` from the dashboard's `https://` page. The media
+   ports are reached directly, not through the proxy.
+4. On the dashboard's server set `LIVEKIT_URL` (the proxy's `wss://` address), `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` (the same
+   key and secret), and `LIVEKIT_API_URL` if the dashboard reaches LiveKit by another address than the public one (for example
+   `http://<node address>:7880` on the same node).
+
+`backend/test/livekit_egg.test.ts` keeps the file honest (the command's variables are declared, no secret is shipped, the config it
+writes is the one LiveKit reads, the installer refuses a failed or wrong download). **Not tried against a panel or the real
+server yet:** the line that marks the server as running (`starting LiveKit server`) is LiveKit's log line as the maintainer of
+this code remembers it; if the panel stays on "starting", change it in the egg's Configuration > Startup > Done.
