@@ -20,6 +20,8 @@ interface Chain {
   /** null when the gate could not start: the page then decides (a little late) and mutes the track, as before RFC 29. */
   gate: AudioWorkletNode | null
   filterOk: boolean
+  /** Set by the page: gets the noise filter's probability that the sound is speech (0 to 1), about every 10 ms; none comes for digital silence. */
+  onVad: ((p: number) => void) | null
 }
 
 // The microphone through the noise filter (RNNoise, in the browser; its files are copied to /public/rnnoise by the build) and then the
@@ -37,6 +39,8 @@ async function buildChain(c: AudioContext, raw: MediaStreamTrack, at: { open: nu
     const wasmBinary = await loadRnnoise({ url: '/public/rnnoise/rnnoise.wasm', simdUrl: '/public/rnnoise/rnnoise_simd.wasm' })
     await c.audioWorklet.addModule('/public/rnnoise/worklet.js')
     const filter = new RnnoiseWorkletNode(c, { maxChannels: 2, wasmBinary })
+    // The build patches the filter's worklet (scripts/copy-rnnoise.ts) to post { vad } with the probability of speech (RFC 29, 4.4).
+    filter.port.onmessage = (e: MessageEvent) => { const v = e.data?.vad; if (typeof v === 'number') chain.onVad?.(v) }
     src.connect(filter); filter.connect(wet); wet.connect(pre)
   } catch (err) {
     console.warn('voice: the noise filter did not start', err)
@@ -53,11 +57,12 @@ async function buildChain(c: AudioContext, raw: MediaStreamTrack, at: { open: nu
   const tail = gate ?? pre
   tail.connect(dest); tail.connect(monitor)
   monitor.connect(c.destination)
-  return {
-    out: dest.stream.getAudioTracks()[0]!, gate, filterOk,
+  const chain: Chain = {
+    out: dest.stream.getAudioTracks()[0]!, gate, filterOk, onVad: null,
     setFilter(on) { const w = on && filterOk; wet.gain.value = w ? 1 : 0; dry.gain.value = w ? 0 : 1 },
     setMonitor(on) { monitor.gain.value = on ? 1 : 0 },
   }
+  return chain
 }
 
 // The meter shows -80 to 0 dBFS; its zones (quiet, where speech should sit, too loud) are drawn by the stylesheet at the same places.
@@ -84,6 +89,9 @@ function start(root: HTMLElement) {
   const measureNote = $('[data-measure-note]')
   const autoBtn = $<HTMLButtonElement>('[data-auto]')
   const gateNote = $('[data-gate-note]')
+  const condLoud = $<HTMLInputElement>('[data-cond-loud]')
+  const condSpeech = $<HTMLInputElement>('[data-cond-speech]')
+  const condNote = $('[data-cond-note]')
   const count = $('[data-count]')
   const audioBox = $('[data-audio]')
   const vadBox = $('[data-vad-box]')
@@ -116,6 +124,16 @@ function start(root: HTMLElement) {
   const monitorOn = () => monitorBtn.getAttribute('aria-pressed') === 'true'
   const autoOn = () => autoBtn.getAttribute('aria-pressed') === 'true'
   const showMode = () => { vadBox.style.display = mode() === 'vad' ? '' : 'none'; pttBox.style.display = mode() === 'ptt' ? '' : 'none' }
+
+  // What must hold for the microphone to open (RFC 29, 4.4): 'loud' (the default, the gate as it was), 'speech' (the noise filter says it is a
+  // voice, whatever the level) or 'both'. Saved as such; anything else saved means 'loud'. The speech part needs the noise filter and the gate
+  // worklet: when either could not start it is not offered, the choice that was saved stays saved, and the gate runs on loudness.
+  type Cond = 'loud' | 'speech' | 'both'
+  const condOf = (v: string | null): Cond => (v === 'speech' || v === 'both' ? v : 'loud')
+  let cond: Cond = condOf(store.get('gate_cond'))
+  let speechOk = true // false once a join has shown that the speech check cannot run
+  const effective = (): Cond => (speechOk ? cond : 'loud')
+  const speechOnly = () => effective() === 'speech'
 
   // The two thresholds, in dBFS. The close one follows the open one at the same distance (6 dB at first); the "Advanced" slider changes the distance.
   let openDb: number = GATE.openDb
@@ -152,15 +170,39 @@ function start(root: HTMLElement) {
   const savedKey = store.get('key'); if (savedKey && savedKey.length === 1) pttKey.value = savedKey
   if (store.get('filter') === 'off') pickFilter('off')
   if (store.get('gate_auto') === '1') autoBtn.setAttribute('aria-pressed', 'true')
-  const showAuto = () => { threshold.disabled = autoOn(); closeThreshold.disabled = autoOn() }
-  showMode(); showThresholds(); showAuto(); pushThresholds()
+  // The sliders, "Measure my room" and "Adjust by itself" are about loudness: with speech alone they are not used, and are off.
+  let measuring: number[] | null = null
+  const showAuto = () => {
+    threshold.disabled = autoOn() || speechOnly(); closeThreshold.disabled = autoOn() || speechOnly()
+    measureBtn.disabled = measuring !== null || speechOnly(); autoBtn.disabled = speechOnly()
+  }
+  const showCond = () => {
+    condLoud.checked = effective() !== 'speech'; condSpeech.checked = effective() !== 'loud'
+    condSpeech.disabled = !speechOk || mode() === 'ptt'; condLoud.disabled = mode() === 'ptt'
+    if (!speechOk) condNote.textContent = 'The speech check needs the noise filter and the voice gate, and one of them could not start: the microphone opens by loudness.'
+    else if (speechOnly()) condNote.textContent = 'Only speech decides now: the sensitivity, "Measure my room" and "Adjust by itself" are not used.'
+    else condNote.textContent = ''
+    showAuto()
+  }
+  const pushConditions = () => { const e = effective(); gateNode?.port.postMessage({ type: 'conditions', loud: e !== 'speech', speech: e !== 'loud' }) }
+  showMode(); showThresholds(); showCond(); pushThresholds()
 
   // Held open or closed by the key in the "hold a key" mode, where the gate is not used; the gate decides otherwise.
   const syncForce = () => gateNode?.port.postMessage({ type: 'force', open: mode() === 'ptt' ? keyDown : null })
 
   filters.forEach(f => f.addEventListener('click', () => { pickFilter(f.dataset.filter!); store.set('filter', filterOn() ? 'on' : 'off'); chain?.setFilter(filterOn()) }))
   monitorBtn.addEventListener('click', () => { monitorBtn.setAttribute('aria-pressed', String(!monitorOn())); chain?.setMonitor(monitorOn()) }) // not remembered: it starts off at every join
-  modes.forEach(m => m.addEventListener('click', () => { pick(m.dataset.mode!); store.set('mode', mode()); showMode(); syncForce() }))
+  modes.forEach(m => m.addEventListener('click', () => { pick(m.dataset.mode!); store.set('mode', mode()); showMode(); showCond(); syncForce() }))
+  // At least one box stays ticked: unticking the last one ticks the other.
+  const onCond = (changed: 'loud' | 'speech') => {
+    let loud = condLoud.checked, speech = condSpeech.checked && speechOk
+    if (!loud && !speech) { if (changed === 'loud' && speechOk) speech = true; else loud = true }
+    cond = loud && speech ? 'both' : speech ? 'speech' : 'loud'
+    store.set('gate_cond', cond)
+    showCond(); pushConditions()
+  }
+  condLoud.addEventListener('change', () => onCond('loud'))
+  condSpeech.addEventListener('change', () => onCond('speech'))
   threshold.addEventListener('input', () => setThresholds(Number(threshold.value), Number(threshold.value) - gap))
   closeThreshold.addEventListener('input', () => setThresholds(openDb, Number(closeThreshold.value)))
   pttKey.addEventListener('input', () => { pttKey.value = pttKey.value.slice(-1).toLowerCase(); store.set('key', pttKey.value) })
@@ -170,23 +212,22 @@ function start(root: HTMLElement) {
   autoBtn.addEventListener('click', () => {
     autoBtn.setAttribute('aria-pressed', String(!autoOn()))
     store.set('gate_auto', autoOn() ? '1' : '0')
-    tracker = new FloorTracker(); showAuto()
+    tracker = new FloorTracker(); showCond()
     if (!autoOn()) setThresholds(manualOpen, manualOpen - manualGap, false) // off: the player's own setting is back, and the sliders
   })
 
   // "Measure my room": 3 seconds of the levels the gate hears (after the filter), then the thresholds are set from them.
-  let measuring: number[] | null = null
   measureBtn.addEventListener('click', () => {
     if (measuring) return
     if (!room || !mic) { measureNote.textContent = 'Join the voice chat first: the room is measured through your microphone.'; return }
     const mine: number[] = []
     measuring = mine
-    measureBtn.disabled = true
+    showAuto()
     measureNote.textContent = 'Stay quiet for 3 seconds…'
     window.setTimeout(() => {
       if (measuring !== mine) return // the player left meanwhile (and may have begun another measurement): this one is over
       const levels = mine
-      measuring = null; measureBtn.disabled = false
+      measuring = null; showAuto()
       const r = calibrate(levels)
       if (!r.ok) {
         measureNote.textContent = r.reason === 'few'
@@ -211,7 +252,7 @@ function start(root: HTMLElement) {
     if (measuring) measuring.push(db)
     const dt = lastT < 0 ? 50 : Math.max(0, Math.min(1000, (t - lastT) * 1000))
     lastT = t
-    if (autoOn() && !measuring) {
+    if (autoOn() && !measuring && !speechOnly()) {
       tracker.feed(db, dt, isOpen)
       const th = tracker.thresholds()
       if (th && (Math.round(th.open) !== openDb || Math.round(th.close) !== closeDb())) setThresholds(th.open, th.close, false)
@@ -297,7 +338,7 @@ function start(root: HTMLElement) {
     window.clearInterval(timer)
     if (gateNode) { gateNode.port.onmessage = null; gateNode = null }
     talking = false; speaking.textContent = ''
-    measuring = null; measureBtn.disabled = false
+    measuring = null
     fallback.reset(); lastT = -1; tracker = new FloorTracker()
     mic?.stop(); mic = null
     rawMic?.stop(); rawMic = null; chain = null
@@ -305,6 +346,7 @@ function start(root: HTMLElement) {
     monitorBtn.setAttribute('aria-pressed', 'false')
     filters.forEach(f => { f.disabled = false })
     filterNote.textContent = ''; gateNote.textContent = ''
+    speechOk = true; showCond() // not known again until the next join
     await ctx?.close().catch(() => {}); ctx = null
     const leaving = room; room = null // before the disconnect, whose event would otherwise call this again
     await leaving?.disconnect()
@@ -347,6 +389,7 @@ function start(root: HTMLElement) {
         chain.setFilter(filterOn()); chain.setMonitor(monitorOn())
         mic = new LocalAudioTrack(chain.out, undefined, true)
         gateNode = chain.gate
+        chain.onVad = (p) => gateNode?.port.postMessage({ type: 'vad', v: p })
         if (!chain.filterOk) {
           filters.forEach(f => { f.disabled = true })
           filterNote.textContent = 'The noise filter could not start; your microphone is sent without it.'
@@ -358,13 +401,15 @@ function start(root: HTMLElement) {
         filters.forEach(f => { f.disabled = true })
         filterNote.textContent = 'The noise filter could not start; your microphone is sent as it is.'
       }
+      speechOk = !!chain && chain.filterOk && !!gateNode // the speech check needs the filter's probability and the gate worklet to use it
+      showCond()
       if (!gateNode) gateNote.textContent = 'The voice gate could not start, so the page switches your microphone on and off itself; the first part of a word may be cut.'
       // Silence suppression (DTX) is on by default in LiveKit for a mono track; it is set here so it does not depend on that.
       await r.localParticipant.publishTrack(mic, { name: 'microphone', dtx: true })
       if (gateNode) {
         // The track stays on: the gate's gain closes and opens it, and the worklet tells the page what it hears.
         gateNode.port.onmessage = (e: MessageEvent) => { const m = e.data; if (m && typeof m.level === 'number') onLevel(m.level, !!m.open, Number(m.t) || 0) }
-        pushThresholds(); syncForce()
+        pushThresholds(); pushConditions(); syncForce()
       } else {
         await mic.mute() // closed until the player speaks or holds the key
         await watchFallback(mic)

@@ -16,6 +16,8 @@ export const GATE = {
   lookaheadMs: 25,
   openRampMs: 3, closeRampMs: 80,
   windowMs: 10,
+  // speech (RFC 29, 4.4): RNNoise's probability that a 10 ms frame is speech, as the filter's worklet posts it about every 10.7 ms
+  speechOpenP: 0.9, speechKeepP: 0.8, speechFrames: 2, vadStaleMs: 150,
   releaseDbPerS: 120, // how fast the envelope falls (it rises at once)
   silenceDb: -100, // the level of digital silence; nothing is reported below it
   // the room measurement (4.2)
@@ -54,6 +56,32 @@ export class LevelMeter {
   }
 }
 
+/** What the speech condition makes of RNNoise's probabilities (one per message, about every 10.7 ms): it says "speech" after `frames`
+ *  messages in a row at `openP` or above (one loud frame, a click, is not enough), and keeps saying it while the last message is at
+ *  `keepP` or above. The filter posts nothing for digital silence, so a message older than `staleMs` counts as 0. */
+export class SpeechDetector {
+  private run = 0
+  private last = 0
+  private age = Infinity // ms since the last message
+  constructor(public openP: number = GATE.speechOpenP, public keepP: number = GATE.speechKeepP, public frames: number = GATE.speechFrames, public staleMs: number = GATE.vadStaleMs) {}
+  /** A message: the probability (0 to 1) of the frames since the last one. */
+  feed(p: number) {
+    if (!Number.isFinite(p)) return
+    if (this.age > this.staleMs) this.run = 0 // a gap is silence, and silence has no probability: what came before is not "in a row" with this
+    this.last = p; this.age = 0
+    this.run = p >= this.openP ? this.run + 1 : 0
+  }
+  /** Time passes with no message (`ms` of sound). */
+  advance(ms: number) { this.age += ms }
+  /** The probability as it counts now: 0 when the last message is stale. */
+  get p() { return this.age > this.staleMs ? 0 : this.last }
+  /** Is it speech now, to open the gate: `frames` messages in a row at the open probability, the last one not stale. */
+  get opens(): boolean { return this.age <= this.staleMs && this.run >= this.frames }
+  /** Is it still speech, to keep the gate open. */
+  get keeps(): boolean { return this.p >= this.keepP }
+  reset() { this.run = 0; this.last = 0; this.age = Infinity }
+}
+
 /** Open or closed, from a level and the time that passed. Between the two thresholds nothing changes: that is the hysteresis. */
 export class GateState {
   open = false
@@ -64,9 +92,15 @@ export class GateState {
   /** One look at the level, `dtMs` after the last. Opens at the open threshold or above; closes only when the level has been
    *  below the close threshold for the whole hold (a level above it, even below the open one, starts the hold again). */
   step(levelDb: number, dtMs: number): boolean {
+    return this.stepConditions(levelDb >= this.openDb, levelDb > this.closeDb, dtMs)
+  }
+  /** The same decision from two answers the caller has worked out (from the loudness, from speech, or from both): `openNow`, whether the
+   *  sound calls for opening, and `keepNow`, whether it still holds the gate open. A closed gate opens on `openNow`; an open one closes only
+   *  after `keepNow` has been false for the whole hold. */
+  stepConditions(openNow: boolean, keepNow: boolean, dtMs: number): boolean {
     if (!this.open) {
-      if (levelDb >= this.openDb) { this.open = true; this.holdLeft = this.holdMs }
-    } else if (levelDb > this.closeDb) {
+      if (openNow) { this.open = true; this.holdLeft = this.holdMs }
+    } else if (keepNow) {
       this.holdLeft = this.holdMs
     } else {
       this.holdLeft -= dtMs
@@ -101,6 +135,10 @@ export class GateEngine {
   readonly state: GateState
   readonly ramp: GainRamp
   readonly delay: number
+  /** What the speech condition makes of the noise filter's probabilities (RFC 29, 4.4). */
+  readonly speech = new SpeechDetector()
+  private loud = true
+  private wantSpeech = false
   private readonly windowMs: number
   private rings: Float32Array[] = []
   private at = 0
@@ -114,6 +152,12 @@ export class GateEngine {
     this.windowMs = GATE.windowMs
   }
   setThresholds(openDb: number, closeDb: number) { this.state.set(openDb, closeDb) }
+  /** Which conditions must hold for the gate to open and to stay open: the sound is loud enough, it sounds like speech, or both.
+   *  Neither means loudness only (the page does not allow it; this is the default and what an old page gets). */
+  setConditions(loud: boolean, speech: boolean) { this.loud = loud || !speech; this.wantSpeech = speech }
+  get conditions(): { loud: boolean, speech: boolean } { return { loud: this.loud, speech: this.wantSpeech } }
+  /** One probability from the noise filter (the highest of its frames since its last message). */
+  setVad(p: number) { this.speech.feed(p) }
   /** The level of the sound as it comes in (the envelope), and whether the gate is open. */
   get levelDb() { return this.meter.env }
   get open() { return this.force ?? this.state.open }
@@ -130,7 +174,13 @@ export class GateEngine {
       for (let c = 0; c < chans; c++) { const x = input[c]![i]!; p += x * x }
       // The state follows the window's own level, not the envelope: the envelope falls slowly (it is for the meter), and a hold that
       // only began once it had fallen below the close threshold was 350 to 600 ms long instead of the 250 it is meant to be.
-      if (this.meter.add(p / chans)) this.state.step(this.meter.window, this.windowMs)
+      if (this.meter.add(p / chans)) {
+        const w = this.meter.window
+        this.state.stepConditions(
+          (this.loud ? w >= this.state.openDb : true) && (this.wantSpeech ? this.speech.opens : true),
+          (this.loud ? w > this.state.closeDb : true) && (this.wantSpeech ? this.speech.keeps : true),
+          this.windowMs)
+      }
       const g = this.ramp.next(this.open ? 1 : 0)
       for (let c = 0; c < chans; c++) {
         const x = input[c]![i]!
@@ -140,6 +190,7 @@ export class GateEngine {
       }
       if (D > 0) this.at = (this.at + 1) % D
     }
+    this.speech.advance(n * 1000 / this.sampleRate) // the age of the last probability: the sound that has gone by since it came
   }
 }
 

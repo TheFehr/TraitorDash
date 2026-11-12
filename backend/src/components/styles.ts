@@ -231,6 +231,12 @@ html.theater{overflow:hidden}
 .vc .lvl-read{display:flex;gap:var(--space-3);align-items:flex-start;min-height:1.6em}
 .vc .mnote{min-height:2.8em}
 @media (max-width:640px){.vc .mnote{min-height:5.6em}}
+.vc .cnote{min-height:2.8em}
+@media (max-width:640px){.vc .cnote{min-height:5.6em}}
+.vc .checks{display:flex;flex-wrap:wrap;gap:var(--space-1) var(--space-3);align-items:center}
+.vc .check{display:inline-flex;align-items:center;gap:var(--space-1);cursor:pointer}
+.vc .check input{margin:0}
+.vc .check:has(input:disabled){opacity:.55;cursor:default}
 .vc .db{min-width:6.5rem}
 .vc .talk{min-width:5rem}
 .vc .lvl-legend{font-size:.85rem}
