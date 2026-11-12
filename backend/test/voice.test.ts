@@ -369,7 +369,7 @@ describe('the page\'s code', () => {
   `
   const RNNOISE_FAKE = `
     export const loadRnnoise = async (urls) => { globalThis.__log.push('load ' + urls.url + ' ' + urls.simdUrl); if (globalThis.__rnnoiseFails) throw new Error('no wasm'); return new ArrayBuffer(1) }
-    export class RnnoiseWorkletNode { constructor(ctx, o) { globalThis.__log.push('rnnoise maxChannels=' + o.maxChannels); this.connect = () => {} } }
+    export class RnnoiseWorkletNode { constructor(ctx, o) { globalThis.__log.push('rnnoise maxChannels=' + o.maxChannels); this.connect = () => {}; this.port = { onmessage: null }; globalThis.__filter = this } }
   `
   async function load() {
     const built = await Bun.build({
@@ -405,6 +405,7 @@ describe('the page\'s code', () => {
     parts['[data-threshold]'] = el('[data-threshold]', { value: '-50' })
     parts['[data-close-threshold]'] = el('[data-close-threshold]', { value: '-56' })
     parts['[data-auto]'] = el('[data-auto]'); attrs['[data-auto]']!['aria-pressed'] = 'false'
+    parts['[data-cond-loud]'] = el('[data-cond-loud]', { checked: true }); parts['[data-cond-speech]'] = el('[data-cond-speech]', { checked: false }); parts['[data-cond-note]'] = el('[data-cond-note]')
     const modes = [el('vad', { dataset: { mode: 'vad' } }), el('ptt', { dataset: { mode: 'ptt' }, disabled: true })]
     const filters = [el('on', { dataset: { filter: 'on' } }), el('off', { dataset: { filter: 'off' } })]
     attrs['on']!['aria-pressed'] = 'true'; attrs['off']!['aria-pressed'] = 'false'
@@ -476,7 +477,7 @@ describe('the page\'s code', () => {
     const fetchFake = async (url: string) => (url.includes('/people')
       ? { ok: true, json: async () => ({ people: state.people }) }
       : { ok: true, json: async () => ({ url: 'wss://lk.test', token: 'tok' }) })
-    return { log, g, rawTrack, outTrack, gains, gate, gateNodes, sound, state, globals: { AudioContext: FakeContext, MediaStream: FakeStream, AudioWorkletNode: FakeGateNode, fetch: fetchFake }, done() { delete g.__log; delete g.__mic; delete g.__rnnoiseFails; delete g.__room; delete g.__handlers } }
+    return { log, g, rawTrack, outTrack, gains, gate, gateNodes, sound, state, globals: { AudioContext: FakeContext, MediaStream: FakeStream, AudioWorkletNode: FakeGateNode, fetch: fetchFake }, done() { delete g.__log; delete g.__mic; delete g.__rnnoiseFails; delete g.__filter; delete g.__room; delete g.__handlers } }
   }
 
   /** A join, done: the page with the fake browser and the join finished. */
@@ -852,22 +853,239 @@ describe('the page\'s code', () => {
     expect(t.log.at(-1)).toBe('unmute')
     t.done()
   })
+
+  describe('what opens the microphone (RFC 29, 4.4)', () => {
+    const tick = async (box: any, page: any, name: string, on: boolean) => { box.checked = on; await page.listeners[name]!.change!() }
+    const LOUD = '[data-cond-loud]', SPEECH = '[data-cond-speech]'
+    const posted = (t: any, type: string) => t.gateNodes[0].sent.filter((m: any) => m.type === type)
+
+    test('the two boxes are in the markup, loudness ticked and speech not, and the page tells the player what each does', async () => {
+      const page = await Bun.file(new URL('../src/components/VoicePage.tsx', import.meta.url)).text()
+      expect(page).toMatch(/<input type="checkbox" data-cond-loud checked \/>/)
+      expect(page).toMatch(/<input type="checkbox" data-cond-speech \/>/)
+      expect(page).not.toMatch(/data-cond-speech[^>]*checked/)
+      expect(page).toContain('Microphone opens when:'); expect(page).toContain('the sound is loud enough'); expect(page).toContain('it sounds like speech')
+      expect(page).toMatch(/data-cond-note role="status"><\/p>/) // a line of its own for the note, empty at first
+      // they sit under the two buttons of "Microphone opens", in the same card
+      expect(page.indexOf('data-cond-loud')).toBeGreaterThan(page.indexOf('data-mode="ptt"'))
+      expect(page.indexOf('data-cond-loud')).toBeLessThan(page.indexOf('Noise filter'))
+    })
+
+    test('a page with nothing saved starts on loudness only: loud ticked, speech not, nothing posted that changes the gate, the sliders on', async () => {
+      const { page, t } = await joined()
+      expect(page.parts[LOUD].checked).toBe(true); expect(page.parts[SPEECH].checked).toBe(false)
+      expect(page.parts[SPEECH].disabled).toBe(false); expect(page.parts[LOUD].disabled).toBe(false)
+      expect(posted(t, 'conditions')).toEqual([{ type: 'conditions', loud: true, speech: false }]) // what the gate is told at the join
+      expect(page.parts['[data-threshold]'].disabled).toBe(false); expect(page.parts['[data-measure]'].disabled).toBe(false); expect(page.parts['[data-auto]'].disabled).toBe(false)
+      expect(page.parts['[data-cond-note]'].textContent).toBe('')
+      expect(page.store.has('td_voice_gate_cond')).toBe(false) // nothing is saved until the player chooses
+      t.done()
+    })
+
+    test('the saved choice is read at the start, anything else saved means loudness, and a choice is written as it is made', async () => {
+      for (const [saved, loud, speech] of [['loud', true, false], ['speech', false, true], ['both', true, true]] as const) {
+        const page = await load(); page.store.set('td_voice_gate_cond', saved); page.run()
+        expect([page.parts[LOUD].checked, page.parts[SPEECH].checked], saved).toEqual([loud, speech])
+      }
+      for (const junk of ['', 'Speech', 'true', '1', 'loud,speech', '{"a":1}', 'undefined', 'null']) {
+        const page = await load(); page.store.set('td_voice_gate_cond', junk); page.run()
+        expect([page.parts[LOUD].checked, page.parts[SPEECH].checked], junk).toEqual([true, false])
+      }
+      const page = await load(); page.run()
+      await tick(page.parts[SPEECH], page, SPEECH, true); expect(page.store.get('td_voice_gate_cond')).toBe('both')
+      await tick(page.parts[LOUD], page, LOUD, false); expect(page.store.get('td_voice_gate_cond')).toBe('speech')
+      await tick(page.parts[LOUD], page, LOUD, true); expect(page.store.get('td_voice_gate_cond')).toBe('both')
+      await tick(page.parts[SPEECH], page, SPEECH, false); expect(page.store.get('td_voice_gate_cond')).toBe('loud')
+    })
+
+    test('at least one box stays ticked: unticking the last one ticks the other', async () => {
+      const page = await load(); page.run()
+      await tick(page.parts[LOUD], page, LOUD, false) // loud was the only one
+      expect([page.parts[LOUD].checked, page.parts[SPEECH].checked]).toEqual([false, true]); expect(page.store.get('td_voice_gate_cond')).toBe('speech')
+      await tick(page.parts[SPEECH], page, SPEECH, false) // speech was the only one now
+      expect([page.parts[LOUD].checked, page.parts[SPEECH].checked]).toEqual([true, false]); expect(page.store.get('td_voice_gate_cond')).toBe('loud')
+    })
+
+    test('the choice is sent to the gate when it is made, and the gate is told it at the join', async () => {
+      const { page, t } = await joined()
+      await tick(page.parts[SPEECH], page, SPEECH, true)
+      expect(posted(t, 'conditions').at(-1)).toEqual({ type: 'conditions', loud: true, speech: true })
+      await tick(page.parts[LOUD], page, LOUD, false)
+      expect(posted(t, 'conditions').at(-1)).toEqual({ type: 'conditions', loud: false, speech: true })
+      await tick(page.parts[LOUD], page, LOUD, true); await tick(page.parts[SPEECH], page, SPEECH, false)
+      expect(posted(t, 'conditions').at(-1)).toEqual({ type: 'conditions', loud: true, speech: false })
+      t.done()
+      const saved = await load(); saved.store.set('td_voice_gate_cond', 'both')
+      const t2 = setup(); saved.run(t2.globals); saved.listeners['[data-join]']!.click!(); await new Promise(r => setTimeout(r, 30))
+      expect(posted(t2, 'conditions')).toEqual([{ type: 'conditions', loud: true, speech: true }])
+      t2.done()
+    })
+
+    test('speech alone: the sensitivity, "Measure my room" and "Adjust by itself" are off, and the page says so; ticking loudness gives them back', async () => {
+      const { page, t } = await joined()
+      await tick(page.parts[LOUD], page, LOUD, false)
+      expect(page.parts['[data-threshold]'].disabled).toBe(true); expect(page.parts['[data-close-threshold]'].disabled).toBe(true)
+      expect(page.parts['[data-measure]'].disabled).toBe(true); expect(page.parts['[data-auto]'].disabled).toBe(true)
+      expect(page.parts['[data-cond-note]'].textContent).toContain('Only speech decides')
+      await tick(page.parts[LOUD], page, LOUD, true) // both: loudness is a condition again
+      expect(page.parts['[data-threshold]'].disabled).toBe(false); expect(page.parts['[data-close-threshold]'].disabled).toBe(false)
+      expect(page.parts['[data-measure]'].disabled).toBe(false); expect(page.parts['[data-auto]'].disabled).toBe(false)
+      expect(page.parts['[data-cond-note]'].textContent).toBe('')
+      t.done()
+    })
+
+    test('with "Adjust by itself" on, the sliders stay off when loudness is ticked again; and in speech alone it does not follow the room', async () => {
+      const { page, t, post } = await joined()
+      page.listeners['[data-auto]']!.click!()
+      await tick(page.parts[LOUD], page, LOUD, false)
+      const sets = () => t.gateNodes[0].sent.filter((m: any) => m.type === 'set').length
+      const before = sets()
+      for (let i = 0; i < 80; i++) post(-75, false, i * 0.05) // a very quiet room for 4 s: the open threshold would follow it down if the mode were working
+      expect(sets()).toBe(before)
+      await tick(page.parts[LOUD], page, LOUD, true)
+      for (let i = 80; i < 160; i++) post(-75, false, i * 0.05)
+      expect(sets()).toBeGreaterThan(before) // with loudness back, it follows again (so the check above could have failed)
+      expect(page.parts['[data-threshold]'].disabled).toBe(true) // the automatic mode still has the sliders
+      t.done()
+    })
+
+    test('the probability from the noise filter reaches the gate as { type: "vad", v }, and only numbers do', async () => {
+      const { t } = await joined()
+      const filter = (t.g as any).__filter
+      expect(filter.port.onmessage).toBeInstanceOf(Function)
+      for (const v of [0, 0.42, 0.97, 1]) filter.port.onmessage({ data: { vad: v } })
+      filter.port.onmessage({ data: { vad: 'x' } }); filter.port.onmessage({ data: {} }); filter.port.onmessage({ data: null }); filter.port.onmessage({ data: { level: -30 } })
+      expect(posted(t, 'vad')).toEqual([0, 0.42, 0.97, 1].map(v => ({ type: 'vad', v })))
+      t.done()
+    })
+
+    test('when the noise filter cannot start the speech box is off and unticked with a note, loudness runs, and the saved choice is kept', async () => {
+      const page = await load(); page.store.set('td_voice_gate_cond', 'both')
+      const t = setup({ rnnoiseFails: true })
+      const warn = console.warn; console.warn = () => {}
+      try { page.run(t.globals); page.listeners['[data-join]']!.click!(); await new Promise(r => setTimeout(r, 30)) } finally { console.warn = warn }
+      expect(page.parts[SPEECH].disabled).toBe(true); expect(page.parts[SPEECH].checked).toBe(false); expect(page.parts[LOUD].checked).toBe(true)
+      expect(page.parts['[data-cond-note]'].textContent).toContain('could not start')
+      expect(t.gateNodes[0].sent.filter((m: any) => m.type === 'conditions').at(-1)).toEqual({ type: 'conditions', loud: true, speech: false })
+      expect(page.store.get('td_voice_gate_cond')).toBe('both') // a failed start is not the player's choice
+      await tick(page.parts[LOUD], page, LOUD, false) // the only box left: it stays ticked
+      expect(page.parts[LOUD].checked).toBe(true); expect(page.store.get('td_voice_gate_cond')).toBe('loud')
+      // leaving makes the box available again for the next join
+      page.listeners['[data-join]']!.click!(); await new Promise(r => setTimeout(r, 30))
+      t.done()
+    })
+
+    test('speech alone saved, and the filter cannot start: the page falls back to loudness, with the sliders on', async () => {
+      const page = await load(); page.store.set('td_voice_gate_cond', 'speech')
+      const t = setup({ rnnoiseFails: true })
+      const warn = console.warn; console.warn = () => {}
+      try { page.run(t.globals); page.listeners['[data-join]']!.click!(); await new Promise(r => setTimeout(r, 30)) } finally { console.warn = warn }
+      expect(page.parts['[data-threshold]'].disabled).toBe(false); expect(page.parts['[data-measure]'].disabled).toBe(false)
+      expect(t.gateNodes[0].sent.filter((m: any) => m.type === 'conditions').at(-1)).toEqual({ type: 'conditions', loud: true, speech: false })
+      t.done()
+    })
+
+    test('when the gate worklet cannot start (the page\'s own gate) or the whole chain fails, the speech box is off with a note', async () => {
+      for (const opts of [{ gateFails: true }, { chainFails: true }]) {
+        const page = await load(); page.store.set('td_voice_gate_cond', 'both')
+        const t = setup(opts)
+        const warn = console.warn; console.warn = () => {}
+        try { page.run(t.globals); page.listeners['[data-join]']!.click!(); await new Promise(r => setTimeout(r, 30)) } finally { console.warn = warn }
+        expect(page.parts[SPEECH].disabled, JSON.stringify(opts)).toBe(true); expect(page.parts[SPEECH].checked).toBe(false)
+        expect(page.parts['[data-cond-note]'].textContent, JSON.stringify(opts)).toContain('could not start')
+        t.done()
+      }
+    })
+
+    test('the boxes do not apply to "Hold a key": they are off in that mode', async () => {
+      const page = await load(); page.run()
+      page.modes[1]!.disabled = false
+      page.listeners['ptt']!.click!()
+      expect(page.parts[LOUD].disabled).toBe(true); expect(page.parts[SPEECH].disabled).toBe(true)
+      page.listeners['vad']!.click!()
+      expect(page.parts[LOUD].disabled).toBe(false); expect(page.parts[SPEECH].disabled).toBe(false)
+    })
+  })
 })
 
 describe('the noise filter files', () => {
-  test('the build copies the worklet and the two WebAssembly files to where the page asks for them, and they exist', async () => {
+  test('the build copies the worklet (patched, RFC 29) and the two WebAssembly files and the licence to where the page asks for them, and they exist', async () => {
     const root = new URL('..', import.meta.url).pathname
     const pkg = JSON.parse(await Bun.file(root + 'package.json').text())
-    const copy: string = pkg.scripts['copy:rnnoise']
+    expect(pkg.scripts['copy:rnnoise']).toBe('bun run scripts/copy-rnnoise.ts')
     expect(pkg.scripts['build:js']).toContain('bun run copy:rnnoise')
+    const copy = await Bun.file(root + 'scripts/copy-rnnoise.ts').text()
     const src = await Bun.file(root + 'src/voice.ts').text()
     for (const [from, to] of [['dist/rnnoise/workletProcessor.js', 'worklet.js'], ['dist/rnnoise.wasm', 'rnnoise.wasm'], ['dist/rnnoise_simd.wasm', 'rnnoise_simd.wasm']] as const) {
       expect(copy).toContain(from)
+      expect(copy).toContain(`'${to}'`)
       expect(src).toContain(`/public/rnnoise/${to}`) // the address the page loads is the name the build gives
       expect(await Bun.file(root + 'node_modules/@sapphi-red/web-noise-suppressor/' + from).exists()).toBe(true)
     }
-    expect(copy).toContain('LICENSE') // MIT, and the licence of RNNoise is in the package's: it goes along
+    expect(copy).toContain("'LICENSE'") // MIT, and the licence of RNNoise is in the package's: it goes along
     expect(await Bun.file(root + '.gitignore').text()).toContain('src/public/rnnoise/')
+  })
+
+  describe('scripts/copy-rnnoise.ts', () => {
+    const PKG = new URL('../node_modules/@sapphi-red/web-noise-suppressor/', import.meta.url).pathname
+    const WORKLET = PKG + 'dist/rnnoise/workletProcessor.js'
+    const fresh = async () => { const { mkdtemp } = await import('node:fs/promises'); const { tmpdir } = await import('node:os'); return mkdtemp(tmpdir() + '/rnnoise-') }
+
+    test('produces the four files, and the worklet carries the speech probability while the package itself is untouched', async () => {
+      const { copyRnnoise } = await import('../scripts/copy-rnnoise')
+      const dest = await fresh()
+      const before = await Bun.file(WORKLET).text()
+      await copyRnnoise(PKG, dest)
+      for (const f of ['worklet.js', 'rnnoise.wasm', 'rnnoise_simd.wasm', 'LICENSE']) expect(await Bun.file(dest + '/' + f).exists(), f).toBe(true)
+      const out = await Bun.file(dest + '/worklet.js').text()
+      expect(out).toContain('globalThis.__rnnoiseVad'); expect(out).toContain('this.port.postMessage({vad:v})'); expect(out).toContain('tickVad()')
+      expect(out).not.toBe(before)
+      expect(await Bun.file(WORKLET).text()).toBe(before) // node_modules is never edited
+      expect(before).not.toContain('__rnnoiseVad')
+      expect(await Bun.file(dest + '/rnnoise.wasm').arrayBuffer()).toEqual(await Bun.file(PKG + 'dist/rnnoise.wasm').arrayBuffer())
+    })
+
+    test('the patched worklet is still a valid script, and its posting logic works: the highest probability since the last message, then 0 is forgotten', async () => {
+      const { patchWorklet } = await import('../scripts/copy-rnnoise')
+      const out = patchWorklet(await Bun.file(WORKLET).text())
+      expect(() => new Function(out.replace(/registerProcessor\(/g, 'void(0,').replace(/import\.meta\.url/g, '""'))).not.toThrow(SyntaxError)
+      const body = /tickVad\(\)\{[^]*?globalThis\.__rnnoiseVad=0\}\}\}/.exec(out)![0]
+      const g = globalThis as any
+      const posted: number[] = []
+      const self = { vadBlocks: 0, port: { postMessage: (m: { vad: number }) => posted.push(m.vad) } }
+      const tick = new Function('globalThis', 'return function ' + body)(g) as () => void
+      g.__rnnoiseVad = undefined
+      for (let i = 0; i < 3; i++) tick.call(self)
+      expect(posted).toEqual([]) // nothing yet: a post every fourth block, and not when no frame has come
+      g.__rnnoiseVad = 0.7; tick.call(self)
+      expect(posted).toEqual([0.7]); expect(g.__rnnoiseVad).toBe(0) // reset to 0, not removed
+      for (let i = 0; i < 4; i++) tick.call(self)
+      expect(posted).toEqual([0.7, 0]) // frames that said 0 are a message too
+      delete g.__rnnoiseVad
+    })
+
+    test('each edit must match exactly once: a package that no longer matches fails the build (zero matches, and two)', async () => {
+      const { patchWorklet, EDITS } = await import('../scripts/copy-rnnoise')
+      const real = await Bun.file(WORKLET).text()
+      expect(EDITS).toHaveLength(3)
+      for (const e of EDITS) {
+        expect(real.split(e.from).length - 1, e.name).toBe(1) // the installed version matches now
+        expect(() => patchWorklet(real.replace(e.from, e.from.slice(0, -1) + '#')), e.name).toThrow(/matches 0 times/)
+        expect(() => patchWorklet(real + e.from), e.name).toThrow(/matches 2 times/)
+      }
+    })
+
+    test('the script itself fails, and writes nothing, when the worklet does not match', async () => {
+      const { copyRnnoise } = await import('../scripts/copy-rnnoise')
+      const { mkdir, cp, writeFile } = await import('node:fs/promises')
+      const pkg = await fresh()
+      await mkdir(pkg + '/dist/rnnoise', { recursive: true })
+      await cp(PKG + 'LICENSE', pkg + '/LICENSE'); await cp(PKG + 'dist/rnnoise.wasm', pkg + '/dist/rnnoise.wasm'); await cp(PKG + 'dist/rnnoise_simd.wasm', pkg + '/dist/rnnoise_simd.wasm')
+      await writeFile(pkg + '/dist/rnnoise/workletProcessor.js', 'registerProcessor("x", class {})')
+      const dest = (await fresh()) + '/out'
+      await expect(copyRnnoise(pkg, dest)).rejects.toThrow(/exactly once/)
+      expect(await Bun.file(dest + '/worklet.js').exists()).toBe(false)
+    })
   })
 
   test('the build makes the gate worklet (/public/gate.js) from its source, as one file, and keeps it out of git; the page loads that address', async () => {
