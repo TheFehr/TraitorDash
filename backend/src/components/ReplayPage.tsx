@@ -33,15 +33,15 @@ export const ReplayPage = ({ ctx, server, round, hasTrack, src, pinned, here, pi
       <Crumbs><a href={link(ctx, `/servers/${id}/stats`, { view: 'rounds', bots })}>Rounds</a> / <a href={back}>{round.map ? prettyMap(round.map) : 'Round'}</a> / Replay</Crumbs>
       {!ctx.embed && <Sections serverId={id} admin={adminOf(ctx)} />}
       <h1>Round replay</h1>
-      <p class="muted" style="margin:.1rem 0 .8rem">
+      <p class="muted" style="margin:0 0 var(--space-3)">
         {round.map ? prettyMap(round.map) : 'unknown map'} · {teamLabel(round.result)} · {duration(round.duration)}
-        {pinned && <span data-pinned class="pill ok ml6">Pinned</span>}
+        {pinned && <span data-pinned class="pill ok ml2">Pinned</span>}
       </p>
 
       {!hasTrack ? (
         <div data-no-track class="f c-gray">
           There is no recorded track for this round. Tracks are recorded only when the game server has position tracking on, and older ones are removed to keep room.
-          <p style="margin:.6rem 0 0"><a href={link(ctx, `/servers/${id}/stats`, { view: 'rounds', bots })} class="ul">Back to the round stats</a></p>
+          <p class="sp2"><a href={link(ctx, `/servers/${id}/stats`, { view: 'rounds', bots })} class="ul">Back to the round stats</a></p>
         </div>
       ) : (
         <div data-replay data-src={src} data-viewer={ctx.viewer?.steamId ?? ''} class="replay">
@@ -86,7 +86,7 @@ export const ReplayPage = ({ ctx, server, round, hasTrack, src, pinned, here, pi
             <section class="f c-green"><h2 class="ft">Players</h2><div data-players class="list" style={counts ? `--n:${counts.players}` : undefined}></div></section>
             <section class="f c-violet">
               <h2 class="ft">Selected player</h2>
-              <p data-selected-role style="margin:.2rem 0"></p>
+              <p data-selected-role style="margin:var(--space-1) 0"></p>
               <ol data-player-events class="list"></ol>
             </section>
             <section class="f c-red"><h2 class="ft">Deaths</h2><ol data-deaths class="list" style={counts ? `--n:${counts.deaths}` : undefined}></ol></section>

@@ -32,7 +32,7 @@ export const ServerManager = ({ servers, newToken, pairing }: { servers: any[], 
                 For tools that write the configuration themselves: this server's API token. It is shown once and stored only as a hash.
                 Using the command above instead is the easier way, and pairing replaces it.
               </p>
-              <code class="code" style="display:block;margin-top:.5rem;background:#14110e;border:1px solid #3a342a;padding:.6rem .8rem;word-break:break-all;user-select:all;font-size:.85rem">{pairing.token}</code>
+              <code class="code" style="display:block;margin-top:var(--space-2);background:#14110e;border:1px solid #3a342a;padding:var(--space-2) var(--space-3);word-break:break-all;user-select:all;font-size:.85rem">{pairing.token}</code>
             </details>
           )}
         </div>

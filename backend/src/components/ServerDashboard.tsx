@@ -128,10 +128,10 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
       <div class="head">
         <div>
           <h1>{server.name}</h1>
-          <p class="muted mb6">Server role registry</p>
+          <p class="muted mb2">Server role registry</p>
           <Sections serverId={server.id} />
-          <p style="margin:.6rem 0 0"><a href={`/servers/${server.id}/views`} data-view-log>👁 View log</a> <span class="muted">who opened replays and 3D maps</span></p>
-          <p style="margin:.4rem 0 0"><a href={`/servers/${server.id}/settings`} data-server-settings>⚙ Settings</a> <span class="muted">sampling, statistics and tracking on the game server, and how many replays are kept</span></p>
+          <p class="sp2"><a href={`/servers/${server.id}/views`} data-view-log>👁 View log</a> <span class="muted">who opened replays and 3D maps</span></p>
+          <p class="sp2"><a href={`/servers/${server.id}/settings`} data-server-settings>⚙ Settings</a> <span class="muted">sampling, statistics and tracking on the game server, and how many replays are kept</span></p>
         </div>
         <div class={`status ${isOnline ? 'on' : ''}`}>
           <i></i>
@@ -142,7 +142,7 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
         </div>
       </div>
 
-      <div class="stack" style="margin-top:1.2rem" x-data={filterState}>
+      <div class="parts mt4" x-data={filterState}>
         {sortedGroups.length > 0 && (
           <div class="toolbar">
             <label>
@@ -186,7 +186,7 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
         )}
 
         {sortedGroups.length > 0 && (
-          <p x-show="shown() === 0" x-cloak="true" class="muted m0" style="text-align:center;padding:2rem;border:2px dashed #3a342a">
+          <p x-show="shown() === 0" x-cloak="true" class="muted m0" style="text-align:center;padding:var(--space-5);border:2px dashed #3a342a">
             No roles match these filters.
           </p>
         )}
@@ -198,8 +198,8 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
           </div>
         ) : (
           <div
-            class="stack"
-            x-bind:style="{ display: flat ? 'grid' : '', gridTemplateColumns: flat ? 'repeat(auto-fill, minmax(17rem, 1fr))' : '', gap: flat ? '1.5rem 1rem' : '' }"
+            class="parts"
+            x-bind:style="{ display: flat ? 'grid' : '', gridTemplateColumns: flat ? 'repeat(auto-fill, minmax(17rem, 1fr))' : '', gap: flat ? 'var(--space-4) var(--space-3)' : '' }"
           >
           {sortedGroups.map(([team, roleList]: [string, any]) => (
             <section x-show="sectionVisible($el)" x-bind:class="flat ? 'contents' : ''" style={roleList.some((r: any) => r.enabled) ? undefined : 'display:none'}>
@@ -222,7 +222,7 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
                     <div style="min-width:0">
                       <strong class="ft m0" style="font-size:1.1rem;border:0">
                         {role.name}
-                        {!role.enabled && <span class="pill mute" style="margin-left:.5rem">disabled</span>}
+                        {!role.enabled && <span class="pill mute ml2">disabled</span>}
                       </strong>
                       <span
                         class="val"

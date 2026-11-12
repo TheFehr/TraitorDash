@@ -1003,10 +1003,12 @@ describe('the meter\'s styles', () => {
   test('the things whose text changes have a fixed width or one line, so what is beside and under them stays put', async () => {
     const css = await Bun.file(new URL('../src/components/styles.ts', import.meta.url)).text()
     const rule = (sel: string) => new RegExp('^' + sel.replace(/[.[\]=]/g, '\\$&') + '\\{([^}]*)\\}', 'm').exec(css)?.[1] ?? ''
-    // The cards sit as the cards of the other pages do (".g", ".pair" and ".replay" use 1.2rem between them, and ".g" 1rem above the first row):
-    // each card has a coloured tab 0.7rem high above it that takes up part of that space, and with a smaller gap the tab nearly touched the
-    // card above it (the owner noticed: the maps page and this page looked different).
-    expect(rule('.vcs')).toContain('gap:1.2rem'); expect(rule('.vcs')).toContain('padding-top:1rem')
+    // The cards sit as the cards of the other pages do (RFC 30: the shared ".stack" has --space-4 between the cards, as ".g" has between its rows,
+    // and the room for the first card's tab above the first): each card has a coloured tab (--tab) above it that takes up part of that space,
+    // and with a smaller gap the tab nearly touched the card above it (the owner noticed: the maps page and this page looked different).
+    expect(rule('.stack')).toContain('gap:var(--space-4)'); expect(rule('.stack')).toContain('padding-top:calc(var(--tab) + var(--space-2))')
+    expect(rule('.g,.pair,.nums')).toContain('gap:var(--space-4) var(--space-3)'); expect(rule('.g,.pair,.nums')).toContain('padding-top:calc(var(--tab) + var(--space-2))')
+    expect(await Bun.file(new URL('../src/components/VoicePage.tsx', import.meta.url)).text()).toMatch(/<div data-voice [^>]*class="stack"/)
     expect(rule('.vc .jn')).toMatch(/min-width:/) // "Join voice" to "Leave voice"
     // The name column of the People list is one width for every row and every name (digits, a nick, a long nick), on one line with an ellipsis:
     // with a width that followed the name, the slider of each row began somewhere else, and slid sideways when a nick replaced the digits.

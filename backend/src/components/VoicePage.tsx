@@ -20,11 +20,11 @@ export const VoicePage = ({ ctx, server, enabled }: VoicePageProps) => {
       <Crumbs><a href={`/servers/${id}/stats`}>{server.name}</a> / Voice</Crumbs>
       {!ctx.embed && <Sections serverId={id} admin={adminOf(ctx)} />}
       <h1>Voice chat</h1>
-      <p class="muted" style="margin:.1rem 0 .8rem">Talk to the other players of the server while you play.</p>
+      <p class="muted" style="margin:0 0 var(--space-3)">Talk to the other players of the server while you play.</p>
       {!enabled ? (
         <div data-voice-off class="f c-gray">Voice chat is not set up on this dashboard.</div>
       ) : (
-        <div data-voice data-token={`/servers/${id}/voice/token`} data-people-url={`/servers/${id}/voice/people`} class="vcs">
+        <div data-voice data-token={`/servers/${id}/voice/token`} data-people-url={`/servers/${id}/voice/people`} class="stack">
           <div class="f c-gray vc">
             <div class="ft">On the voice chat</div>
             <p>
@@ -42,7 +42,7 @@ export const VoicePage = ({ ctx, server, enabled }: VoicePageProps) => {
             <div>
               <div class="cap">People</div>
               <div data-people></div>
-              <p class="muted" style="margin-top:.35rem">Everyone on the voice chat is listed, whether or not you can hear them right now (during a round the game decides that). Your volumes and mutes are remembered on this device.</p>
+              <p class="muted mt1">Everyone on the voice chat is listed, whether or not you can hear them right now (during a round the game decides that). Your volumes and mutes are remembered on this device.</p>
             </div>
           </div>
 
@@ -55,7 +55,7 @@ export const VoicePage = ({ ctx, server, enabled }: VoicePageProps) => {
                 <button type="button" data-mode="vad" aria-pressed="true" class="tog">By your voice</button>
                 <button type="button" data-mode="ptt" aria-pressed="false" class="tog" disabled title="Needs the desktop app, which comes later">Hold a key</button>
               </div>
-              <p class="muted" style="margin-top:.35rem">Holding a key to talk needs a small desktop app (a browser tab cannot hear a key while the game has the focus); it comes later.</p>
+              <p class="muted mt1">Holding a key to talk needs a small desktop app (a browser tab cannot hear a key while the game has the focus); it comes later.</p>
             </div>
 
             <div>
@@ -87,12 +87,12 @@ export const VoicePage = ({ ctx, server, enabled }: VoicePageProps) => {
               <p class="muted">"Measure my room" listens for 3 seconds while you stay quiet and sets the line for you. "Adjust by itself" keeps following the room's noise while you are not talking (it is off until you switch it on).</p>
               <details>
                 <summary>Advanced</summary>
-                <div class="row" style="margin-top:.5rem">
+                <div class="row mt2">
                   <label for="td-close">Closes below</label>
                   <input id="td-close" data-close-threshold type="range" min={-70} max={-20} step={1} value={-56} aria-label="The level the microphone closes at, in dBFS" />
                   <span data-close-out class="muted db">-56 dBFS</span>
                 </div>
-                <p class="muted" style="margin-top:.35rem">The microphone stays open until the sound has been below this level for a quarter of a second. It cannot be higher than the opening level.</p>
+                <p class="muted mt1">The microphone stays open until the sound has been below this level for a quarter of a second. It cannot be higher than the opening level.</p>
               </details>
             </div>
 
