@@ -385,7 +385,7 @@ export const PlayerPage = ({ ctx, server, player, by = 'end', bots, weapons }: P
   const path = `${here(id)}/players/${pidOf(player.steamId)}`
   return (
     <Shell title={`${player.nick} | ${server.name}`} embed={ctx.embed} viewer={ctx.viewer}>
-      <PageHead serverId={id} embed={ctx.embed} admin={adminOf(ctx)} crumbs={<><ServerName ctx={ctx} server={server} /> / <a href={link(ctx, `${here(id)}/stats`, { view: 'leaders', bots })}>Round stats</a></>}>
+      <PageHead serverId={id} embed={ctx.embed} admin={adminOf(ctx)} crumbs={<><a href={link(ctx, `${here(id)}/stats`, { view: 'leaders', bots })}>Leaderboard</a> / {player.nick}</>}>
         <h1>{player.nick}</h1>
         <p class="muted m0">{player.steamId}</p>
       </PageHead>

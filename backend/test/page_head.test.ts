@@ -75,6 +75,24 @@ describe('nothing composes a head by hand', () => {
     expect(users.sort()).toEqual(['CaseFile.tsx', 'HomePage.tsx', 'ServerDashboard.tsx'])
   })
 
+  test('the way back of a page below a section starts with the link to its list, like the others ("Rounds / ...", "All maps / ...", "All roles / ..."): never the server\'s name', async () => {
+    // The player page had "Server name / Round stats", the pattern of a section's own page, among pages that all begin with their list.
+    const dir = new URL('../src/components/', import.meta.url).pathname
+    const seen: string[] = []
+    for (const f of ['StatsPages.tsx', 'MapPages.tsx', 'RolePublic.tsx', 'ReplayPage.tsx', 'VoicePage.tsx']) {
+      const text = await Bun.file(dir + f).text()
+      for (const m of text.matchAll(/crumbs=\{(.{0,28})/g)) {
+        const start = m[1]!
+        const sectionPage = start.startsWith('<ServerName') || start.startsWith('server.name')
+        const wayBack = start.startsWith('<><a href=')
+        expect(sectionPage || wayBack, `${f}: crumbs={${start}`).toBe(true)
+        seen.push(f + ':' + (sectionPage ? 'section' : 'way back'))
+      }
+    }
+    expect(seen.filter(s => s.endsWith('section')).length).toBe(4) // Round stats, Maps, Roles, Voice
+    expect(seen.filter(s => s.endsWith('way back')).length).toBe(6) // round, player, map, a map's rounds, role, replay
+  })
+
   test('every page of a server with a way back and a title uses PageHead', async () => {
     const dir = new URL('../src/components/', import.meta.url).pathname
     for (const f of ['StatsPages.tsx', 'MapPages.tsx', 'RolePublic.tsx', 'ReplayPage.tsx', 'VoicePage.tsx']) {
