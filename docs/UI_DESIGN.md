@@ -24,7 +24,21 @@ All CSS is in `backend/src/components/styles.ts`: `PUBLIC_CSS` (every page) and 
 -   **Palette.** Colours are variables on `:root`, named by use: `--ink` / `--ink2` (text on paper), `--paper`, `--desk` / `--night` (dark grounds), `--muted`, `--soft`, `--mist` (text on dark), `--dim` (quiet text on paper), `--rule` / `--edge` / `--line` (borders and rules), `--good` / `--warn` / `--bad` / `--blush` / `--amber` / `--deep` (signals). Use a variable; add a new one only when a colour is used in three places. The two font stacks are `--mono` and `--cond`.
 -   **Panels.** `.f` is a card on paper (public pages), `.pn` the same card dark (admin pages). They share one set of rules; the tab colour is `--c`, set with a helper class (`c-gray`, `c-red`, `c-green`, `c-violet`, `c-mint`, `c-blue`, `c-edge`) or inline for a colour that comes from data (a role's own colour).
 -   **Pills.** `.pill.ok|wait|mute` has one definition; the surface decides the colours through `--st-ok`, `--st-wait`, `--st-mute` (paper sets darker ones). Do not write a pill colour per page.
--   **Helpers.** `mt1`, `mt12`, `mt6` (margin-top), `m0`, `ml6`, `mb6`, `ul`. They win over the card rules. A margin used once stays an inline `style`; a margin used three times becomes a helper.
+-   **Helpers.** `mt1` to `mt4` (margin-top, one per step of the scale below), `sp1` to `sp3` (the space above with the other margins 0), `ml2`, `mb2`, `m0`, `ul`. They win over the card rules. A margin used once stays an inline `style` written with a step (`style="margin-top:var(--space-2)"`); the same one used three times becomes a helper.
+-   **Spacing** ([RFC 30](./rfcs/RFC-030.md)). Space between things is a step of one scale, named by use like the colours, on `:root`. A `gap`, a `margin*` or a layout `padding*` is `0`, `auto`, one of these or a `calc` of them; `backend/test/spacing.test.ts` fails otherwise.
+
+    | Variable | Value | Use |
+    |---|---|---|
+    | `--space-1` | `.25rem` | the least: between a label and its field, inside a control's rows |
+    | `--space-2` | `.5rem` | between items of a row, between a heading and its text |
+    | `--space-3` | `.8rem` | between blocks of text and controls inside a card, between the columns of a grid of cards |
+    | `--space-4` | `1.2rem` | between cards (the rows of a grid, the items of a column), between the parts of a page, the padding of the big card |
+    | `--space-5` | `2rem` | between the big parts of a page, the room around an empty state |
+    | `--tab` | `.7rem` | the height of a card's tab (`.f:before`, `.pn:before`) |
+
+    A new value goes to the nearest step; a tie is decided by the role (`1rem` between controls inside a card is `--space-3`, between cards `--space-4`). A new step is added only when a space is used in three places, as for colours. Details inside a control (the padding of a button, a pill, a table row, a one-pixel overlap) are not layout: they stay as they are and are on the allow-list of the test, by selector, with a reason; the list only gets shorter.
+
+    **A column of cards is `.stack`** (flex, `--space-4` between the cards, `calc(var(--tab) + var(--space-2))` above the first one, which is the room for its tab); **a grid of cards is `.g`**, and `.pair`, `.nums` (and `.tiles` on the admin pages) have the same gaps (`--space-4` between rows, `--space-3` between columns) and the same room above; only their column minimums differ. A card's tab sticks out `--tab` into the space above it, so the clear space between two cards is the gap minus the tab: a page needs no `margin-top` before its first card, and a card put under something that is not a stack or grid takes `mt4`. Text blocks inside a card are `--space-3` apart, a heading and its text `--space-2`. `.parts` (admin) is a column of big parts with `--space-5` between them.
 -   **Scripts.** `replay.ts`, `mapview.ts` and the canvas views build their lists in the browser with these same class names (`tog`, `lnk`, `prow`, `pdot`, `tick`); they cannot share JSX, only the names.
 
 ---

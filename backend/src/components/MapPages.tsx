@@ -225,8 +225,8 @@ export const MapFilePage = ({ ctx, server, name, map, state, activity, has3d, ha
       {!ctx.embed && <Sections serverId={id} current="maps" admin={adminOf(ctx)} />}
       <div class="f big" style={`--c:${tabColour(map)}`}>
         <h1>{prettyMap(name)}</h1>
-        <p class="file" style="margin:.2rem 0 0">{name}</p>
-        {map && <p style="margin:.5rem 0 0"><Pills m={map} next={next} />{admin && <i class="pill mute">{mapSize(map.size)}</i>}</p>}
+        <p class="file sp1">{name}</p>
+        {map && <p class="sp2"><Pills m={map} next={next} />{admin && <i class="pill mute">{mapSize(map.size)}</i>}</p>}
         {!map && <p class="none">Not in the server's latest map list.</p>}
         {activity ? (
           <>
@@ -241,16 +241,16 @@ export const MapFilePage = ({ ctx, server, name, map, state, activity, has3d, ha
           </>
         ) : <p class="none">No round has been played on this map yet.</p>}
         {has3d && (
-          <p style="margin:1rem 0 0">
+          <p class="sp3">
             {ctx.viewer
-              ? <><a class="btn" href={view}>View in 3D</a>{viewLogDays > 0 && <span class="dim ml6">Opening it is logged with your SteamID64 for {viewLogDays} days.</span>}</>
+              ? <><a class="btn" href={view}>View in 3D</a>{viewLogDays > 0 && <span class="dim ml2">Opening it is logged with your SteamID64 for {viewLogDays} days.</span>}</>
               : ctx.signinOpen && !ctx.embed
                 ? <a class="btn" href={signinUrl(mapPath(id, name))}>Sign in to view in 3D</a>
                 : <span class="dim">This map has a 3D view. It opens for signed-in visitors.</span>}
           </p>
         )}
         {admin && (
-          <p style="margin:1rem 0 0"><a class="btn" href={view}>{hasPlan ? 'Floor plan and settings' : 'Settings'}</a></p>
+          <p class="sp3"><a class="btn" href={view}>{hasPlan ? 'Floor plan and settings' : 'Settings'}</a></p>
         )}
         {!admin && <p class="foot dark">The floor plan is on the website, for admins.</p>}
       </div>
@@ -267,7 +267,7 @@ export const Killzones = ({ ctx, serverId, name, k }: { ctx: Ctx, serverId: stri
   const noDeaths = 'No deaths with a position on this map yet. They are recorded since the game server was updated.'
   const to = (p: { weapon?: string | null, level?: number | null }) => link(ctx, path, { weapon: p.weapon ?? undefined, level: p.level ?? undefined })
   return (
-    <div class="f c-red mt12" data-killzones>
+    <div class="f c-red mt4" data-killzones>
       <h2 class="ft">Killzones</h2>
       {k.svg === null && !filtered ? (
         <p class="none" data-no-killzones>{noDeaths}</p>
@@ -294,7 +294,7 @@ export const Killzones = ({ ctx, serverId, name, k }: { ctx: Ctx, serverId: stri
             </>
           ) : (
             <>
-              <p class="file" style="margin:.2rem 0 .6rem">
+              <p class="file" style="margin:var(--space-1) 0 var(--space-2)">
                 {k.deaths} {k.deaths === 1 ? 'death' : 'deaths'} in {k.rounds} {k.rounds === 1 ? 'round' : 'rounds'}{k.weapon ? <> by <b>{weaponName(k.weapon)}</b></> : ''}. From above, north is up; a redder spot is where more players died for the area it covers; the squares are coarse where few died and finer where more did.
               </p>
               <div data-killzone-picture>{raw(k.svg!)}</div>
@@ -351,13 +351,13 @@ export const MapViewPage = ({ ctx, server, map, name, next, plan, geometry }: Ma
       <Crumbs><a href={link(ctx, `${here(id)}/maps`)}>All maps</a> / <a href={link(ctx, `${mapPath(id, name)}/rounds`)}>{prettyMap(name)}</a></Crumbs>
       {!ctx.embed && <Sections serverId={id} current="maps" admin={adminOf(ctx)} />}
       <h1>{prettyMap(name)}</h1>
-      <p class="file" style="margin:.1rem 0 .3rem">{name}</p>
-      <p style="margin:.2rem 0 0">
+      <p class="file" style="margin:0 0 var(--space-1)">{name}</p>
+      <p class="sp1">
         {map ? <><Pills m={map} next={next} /><span class="muted">{admin ? mapSize(map.size) : ''}</span></> : <span class="muted">Not in the server's latest map list.</span>}
       </p>
 
       {admin && geometry && (
-        <div class="f c-gray mt12">
+        <div class="f c-gray mt4">
           <h2 class="ft">Exact geometry</h2>
           {!geometry.requested
             ? <p>Off. Turning it on makes the backend fetch this map's file from the Steam Workshop once and keep a simplified 3D mesh of its floors and walls. The file itself is deleted afterwards.</p>
@@ -384,7 +384,7 @@ export const MapViewPage = ({ ctx, server, map, name, next, plan, geometry }: Ma
       )}
 
       {hasView && geometry?.info && (
-        <div class="f c-green mt12">
+        <div class="f c-green mt4">
           <h2 class="ft">3D view</h2>
           <div data-mapview data-src={`${mapPath(id, name)}/mesh.glb`}>
             <div class="view">
@@ -417,7 +417,7 @@ export const MapViewPage = ({ ctx, server, map, name, next, plan, geometry }: Ma
       )}
 
       {admin && (
-        <div class="mt12">
+        <div class="mt4">
           <h2>Floor plan</h2>
           {plan === null ? (
             <div class="f c-gray">
@@ -425,7 +425,7 @@ export const MapViewPage = ({ ctx, server, map, name, next, plan, geometry }: Ma
             </div>
           ) : (
             <>
-              <p class="foot mb6">
+              <p class="foot mb2">
                 {plan.floorCells} floor cells, {plan.crouchFloors} crouch-only {planOutdated(plan, map ?? undefined) && <i class="pill wait">Outdated</i>} scanned <When iso={plan.scannedAt} now={ctx.now} />
                 {' · '}<a href={`${mapPath(id, name)}/plan.svg`}>All floors</a> · <a href={`${mapPath(id, name)}/plan.json`}>JSON</a>
               </p>

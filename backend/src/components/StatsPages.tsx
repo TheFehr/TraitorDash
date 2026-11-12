@@ -56,7 +56,7 @@ export interface TracksInfo {
 
 /** How much room the position tracks use and where their limits are changed: on the settings page (RFC 12, 3.4; RFC 23). Admins only. */
 export const TracksSummary = ({ serverId, t }: { serverId: string, t: TracksInfo }) => (
-  <p data-tracks-summary class="foot mt1" style="margin-bottom:0">
+  <p data-tracks-summary class="foot mt3" style="margin-bottom:0">
     Replays: {t.count} {t.count === 1 ? 'track' : 'tracks'}, {mb(t.bytes)} MB used of {t.limits.count} tracks / {t.limits.mb} MB
     {t.pinned > 0 && <> ({t.pinned} pinned, kept regardless)</>}. <a href={`/servers/${serverId}/settings#replay-storage`}>Change the limits in Settings</a>
     {t.botRounds > 0 && <>, where the {t.botRounds} test {t.botRounds === 1 ? 'round' : 'rounds'} played only by bots can be deleted</>}.
@@ -148,7 +148,7 @@ export const StatsPage = (p: StatsPageProps) => {
       {p.overview.rounds > 0 && p.view === 'leaders' && (
         <>
           <Pills label="Sort" current={p.sort} items={SORTS.map(s => ({ key: s, label: SORT_LABELS[s], href: link(ctx, path, { ...k, view: 'leaders', sort: s === 'rounds' ? undefined : s }) }))} />
-          <div class="f c-red mt1">
+          <div class="f c-red mt4">
             <div class="scrollx">
               <table class="log">
                 <tr><th>#</th><th>Player</th><th class="r">Rounds</th><th class="r">Wins</th><th class="r">Win %</th><th class="r">Kills</th><th class="r">Deaths</th><th class="r">K/D</th></tr>
@@ -178,7 +178,7 @@ export const StatsPage = (p: StatsPageProps) => {
         <>
           <RoundsTable ctx={ctx} serverId={id} rounds={p.rounds} tracked={p.tracked} bots={p.bots} />
           {p.paging && p.paging.pages > 1 && (
-            <div class="bar mt6" data-rounds-pages><span>Page</span>
+            <div class="bar mt2" data-rounds-pages><span>Page</span>
               {p.paging.page > 1 && <a href={link(ctx, path, { ...k, view: 'rounds', page: p.paging.page - 1 > 1 ? p.paging.page - 1 : undefined })} rel="prev">Newer</a>}
               <span class="on">{p.paging.page} of {p.paging.pages}</span>
               {p.paging.page < p.paging.pages && <a href={link(ctx, path, { ...k, view: 'rounds', page: p.paging.page + 1 })} rel="next">Older</a>}
@@ -208,7 +208,7 @@ export const WeaponTable = ({ stats, serverId, ctx }: { stats: WeaponStats, serv
   const top = Math.max(1, ...rows.map(r => r.damage))
   return (
     <>
-      <div class="f c-red mt1" data-weapons>
+      <div class="f c-red mt4" data-weapons>
         <h2 class="ft">Most damage by weapon</h2>
         <div class="scrollx">
           <table class="log">
@@ -237,7 +237,7 @@ export const WeaponTable = ({ stats, serverId, ctx }: { stats: WeaponStats, serv
 
 /** A player's weapons (RFC 21, 4.3). */
 export const PlayerWeapons = ({ rows }: { rows: WeaponRow[] }) => (
-  <div class="f c-red mt12" data-player-weapons>
+  <div class="f c-red mt4" data-player-weapons>
     <h2 class="ft">Weapons</h2>
     <div class="scrollx">
       <table class="log">
@@ -260,7 +260,7 @@ export const RoundsTable = ({ ctx, serverId, rounds, tracked, bots }: { ctx: Ctx
   const pick = admin && rounds.length > 0
   const withTapes = tracked.size > 0
   const table = (
-    <div class="f c-red mt1">
+    <div class="f c-red mt4">
       <div class="scrollx">
         <table class="log">
           <tr>{pick && <th></th>}<th>When</th><th>Map</th><th>Result</th><th class="r">Players</th><th class="r">Deaths</th><th class="r">Length</th>{withTapes && <th class="r">Replay</th>}</tr>
@@ -291,7 +291,7 @@ export const RoundsTable = ({ ctx, serverId, rounds, tracked, bots }: { ctx: Ctx
       data-confirm="Delete the selected rounds with their replays? They leave the statistics too. This cannot be undone.">
       {bots && <input type="hidden" name="bots" value="1" />}
       {table}
-      <p style="margin:.8rem 0 0"><button type="submit" class="btn danger">Delete selected rounds</button> <span class="dim">Tick the rounds first.</span></p>
+      <p class="sp3"><button type="submit" class="btn danger">Delete selected rounds</button> <span class="dim">Tick the rounds first.</span></p>
     </form>
   )
 }
@@ -332,7 +332,7 @@ export const RoundPage = ({ ctx, server, round, deaths, firstBlood, hasReplay, c
       <div class="f big" style={`--c:${teamHex(round.result, ctx)}`}>
         <div class="stamp" style={`--c:${teamHex(round.result, ctx)}`}>{teamLabel(round.result)}</div>
         <h1>{round.map ? prettyMap(round.map) : 'Unknown map'}</h1>
-        {round.map && <p class="file" style="margin:.2rem 0 0">{round.map}</p>}
+        {round.map && <p class="file sp1">{round.map}</p>}
         <h2>The round</h2>
         <dl class="ledger">
           <div><dt>Length</dt><dd>{duration(round.duration)}</dd></div>
@@ -357,7 +357,7 @@ export const RoundPage = ({ ctx, server, round, deaths, firstBlood, hasReplay, c
           </table>
         </div>
         {hasReplay && (
-          <p style="margin:1rem 0 0">
+          <p class="sp3">
             {ctx.viewer
               ? <a class="btn" href={link(ctx, replayPath, { bots })}>▶ Watch the replay</a>
               : ctx.signinOpen && !ctx.embed
@@ -402,7 +402,7 @@ export const PlayerPage = ({ ctx, server, player, by = 'end', bots, weapons }: P
       <ByToggle ctx={ctx} path={path} by={by} params={{ bots }} />
       <div class="pair"><WinTable title="By role" rows={player.roles} empty="No role data." /></div>
       {weapons && weapons.length > 0 && <PlayerWeapons rows={weapons} />}
-      <div class="f c-red mt12">
+      <div class="f c-red mt4">
         <h2 class="ft">Recent rounds</h2>
         <div class="scrollx">
           <table class="log">

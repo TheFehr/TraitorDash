@@ -106,7 +106,7 @@ export const ViewLogPage = ({ steamId, server, log, now }: { steamId: string, se
       <Crumbs><a href="/">Dashboard</a> / <a href={`/servers/${server.id}`}>{server.name}</a> / View log</Crumbs>
       <h1>View log</h1>
       <p class="muted">Who opened a replay or a 3D map. A repeat of the same thing within an hour is one row. {log.days > 0 ? `Rows are kept for ${log.days} days.` : 'The log is switched off.'}</p>
-      <div class="bar" style="margin:.8rem 0">
+      <div class="bar" style="margin:var(--space-3) 0">
         <span>Show</span>
         <a class={log.action === null ? 'on' : ''} href={to({ player: log.steamId })}>All</a>
         <a class={log.action === 'VIEW_REPLAY' ? 'on' : ''} href={to({ player: log.steamId, action: 'replay' })}>Replays</a>
@@ -118,22 +118,22 @@ export const ViewLogPage = ({ steamId, server, log, now }: { steamId: string, se
       )}
       {(log.rows.length > 0 || log.accounts.length > 0) && (
         <>
-          <div class="f c-blue mt1">
+          <div class="f c-blue mt4">
             <h2 class="ft">Accounts</h2>
             <div class="scrollx">
               <table class="log" data-view-accounts>
-                <tr><th>Account</th><th class="r">Views</th><th class="r">Different</th><th style="padding-left:1.2rem">Last</th></tr>
+                <tr><th>Account</th><th class="r">Views</th><th class="r">Different</th><th style="padding-left:var(--space-4)">Last</th></tr>
                 {log.accounts.map(a => (
                   <tr>
                     <td><a href={to({ player: a.steamId, action: log.action === 'VIEW_REPLAY' ? 'replay' : log.action === 'VIEW_MESH' ? 'map' : null })}>{a.steamId}</a></td>
                     <td class="r">{a.views}</td><td class="r">{a.things}</td>
-                    <td style="padding-left:1.2rem"><When iso={iso(a.last)} now={now} /></td>
+                    <td style="padding-left:var(--space-4)"><When iso={iso(a.last)} now={now} /></td>
                   </tr>
                 ))}
               </table>
             </div>
           </div>
-          {log.rows.length > 0 && <div class="f c-red mt1">
+          {log.rows.length > 0 && <div class="f c-red mt4">
             <h2 class="ft">Newest views</h2>
             <div class="scrollx">
               <table class="log" data-view-rows>
