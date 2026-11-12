@@ -5,6 +5,8 @@ import { GateEngine, GATE } from './gate'
 // level and whether the gate is open go to the page about 20 times a second, and at once when the state changes.
 //
 // From the page: { type: 'set', open, close } (thresholds in dBFS) and { type: 'force', open: true | false | null }.
+//                { type: 'vad', v } (the noise filter's probability that the sound is speech, 0 to 1; a missing message means 0) and
+//                { type: 'conditions', loud, speech } (which of the two must hold for the gate to open; RFC 29, 4.4).
 // To the page:   { t, level, open } (t: seconds of sound so far; level: dBFS before the gate).
 
 declare const sampleRate: number
@@ -29,6 +31,8 @@ class GateProcessor extends AudioWorkletProcessor {
       const m = e.data
       if (m?.type === 'set' && Number.isFinite(m.open) && Number.isFinite(m.close)) this.engine.setThresholds(m.open, m.close)
       else if (m?.type === 'force') this.engine.force = m.open === true ? true : m.open === false ? false : null
+      else if (m?.type === 'vad' && typeof m.v === 'number') this.engine.setVad(m.v)
+      else if (m?.type === 'conditions') this.engine.setConditions(m.loud === true, m.speech === true)
     }
   }
   process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {

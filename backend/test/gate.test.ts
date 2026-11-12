@@ -1,5 +1,5 @@
 import { expect, test, describe } from 'bun:test'
-import { GATE, GateState, GainRamp, LevelMeter, GateEngine, FloorTracker, calibrate, thresholdsFromFloor, percentile, clampDb, toDb } from '../src/gate'
+import { GATE, GateState, SpeechDetector, GainRamp, LevelMeter, GateEngine, FloorTracker, calibrate, thresholdsFromFloor, percentile, clampDb, toDb } from '../src/gate'
 
 // RFC 29: the voice gate's pure core, and the worklet built from it. Synthetic levels for the state machine, synthetic sound for the
 // engine; the real worklet file is bundled and its process() run on blocks, as the browser would.
@@ -460,6 +460,40 @@ describe('the real worklet file', () => {
     through(node, silence(2000))
     expect(w.posted.at(-1).open).toBe(false)
   })
+
+  test('takes the probabilities and the conditions from the page: the same burst opens by loudness, stays closed with a low probability in "both", and opens in speech only below the threshold', async () => {
+    const MSGB = 4 * BLOCK
+    /** The sound through the worklet's process(), a { type: 'vad', v } message before every fourth block; returns whether it was ever open. */
+    const opened = async (conds: { loud: boolean, speech: boolean } | null, db: number, vad: (ms: number) => number | undefined) => {
+      const w = await load()
+      const node = w.make()
+      if (conds) node.port.onmessage({ data: { type: 'conditions', ...conds } })
+      const x = concat(silence(300), tone(600, db), silence(1000))
+      for (let i = 0; i < x.length; i += BLOCK) {
+        if (i % MSGB === 0) { const v = vad(i * 1000 / SR); if (v !== undefined) node.port.onmessage({ data: { type: 'vad', v } }) }
+        const inp = new Float32Array(BLOCK); inp.set(x.subarray(i, i + BLOCK))
+        node.process([[inp]], [[new Float32Array(BLOCK)]])
+      }
+      return w.posted.some(m => m.open === true)
+    }
+    const speechy = (ms: number) => (ms >= 300 && ms < 900 ? 0.95 : 0.05)
+    expect(await opened(null, -30, () => 0)).toBe(true) // no conditions sent: loudness, the probability is not looked at
+    expect(await opened({ loud: true, speech: false }, -30, () => 0)).toBe(true)
+    expect(await opened({ loud: true, speech: true }, -30, () => 0.1)).toBe(false)
+    expect(await opened({ loud: true, speech: true }, -30, speechy)).toBe(true)
+    expect(await opened({ loud: true, speech: true }, -65, speechy)).toBe(false)
+    expect(await opened({ loud: false, speech: true }, -65, speechy)).toBe(true)
+    expect(await opened({ loud: false, speech: true }, -20, () => 0)).toBe(false)
+    expect(await opened({ loud: false, speech: false }, -30, () => 0)).toBe(true) // neither: loudness
+  })
+
+  test('the vad and conditions messages with nonsense in them are ignored without an error', async () => {
+    const w = await load()
+    const node = w.make()
+    for (const data of [{ type: 'vad' }, { type: 'vad', v: 'x' }, { type: 'vad', v: NaN }, { type: 'conditions' }, null, 5, { type: 'nothing' }]) expect(() => node.port.onmessage({ data })).not.toThrow()
+    through(node, tone(300, -30))
+    expect(w.posted.some(m => m.open)).toBe(true) // still loudness only
+  })
 })
 
 describe('the hold: closes a hold after the sound ends, not after the slow envelope', () => {
@@ -483,5 +517,249 @@ describe('the hold: closes a hold after the sound ends, not after the slow envel
     const words = concat(tone(300, -25), silence(150), tone(300, -25), silence(200), tone(300, -25))
     const { open } = run(engine, words)
     expect(open.slice(Math.round(0.03 * SR / BLOCK)).every(Boolean)).toBe(true) // open from the first window to the end
+  })
+})
+
+describe('SpeechDetector (RFC 29, 4.4)', () => {
+  test('opens after two messages in a row at 0.9 or above, not after one', () => {
+    const d = new SpeechDetector()
+    expect(d.opens).toBe(false); expect(d.keeps).toBe(false) // nothing heard yet
+    d.feed(0.95); expect(d.opens).toBe(false)
+    d.feed(0.9); expect(d.opens).toBe(true) // 0.9 itself counts
+    expect(GATE.speechOpenP).toBe(0.9); expect(GATE.speechFrames).toBe(2)
+  })
+  test('a single frame at 0.92 between low ones (a click) never opens it', () => {
+    const d = new SpeechDetector()
+    for (const p of [0.1, 0.92, 0.2, 0.92, 0.3, 0.92, 0.1]) { d.feed(p); expect(d.opens, String(p)).toBe(false) }
+  })
+  test('the two must be in a row: a frame between 0.8 and 0.9 starts the count again', () => {
+    const d = new SpeechDetector()
+    d.feed(0.95); d.feed(0.89); d.feed(0.95); expect(d.opens).toBe(false)
+    d.feed(0.95); expect(d.opens).toBe(true)
+  })
+  test('keeps while the last message is at 0.8 or above, and lets go below it', () => {
+    const d = new SpeechDetector()
+    d.feed(0.95); d.feed(0.95)
+    d.feed(0.8); expect(d.keeps).toBe(true)
+    d.feed(0.85); expect(d.keeps).toBe(true)
+    d.feed(0.79); expect(d.keeps).toBe(false)
+    d.feed(0.95); expect(d.keeps).toBe(true) // one message is enough to keep (the two are for opening)
+    expect(GATE.speechKeepP).toBe(0.8)
+  })
+  test('a message older than 150 ms counts as 0: the filter posts nothing for silence', () => {
+    const d = new SpeechDetector()
+    d.feed(0.95); d.feed(0.95)
+    d.advance(150); expect(d.opens).toBe(true); expect(d.keeps).toBe(true); expect(d.p).toBe(0.95) // not older than the limit yet
+    d.advance(1); expect(d.opens).toBe(false); expect(d.keeps).toBe(false); expect(d.p).toBe(0)
+    d.feed(0.95); expect(d.keeps).toBe(true); expect(d.opens).toBe(false) // a new message counts again, but the count began again too
+    d.feed(0.95); expect(d.opens).toBe(true)
+    expect(GATE.vadStaleMs).toBe(150)
+  })
+  test('nonsense is ignored, and a reset forgets everything', () => {
+    const d = new SpeechDetector()
+    d.feed(NaN); d.feed(Infinity); expect(d.keeps).toBe(false)
+    d.feed(0.95); d.feed(0.95); d.reset(); expect(d.opens).toBe(false); expect(d.keeps).toBe(false)
+  })
+})
+
+describe('GateState.stepConditions', () => {
+  test('a closed gate opens on openNow and only on it; keepNow alone does not open it', () => {
+    const s = new GateState(-50, -56)
+    expect(s.stepConditions(false, true, 10)).toBe(false)
+    expect(s.stepConditions(true, true, 10)).toBe(true)
+  })
+  test('an open gate closes after keepNow has been false for the whole hold (250 ms), and openNow does not hold it open', () => {
+    const s = new GateState(-50, -56)
+    s.stepConditions(true, true, 10)
+    let ms = 0
+    while (s.open && ms < 1000) { s.stepConditions(true, false, 10); ms += 10 }
+    expect(ms).toBe(250)
+    expect(s.open).toBe(false)
+  })
+  test('a keepNow in the middle starts the hold again', () => {
+    const s = new GateState(-50, -56)
+    s.stepConditions(true, true, 10)
+    for (let i = 0; i < 24; i++) s.stepConditions(false, false, 10) // 240 ms: not yet
+    expect(s.open).toBe(true)
+    s.stepConditions(false, true, 10)
+    for (let i = 0; i < 24; i++) s.stepConditions(false, false, 10)
+    expect(s.open).toBe(true) // another 240 ms is not enough either
+    s.stepConditions(false, false, 10); expect(s.open).toBe(false)
+  })
+  test('step(level) is the loudness-only case of it, for any sequence of levels', () => {
+    const a = new GateState(-50, -56), b = new GateState(-50, -56)
+    let seed = 7
+    const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648
+    for (let i = 0; i < 3000; i++) {
+      const db = -70 + rnd() * 40, dt = 10
+      expect(a.step(db, dt)).toBe(b.stepConditions(db >= b.openDb, db > b.closeDb, dt))
+    }
+  })
+})
+
+describe('the engine with conditions (RFC 29, 4.4), on synthetic sound and synthetic probabilities', () => {
+  const MSG = 4 * BLOCK // the noise filter's worklet posts every fourth block: 10.67 ms
+  /** The input in blocks of 128; before every fourth block the engine is given the probability `vad(ms)` returns for that moment (undefined:
+   *  no message, as for digital silence). Returns the output, the open state after each block, and when (ms) it first opened and last closed. */
+  function runVad(engine: GateEngine, input: Float32Array, vad: (ms: number) => number | undefined) {
+    const out = new Float32Array(input.length)
+    const open: boolean[] = []
+    for (let i = 0; i < input.length; i += BLOCK) {
+      if (i % MSG === 0) { const p = vad(i * 1000 / SR); if (p !== undefined) engine.setVad(p) }
+      const inp = input.subarray(i, Math.min(input.length, i + BLOCK))
+      const o = new Float32Array(inp.length)
+      engine.process([inp], [o])
+      out.set(o, i); open.push(engine.open)
+    }
+    const at = (b: number) => b * BLOCK * 1000 / SR
+    const firstOpen = open.indexOf(true)
+    const lastTrue = open.lastIndexOf(true)
+    return { out, open, firstOpenMs: firstOpen < 0 ? NaN : at(firstOpen), closedMs: lastTrue < 0 || lastTrue === open.length - 1 ? NaN : at(lastTrue + 1),
+      openFraction: open.filter(Boolean).length / open.length }
+  }
+  const engineWith = (loud: boolean, speech: boolean) => { const e = new GateEngine(SR); e.setConditions(loud, speech); return e }
+  const ONSET = 300
+  /** 300 ms of nothing, a 600 ms tone, a second of nothing. */
+  const burst = (db: number) => concat(silence(ONSET), tone(600, db), silence(1000))
+  const during = (ms: number) => ms >= ONSET && ms < ONSET + 600
+
+  test('the default is loudness only, and it does not look at the probabilities at all: the output is the same with and without them', () => {
+    const x = burst(-30)
+    const plain = run(new GateEngine(SR), x)
+    for (const vad of [() => 0, () => 0.99, (ms: number) => (during(ms) ? 0.95 : 0), () => undefined]) {
+      const r = runVad(new GateEngine(SR), x, vad)
+      expect(r.out).toEqual(plain.out)
+      expect(r.open).toEqual(plain.open)
+    }
+    expect(plain.open.some(Boolean)).toBe(true)
+    expect(new GateEngine(SR).conditions).toEqual({ loud: true, speech: false })
+    expect(engineWith(false, false).conditions).toEqual({ loud: true, speech: false }) // neither means loudness
+  })
+
+  test('both: a loud burst with a low probability (a keyboard, a door) stays closed, and the output is silent', () => {
+    const r = runVad(engineWith(true, true), burst(-30), () => 0.1)
+    expect(r.open.some(Boolean)).toBe(false)
+    expect(peak(r.out)).toBe(0)
+    // and with no messages at all, as when the filter is not running
+    expect(runVad(engineWith(true, true), burst(-30), () => undefined).open.some(Boolean)).toBe(false)
+  })
+
+  test('both: loud and speech-like (0.95 for the whole burst) opens, a little after the start, and closes after the hold', () => {
+    const r = runVad(engineWith(true, true), burst(-30), ms => (during(ms) ? 0.95 : 0.05))
+    expect(r.firstOpenMs).toBeGreaterThanOrEqual(ONSET); expect(r.firstOpenMs).toBeLessThanOrEqual(ONSET + 40) // two messages and a window
+    expect(r.closedMs).toBeGreaterThanOrEqual(ONSET + 600 + GATE.holdMs - 20); expect(r.closedMs).toBeLessThanOrEqual(ONSET + 600 + GATE.holdMs + 40)
+  })
+
+  test('both: a hum above the open level with a probability of 0.6 stays closed', () => {
+    const r = runVad(engineWith(true, true), concat(silence(300), tone(2000, -35, 100)), () => 0.6)
+    expect(r.open.some(Boolean)).toBe(false)
+  })
+
+  test('both: one frame at 0.92 in a loud burst does not open it; two in a row do', () => {
+    const one = runVad(engineWith(true, true), burst(-30), ms => (ms >= 320 && ms < 330 ? 0.92 : 0.2)) // the message at 320 only
+    expect(one.open.some(Boolean)).toBe(false)
+    const two = runVad(engineWith(true, true), burst(-30), ms => (ms >= 320 && ms < 340 ? 0.92 : 0.2)) // 320 and 330.7
+    expect(two.open.some(Boolean)).toBe(true)
+  })
+
+  test('both: speech-like but below the open level does not open it (loudness is a condition too)', () => {
+    const r = runVad(engineWith(true, true), burst(-62), ms => (during(ms) ? 0.97 : 0))
+    expect(r.open.some(Boolean)).toBe(false)
+  })
+
+  test('both: once open, it stays while the sound is above the close level and the probability is at least 0.8, and closes when either goes', () => {
+    // the probability falls to 0.7 in the middle of a loud tone: speech has ended even though the sound is still loud
+    const a = runVad(engineWith(true, true), burst(-30), ms => (ms < 600 ? 0.95 : 0.7))
+    expect(a.closedMs).toBeGreaterThanOrEqual(600 + GATE.holdMs - 20); expect(a.closedMs).toBeLessThanOrEqual(600 + GATE.holdMs + 40)
+    // 0.85 (between 0.8 and 0.9) keeps it open as long as the tone lasts
+    const b = runVad(engineWith(true, true), burst(-30), ms => (ms < 330 ? 0.95 : 0.85))
+    expect(b.closedMs).toBeGreaterThanOrEqual(ONSET + 600 + GATE.holdMs - 20)
+    // the sound ends while the probability stays high (frames after the end still say speech): it closes by the level
+    const c = runVad(engineWith(true, true), burst(-30), () => 0.95)
+    expect(c.closedMs).toBeGreaterThanOrEqual(ONSET + 600 + GATE.holdMs - 20); expect(c.closedMs).toBeLessThanOrEqual(ONSET + 600 + GATE.holdMs + 40)
+  })
+
+  test('speech only: opens on a probability at a level far below the open threshold, and the output carries the sound', () => {
+    const x = burst(-65) // the open threshold is -50
+    const loud = runVad(engineWith(true, false), x, ms => (during(ms) ? 0.95 : 0))
+    expect(loud.open.some(Boolean)).toBe(false) // by loudness it would not open
+    const r = runVad(engineWith(false, true), x, ms => (during(ms) ? 0.95 : 0))
+    expect(r.firstOpenMs).toBeGreaterThanOrEqual(ONSET); expect(r.firstOpenMs).toBeLessThanOrEqual(ONSET + 40)
+    expect(peak(r.out)).toBeGreaterThan(0.9 * Math.SQRT2 * Math.pow(10, -65 / 20))
+  })
+
+  test('speech only: a loud sound with a low probability does not open it', () => {
+    expect(runVad(engineWith(false, true), burst(-20), () => 0).open.some(Boolean)).toBe(false)
+    expect(runVad(engineWith(false, true), burst(-20), () => 0.7).open.some(Boolean)).toBe(false)
+  })
+
+  test('speech only: closes after the hold when the probability falls below 0.8, and stays open at 0.85', () => {
+    const x = burst(-65)
+    const fall = runVad(engineWith(false, true), x, ms => (ms < 900 ? (ms >= ONSET ? 0.95 : 0) : 0.7))
+    expect(fall.closedMs).toBeGreaterThanOrEqual(900 + GATE.holdMs - 20); expect(fall.closedMs).toBeLessThanOrEqual(900 + GATE.holdMs + 40)
+    const mid = runVad(engineWith(false, true), x, ms => (ms >= ONSET ? (ms < 330 ? 0.95 : 0.85) : 0))
+    expect(mid.open.at(-1)).toBe(true) // 0.85 keeps it open for ever, whatever the level (here: through a second of nothing)
+    expect(mid.closedMs).toBeNaN()
+  })
+
+  test('speech only: closes after the messages stop (silence posts none): 150 ms until the last one counts as 0, then the hold', () => {
+    const r = runVad(engineWith(false, true), burst(-65), ms => (during(ms) ? 0.95 : undefined))
+    const lastMsg = Math.floor((ONSET + 600) / (MSG * 1000 / SR)) * (MSG * 1000 / SR)
+    expect(r.closedMs).toBeGreaterThanOrEqual(lastMsg + GATE.vadStaleMs + GATE.holdMs - 20)
+    expect(r.closedMs).toBeLessThanOrEqual(lastMsg + GATE.vadStaleMs + GATE.holdMs + 40)
+  })
+
+  test('speech only: no messages at all (the filter did not start) never opens it', () => {
+    expect(runVad(engineWith(false, true), burst(-20), () => undefined).open.some(Boolean)).toBe(false)
+  })
+
+  test('the conditions can be changed while it runs: the sound that follows is judged by the new ones', () => {
+    const e = new GateEngine(SR)
+    const x = concat(tone(500, -30), silence(1000), tone(500, -30), silence(1000))
+    const first = run(e, x.subarray(0, 72000))
+    expect(first.open.some(Boolean)).toBe(true) // loudness only: opens on a loud tone with no probability
+    e.setConditions(true, true)
+    const second = runVad(e, x.subarray(72000), () => 0.1)
+    expect(second.open.some(Boolean)).toBe(false)
+  })
+
+  test('the first samples of speech come out whole in "both" mode if the filter says speech with the sound; the later it says so, the more is cut', () => {
+    // Assumption stated: the filter's worklet buffers the sound by one frame (10 ms) before it reaches the gate, and the probability of a frame
+    // is posted when that frame leaves it, so the message that says "speech" arrives with the sound it is about, +- one message interval.
+    // Two messages are needed (10.67 ms apart) and the state looks every 10 ms, and the look-ahead is 25 ms, so the gate is open 15 to 25 ms
+    // after the first message: "whole" holds when that first message is no later than the onset. A message 20 ms late cuts into the start.
+    const a = Math.SQRT2 * Math.pow(10, -30 / 20)
+    const D = Math.round(SR * GATE.lookaheadMs / 1000)
+    const onset = Math.round(SR * ONSET / 1000)
+    const x = burst(-30)
+    /** Samples of the output after the delayed onset (onset + D) that are below 0.98 of the tone's start: how much of the start was cut. */
+    const cutMs = (r: { out: Float32Array }) => {
+      let n = 0
+      // the tone has its peak at the very first sample and then oscillates at 200 Hz: compare the envelope over each 5 ms (a full cycle) with the tone's own
+      for (; n < SR * 0.1; n += Math.round(SR * 0.005)) if (peak(r.out.subarray(onset + D + n, onset + D + n + Math.round(SR * 0.005))) > 0.98 * a) break
+      return n * 1000 / SR
+    }
+    const first = (lateMs: number) => (ms: number) => (ms >= ONSET - 1.4 + lateMs && ms < ONSET + 600 ? 0.95 : 0.05) // 298.67 is the message time before the onset
+    const loudOnly = runVad(engineWith(true, false), x, first(0))
+    expect(cutMs(loudOnly)).toBe(0) // as before
+    expect(loudOnly.out[onset + D]!).toBeGreaterThan(0.98 * a)
+    const both0 = runVad(engineWith(true, true), x, first(0))
+    expect(both0.out[onset + D]!).toBeGreaterThan(0.98 * a) // the first sample of the sound, at full strength
+    expect(cutMs(both0)).toBe(0)
+    const cuts = [0, 5, 10, 20].map(d => cutMs(runVad(engineWith(true, true), x, first(d))))
+    for (let i = 1; i < cuts.length; i++) expect(cuts[i]!).toBeGreaterThanOrEqual(cuts[i - 1]!) // later is never less cut
+    expect(cuts.at(-1)!).toBeGreaterThan(0) // and the 20 ms late one is cut: that is what the look-ahead cannot cover
+    expect(cuts.at(-1)!).toBeLessThanOrEqual(25) // but by no more than a syllable's first 25 ms
+    // the same in speech only
+    expect(runVad(engineWith(false, true), x, first(0)).out[onset + D]!).toBeGreaterThan(0.98 * a)
+  })
+
+  test('probabilities are processed per message: the staleness advances with the sound, not with the messages', () => {
+    const e = engineWith(false, true)
+    e.setVad(0.95); e.setVad(0.95)
+    run(e, silence(100)) // 100 ms of sound, no message: still fresh at 100 ms
+    expect(e.speech.opens).toBe(true)
+    run(e, silence(60)) // 160 ms: stale
+    expect(e.speech.opens).toBe(false)
   })
 })
