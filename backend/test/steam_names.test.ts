@@ -197,6 +197,21 @@ describe('the cache', () => {
     expect(sn.names([A]).get(A)).toBe('Now public')
   })
 
+  test('a good name is kept when a later answer leaves the player out; only the time is renewed, and a player with no name is still a miss', async () => {
+    const table: Record<string, string | null> = { [A]: 'Alice' }
+    const s = fakeSteam(table)
+    const { sn, db, clock } = make(s.fetchFn)
+    sn.names([A]); await sn.idle()
+    clock.t += NAME_TTL_MS + 1
+    table[A] = null // Steam's answer no longer has her (a profile gone private)
+    sn.names([A]); await sn.idle()
+    expect(sn.names([A]).get(A)).toBe('Alice')
+    const row = db.query('SELECT name, fetched_at FROM steam_names WHERE steam_id = ?').get(A) as { name: string | null, fetched_at: number }
+    expect(row.name).toBe('Alice'); expect(row.fetched_at).toBe(clock.t)
+    sn.names([B]); await sn.idle()
+    expect((db.query('SELECT name FROM steam_names WHERE steam_id = ?').get(B) as { name: string | null }).name).toBeNull()
+  })
+
   test('only what is missing or old is asked for, and the same id is not asked for twice at once', async () => {
     const s = fakeSteam({ [A]: 'Alice', [B]: 'Bob' })
     const { sn } = make(s.fetchFn)

@@ -90,7 +90,9 @@ export class SteamNames {
     try {
       const found = await this.lookup(key, ids)
       const at = this.now()
-      const put = this.db.prepare('INSERT INTO steam_names (steam_id, name, fetched_at) VALUES (?, ?, ?) ON CONFLICT(steam_id) DO UPDATE SET name = excluded.name, fetched_at = excluded.fetched_at')
+      // A good name is kept when an answer leaves the player out (a profile that went private, a gap in Steam's answer): only the time is
+      // renewed. A miss is recorded only for a player with no name yet.
+      const put = this.db.prepare('INSERT INTO steam_names (steam_id, name, fetched_at) VALUES (?, ?, ?) ON CONFLICT(steam_id) DO UPDATE SET name = COALESCE(excluded.name, steam_names.name), fetched_at = excluded.fetched_at')
       this.db.transaction(() => { for (const id of ids) put.run(id, found.get(id) ?? null, at) })()
     } catch (err) {
       this.failedAt = this.now()

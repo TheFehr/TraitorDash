@@ -130,6 +130,11 @@ export class LiveKitApi {
     }))
   }
 
+  /** Sets the name the room shows for a participant (the others' lists follow it). */
+  async updateParticipantName(room: string, identity: string, name: string): Promise<void> {
+    await this.call('UpdateParticipant', room, { room, identity, name })
+  }
+
   async updateSubscriptions(room: string, identity: string, trackSids: string[], subscribe: boolean): Promise<void> {
     await this.call('UpdateSubscriptions', room, { room, identity, track_sids: trackSids, subscribe })
   }
@@ -146,6 +151,9 @@ export class VoiceHub {
   private applied = new Map<string, Map<string, Set<string>>>()
   private lastFull = new Map<string, number>()
   private peopleCache = new Map<string, { at: number, list: { id: string, name: string }[] }>()
+  /** The name this process last gave each participant (by connection), so a name that did not take is not sent again at every pass. */
+  private named = new Map<string, Map<string, string>>()
+  private nameFor: ((serverId: string, steamId: string) => string | null) | null = null
   /** The pass in progress for a server, and the one waiting behind it (a state that arrives mid-pass is acted on, not skipped). */
   private current = new Map<string, Promise<number>>()
   private queued = new Map<string, Promise<number>>()
@@ -189,6 +197,9 @@ export class VoiceHub {
     return list
   }
 
+  /** What the dashboard knows as the name of a player (the game's nick, a round's, Steam's), or null when it knows none. */
+  setNameResolver(fn: ((serverId: string, steamId: string) => string | null) | null) { this.nameFor = fn }
+
   /** For tests, and for a server whose media server is set up while it runs. */
   setApi(api: LiveKitApi | null) { this.api = api }
 
@@ -228,6 +239,21 @@ export class VoiceHub {
       if (this.watched.has(serverId)) this.watched.set(serverId, 0)
       // Now and then everything is given again from nothing, in case a call was lost without an error.
       if (now - (this.lastFull.get(serverId) ?? 0) > 30_000) { this.applied.delete(serverId); this.lastFull.set(serverId, now) }
+      // The name each participant shows in the room is the one in their token, made when they joined: a player the dashboard knew nothing about
+      // then (a Steam name still on its way, a nick the game server had not sent) shows as digits to the others until this puts it right.
+      if (this.nameFor) {
+        const done = this.named.get(serverId) ?? new Map<string, string>()
+        this.named.set(serverId, done)
+        const here = new Set(parts.map(p => p.sid))
+        for (const sid of [...done.keys()]) if (!here.has(sid)) done.delete(sid)
+        for (const p of parts) {
+          const want = this.nameFor(serverId, p.identity)?.slice(0, 64)
+          if (!want || want === p.name || done.get(p.sid) === want) continue
+          try { await api.updateParticipantName(room, p.identity, want); done.set(p.sid, want); calls++ } catch (err) {
+            this.log(`[Voice] could not set the name of ${p.identity}: ${(err as Error).message}`)
+          }
+        }
+      }
       const book = this.applied.get(serverId) ?? new Map<string, Set<string>>()
       this.applied.set(serverId, book)
       const present = new Set(parts.map(p => p.sid))

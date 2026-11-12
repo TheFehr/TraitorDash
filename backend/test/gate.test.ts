@@ -444,3 +444,27 @@ describe('the real worklet file', () => {
     expect(w.posted.at(-1).open).toBe(false)
   })
 })
+
+describe('the hold: closes a hold after the sound ends, not after the slow envelope', () => {
+  // The state used to follow the envelope, which falls 120 dB/s: the hold only began once the envelope was below the close threshold,
+  // so the gate stayed open 350 to 600 ms after a loud sound ended instead of the 250 ms of the hold.
+  for (const db of [-13, -23, -33, -43]) {
+    test(`a tone of ${db} dBFS: closed after about ${GATE.holdMs} ms of silence`, () => {
+      const engine = new GateEngine(SR, GATE.openDb, GATE.openDb - GATE.gapDb)
+      run(engine, tone(1000, db))
+      expect(engine.state.open).toBe(true)
+      let n = 0
+      while (engine.state.open && n < SR) { engine.process([new Float32Array(BLOCK)], [new Float32Array(BLOCK)]); n += BLOCK }
+      const ms = n * 1000 / SR
+      expect(ms).toBeGreaterThanOrEqual(GATE.holdMs - 15)
+      expect(ms).toBeLessThanOrEqual(GATE.holdMs + 40) // one window and a block more, not the 100 to 350 ms more it was
+    })
+  }
+
+  test('speech with short pauses stays open: a pause shorter than the hold does not close it', () => {
+    const engine = new GateEngine(SR)
+    const words = concat(tone(300, -25), silence(150), tone(300, -25), silence(200), tone(300, -25))
+    const { open } = run(engine, words)
+    expect(open.slice(Math.round(0.03 * SR / BLOCK)).every(Boolean)).toBe(true) // open from the first window to the end
+  })
+})

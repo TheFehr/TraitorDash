@@ -126,10 +126,14 @@ function start(root: HTMLElement) {
   }
   const fallback = new GateState(openDb, closeDb()) // the page's own gate, when the worklet could not start
   const pushThresholds = () => { gateNode?.port.postMessage({ type: 'set', open: openDb, close: closeDb() }); fallback.set(openDb, closeDb()) }
+  // The player's own setting (what the sliders and the measurement set, and what is saved) is kept apart from what the automatic mode
+  // adjusts: that is never saved, and switching it off puts the player's own setting back.
+  let manualOpen: number = openDb
+  let manualGap: number = gap
   const setThresholds = (open: number, close: number, keep = true) => {
     openDb = clampDb(Math.round(open)); gap = openDb - clampDb(Math.round(close), GATE.minDb, openDb)
     showThresholds(); pushThresholds()
-    if (keep) { store.set('gate_open', String(openDb)); store.set('gate_close', String(closeDb())) }
+    if (keep) { manualOpen = openDb; manualGap = gap; store.set('gate_open', String(openDb)); store.set('gate_close', String(closeDb())) }
   }
 
   // What was chosen last time. (The linear 1 to 60 threshold of before RFC 29 is not carried over: another scale.)
@@ -138,6 +142,7 @@ function start(root: HTMLElement) {
   if (savedOpen !== null && savedOpen >= GATE.minDb && savedOpen <= GATE.maxDb) {
     openDb = Math.round(savedOpen)
     if (savedClose !== null && savedClose >= GATE.minDb && savedClose <= openDb) gap = openDb - Math.round(savedClose)
+    manualOpen = openDb; manualGap = gap
     measureNote.textContent = ''
   } else {
     measureNote.textContent = 'Not measured yet: join, stay quiet, and press "Measure my room" so the microphone opens at the right level for your room.'
@@ -163,7 +168,8 @@ function start(root: HTMLElement) {
   autoBtn.addEventListener('click', () => {
     autoBtn.setAttribute('aria-pressed', String(!autoOn()))
     store.set('gate_auto', autoOn() ? '1' : '0')
-    tracker = new FloorTracker(); showAuto() // off keeps the last values and gives the sliders back
+    tracker = new FloorTracker(); showAuto()
+    if (!autoOn()) setThresholds(manualOpen, manualOpen - manualGap, false) // off: the player's own setting is back, and the sliders
   })
 
   // "Measure my room": 3 seconds of the levels the gate hears (after the filter), then the thresholds are set from them.
@@ -206,7 +212,7 @@ function start(root: HTMLElement) {
     if (autoOn() && !measuring) {
       tracker.feed(db, dt, isOpen)
       const th = tracker.thresholds()
-      if (th && (Math.round(th.open) !== openDb || Math.round(th.close) !== closeDb())) setThresholds(th.open, th.close)
+      if (th && (Math.round(th.open) !== openDb || Math.round(th.close) !== closeDb())) setThresholds(th.open, th.close, false)
     }
   }
 
@@ -325,6 +331,7 @@ function start(root: HTMLElement) {
       r.on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack, _pub: unknown, who: { identity: string }) => { track.detach().forEach(el => el.remove()); playing.delete(who.identity) })
       r.on(RoomEvent.ParticipantConnected, people)
       r.on(RoomEvent.ParticipantDisconnected, people)
+      r.on(RoomEvent.ParticipantNameChanged, people) // the dashboard puts a name right after the player has joined (RFC 28)
       r.on(RoomEvent.Reconnecting, () => { status.textContent = 'Reconnecting…' })
       r.on(RoomEvent.Reconnected, () => { status.textContent = 'Connected.' })
       r.on(RoomEvent.Disconnected, () => { if (room === r) void leave() })

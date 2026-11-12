@@ -127,7 +127,9 @@ export class GateEngine {
     for (let i = 0; i < n; i++) {
       let p = 0
       for (let c = 0; c < chans; c++) { const x = input[c]![i]!; p += x * x }
-      if (this.meter.add(p / chans)) this.state.step(this.meter.env, this.windowMs)
+      // The state follows the window's own level, not the envelope: the envelope falls slowly (it is for the meter), and a hold that
+      // only began once it had fallen below the close threshold was 350 to 600 ms long instead of the 250 it is meant to be.
+      if (this.meter.add(p / chans)) this.state.step(this.meter.window, this.windowMs)
       const g = this.ramp.next(this.open ? 1 : 0)
       for (let c = 0; c < chans; c++) {
         const x = input[c]![i]!

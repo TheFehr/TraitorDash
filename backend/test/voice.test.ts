@@ -145,6 +145,13 @@ describe('the calls to the media server', () => {
     expect(sent[0]!.body).toEqual({ room: 'traitordash-x', identity: A, track_sids: ['TR_b'], subscribe: true })
   })
 
+  test('sets the name a participant shows in the room', async () => {
+    sent.length = 0
+    await new LiveKitApi(CFG, fake).updateParticipantName('traitordash-x', A, 'Alice')
+    expect(sent[0]!.url).toBe('https://lk.test/twirp/livekit.RoomService/UpdateParticipant')
+    expect(sent[0]!.body).toEqual({ room: 'traitordash-x', identity: A, name: 'Alice' })
+  })
+
   test('an answer that is not 200 is an error', async () => {
     const bad = (async () => new Response('no', { status: 401 })) as unknown as typeof fetch
     await expect(new LiveKitApi(CFG, bad).listParticipants('x')).rejects.toThrow('HTTP 401')
@@ -156,7 +163,9 @@ class FakeRoom {
   people: Participant[] = []
   subs = new Map<string, Set<string>>() // listener identity -> tracks
   calls: string[] = []
+  renames: string[] = []
   failNext = false
+  failName = false
   join(identity: string, sid = `PA_${identity.slice(-2)}_${this.people.length}`) {
     this.people = this.people.filter(p => p.identity !== identity)
     this.people.push({ sid, identity, name: `n${identity.slice(-2)}`, audio: [`TR_${identity.slice(-2)}_${sid}`] })
@@ -165,6 +174,11 @@ class FakeRoom {
   leave(identity: string) { this.people = this.people.filter(p => p.identity !== identity); this.subs.delete(identity) }
   api = {
     listParticipants: async () => this.people.map(p => ({ ...p })),
+    updateParticipantName: async (_room: string, identity: string, name: string) => {
+      if (this.failName) { this.failName = false; throw new Error('down') }
+      this.renames.push(`${identity.slice(-2)}=${name}`)
+      const p = this.people.find(x => x.identity === identity); if (p) p.name = name
+    },
     updateSubscriptions: async (_room: string, identity: string, tracks: string[], subscribe: boolean) => {
       if (this.failNext) { this.failNext = false; throw new Error('down') }
       this.calls.push(`${identity.slice(-2)}${subscribe ? '+' : '-'}${tracks.length}`)
@@ -333,7 +347,7 @@ describe('the page\'s code', () => {
   // a real browser) are replaced by small fakes. The fake microphone behaves as LiveKit's does: mute() switches the track off, and a copy
   // made then is off too.
   const LIVEKIT_FAKE = `
-    export const RoomEvent = { TrackSubscribed: 'ts', TrackUnsubscribed: 'tu', ParticipantConnected: 'pc', ParticipantDisconnected: 'pd', Reconnecting: 'rc', Reconnected: 'rd', Disconnected: 'dc' }
+    export const RoomEvent = { TrackSubscribed: 'ts', TrackUnsubscribed: 'tu', ParticipantConnected: 'pc', ParticipantDisconnected: 'pd', ParticipantNameChanged: 'pnc', Reconnecting: 'rc', Reconnected: 'rd', Disconnected: 'dc' }
     export class Room {
       constructor() { globalThis.__room = this; globalThis.__handlers = {}; this.remoteParticipants = new Map(); this.localParticipant = { publishTrack: async (t, o) => { globalThis.__log.push('published ' + (t === globalThis.__mic ? 'raw' : 'filtered') + ' dtx=' + o.dtx) } } }
       on(ev, fn) { globalThis.__handlers[ev] = fn } async connect(url, token, opts) { globalThis.__log.push('connect autoSubscribe=' + opts.autoSubscribe) } async startAudio() {} async disconnect() {}
@@ -605,7 +619,7 @@ describe('the page\'s code', () => {
     t.done()
   })
 
-  test('"Adjust by itself": off by default; on, it follows the room\'s floor while the gate is closed, never while it is open, and off keeps the last value and gives the sliders back', async () => {
+  test('"Adjust by itself": off by default; on, it follows the room\'s floor while the gate is closed, never while it is open, never saves what it adjusts, and off gives back the player\'s own setting', async () => {
     const { page, t, post } = await joined()
     const node = t.gateNodes[0]
     for (let i = 0; i < 100; i++) post(-62, false, i * 0.05)
@@ -615,7 +629,7 @@ describe('the page\'s code', () => {
     expect(page.parts['[data-threshold]'].disabled).toBe(true); expect(page.parts['[data-close-threshold]'].disabled).toBe(true)
     for (let i = 0; i < 40; i++) post(-62, false, 10 + i * 0.05)
     expect(node.sent.at(-1)).toEqual({ type: 'set', open: -52, close: -56 }) // floor -62: open +10, close +6
-    expect(page.store.get('td_voice_gate_open')).toBe('-52')
+    expect(page.store.get('td_voice_gate_open')).toBeUndefined() // what it adjusts is never saved
     // speech: the gate is open, nothing is followed
     const sets = node.sent.length
     for (let i = 0; i < 400; i++) post(-20, true, 12 + i * 0.05)
@@ -623,9 +637,26 @@ describe('the page\'s code', () => {
     page.listeners['[data-auto]']!.click!()
     expect(page.attrs['[data-auto]']!['aria-pressed']).toBe('false'); expect(page.store.get('td_voice_gate_auto')).toBe('0')
     expect(page.parts['[data-threshold]'].disabled).toBe(false)
-    expect(page.parts['[data-threshold]'].value).toBe('-52') // the last value stays
+    expect(page.parts['[data-threshold]'].value).toBe('-50') // the player's own setting (here the starting one) is back
+    expect(node.sent.at(-1)).toEqual({ type: 'set', open: -50, close: -56 })
+    const afterOff = node.sent.length
     for (let i = 0; i < 100; i++) post(-40, false, 40 + i * 0.05)
-    expect(node.sent.length).toBe(sets) // off again: it does not move
+    expect(node.sent.length).toBe(afterOff) // off again: it does not move
+    t.done()
+  })
+
+  test('"Adjust by itself" never overwrites what the player saved, and switching it off puts it back', async () => {
+    const { page, t, post } = await joined()
+    const node = t.gateNodes[0]
+    page.parts['[data-threshold]'].value = '-45'; page.listeners['[data-threshold]']!.input!() // the player's own setting
+    expect(page.store.get('td_voice_gate_open')).toBe('-45'); expect(page.store.get('td_voice_gate_close')).toBe('-51')
+    page.listeners['[data-auto]']!.click!()
+    for (let i = 0; i < 40; i++) post(-62, false, 10 + i * 0.05)
+    expect(node.sent.at(-1)).toEqual({ type: 'set', open: -52, close: -56 }) // it adjusts...
+    expect(page.store.get('td_voice_gate_open')).toBe('-45'); expect(page.store.get('td_voice_gate_close')).toBe('-51') // ...but the saved setting is the player's
+    page.listeners['[data-auto]']!.click!()
+    expect(node.sent.at(-1)).toEqual({ type: 'set', open: -45, close: -51 })
+    expect(page.parts['[data-threshold]'].value).toBe('-45')
     t.done()
   })
 
@@ -669,6 +700,11 @@ describe('the page\'s code', () => {
     expect(rows[1].children[0].textContent).toBe(CARA) // else by SteamID64
     expect(slider.value).toBe('100'); expect(rows[1].children[1].value).toBe('25') // the default, and what was remembered
     expect(page.parts['[data-count]'].textContent).toBe('3')
+
+    // the dashboard puts a name right after the player joined (RFC 28): the list follows at once
+    g.__room.remoteParticipants.get(BOB).name = 'Robert'
+    g.__handlers.pnc()
+    expect(page.parts['[data-people]'].children[0].children[0].textContent).toBe('Robert')
 
     // the track of Bob arrives: his volume is applied to the audio element, and moves with the slider
     const audio = { volume: 1, remove() {} }
@@ -835,6 +871,60 @@ describe('the noise filter files', () => {
     expect(await Bun.file(root + '.gitignore').text()).toContain('src/public/gate.js')
     expect(await Bun.file(root + 'src/voice.ts').text()).toContain("addModule('/public/gate.js')")
     expect(await Bun.file(root + 'src/gate-worklet.ts').text()).toContain("registerProcessor('td-gate'")
+  })
+})
+
+describe('the name the room shows (RFC 28: a name that arrives after the player has joined)', () => {
+  const setup = () => {
+    const room = new FakeRoom()
+    const hub = new VoiceHub(room.api, () => 10_000, () => {})
+    const names: Record<string, string | null> = {}
+    hub.setNameResolver((_s, id) => names[id] ?? null)
+    room.join(A); room.join(B)
+    room.people.forEach(p => { p.name = p.identity }) // both joined with digits: the dashboard knew nothing of them
+    return { room, hub, names }
+  }
+
+  test('a player who joined as digits gets the name the dashboard knows now, once, and the others are left alone', async () => {
+    const { room, hub, names } = setup()
+    await hub.reconcile('srv')
+    expect(room.renames).toEqual([]) // it knows nothing yet
+    names[A] = 'Alice'
+    await hub.reconcile('srv')
+    expect(room.renames).toEqual(['01=Alice'])
+    await hub.reconcile('srv')
+    expect(room.renames).toEqual(['01=Alice']) // the room has it now: not again
+    expect(room.people.find(p => p.identity === B)!.name).toBe(B)
+    names[B] = 'Bob'
+    await hub.reconcile('srv')
+    expect(room.renames).toEqual(['01=Alice', '02=Bob'])
+  })
+
+  test('a name that changes (a rename in the game) is changed in the room', async () => {
+    const { room, hub, names } = setup()
+    names[A] = 'Alice'; await hub.reconcile('srv')
+    names[A] = 'Alice2'; await hub.reconcile('srv')
+    expect(room.renames).toEqual(['01=Alice', '01=Alice2'])
+  })
+
+  test('a call that fails does not stop the routing, and is tried again at the next pass', async () => {
+    const { room, hub, names } = setup()
+    hub.setState('srv', { boot: 1, seq: 1, phase: 'active', alive: [A, B], names: {} })
+    names[A] = 'Alice'; room.failName = true
+    await hub.reconcile('srv')
+    expect(room.renames).toEqual([])
+    expect(room.hears(A)).toEqual([B]) // the routing was done all the same
+    await hub.reconcile('srv')
+    expect(room.renames).toEqual(['01=Alice'])
+  })
+
+  test('a name that did not take is not sent at every pass', async () => {
+    const { room, hub, names } = setup()
+    let sent = 0
+    ;(room.api as any).updateParticipantName = async () => { sent++ } // the room never shows it
+    names[A] = 'Alice'
+    for (let i = 0; i < 4; i++) await hub.reconcile('srv')
+    expect(sent).toBe(1)
   })
 })
 

@@ -639,6 +639,9 @@ app.get('/servers/:serverId/voice', async (c) => {
   return respond(c, ctx, <VoicePage ctx={ctx} server={server} enabled={!!cfg} />, { scripts: !!cfg, wasm: !!cfg, connect: cfg ? [cfg.url, cfg.url.replace(/^ws/i, 'http')] : [] })
 })
 
+// What the room shows for each player follows what the dashboard knows (RFC 28): the game's nick, a round's, Steam's. Only players who are on the voice chat are asked about.
+voiceHub.setNameResolver((serverId, id) => voiceHub.nameOf(serverId, id) ?? Store.getNick(serverId, id) ?? steamNames.names([id]).get(id) ?? null)
+
 export const voiceTokenLimiter = new RateLimiter(20, 60_000)
 
 /** A token to join the server's voice room as the signed-in player (their SteamID64 is their name there, which is how the rules find them). */
