@@ -18,7 +18,7 @@ export const VoicePage = ({ ctx, server, enabled }: VoicePageProps) => {
   return (
     <Shell title={`Voice | ${server.name}`} embed={ctx.embed} viewer={ctx.viewer} scripts={enabled ? ['/public/voice.js'] : []}>
       <Crumbs><a href={`/servers/${id}/stats`}>{server.name}</a> / Voice</Crumbs>
-      {!ctx.embed && <Sections serverId={id} admin={adminOf(ctx)} />}
+      {!ctx.embed && <Sections serverId={id} current="voice" admin={adminOf(ctx)} />}
       <h1>Voice chat</h1>
       <p class="muted" style="margin:0 0 var(--space-3)">Talk to the other players of the server while you play.</p>
       {!enabled ? (

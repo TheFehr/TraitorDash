@@ -1122,6 +1122,19 @@ describe('the routes', () => {
     expect((await get('/servers/nope/voice', ADMIN)).status).toBe(302)
   })
 
+  test('the voice page is linked from the section links of the server\'s pages, only where the dashboard has a media server, and marks itself when it is open', async () => {
+    const link = `href="/servers/${server.id}/voice"`
+    const stats = async () => (await get(`/servers/${server.id}/stats`, ADMIN)).text()
+    expect(await stats()).not.toContain(link) // no media server: no link to a page that says it is not set up
+    configureVoice(CFG)
+    expect(await stats()).toContain(link)
+    expect(await (await get(`/servers/${server.id}/maps`, ADMIN)).text()).toContain(link) // every page with the section links
+    const here = await (await get(`/servers/${server.id}/voice`, ADMIN)).text()
+    expect(here).toMatch(new RegExp(`<a ${link.replace(/[/]/g, '\\/')}[^>]*aria-current="page"`))
+    configureVoice(null)
+    expect(await stats()).not.toContain(link)
+  })
+
   test('a token is for a signed-in user, for their own SteamID64, in the server\'s room', async () => {
     expect((await postToken(`/servers/${server.id}/voice/token`)).status).toBe(401)
     expect((await postToken(`/servers/${server.id}/voice/token`, ADMIN)).status).toBe(503) // no media server
