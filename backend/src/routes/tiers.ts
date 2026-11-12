@@ -30,6 +30,7 @@ export const TIERS: Record<string, Tier> = {
   'GET /servers/:serverId/rounds/:roundId/track.json': 'user',
   'GET /servers/:serverId/voice': 'user',
   'POST /servers/:serverId/voice/token': 'user',
+  'GET /servers/:serverId/voice/people': 'user',
 
   'GET /sidebar/:serverId': 'admin',
   'GET /servers': 'admin',

@@ -51,6 +51,8 @@ function start(root: HTMLElement) {
   const monitorBtn = $<HTMLButtonElement>('[data-monitor]')
   const filterNote = $('[data-filter-note]')
   const peopleBox = $('[data-people]')
+  const who = $('[data-who]')
+  const peopleUrl = root.dataset.peopleUrl
 
   let room: Room | null = null
   let mic: LocalAudioTrack | null = null
@@ -153,6 +155,23 @@ function start(root: HTMLElement) {
 
   const people = () => { count.textContent = String(room ? room.remoteParticipants.size + 1 : 0); renderPeople() }
 
+  // Before the player has joined the page asks the dashboard who is on (the room cannot be read from outside it), every 5 seconds, and
+  // stops when they join; it starts again when they leave. A failed look is simply tried again.
+  let pollTimer = 0
+  const poll = async () => {
+    window.clearTimeout(pollTimer)
+    if (room || !peopleUrl) return
+    try {
+      const res = await fetch(peopleUrl, { credentials: 'same-origin' })
+      const data = res.ok ? await res.json() as { people?: { id: string, name: string }[] } : null
+      if (data && Array.isArray(data.people) && !room) {
+        count.textContent = String(data.people.length)
+        who.textContent = data.people.length ? 'On now: ' + data.people.map(p => p.name).join(', ') : 'Nobody is on the voice chat.'
+      }
+    } catch { /* the next look tries again */ }
+    if (!room) pollTimer = window.setTimeout(poll, 5000)
+  }
+
   const leave = async () => {
     window.clearInterval(timer)
     setOpen(false)
@@ -172,6 +191,7 @@ function start(root: HTMLElement) {
     people()
     join.textContent = 'Join voice'
     status.textContent = 'Not connected.'
+    void poll()
   }
 
   const enter = async () => {
@@ -210,6 +230,8 @@ function start(root: HTMLElement) {
       await r.localParticipant.publishTrack(mic, { name: 'microphone' })
       await mic.mute() // closed until the player speaks or holds the key
       await watch(mic)
+      window.clearTimeout(pollTimer)
+      who.textContent = ''
       people()
       join.textContent = 'Leave voice'
       status.textContent = 'Connected.'
@@ -223,6 +245,7 @@ function start(root: HTMLElement) {
   }
 
   join.addEventListener('click', () => { void (room ? leave() : enter()) })
+  void poll()
   window.addEventListener('pagehide', () => { void room?.disconnect() })
 }
 

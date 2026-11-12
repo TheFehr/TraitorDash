@@ -12,18 +12,39 @@ export const STALE_MS = 20_000
 export const MAX_ALIVE = 128
 
 export type Phase = 'prep' | 'active' | 'over'
-export interface VoiceState { boot: number, seq: number, phase: Phase, alive: Set<string>, at: number }
+export interface VoiceState { boot: number, seq: number, phase: Phase, alive: Set<string>, at: number, names: Map<string, string> }
+
+/** A nick as it is kept: no control characters, trimmed, at most 32 characters (not bytes); null when nothing is left. */
+export function cleanNick(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null
+  const n = [...raw.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').trim()].slice(0, 32).join('').trim()
+  return n === '' ? null : n
+}
 
 /** The bridge's message, checked. A string is the reason it is refused. */
-export function parseVoiceState(body: any): { boot: number, seq: number, phase: Phase, alive: string[] } | string {
+export interface VoiceMessage { boot: number, seq: number, phase: Phase, alive: string[], names: Record<string, string> }
+export function parseVoiceState(body: any): VoiceMessage | string {
   if (!body || typeof body !== 'object') return 'a JSON object is required'
   const { boot, seq, phase, alive } = body
+  const rawNames = body.names
   if (!Number.isSafeInteger(boot) || boot < 0) return 'boot must be a whole number'
   if (!Number.isSafeInteger(seq) || seq < 0) return 'seq must be a whole number'
   if (phase !== 'prep' && phase !== 'active' && phase !== 'over') return 'phase must be prep, active or over'
   if (!Array.isArray(alive) || alive.length > MAX_ALIVE) return `alive must be a list of at most ${MAX_ALIVE} SteamID64s`
   for (const a of alive) if (typeof a !== 'string' || !STEAM_ID64.test(a)) return 'alive holds only SteamID64s'
-  return { boot, seq, phase, alive: [...new Set<string>(alive)] }
+  // The nicks of everyone connected (RFC 27, 7): optional, and an empty table may come as an empty list (a Lua table has no kind).
+  const names: Record<string, string> = {}
+  if (rawNames !== undefined && rawNames !== null && !(Array.isArray(rawNames) && rawNames.length === 0)) {
+    if (typeof rawNames !== 'object' || Array.isArray(rawNames)) return 'names must be a table of SteamID64 to nick'
+    const entries = Object.entries(rawNames)
+    if (entries.length > MAX_ALIVE) return `names holds at most ${MAX_ALIVE} entries`
+    for (const [id, nick] of entries) {
+      if (!STEAM_ID64.test(id) || typeof nick !== 'string') return 'names maps SteamID64s to nicks'
+      const clean = cleanNick(nick)
+      if (clean) names[id] = clean
+    }
+  }
+  return { boot, seq, phase, alive: [...new Set<string>(alive)], names }
 }
 
 /**
@@ -78,7 +99,7 @@ export function joinToken(cfg: LiveKitConfig, room: string, identity: string, na
   })
 }
 
-export interface Participant { sid: string, identity: string, audio: string[] }
+export interface Participant { sid: string, identity: string, name: string, audio: string[] }
 
 /** The few calls of LiveKit's room service (a Twirp API over HTTP and JSON) that routing needs. */
 export class LiveKitApi {
@@ -101,7 +122,7 @@ export class LiveKitApi {
     const out = await this.call('ListParticipants', room, { room })
     const list = Array.isArray(out?.participants) ? out.participants : []
     return list.filter((p: any) => typeof p?.sid === 'string' && typeof p?.identity === 'string').map((p: any) => ({
-      sid: p.sid, identity: p.identity,
+      sid: p.sid, identity: p.identity, name: typeof p.name === 'string' ? p.name : '',
       // The room holds microphones only. An audio track's type is 0, which the JSON may leave out.
       audio: (Array.isArray(p.tracks) ? p.tracks : [])
         .filter((t: any) => typeof t?.sid === 'string' && t.type !== 'VIDEO' && t.type !== 1 && t.type !== 'DATA' && t.type !== 2)
@@ -124,6 +145,7 @@ export class VoiceHub {
   /** Per server and listener (by connection): the tracks the listener has been given. */
   private applied = new Map<string, Map<string, Set<string>>>()
   private lastFull = new Map<string, number>()
+  private peopleCache = new Map<string, { at: number, list: { id: string, name: string }[] }>()
   /** The pass in progress for a server, and the one waiting behind it (a state that arrives mid-pass is acted on, not skipped). */
   private current = new Map<string, Promise<number>>()
   private queued = new Map<string, Promise<number>>()
@@ -132,15 +154,40 @@ export class VoiceHub {
   constructor(private api: LiveKitApi | null, private now: () => number = Date.now, private log: (msg: string) => void = (m) => console.warn(m)) {}
 
   /** A message from the bridge. 'old' means it was older than one already taken (or the same), and is ignored. */
-  setState(serverId: string, msg: { boot: number, seq: number, phase: Phase, alive: string[] }): 'ok' | 'old' {
+  setState(serverId: string, msg: { boot: number, seq: number, phase: Phase, alive: string[], names?: Record<string, string> }): 'ok' | 'old' {
     const last = this.states.get(serverId)
     if (last && last.boot === msg.boot && msg.seq <= last.seq) return 'old'
-    this.states.set(serverId, { boot: msg.boot, seq: msg.seq, phase: msg.phase, alive: new Set(msg.alive), at: this.now() })
+    this.states.set(serverId, { boot: msg.boot, seq: msg.seq, phase: msg.phase, alive: new Set(msg.alive), at: this.now(), names: new Map(Object.entries(msg.names ?? {})) })
     if (this.watched.has(serverId)) void this.reconcile(serverId)
     return 'ok'
   }
 
   state(serverId: string): VoiceState | null { return this.states.get(serverId) ?? null }
+
+  /** The nick the game server last gave for a player who is connected to it, if it is still saying anything. */
+  nameOf(serverId: string, steamId: string): string | null {
+    const s = this.states.get(serverId)
+    return s && this.now() - s.at <= STALE_MS ? s.names.get(steamId) ?? null : null
+  }
+
+  /**
+   * Who is in the server's voice room now, for the page's count and names before a player has joined. Asked of the media server, at most
+   * once in 3 seconds per server however many pages ask; when it cannot be asked, the last answer stands.
+   */
+  async people(serverId: string): Promise<{ id: string, name: string }[]> {
+    if (!this.api) return []
+    const now = this.now()
+    const kept = this.peopleCache.get(serverId)
+    if (kept && now - kept.at < 3000) return kept.list
+    let list = kept?.list ?? []
+    try {
+      list = (await this.api.listParticipants(roomOf(serverId))).map(p => ({ id: p.identity, name: p.name }))
+    } catch (err) {
+      this.log(`[Voice] could not list the room of ${serverId}: ${(err as Error).message}`)
+    }
+    this.peopleCache.set(serverId, { at: now, list })
+    return list
+  }
 
   /** For tests, and for a server whose media server is set up while it runs. */
   setApi(api: LiveKitApi | null) { this.api = api }

@@ -18,7 +18,7 @@ const A = '76561198000000001', B = '76561198000000002', C = '76561198000000003',
 const ADMIN = '76561198000000000'
 const CFG: LiveKitConfig = { url: 'wss://lk.test', apiUrl: 'https://lk.test', key: 'devkey', secret: 'devsecret-devsecret-devsecret-00' }
 
-const state = (phase: 'prep' | 'active' | 'over', alive: string[], at = 1000): VoiceState => ({ boot: 1, seq: 1, phase, alive: new Set(alive), at })
+const state = (phase: 'prep' | 'active' | 'over', alive: string[], at = 1000): VoiceState => ({ boot: 1, seq: 1, phase, alive: new Set(alive), at, names: new Map() })
 
 describe('canHear', () => {
   test('in a round the living hear the living, and the dead hear everyone', () => {
@@ -57,7 +57,7 @@ describe('canHear', () => {
 })
 
 describe('the bridge message', () => {
-  const ok = { boot: 5, seq: 1, phase: 'active' as const, alive: [A, B] }
+  const ok = { boot: 5, seq: 1, phase: 'active' as const, alive: [A, B], names: {} as Record<string, string> }
   test('is taken when whole', () => {
     expect(parseVoiceState(ok)).toEqual(ok)
     expect(parseVoiceState({ ...ok, alive: [A, A, B] })).toEqual(ok) // a repeat is one
@@ -70,7 +70,18 @@ describe('the bridge message', () => {
     }
   })
   test('carries nothing else: a role or a position in it is dropped, not kept', () => {
-    expect(Object.keys(parseVoiceState({ ...ok, role: 'traitor', pos: [1, 2, 3] }) as object).sort()).toEqual(['alive', 'boot', 'phase', 'seq'])
+    expect(Object.keys(parseVoiceState({ ...ok, role: 'traitor', pos: [1, 2, 3] }) as object).sort()).toEqual(['alive', 'boot', 'names', 'phase', 'seq'])
+  })
+  test('the nicks of everyone connected are optional, cleaned, and not a way to say who is alive', () => {
+    expect((parseVoiceState({ ...ok, names: undefined }) as any).names).toEqual({}) // an old bridge sends none
+    expect((parseVoiceState({ ...ok, names: [] }) as any).names).toEqual({}) // an empty Lua table arrives as an empty list
+    const named = parseVoiceState({ ...ok, names: { [A]: '  Alice\u0007\n ', [B]: 'x'.repeat(100), [C]: '   ', } }) as any
+    expect(named.names).toEqual({ [A]: 'Alice', [B]: 'x'.repeat(32) }) // control characters out, trimmed, at most 32, nothing left means no entry
+    expect((parseVoiceState({ ...ok, names: { [A]: '😀'.repeat(40) } }) as any).names[A]).toBe('😀'.repeat(32)) // characters, not bytes
+    for (const bad of [{ ...ok, names: 'Bob' }, { ...ok, names: { bot: 'Bob' } }, { ...ok, names: { [A]: 5 } }, { ...ok, names: ['Bob'] },
+      { ...ok, names: Object.fromEntries(Array.from({ length: 129 }, (_, i) => [`7656119800000${String(i).padStart(4, '0')}`, 'n'])) }]) {
+      expect(typeof parseVoiceState(bad)).toBe('string')
+    }
   })
 })
 
@@ -108,7 +119,7 @@ describe('the calls to the media server', () => {
   const fake = (async (url: string, init: any) => {
     sent.push({ url, auth: init.headers.Authorization, body: JSON.parse(init.body) })
     if (url.endsWith('/ListParticipants')) return Response.json({ participants: [
-      { sid: 'PA_1', identity: A, tracks: [{ sid: 'TR_a', type: 'AUDIO' }, { sid: 'TR_v', type: 'VIDEO' }] },
+      { sid: 'PA_1', identity: A, name: 'Alice', tracks: [{ sid: 'TR_a', type: 'AUDIO' }, { sid: 'TR_v', type: 'VIDEO' }] },
       { sid: 'PA_2', identity: B, tracks: [{ sid: 'TR_b' }] }, // an audio track's type 0 may be left out of the JSON
       { sid: 'PA_3', identity: C },
       { nope: true },
@@ -120,7 +131,7 @@ describe('the calls to the media server', () => {
     sent.length = 0
     const api = new LiveKitApi(CFG, fake, () => 1_700_000_000_000)
     const list = await api.listParticipants('traitordash-x')
-    expect(list).toEqual<Participant[]>([{ sid: 'PA_1', identity: A, audio: ['TR_a'] }, { sid: 'PA_2', identity: B, audio: ['TR_b'] }, { sid: 'PA_3', identity: C, audio: [] }])
+    expect(list).toEqual<Participant[]>([{ sid: 'PA_1', identity: A, name: 'Alice', audio: ['TR_a'] }, { sid: 'PA_2', identity: B, name: '', audio: ['TR_b'] }, { sid: 'PA_3', identity: C, name: '', audio: [] }])
     expect(sent[0]!.url).toBe('https://lk.test/twirp/livekit.RoomService/ListParticipants')
     expect(sent[0]!.body).toEqual({ room: 'traitordash-x' })
     const claims = JSON.parse(Buffer.from(sent[0]!.auth.replace('Bearer ', '').split('.')[1]!, 'base64url').toString())
@@ -148,7 +159,7 @@ class FakeRoom {
   failNext = false
   join(identity: string, sid = `PA_${identity.slice(-2)}_${this.people.length}`) {
     this.people = this.people.filter(p => p.identity !== identity)
-    this.people.push({ sid, identity, audio: [`TR_${identity.slice(-2)}_${sid}`] })
+    this.people.push({ sid, identity, name: `n${identity.slice(-2)}`, audio: [`TR_${identity.slice(-2)}_${sid}`] })
     this.subs.set(identity, new Set()) // a new connection starts with nothing
   }
   leave(identity: string) { this.people = this.people.filter(p => p.identity !== identity); this.subs.delete(identity) }
@@ -368,21 +379,24 @@ describe('the page\'s code', () => {
     }
     const parts: Record<string, any> = {}
     parts['[data-people]'] = node()
+    parts['[data-who]'] = node()
     for (const sel of ['[data-join]', '[data-status]', '[data-level]', '[data-marker]', '[data-speaking]', '[data-threshold]', '[data-count]', '[data-audio]', '[data-vad-box]', '[data-ptt-box]', '[data-ptt-key]', '[data-monitor]', '[data-filter-note]']) parts[sel] = el(sel)
     const modes = [el('vad', { dataset: { mode: 'vad' } }), el('ptt', { dataset: { mode: 'ptt' }, disabled: true })]
     const filters = [el('on', { dataset: { filter: 'on' } }), el('off', { dataset: { filter: 'off' } })]
     attrs['on']!['aria-pressed'] = 'true'; attrs['off']!['aria-pressed'] = 'false'
-    const root = { dataset: { token: '/servers/x/voice/token' }, querySelector: (s: string) => parts[s],
+    const root = { dataset: { token: '/servers/x/voice/token', peopleUrl: '/servers/x/voice/people' }, querySelector: (s: string) => parts[s],
       querySelectorAll: (s: string) => (s.includes('data-filter') ? filters : modes) }
     const timers: Function[] = []
-    const win = { addEventListener() {}, setInterval: (fn: Function) => { timers.push(fn); return timers.length }, clearInterval() {} }
+    const timeouts: { fn: Function, ms: number }[] = []
+    const win = { addEventListener() {}, setInterval: (fn: Function) => { timers.push(fn); return timers.length }, clearInterval() {},
+      setTimeout: (fn: Function, ms: number) => { timeouts.push({ fn, ms }); return timeouts.length }, clearTimeout() {} }
     const store = new Map<string, string>([['mode', 'ptt']]) // a saved choice of the disabled mode
     const local = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v) } }
     const run = (extra: Record<string, unknown> = {}) => {
       const names = ['document', 'window', 'localStorage', ...Object.keys(extra)]
       return new Function(...names, code)({ querySelector: () => root, createElement: () => node() }, win, local, ...Object.values(extra))
     }
-    return { run, parts, modes, filters, listeners, attrs, timers, local, store, node }
+    return { run, parts, modes, filters, listeners, attrs, timers, timeouts, local, store, node }
   }
 
   test('runs as the browser runs it: bundled, against a page with its parts, it starts without an error and wires the buttons', async () => {
@@ -420,8 +434,11 @@ describe('the page\'s code', () => {
       createMediaStreamSource(stream: any) { sourceTracks = stream.tracks; return { connect() {} } }
     }
     class FakeStream { constructor(public tracks: any[]) {} }
-    const fetchFake = async () => ({ ok: true, json: async () => ({ url: 'wss://lk.test', token: 'tok' }) })
-    return { log, g, rawTrack, outTrack, gains, gate, globals: { AudioContext: FakeContext, MediaStream: FakeStream, fetch: fetchFake }, done() { delete g.__log; delete g.__mic; delete g.__rnnoiseFails; delete g.__room; delete g.__handlers } }
+    const state = { people: [] as { id: string, name: string }[] }
+    const fetchFake = async (url: string) => (url.includes('/people')
+      ? { ok: true, json: async () => ({ people: state.people }) }
+      : { ok: true, json: async () => ({ url: 'wss://lk.test', token: 'tok' }) })
+    return { log, g, rawTrack, outTrack, gains, gate, state, globals: { AudioContext: FakeContext, MediaStream: FakeStream, fetch: fetchFake }, done() { delete g.__log; delete g.__mic; delete g.__rnnoiseFails; delete g.__room; delete g.__handlers } }
   }
 
   test('a join: the context is made in the click at 48 kHz, the microphone goes through the filter, the meter listens to a copy that stays on, and speaking opens the microphone', async () => {
@@ -518,6 +535,43 @@ describe('the page\'s code', () => {
     t.done()
   })
 
+  test('before joining, the page asks who is on every 5 seconds and shows the count and the names; it stops when the player joins and starts again when they leave', async () => {
+    const page = await load()
+    const t = setup()
+    const BOB = '76561198000000002', CARA = '76561198000000003'
+    t.state.people = [{ id: BOB, name: 'Bob' }, { id: CARA, name: 'Cara' }]
+    page.run(t.globals) // the first look is made at once
+    await new Promise(r => setTimeout(r, 10))
+    expect(page.parts['[data-count]'].textContent).toBe('2') // not 0: somebody else is on, though this player is not
+    expect(page.parts['[data-who]'].textContent).toBe('On now: Bob, Cara')
+    expect(page.timeouts.at(-1)!.ms).toBe(5000)
+
+    t.state.people = [{ id: CARA, name: 'Cara' }]
+    await page.timeouts.at(-1)!.fn()
+    expect(page.parts['[data-count]'].textContent).toBe('1')
+    t.state.people = []
+    await page.timeouts.at(-1)!.fn()
+    expect(page.parts['[data-count]'].textContent).toBe('0')
+    expect(page.parts['[data-who]'].textContent).toBe('Nobody is on the voice chat.')
+
+    page.listeners['[data-join]']!.click!() // joining: the room itself tells who is on
+    await new Promise(r => setTimeout(r, 30))
+    expect(page.parts['[data-who]'].textContent).toBe('')
+    expect(page.parts['[data-count]'].textContent).toBe('1') // this player alone
+    const looks = page.timeouts.length
+    t.state.people = [{ id: BOB, name: 'Bob' }]
+    await page.timeouts.at(-1)!.fn() // a late look does nothing once joined
+    expect(page.timeouts.length).toBe(looks)
+    expect(page.parts['[data-count]'].textContent).toBe('1')
+
+    page.listeners['[data-join]']!.click!() // leaving: it looks again
+    await new Promise(r => setTimeout(r, 30))
+    expect(page.timeouts.length).toBeGreaterThan(looks)
+    expect(page.parts['[data-count]'].textContent).toBe('1')
+    expect(page.parts['[data-who]'].textContent).toBe('On now: Bob')
+    t.done()
+  })
+
   test('when the filter cannot start the microphone is sent as it is, the join still works, and the page says so', async () => {
     const page = await load()
     const t = setup({ rnnoiseFails: true })
@@ -555,6 +609,33 @@ describe('the noise filter files', () => {
   })
 })
 
+describe('who is on the voice chat (before a player has joined)', () => {
+  test('is the media server\'s list, asked at most once in 3 seconds, and the last answer stands when it cannot be asked', async () => {
+    const room = new FakeRoom()
+    let now = 10_000
+    const hub = new VoiceHub(room.api, () => now, () => {})
+    expect(await hub.people('srv')).toEqual([])
+    room.join(A); room.join(B)
+    expect(await hub.people('srv')).toEqual([]) // still the answer of a moment ago
+    now += 3001
+    expect((await hub.people('srv')).map(p => p.id).sort()).toEqual([A, B])
+    room.api.listParticipants = async () => { throw new Error('down') }
+    now += 3001
+    expect((await hub.people('srv')).map(p => p.id).sort()).toEqual([A, B])
+    expect(await new VoiceHub(null).people('srv')).toEqual([])
+  })
+
+  test('the nicks the game server sends are kept while it is still talking, and forgotten when it goes quiet', () => {
+    let now = 1000
+    const hub = new VoiceHub(null, () => now, () => {})
+    hub.setState('srv', { boot: 1, seq: 1, phase: 'active', alive: [A], names: { [A]: 'Alice', [B]: 'Bob' } })
+    expect(hub.nameOf('srv', B)).toBe('Bob') // a dead player's nick too: it says nothing about who is alive
+    expect(hub.nameOf('srv', C)).toBeNull()
+    now += STALE_MS + 1
+    expect(hub.nameOf('srv', B)).toBeNull()
+  })
+})
+
 describe('the routes', () => {
   let app: any, api: any, Store: any, server: { id: string, token: string }
   const cookieFor = async (id: string) => (await serializeSigned('steam_id', id, SECRET)).split(';')[0]!
@@ -573,6 +654,7 @@ describe('the routes', () => {
     configureVoice(null)
     ;(await import('../src/routes/api')).voiceLimiter.reset()
     ;(await import('../src/index')).voiceTokenLimiter.reset()
+    ;(await import('../src/index')).voicePeopleLimiter.reset()
   })
   afterAll(() => configureVoice(null))
 
@@ -649,6 +731,32 @@ describe('the routes', () => {
       body: JSON.stringify({ round_id: 'round-nick-001', map: 'ttt_example', result: 'innocents', duration: 300, players: [{ steam_id: ADMIN, nick: 'Phil', role: 'innocent', team: 'innocents' }], deaths: [] }) })
     expect(round.status).toBe(200)
     expect(await nameIn()).toBe('Phil')
+    // the nick the game server gives for someone connected now is the freshest, and wins
+    const { voiceHub } = await import('../src/services/voice')
+    voiceHub.setState(server.id, { boot: 1, seq: 1, phase: 'over', alive: [], names: { [ADMIN]: 'Phil in game' } })
+    expect(await nameIn()).toBe('Phil in game')
+  })
+
+  test('who is on: signed-in users only; the names come from the media server, else the game, else a round, else the SteamID64', async () => {
+    const path = `/servers/${server.id}/voice/people`
+    expect((await get(path)).status).toBe(401)
+    expect((await get(path, ADMIN)).status).toBe(503) // no media server
+    configureVoice(CFG, (async () => Response.json({ participants: [
+      { sid: 'PA_1', identity: A, name: 'Alice' }, { sid: 'PA_2', identity: B, name: B }, { sid: 'PA_3', identity: C, name: '' }] })) as unknown as typeof fetch)
+    expect((await get('/servers/nope/voice/people', ADMIN)).status).toBe(404)
+    const { voiceHub } = await import('../src/services/voice')
+    voiceHub.setState(server.id, { boot: 1, seq: 1, phase: 'over', alive: [], names: { [B]: 'Bob' } })
+    const res = await get(path, ADMIN)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('cache-control')).toBe('no-store')
+    expect((await res.json()).people).toEqual([{ id: A, name: 'Alice' }, { id: B, name: 'Bob' }, { id: C, name: C }])
+  })
+
+  test('who is on is limited per account', async () => {
+    configureVoice(CFG, (async () => Response.json({ participants: [] })) as unknown as typeof fetch)
+    let last = 200
+    for (let i = 0; i < 62; i++) last = (await get(`/servers/${server.id}/voice/people`, ADMIN)).status
+    expect(last).toBe(429)
   })
 
   test('tokens are limited per account', async () => {

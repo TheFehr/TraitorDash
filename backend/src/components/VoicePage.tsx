@@ -22,7 +22,7 @@ export const VoicePage = ({ ctx, server, enabled }: VoicePageProps) => {
       {!enabled ? (
         <div data-voice-off class="f c-gray">Voice chat is not set up on this dashboard.</div>
       ) : (
-        <div data-voice data-token={`/servers/${id}/voice/token`} class="f c-gray vc">
+        <div data-voice data-token={`/servers/${id}/voice/token`} data-people-url={`/servers/${id}/voice/people`} class="f c-gray vc">
           <p>
             Keep this tab open while you play, turn the game's own voice off or down, and use a headset.
             While a round runs, the living hear the living, and the dead hear everyone.
@@ -33,6 +33,7 @@ export const VoicePage = ({ ctx, server, enabled }: VoicePageProps) => {
             <span data-status role="status">Not connected.</span>
             <span class="muted">Connected: <span data-count>0</span></span>
           </div>
+          <p class="muted" data-who></p>
 
           <div>
             <div class="cap">Microphone opens</div>

@@ -650,7 +650,22 @@ app.post('/servers/:serverId/voice/token', async (c) => {
   if (!cfg) return c.json({ error: 'Voice chat is not set up' }, 503)
   if (voiceTokenLimiter.hit(session.steamId) > 0) return c.json({ error: 'Too many requests; slow down' }, 429)
   voiceHub.watch(serverId)
-  return c.json({ url: cfg.url, token: joinToken(cfg, roomOf(serverId), session.steamId, (Store.getNick(serverId, session.steamId) ?? session.steamId).slice(0, 64)) })
+  return c.json({ url: cfg.url, token: joinToken(cfg, roomOf(serverId), session.steamId, (voiceHub.nameOf(serverId, session.steamId) ?? Store.getNick(serverId, session.steamId) ?? session.steamId).slice(0, 64)) })
+})
+
+export const voicePeopleLimiter = new RateLimiter(60, 60_000)
+
+/** Who is on the server's voice chat now (RFC 27, 7): for the count and the names the page shows before a player has joined. Not who is alive. */
+app.get('/servers/:serverId/voice/people', async (c) => {
+  const session = await getSession(c)
+  if (!session) return c.json({ error: 'Sign-in required', signin: '/auth/steam' }, 401)
+  const serverId = c.req.param('serverId')
+  if (!Store.getServerById(serverId)) return c.json({ error: 'Not found' }, 404)
+  if (!voiceConfig()) return c.json({ error: 'Voice chat is not set up' }, 503)
+  if (voicePeopleLimiter.hit(session.steamId) > 0) return c.json({ error: 'Too many requests; slow down' }, 429)
+  const list = await voiceHub.people(serverId)
+  c.header('Cache-Control', 'no-store')
+  return c.json({ people: list.map(p => ({ id: p.id, name: (p.name && p.name !== p.id ? p.name : voiceHub.nameOf(serverId, p.id) ?? Store.getNick(serverId, p.id) ?? p.id).slice(0, 64) })) })
 })
 
 app.get('/servers/:serverId/players/:playerId', async (c) => {

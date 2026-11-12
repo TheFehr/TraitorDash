@@ -1,6 +1,7 @@
 -- TraitorDash voice state (RFC 27).
 --
--- Tells the dashboard two things, and nothing else: the round's phase and the WHOLE list of the living. The dashboard turns that
+-- Tells the dashboard three things, and nothing else: the round's phase, the WHOLE list of the living, and the nicks of everyone who is
+-- connected (alive or dead, for the voice page's list of who is on; it says nothing about who is alive). The dashboard turns that
 -- into who hears whom in its own voice chat (living hear the living, dead hear everyone; outside a round everyone hears everyone).
 -- No role, team or position is sent, so the voice side cannot leak one.
 --
@@ -56,13 +57,46 @@ local function Alive()
     return list
 end
 
-local function Send(phase, list)
+-- A nick fit for the wire: no control characters, valid UTF-8 (anything else is reduced to ASCII), at most 32 characters.
+local function CleanNick(raw)
+    local n = tostring(raw or ""):gsub("%c", " ")
+    if utf8 and utf8.len then
+        if not utf8.len(n) then n = n:gsub("[\128-\255]", "?") end
+        local cut = utf8.offset(n, 33)
+        if cut then n = n:sub(1, cut - 1) end
+    else
+        n = n:sub(1, 32)
+    end
+    return n
+end
+
+-- Everyone who is connected as a person, alive or dead, by SteamID64, with their nick: for the voice page's list of who is on
+-- (RFC 27, 7). It says nothing about who is alive, so it cannot give a death away.
+local function Names()
+    local names, keyParts = {}, {}
+    for _, ply in ipairs(player.GetAll()) do
+        if IsValid(ply) and not ply:IsBot() then
+            local sid = ply:SteamID64()
+            if sid and #sid == 17 and #keyParts < MAX_ALIVE then
+                local nick = CleanNick(ply:Nick())
+                if nick ~= "" then
+                    names[sid] = nick
+                    keyParts[#keyParts + 1] = sid .. "=" .. nick
+                end
+            end
+        end
+    end
+    table.sort(keyParts)
+    return names, table.concat(keyParts, ";")
+end
+
+local function Send(phase, list, names)
     local cfg = TraitorDash.GetConfig and TraitorDash.GetConfig()
     if not cfg or not cfg.url or cfg.token == "" then return end
     local map = game.GetMap()
     if noEndpointOn == map then return end
     seq = seq + 1
-    local json = util.TableToJSON({ boot = boot, seq = seq, phase = phase, alive = list })
+    local json = util.TableToJSON({ boot = boot, seq = seq, phase = phase, alive = list, names = names })
     if not json then return end
     HTTP({
         url = cfg.url .. "/api/v1/voice",
@@ -84,11 +118,12 @@ end
 function Voice.Check()
     local phase = Phase()
     local list = Alive()
-    local key = phase .. "|" .. table.concat(list, ",")
+    local names, namesKey = Names()
+    local key = phase .. "|" .. table.concat(list, ",") .. "|" .. namesKey
     local now = CurTime()
     if key == lastKey and now - lastSentAt < REPEAT_EVERY then return end
     lastKey, lastSentAt = key, now
-    Send(phase, list)
+    Send(phase, list, names)
 end
 
 local function SafeCheck()

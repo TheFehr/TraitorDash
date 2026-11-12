@@ -77,16 +77,17 @@ const PRELUDE = `
   CONFIG = { url = "https://td.test", token = "tok" }
   TraitorDash = { GetConfig = function() return CONFIG end }
 
-  local function mkply(sid, bot)
-    local p = { sid = sid, alive = true, bot = bot }
+  local function mkply(sid, bot, nick)
+    local p = { sid = sid, alive = true, bot = bot, nick = nick }
+    function p:Nick() return self.nick end
     function p:IsBot() return self.bot end
     function p:IsTerror() if self.boom then error("IsTerror failed") end return self.alive end
     function p:SteamID64() return self.sid end
     return p
   end
-  A = mkply("76561198000000001"); B = mkply("76561198000000002"); C = mkply("76561198000000003")
-  BOT = mkply("0", true)
-  SPEC = mkply("76561198000000009"); SPEC.alive = false
+  A = mkply("76561198000000001", false, "Alice"); B = mkply("76561198000000002", false, "Bob"); C = mkply("76561198000000003", false, "Cara")
+  BOT = mkply("0", true, "Botty")
+  SPEC = mkply("76561198000000009", false, "Spec"); SPEC.alive = false
   PLAYERS = { C, A, B, BOT, SPEC }
   player = { GetAll = function() return PLAYERS end }
 
@@ -142,8 +143,29 @@ describe('voice.lua', () => {
     expect(r.sent[0]!.auth).toBe('Bearer tok')
     expect(r.sent[0]!.body).toMatchObject({ phase: 'over', alive: [A, B, C], seq: 1 })
     expect(typeof r.sent[0]!.body.boot).toBe('number')
-    expect(Object.keys(r.sent[0]!.body).sort()).toEqual(['alive', 'boot', 'phase', 'seq']) // nothing else: no role, team or position
+    expect(Object.keys(r.sent[0]!.body).sort()).toEqual(['alive', 'boot', 'names', 'phase', 'seq']) // nothing else: no role, team or position
     expect(parseVoiceState(r.sent[0]!.body)).not.toBeTypeOf('string')
+  })
+
+  test('names everyone who is connected as a person, the dead too and no bot: it says nothing about who is alive', () => {
+    const r = play('Run(1)')
+    expect(r.sent[0]!.body.names).toEqual({ [A]: 'Alice', [B]: 'Bob', [C]: 'Cara', '76561198000000009': 'Spec' })
+    expect(r.sent[0]!.body.alive).toEqual([A, B, C]) // Spec is connected and dead: in the names, not in the list
+  })
+
+  test('a nick is made fit for the wire: control characters out, valid UTF-8, at most 32 characters; a rename is sent at once', () => {
+    const r = play(`
+      A.nick = "line\\none\\ttab"
+      B.nick = "12345678901234567890123456789012345"
+      C.nick = "bad\\255byte"
+      Run(1)
+      A.nick = "Alice2"; Run(1)
+    `)
+    expect(r.sent[0]!.body.names[A]).toBe('line one tab')
+    expect(r.sent[0]!.body.names[B]).toBe('12345678901234567890123456789012')
+    expect(r.sent[0]!.body.names[C]).toBe('bad?byte')
+    expect(r.sent).toHaveLength(2)
+    expect(r.sent[1]!.body.names[A]).toBe('Alice2')
   })
 
   test('says nothing new until something changes, and the same again every five seconds', () => {
