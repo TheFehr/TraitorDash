@@ -28,15 +28,15 @@ h2{font-size:.85rem;font-weight:800;letter-spacing:.16em;text-transform:uppercas
 .crumbs{font-size:.85rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:.3rem}
 .crumbs a{text-decoration:underline}
 .sections{display:flex;flex-wrap:wrap;gap:.5rem;margin:.2rem 0 .9rem}
-.sections a{border:1px solid var(--edge);padding:.2rem .7rem;font-size:.85rem;letter-spacing:.06em;text-transform:uppercase;color:var(--soft)}
+.sections a,.sections span[aria-current]{border:1px solid var(--edge);padding:.2rem .7rem;font-size:.85rem;letter-spacing:.06em;text-transform:uppercase;color:var(--soft)}
 .sections a:hover{border-color:var(--paper);color:#fff}
 .sections a.manage{margin-left:auto;border-style:dashed}
 .sections a[aria-current]:hover{color:var(--ink)}
-.sections a[aria-current]{background:var(--paper);color:var(--ink);border-color:var(--paper)}
+.sections a[aria-current],.sections span[aria-current]{background:var(--paper);color:var(--ink);border-color:var(--paper)}
 .muted{color:var(--muted)}
 .bar{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin:.7rem 0 .2rem;font-size:.9rem;letter-spacing:.1em;text-transform:uppercase;color:var(--mist)}
 .bar b,.bar strong{color:#fff}.bar .sp{flex:1}
-.bar a{border:1px solid var(--rule);padding:.05rem .6rem;color:var(--paper)}.bar a.on{background:var(--paper);color:var(--ink);font-weight:800}
+.bar a{border:1px solid var(--rule);padding:.05rem .6rem;color:var(--paper)}.bar a.on{background:var(--paper);color:var(--ink)}
 form.find{margin:.6rem 0 0;display:flex;gap:.4rem}
 input[type=search]{background:var(--night);color:#fff;border:1px solid var(--rule);padding:.3rem .6rem;font:inherit;font-weight:600}
 button{background:var(--paper);color:var(--ink);border:0;padding:.35rem .9rem;font:inherit;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
@@ -133,7 +133,7 @@ main>p.file,main>.foot.dark,.replay .main .foot.dark,main>form>p .dim{color:var(
 .g.wide{grid-template-columns:repeat(auto-fill,minmax(min(100%,36rem),1fr))}
 h2+.f,h2+.plans,h2+p+.f{margin-top:1.1rem}
 .f .sections{margin:.6rem 0 0}
-.f .sections a{color:var(--ink);border-color:var(--dim)}
+.f .sections a,.f .sections span[aria-current]{color:var(--ink);border-color:var(--dim)}
 .filt{display:grid;grid-template-columns:4.6rem 1fr;gap:.7rem;align-items:baseline;margin:.7rem 0 0;font-size:.85rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink2)}
 .f .ft+.filt{margin-top:.9rem}.filt+.filt{margin-top:.6rem}.filt+p,.filt+div{margin-top:.9rem}
 .filt .chips{display:flex;flex-wrap:wrap;gap:.45rem .5rem}
@@ -145,7 +145,7 @@ h2+.f,h2+.plans,h2+p+.f{margin-top:1.1rem}
 .f .bar a{color:var(--ink);border-color:var(--dim)}
 .f .bar a.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
 .f .sections a:hover{color:var(--ink);border-color:var(--ink)}
-.f .sections a[aria-current],.f .sections a[aria-current]:hover{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.f .sections a[aria-current],.f .sections a[aria-current]:hover,.f .sections span[aria-current]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
 .replay{display:grid;grid-template-columns:minmax(0,1fr) 17rem;gap:1.2rem}
 @media (max-width:760px){.replay{grid-template-columns:minmax(0,1fr)}}
 .replay .main{min-width:0}
@@ -185,7 +185,8 @@ html.theater{overflow:hidden}
 .tools input[type=checkbox]{accent-color:var(--paper)}
 .f .tools label,.f .tools .cap{color:var(--ink2)}
 .f .tools input[type=checkbox]{accent-color:var(--ink)}
-.f .tog[aria-pressed=true]{background:#fff8e6;color:var(--ink);border:2px solid var(--ink);padding:calc(.05rem - 1px) calc(.7rem - 1px)}
+/* pressed on paper: the second pixel of the frame is an inset shadow, so border and padding stay the base .tog's whatever overrides its padding (.vc .tog) */
+.f .tog[aria-pressed=true]{background:#fff8e6;color:var(--ink);border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
 .tog{background:var(--line);border:1px solid var(--rule);color:var(--soft);padding:.05rem .7rem;margin-right:.25rem;font-family:var(--cond);font-weight:800;font-size:.9rem;letter-spacing:.06em;text-transform:uppercase;cursor:pointer}
 .tog[aria-pressed=true]{background:var(--paper);color:var(--ink);border-color:var(--paper)}
 .vc{display:flex;flex-direction:column;gap:1rem}
