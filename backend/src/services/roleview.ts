@@ -1,6 +1,7 @@
 import { Store, type LiveConVar } from './Store'
 import { roleColour, teamLabel } from '../teamColours'
 import { cleanWorkshopText } from './workshopText'
+import { stripTags } from './plaintext'
 import { isRoleEnabled, roleMetrics, METRICS, type MetricKey } from './roles'
 import { cleanLabel, conVarDataText, humanizeKey, kindForConVarData, kindForLive, suffixOf, SUFFIX_TO_KEY, type FieldKind } from '../components/RoleConfigForm'
 import { NAME, SMALL_INT } from './validators'
@@ -129,8 +130,7 @@ const MAX_DESCRIPTION = 2000
  */
 export function cleanDescription(raw: string | null | undefined): string | null {
   if (!raw) return null
-  const text = raw
-    .replace(/<[^>]*>/g, '')
+  const text = stripTags(raw)
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '')
     .replace(/[ \t]+/g, ' ')
     .replace(/ ?\n ?/g, '\n')

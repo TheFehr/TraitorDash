@@ -1,4 +1,5 @@
 import { Store } from './Store'
+import { stripTags } from './plaintext'
 import { WSID } from './validators'
 
 /**
@@ -57,7 +58,8 @@ export function cleanWorkshopText(raw: string | null | undefined): string | null
     .replace(/\[url(?:=[^\]]*)?\]([\s\S]*?)\[\/url\]/gi, (_m, label: string) => (/^\s*(here|this|link|this link|this page|click here|page)\s*$/i.test(label) ? POINTER : label))
     .replace(/\[\/?[a-z0-9]+(?:=[^\]]*)?\]/gi, '')
     .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<[^>]*>/g, '')
+  t = stripTags(t)
+  t = t
     .replace(/https?:\/\/\S+/gi, LINKED)
     .replace(/&(?:quot|amp|lt|gt|#39|apos|nbsp);/g, e => ENTITIES[e]!)
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '')
