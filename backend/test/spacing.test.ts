@@ -97,11 +97,11 @@ function tokens(value: string): string[] {
   if (cur) out.push(cur)
   return out
 }
-const STEP = /var\(--(?:space-[1-5]|tab)\)/g
+const STEP = /var\(--(?:space-[1-5]|tab|gutter)\)/g
 /** 0, auto, a step of the scale, or a calc of steps and plain numbers. */
 function onScale(token: string): boolean {
   if (token === '0' || token === 'auto') return true
-  if (/^var\(--(?:space-[1-5]|tab)\)$/.test(token)) return true
+  if (/^var\(--(?:space-[1-5]|tab|gutter)\)$/.test(token)) return true
   const calc = /^calc\((.*)\)$/.exec(token)
   if (!calc) return false
   const inner = calc[1]!.replace(STEP, '')
@@ -129,12 +129,20 @@ function rules(css: string): [string, string][] {
 const ALL = [...rules(PUBLIC_CSS), ...rules(ADMIN_CSS)]
 
 describe('the spacing scale (RFC 30)', () => {
-  test('the six variables are on :root with the values of the scale, and the notes name each of them', async () => {
+  test('the variables (the five steps, the tab and the page gutter) are on :root with the values of the scale, and the notes name each of them', async () => {
     const root = /:root\{([^}]*)\}/.exec(PUBLIC_CSS)?.[1] ?? ''
-    const want: Record<string, string> = { '--space-1': '.25rem', '--space-2': '.5rem', '--space-3': '.8rem', '--space-4': '1.2rem', '--space-5': '2rem', '--tab': '.7rem' }
+    const want: Record<string, string> = { '--space-1': '.25rem', '--space-2': '.5rem', '--space-3': '.8rem', '--space-4': '1.2rem', '--space-5': '2rem', '--tab': '.7rem', '--gutter': '1rem' }
     for (const [name, value] of Object.entries(want)) expect(root, name).toContain(`${name}:${value}`)
     const notes = await Bun.file(new URL('../../docs/UI_DESIGN.md', import.meta.url)).text()
     for (const name of Object.keys(want)) expect(notes, `${name} in docs/UI_DESIGN.md`).toContain(name)
+  })
+
+  test('the page gutter is its own documented exception (--gutter, the old 1rem), not a step: it is the frame of the page, not a space between things', () => {
+    expect(/^\.w\{[^}]*padding:var\(--gutter\)/m.test(PUBLIC_CSS)).toBe(true)
+    // Measured when the scale was made (RFC 30, 7.3): mapped to --space-4 the view log's paragraph gained a line at 390 px (+6.2 %), mapped to
+    // --space-3 the roles list fitted a fourth column at 1100 px only by an exact float tie (4 x 13rem + 3 x .8rem = 54.4rem) and nine pages
+    // reflowed; keeping 1rem moved no page by more than 0.7 %.
+    expect(PUBLIC_CSS).toContain('--gutter:1rem')
   })
 
   test('the tab of a card is --tab high and reaches up by as much, so the room above a card is counted from one number', () => {

@@ -14,7 +14,7 @@ const FONT_FACES = FONTS.map(([family, weight, file]) =>
   `@font-face{font-family:"${family}";font-weight:${weight};font-display:optional;src:url(/fonts/${file}.woff2) format("woff2")}`).join('')
 
 /** The palette, named by what it is used for rather than by its colour, and the spacing scale (RFC 30: five steps and the height of a card's tab; a gap, a margin or a layout padding is one of them, see docs/UI_DESIGN.md). */
-const ROOT = `:root{--ink:#2a2418;--paper:#e9dfc4;--muted:#a89f8c;--good:#4ade80;--dim:#5f5846;--amber:#e9b44c;--night:#14110e;--rule:#8a7f65;--ink2:#4a4334;--bad:#f87171;--warn:#fbbf24;--line:#3a342a;--soft:#d9d0bd;--edge:#6b6455;--mist:#b9b2a0;--deep:#991b1b;--blush:#fca5a5;--desk:#1a1612;--mono:"Courier Prime","Courier New",monospace;--cond:"Barlow Condensed",sans-serif;--space-1:.25rem;--space-2:.5rem;--space-3:.8rem;--space-4:1.2rem;--space-5:2rem;--tab:.7rem}
+const ROOT = `:root{--ink:#2a2418;--paper:#e9dfc4;--muted:#a89f8c;--good:#4ade80;--dim:#5f5846;--amber:#e9b44c;--night:#14110e;--rule:#8a7f65;--ink2:#4a4334;--bad:#f87171;--warn:#fbbf24;--line:#3a342a;--soft:#d9d0bd;--edge:#6b6455;--mist:#b9b2a0;--deep:#991b1b;--blush:#fca5a5;--desk:#1a1612;--mono:"Courier Prime","Courier New",monospace;--cond:"Barlow Condensed",sans-serif;--space-1:.25rem;--space-2:.5rem;--space-3:.8rem;--space-4:1.2rem;--space-5:2rem;--tab:.7rem;--gutter:1rem}
 `
 
 const BASE = `
@@ -22,7 +22,7 @@ const BASE = `
 html{scrollbar-gutter:stable}
 body{margin:0;background:var(--desk) repeating-linear-gradient(90deg,rgba(0,0,0,.12) 0 2px,transparent 2px 7px);color:#e8eaed;font:17px/1.35 "Barlow Condensed","Arial Narrow",sans-serif;font-weight:600}
 a{color:inherit;text-decoration:none}
-.w{max-width:56rem;margin:0 auto;padding:var(--space-4)}
+.w{max-width:56rem;margin:0 auto;padding:var(--gutter)}
 header.top{border-bottom:2px solid #2a303a;background:var(--night)}
 header.top .w{padding-top:var(--space-2);padding-bottom:var(--space-2)}
 header.top a{font-weight:800;letter-spacing:.14em;text-transform:uppercase}
