@@ -11,6 +11,7 @@
 export const GATE = {
   minDb: -70, maxDb: -20, // the slider's range, and what the calibration is kept inside
   openDb: -50, gapDb: 6, // before the room is measured: opens at -50, closes 6 dB lower
+  minGapDb: 3, // the least the close threshold sits below the open one, wherever the room puts them (no hysteresis without a gap)
   holdMs: 250,
   lookaheadMs: 25,
   openRampMs: 3, closeRampMs: 80,
@@ -155,6 +156,17 @@ export type Calibration =
   | { ok: true, floor: number, open: number, close: number, clamped: boolean }
   | { ok: false, reason: 'few' | 'noisy', spread?: number }
 
+/** The thresholds a floor gives: open = floor + 10 dB, close = floor + 6 dB, kept inside the slider's range and never closer together than
+ *  `minGapDb`. In a room so quiet that floor + 10 is below the range (after the noise filter a quiet room measures -90 dBFS and less), the
+ *  open threshold moves up just enough to leave room for the close one below it, instead of both being cut to the edge of the range, where the
+ *  gate would have no gap between opening and closing and would flutter. The same at the loud end. `clamped` says the range moved the open one. */
+export function thresholdsFromFloor(floor: number): { open: number, close: number, clamped: boolean } {
+  const wantOpen = floor + GATE.openAboveFloorDb
+  const open = clampDb(wantOpen, GATE.minDb + GATE.minGapDb, GATE.maxDb)
+  const close = clampDb(floor + GATE.closeAboveFloorDb, GATE.minDb, open - GATE.minGapDb)
+  return { open, close, clamped: open !== wantOpen }
+}
+
 /** Room measurement (4.2): the levels heard while the player stayed quiet, after the noise filter. The floor is the 90th
  *  percentile (a few bangs do not raise it); open = floor + 10 dB, close = floor + 6 dB, kept inside the slider's range. If the
  *  levels vary a lot (speech, a bang, a door) the measurement is refused instead of setting something bad. */
@@ -165,10 +177,7 @@ export function calibrate(levels: number[]): Calibration {
   const spread = floor - percentile(v, 100 - GATE.floorPercentile)
   // Near digital silence the levels in dB swing wildly for no audible reason: that is not a noisy room.
   if (spread > GATE.maxSpreadDb && floor > -80) return { ok: false, reason: 'noisy', spread }
-  const wantOpen = floor + GATE.openAboveFloorDb
-  const open = clampDb(wantOpen)
-  const close = clampDb(floor + GATE.closeAboveFloorDb, GATE.minDb, open)
-  return { ok: true, floor, open, close, clamped: open !== wantOpen }
+  return { ok: true, floor, ...thresholdsFromFloor(floor) }
 }
 
 /** Automatic mode (4.3): follows the room's floor from the levels, while the gate is closed. The floor is the running minimum over
@@ -200,8 +209,8 @@ export class FloorTracker {
   /** The thresholds the floor gives (open = floor + 10 dB, close = floor + 6 dB, inside the range), or null before there is a floor. */
   thresholds(): { open: number, close: number } | null {
     if (this.floor === null) return null
-    const open = clampDb(this.floor + GATE.openAboveFloorDb)
-    return { open, close: clampDb(this.floor + GATE.closeAboveFloorDb, GATE.minDb, open) }
+    const { open, close } = thresholdsFromFloor(this.floor)
+    return { open, close }
   }
   /** Starts from a known floor (the room measurement just made). */
   seed(floor: number) { this.floor = floor; this.buckets = []; this.cur = Infinity; this.curMs = 0 }

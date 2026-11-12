@@ -37,6 +37,8 @@ h2{font-size:.85rem;font-weight:800;letter-spacing:.16em;text-transform:uppercas
 .sections a[aria-current]:hover{color:var(--ink)}
 .sections a[aria-current],.sections span[aria-current]{background:var(--paper);color:var(--ink);border-color:var(--paper)}
 .muted{color:var(--muted)}
+.f .muted{color:var(--dim)}
+.f.few .muted,.f.off .muted{color:var(--muted)}
 .bar{display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap;margin:var(--space-3) 0 var(--space-1);font-size:.9rem;letter-spacing:.1em;text-transform:uppercase;color:var(--mist)}
 .bar b,.bar strong{color:#fff}.bar .sp{flex:1}
 .bar a{border:1px solid var(--rule);padding:.05rem .6rem;color:var(--paper)}.bar a.on{background:var(--paper);color:var(--ink)}

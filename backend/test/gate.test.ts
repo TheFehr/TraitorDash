@@ -1,5 +1,5 @@
 import { expect, test, describe } from 'bun:test'
-import { GATE, GateState, GainRamp, LevelMeter, GateEngine, FloorTracker, calibrate, percentile, clampDb, toDb } from '../src/gate'
+import { GATE, GateState, GainRamp, LevelMeter, GateEngine, FloorTracker, calibrate, thresholdsFromFloor, percentile, clampDb, toDb } from '../src/gate'
 
 // RFC 29: the voice gate's pure core, and the worklet built from it. Synthetic levels for the state machine, synthetic sound for the
 // engine; the real worklet file is bundled and its process() run on blocks, as the browser would.
@@ -285,16 +285,33 @@ describe('the room measurement', () => {
   })
 
   test('is kept inside the slider range: a very quiet room, and a very loud one', () => {
-    const quiet = calibrate(Array(60).fill(-90))
-    expect(quiet.ok && quiet.open).toBe(GATE.minDb)
-    expect(quiet.ok && quiet.close).toBe(GATE.minDb) // never above open, never below the range
+    // The owner's room measured -93 dBFS after the noise filter: floor + 10 is below the range. Both thresholds used to be cut to the lowest
+    // value (open = close = -70, no gap, the gate would flutter); now the open one rises just enough to leave room for the close one.
+    const quiet = calibrate(Array(60).fill(-93))
+    expect(quiet.ok && quiet.open).toBe(GATE.minDb + GATE.minGapDb)
+    expect(quiet.ok && quiet.close).toBe(GATE.minDb) // the lowest the slider goes, and below open by the least gap
     expect(quiet.ok && quiet.clamped).toBe(true)
     const loud = calibrate(Array(60).fill(-22))
     expect(loud.ok && loud.open).toBe(GATE.maxDb)
-    expect(loud.ok && loud.close).toBe(GATE.maxDb)
+    expect(loud.ok && loud.close).toBe(GATE.maxDb - GATE.minGapDb) // not equal to open: a gap at the loud end too
     expect(loud.ok && loud.clamped).toBe(true)
     // a room at digital silence swinging between -100 and -85 is quiet, not noisy
     expect(calibrate(Array.from({ length: 60 }, (_, i) => (i % 2 ? -100 : -85))).ok).toBe(true)
+  })
+
+  test('the two thresholds are always inside the range and at least the least gap apart, for every floor, in calibration and in automatic mode', () => {
+    for (let floor = -120; floor <= 10; floor += 0.5) {
+      const t = thresholdsFromFloor(floor)
+      expect(t.open, `open at floor ${floor}`).toBeGreaterThanOrEqual(GATE.minDb + GATE.minGapDb)
+      expect(t.open).toBeLessThanOrEqual(GATE.maxDb)
+      expect(t.close, `close at floor ${floor}`).toBeGreaterThanOrEqual(GATE.minDb)
+      expect(t.open - t.close, `gap at floor ${floor}`).toBeGreaterThanOrEqual(GATE.minGapDb)
+    }
+    // in the middle of the range the numbers are the RFC's: open floor + 10, close floor + 6
+    expect(thresholdsFromFloor(-55)).toEqual({ open: -45, close: -49, clamped: false })
+    // the floor tracker (automatic mode) gives the same
+    const tracker = new FloorTracker(); tracker.seed(-93)
+    expect(tracker.thresholds()).toEqual({ open: GATE.minDb + GATE.minGapDb, close: GATE.minDb })
   })
 
   test('clampDb keeps a value inside the range', () => {
@@ -356,10 +373,10 @@ describe('the floor tracker (automatic mode)', () => {
 
   test('is seeded by a measurement, and the thresholds are kept inside the range', () => {
     const t = new FloorTracker()
-    t.seed(-85)
-    expect(t.thresholds()).toEqual({ open: -70, close: -70 })
+    t.seed(-85) // floor + 10 is below the range: open rises just enough to leave the least gap above close
+    expect(t.thresholds()).toEqual({ open: GATE.minDb + GATE.minGapDb, close: GATE.minDb })
     t.seed(-25)
-    expect(t.thresholds()).toEqual({ open: -20, close: -20 })
+    expect(t.thresholds()).toEqual({ open: -20, close: -20 - GATE.minGapDb })
   })
 })
 
