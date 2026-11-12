@@ -261,7 +261,7 @@ function start(root: HTMLElement) {
     for (const p of room.remoteParticipants.values()) {
       const id = p.identity
       const row = document.createElement('div'); row.className = 'person'
-      const name = document.createElement('span'); name.className = 'pname'; name.textContent = p.name || id
+      const name = document.createElement('span'); name.className = 'pname'; name.textContent = p.name || id; name.title = p.name || id
       const slider = document.createElement('input'); slider.type = 'range'; slider.min = '0'; slider.max = '100'; slider.step = '5'
       slider.value = String(volumeOf(id)); slider.setAttribute('aria-label', 'Volume of ' + (p.name || id))
       const pctOut = document.createElement('span'); pctOut.className = 'pct muted'; pctOut.textContent = slider.value + '%'

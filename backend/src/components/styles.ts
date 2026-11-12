@@ -205,7 +205,6 @@ html.theater{overflow:hidden}
 .vc .row{display:flex;flex-wrap:wrap;gap:.5rem 1rem;align-items:center}
 .vc .cap{margin:0 0 .35rem}
 .vc .tog{margin-right:0;padding:.3rem .9rem;font-size:1rem}
-.vc.f .tog[aria-pressed=true]{padding:.3rem .9rem;border-width:1px;border-color:var(--ink)}
 .vc .jn{min-width:9.5rem}
 .vc [data-status]{flex:1 1 11rem;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .vc [data-count]{display:inline-block;min-width:2ch}
@@ -213,7 +212,7 @@ html.theater{overflow:hidden}
 .vc input[type=range]{width:11rem;accent-color:var(--ink);margin:0}
 .vc input[type=text]{width:3rem;text-align:center}
 .vc .person{display:flex;flex-wrap:wrap;gap:.4rem 1rem;align-items:center;padding:.25rem 0;border-top:1px solid var(--dim)}
-.vc .pname{min-width:9rem;font-weight:700;overflow-wrap:anywhere}
+.vc .pname{flex:0 0 11rem;min-width:0;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .vc .pct{min-width:3rem;text-align:right}
 .lvl{position:relative;width:18rem;max-width:100%;height:1rem;border:1px solid var(--dim);background:linear-gradient(to right,#fff8e6 0,#fff8e6 43.75%,#d9ecd3 43.75%,#d9ecd3 85%,#f2cfc9 85%,#f2cfc9 100%)}
 .lvl i{position:absolute;left:0;top:25%;height:50%;width:0;background:var(--ink2)}

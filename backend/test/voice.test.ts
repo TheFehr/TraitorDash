@@ -984,15 +984,17 @@ describe('the meter\'s styles', () => {
   test('a toggle is the same box pressed and unpressed: same padding, same border width, only the colours change', async () => {
     const css = await Bun.file(new URL('../src/components/styles.ts', import.meta.url)).text()
     const body = (selector: string) => new RegExp('^' + selector.replace(/[.[\]=]/g, '\\$&') + '\\{([^}]*)\\}', 'm').exec(css)?.[1]
-    const base = body('.vc .tog')!, pressed = body('.vc.f .tog[aria-pressed=true]')
-    expect(pressed, 'a rule for the pressed toggle that beats ".f .tog[aria-pressed=true]" (four classes against three)').toBeDefined()
-    const padding = (b: string) => /padding:([^;]+)/.exec(b)?.[1]
-    expect(padding(pressed!)).toBe(padding(base))
-    expect(pressed).toContain('border-width:1px')
-    expect(body('.tog')).toMatch(/border:1px solid/) // the unpressed border; the shared pressed rule's 2px border is what the rule above undoes
+    // The pressed look is the shared rule's, which marks it with a border colour and an inset line and never touches the padding or the
+    // border width (it used to give a 2 px border and less padding, which the voice page's own padding could not undo). So here: the
+    // voice page's toggle padding is set once, on the base rule, and the shared pressed rule leaves the box alone.
+    const base = body('.vc .tog')!, pressed = body('.f .tog[aria-pressed=true]')
+    expect(base).toMatch(/padding:/)
+    expect(pressed, 'the shared rule for a pressed toggle').toBeDefined()
+    expect(pressed).not.toMatch(/(?:^|;)\s*(padding|margin|border-width|border|width|height|font-size|font-weight)\s*:/)
+    expect(pressed).toContain('border-color'); expect(pressed).toContain('box-shadow:inset')
+    expect(body('.tog')).toMatch(/border:1px solid/) // the unpressed border, the same width as the pressed one
     // and nothing else under .vc that changes the size of a toggle when it is pressed, hovered, focused or pressed with the mouse
     for (const m of css.matchAll(/^([^{}\n]*\.vc[^{}\n]*(?::hover|:focus|:active|:disabled|\[aria-pressed)[^{}\n]*)\{([^}]*)\}/gm)) {
-      if (m[1] === '.vc.f .tog[aria-pressed=true]') continue // the one that restates the base padding, checked above
       expect(m[2], m[1]).not.toMatch(/(?:^|;)\s*(padding|margin|font-size|font-weight|letter-spacing|width|min-width|height|min-height)\s*:/)
       expect(m[2], m[1]).not.toMatch(/border(?:-width)?:\s*[2-9]/)
     }
@@ -1002,6 +1004,10 @@ describe('the meter\'s styles', () => {
     const css = await Bun.file(new URL('../src/components/styles.ts', import.meta.url)).text()
     const rule = (sel: string) => new RegExp('^' + sel.replace(/[.[\]=]/g, '\\$&') + '\\{([^}]*)\\}', 'm').exec(css)?.[1] ?? ''
     expect(rule('.vc .jn')).toMatch(/min-width:/) // "Join voice" to "Leave voice"
+    // The name column of the People list is one width for every row and every name (digits, a nick, a long nick), on one line with an ellipsis:
+    // with a width that followed the name, the slider of each row began somewhere else, and slid sideways when a nick replaced the digits.
+    expect(rule('.vc .pname')).toMatch(/flex:0 0 [\d.]+rem/); expect(rule('.vc .pname')).toContain('white-space:nowrap'); expect(rule('.vc .pname')).toContain('text-overflow:ellipsis')
+    expect(await Bun.file(new URL('../src/voice.ts', import.meta.url)).text()).toContain('name.title = p.name || id') // the whole name on hover
     for (const sel of ['.vc [data-status]', '.vc [data-who]']) {
       expect(rule(sel), sel).toContain('white-space:nowrap'); expect(rule(sel), sel).toContain('text-overflow:ellipsis') // a long error or list is one line
     }
@@ -1011,7 +1017,7 @@ describe('the meter\'s styles', () => {
     expect(css).toMatch(/@media \(max-width:640px\)\{\.vc \.mnote\{min-height:5\.6em\}\}/)
     expect(rule('.vc .lvl-read')).toContain('align-items:flex-start') // a baseline alignment moved "talking" 15 px when the reading came
     expect(Number(/min-width:([\d.]+)rem/.exec(rule('.vc .db'))?.[1])).toBeGreaterThanOrEqual(6.5) // "-100 dBFS" fits
-    expect(rule('.vc .pct')).toMatch(/min-width:3rem/); expect(rule('.vc .pname')).toMatch(/min-width:9rem/)
+    expect(rule('.vc .pct')).toMatch(/min-width:3rem/)
     // the notes that only come when something failed are the last thing in the card, so nothing is under them to be pushed
     const page = await Bun.file(new URL('../src/components/VoicePage.tsx', import.meta.url)).text()
     const at = (hook: string) => page.indexOf(hook)
