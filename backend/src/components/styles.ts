@@ -199,7 +199,7 @@ html.theater{overflow:hidden}
 .vc .pname{min-width:9rem;font-weight:700;overflow-wrap:anywhere}
 .vc .pct{min-width:3rem;text-align:right}
 .lvl{position:relative;width:18rem;max-width:100%;height:1rem;border:1px solid var(--dim);background:linear-gradient(to right,#fff8e6 0,#fff8e6 43.75%,#d9ecd3 43.75%,#d9ecd3 85%,#f2cfc9 85%,#f2cfc9 100%)}
-.lvl i{display:block;height:50%;margin-top:25%;width:0;background:var(--ink2)}
+.lvl i{position:absolute;left:0;top:25%;height:50%;width:0;background:var(--ink2)}
 .lvl i.open{background:#256b30}
 .lvl b{position:absolute;top:-.25rem;bottom:-.25rem;width:2px;margin-left:-1px;background:#991b1b}
 .lvl b.c{background:none;width:0;border-left:2px dashed #991b1b}

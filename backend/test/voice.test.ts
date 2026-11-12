@@ -955,6 +955,17 @@ describe('who is on the voice chat (before a player has joined)', () => {
   })
 })
 
+describe('the meter\'s styles', () => {
+  test('the level fill sits inside the bar by position, with no percentage margin (a percentage margin is of the width, and it pushed the fill 70 px out of the bar)', async () => {
+    const css = await Bun.file(new URL('../src/components/styles.ts', import.meta.url)).text()
+    const rule = /^\.lvl i\{([^}]*)\}/m.exec(css)?.[1]
+    expect(rule).toBeDefined()
+    expect(rule).toContain('position:absolute')
+    expect(rule).toContain('top:25%'); expect(rule).toContain('height:50%')
+    for (const line of css.split('\n').filter(l => /^\.lvl\b/.test(l))) expect(line, line).not.toMatch(/margin(-top|-bottom)?:[^;}]*%/)
+  })
+})
+
 describe('the routes', () => {
   let app: any, api: any, Store: any, server: { id: string, token: string }
   const cookieFor = async (id: string) => (await serializeSigned('steam_id', id, SECRET)).split(';')[0]!
