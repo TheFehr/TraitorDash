@@ -115,6 +115,25 @@ export function planLevels(grid: Grid): Level[] {
 
 
 /**
+ * The size, in picture pixels, of every picture renderPlanSvg draws for this plan (all storeys share one frame): the page puts it on the
+ * images as width and height, so the room is kept before the picture arrives (a figure was 22 px high until the image loaded, then 122 to 144).
+ */
+export function planFrame(grid: Grid): { width: number, height: number } {
+  const rows = parseRows(grid)
+  let minI = Infinity, maxI = -1, minJ = Infinity, maxJ = -1
+  for (let j = 0; j < rows.length; j++) for (let i = 0; i < grid.nx; i++) {
+    if (rows[j]![i]!.length === 0) continue
+    minI = Math.min(minI, i); maxI = Math.max(maxI, i); minJ = Math.min(minJ, j); maxJ = Math.max(maxJ, j)
+  }
+  const drawn = maxI >= 0
+  const x0 = drawn ? Math.max(0, minI - 2) * PX : 0
+  const x1 = drawn ? Math.min(grid.nx, maxI + 3) * PX : Math.max(1, grid.nx) * PX
+  const y0 = drawn ? Math.max(0, grid.ny - 1 - maxJ - 2) * PX : 0
+  const y1 = drawn ? Math.min(grid.ny, grid.ny - minJ + 2) * PX : Math.max(1, grid.ny) * PX
+  return { width: drawn ? Math.max(x1 - x0, LEGEND_WIDTH) : x1 - x0, height: y1 - y0 + (drawn ? LEGEND_STRIP : 0) }
+}
+
+/**
  * The plan as an SVG: storey `level` (1-based) on its own, or every floor (highest on top) when
  * `level` is omitted. null when it would need more than MAX_PREVIEW_RECTS rectangles. Every
  * picture of a plan has the same frame, so the storeys line up. The caller checks that `level`

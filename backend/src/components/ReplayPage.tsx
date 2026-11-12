@@ -20,9 +20,11 @@ export interface ReplayPageProps {
   here: string
   pinnedCount?: { used: number, max: number }
   bots?: boolean
+  /** How many players and deaths the round has, to keep room for the two lists before the script fills them (they grew from 0 to 224 px and pushed the panels below them). */
+  counts?: { players: number, deaths: number }
 }
 
-export const ReplayPage = ({ ctx, server, round, hasTrack, src, pinned, here, pinnedCount, bots }: ReplayPageProps) => {
+export const ReplayPage = ({ ctx, server, round, hasTrack, src, pinned, here, pinnedCount, bots, counts }: ReplayPageProps) => {
   const id = server.id
   const admin = adminOf(ctx)
   const back = link(ctx, `/servers/${id}/rounds/${encodeURIComponent(round.id)}`, { bots })
@@ -74,21 +76,20 @@ export const ReplayPage = ({ ctx, server, round, hasTrack, src, pinned, here, pi
               </div>
             </div>
             <p data-background class="foot"></p>
-            <div data-notes></div>
             <p data-disclaimer class="foot dark">
               Simplified map: this shows where players were and when, not what they could see. Doors and ceilings are not in it, and glass and props only roughly, so it cannot tell who could see whom.
             </p>
+            {/* after the text that is always there: the notes come from the script, and above it they pushed it down */}
+            <div data-notes></div>
           </div>
           <aside>
-            <section class="f c-green"><h2 class="ft">Players</h2><div data-players class="list"></div></section>
+            <section class="f c-green"><h2 class="ft">Players</h2><div data-players class="list" style={counts ? `--n:${counts.players}` : undefined}></div></section>
             <section class="f c-violet">
               <h2 class="ft">Selected player</h2>
               <p data-selected-role style="margin:.2rem 0"></p>
               <ol data-player-events class="list"></ol>
             </section>
-            <section data-feed-wrap hidden class="f c-violet"><h2 class="ft">Chat, shop and bodies</h2><ol data-feed class="list" style="max-height:22rem;overflow:auto"></ol></section>
-            <section data-revives-wrap hidden class="f c-mint"><h2 class="ft">Revivals</h2><ol data-revives class="list"></ol></section>
-            <section class="f c-red"><h2 class="ft">Deaths</h2><ol data-deaths class="list"></ol></section>
+            <section class="f c-red"><h2 class="ft">Deaths</h2><ol data-deaths class="list" style={counts ? `--n:${counts.deaths}` : undefined}></ol></section>
             {admin && (
               <section class="f c-gray">
                 <form method="post" action={`/servers/${id}/rounds/${encodeURIComponent(round.id)}/pin`}>
@@ -110,6 +111,9 @@ export const ReplayPage = ({ ctx, server, round, hasTrack, src, pinned, here, pi
                 </div>
               </section>
             )}
+            {/* last: they appear only when the track has chat, shop or revivals, and where they were they pushed Deaths and the admin panel down by 125 to 172 px */}
+            <section data-feed-wrap hidden class="f c-violet"><h2 class="ft">Chat, shop and bodies</h2><ol data-feed class="list" style="max-height:22rem;overflow:auto"></ol></section>
+            <section data-revives-wrap hidden class="f c-mint"><h2 class="ft">Revivals</h2><ol data-revives class="list"></ol></section>
           </aside>
         </div>
       )}

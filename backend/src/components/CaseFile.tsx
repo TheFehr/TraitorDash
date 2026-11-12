@@ -1,5 +1,5 @@
 import { FAVICON, LOGO_EMOJI } from './brand'
-import { ADMIN_CSS, PUBLIC_CSS } from './styles'
+import { ADMIN_CSS, FONT_URLS, PUBLIC_CSS } from './styles'
 import { sectionsOf, type Section } from './SectionLinks'
 import { sourceHash } from '../services/version'
 
@@ -54,6 +54,8 @@ export const Shell = ({ title, embed, children, viewer, scripts = [], admin = fa
       {embed && <meta name="robots" content="noindex" />}
       <title>{title}</title>
       <link rel="icon" href={FAVICON} />
+      {/* The fonts are asked for at once and the faces say font-display:optional: a font that has not arrived at the first layout is not swapped in half way through (that moved the header and every line, 0.1 to 0.3 on a phone); it is used from the next page on. */}
+      {FONT_URLS.map(href => <link rel="preload" as="font" type="font/woff2" href={href} crossorigin="" />)}
       {/* CSS is a constant of this file, never user text: inserted as is, because escaping would turn its quotes into &quot; */}
       <style dangerouslySetInnerHTML={{ __html: PUBLIC_CSS + (admin ? ADMIN_CSS : '') }} />
     </head>

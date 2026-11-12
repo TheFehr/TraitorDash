@@ -376,7 +376,7 @@ export async function startFlat(host: FlatHost): Promise<void> {
   const markCam = () => root.querySelectorAll<HTMLElement>('[data-cam]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.cam === mode)))
   const setMode = (m: 'top' | 'follow') => { mode = m; markCam(); baked.ok = false; paint() }
   root.querySelectorAll<HTMLElement>('[data-cam]').forEach(b => {
-    if (b.dataset.cam === 'orbit') b.hidden = true // the 3D view needs WebGL
+    if (b.dataset.cam === 'orbit') b.classList.add('gone') // the 3D view needs WebGL; its place stays (hiding it moved the buttons after it by 44 px)
     else b.addEventListener('click', () => setMode(b.dataset.cam === 'follow' ? 'follow' : 'top'))
   })
   canvas.style.cursor = 'grab'
@@ -411,7 +411,7 @@ export async function startFlat(host: FlatHost): Promise<void> {
   hooks.level = () => { host.markLevels(); baked.ok = false; paint() }
   hooks.walls = on => { showWalls = on; paint() }
   hooks.resize = resize
-  if (!drawsWalls) root.querySelector<HTMLElement>('[data-walls]')?.closest('label')?.setAttribute('hidden', '')
+  if (!drawsWalls) root.querySelector<HTMLElement>('[data-walls]')?.closest('label')?.classList.add('gone')
   new ResizeObserver(resize).observe(canvas)
 
   ;(root as any).__flat = { map, bounds, get view() { return { cx, cy, fit, scaleTop, scaleFollow, W, H, dpr, mode } } } // for tests and for looking at it in the page
