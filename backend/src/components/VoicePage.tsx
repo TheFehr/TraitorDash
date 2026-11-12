@@ -58,11 +58,33 @@ export const VoicePage = ({ ctx, server, enabled }: VoicePageProps) => {
           <div data-vad-box>
             <div class="cap">Level and sensitivity</div>
             <div class="row">
-              <div class="lvl" aria-hidden="true"><i data-level></i><b data-marker></b></div>
-              <input data-threshold type="range" min={1} max={60} step={1} value={12} aria-label="Sensitivity: the level the microphone opens at" />
+              <div class="lvl" aria-hidden="true"><i data-level></i><b data-marker></b><b data-marker-close class="c"></b></div>
+              <span data-db class="muted db"></span>
               <span data-speaking class="muted"></span>
             </div>
-            <p class="muted">The bar is what the microphone hears; the line is where it opens. Move the slider until the line sits just above your room's noise.</p>
+            <p class="muted lvl-legend">The bar is what the microphone hears, in dBFS (0 is the loudest it can go). The left zone is quiet, the green zone is where speech should sit, the red zone is too loud.</p>
+            <div class="row">
+              <label for="td-sens">Sensitivity</label>
+              <input id="td-sens" data-threshold type="range" min={-70} max={-20} step={1} value={-50} aria-label="Sensitivity: the level the microphone opens at, in dBFS" />
+              <span data-threshold-out class="muted db">-50 dBFS</span>
+            </div>
+            <p class="muted">The solid line is where the microphone opens, the dashed line where it closes again (a little lower, so it does not flutter). Move the slider until the solid line sits just above your room's noise and well below your voice.</p>
+            <div class="row">
+              <button type="button" data-measure class="tog">Measure my room</button>
+              <button type="button" data-auto aria-pressed="false" class="tog">Adjust by itself</button>
+            </div>
+            <p class="muted" data-measure-note role="status"></p>
+            <p class="muted">"Measure my room" listens for 3 seconds while you stay quiet and sets the line for you. "Adjust by itself" keeps following the room's noise while you are not talking (it is off until you switch it on).</p>
+            <details>
+              <summary>Advanced</summary>
+              <div class="row" style="margin-top:.5rem">
+                <label for="td-close">Closes below</label>
+                <input id="td-close" data-close-threshold type="range" min={-70} max={-20} step={1} value={-56} aria-label="The level the microphone closes at, in dBFS" />
+                <span data-close-out class="muted db">-56 dBFS</span>
+              </div>
+              <p class="muted" style="margin-top:.35rem">The microphone stays open until the sound has been below this level for a quarter of a second. It cannot be higher than the opening level.</p>
+            </details>
+            <p class="muted" data-gate-note role="status"></p>
           </div>
 
           <div data-ptt-box style="display:none">

@@ -9,6 +9,7 @@ src/public/frontend.js
 src/public/mapview.js
 src/public/replay.js
 src/public/voice.js
+src/public/gate.js
 
 # code coverage
 coverage
