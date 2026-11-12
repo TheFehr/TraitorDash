@@ -61,7 +61,7 @@ export const VoicePage = ({ ctx, server, enabled }: VoicePageProps) => {
                 <label class="check"><input type="checkbox" data-cond-speech /> it sounds like speech</label>
               </div>
               <p class="muted note cnote mt1" data-cond-note role="status"></p>
-              <p class="muted mt1">Loud enough alone can open on a keyboard, a door or a hum. With both ticked the sound must also sound like speech (the noise filter's guess), which keeps those out. With speech alone the sound level does not matter, so a quiet voice gets through, and the sensitivity below is not used.</p>
+              <p class="muted mt1">Loud enough alone can open on a keyboard, a door or a hum. With both ticked the sound must also sound like speech (the noise filter's guess), which keeps most of those out. With speech alone the sound level does not matter, so a quiet voice gets through, and the sensitivity below is not used.</p>
               <p class="muted mt1">Holding a key to talk needs a small desktop app (a browser tab cannot hear a key while the game has the focus); it comes later.</p>
             </div>
 
