@@ -964,6 +964,16 @@ describe('the meter\'s styles', () => {
     expect(rule).toContain('top:25%'); expect(rule).toContain('height:50%')
     for (const line of css.split('\n').filter(l => /^\.lvl\b/.test(l))) expect(line, line).not.toMatch(/margin(-top|-bottom)?:[^;}]*%/)
   })
+
+  test('what the page writes while it runs has a place that is there when it is empty, so nothing below it jumps (measured in Chromium: the row grew 16 to 23 px, and 24 to 47 px on a phone, when the dB reading came)', async () => {
+    const css = await Bun.file(new URL('../src/components/styles.ts', import.meta.url)).text()
+    expect(/^\.vc \.lvl-read\{[^}]*min-height:/m.test(css)).toBe(true) // the line under the bar: the dB reading and "talking"
+    expect(/^\.vc \.db\{[^}]*min-width:/m.test(css)).toBe(true); expect(/^\.vc \.talk\{[^}]*min-width:/m.test(css)).toBe(true)
+    expect(/^\.vc \.note\{[^}]*min-height:/m.test(css)).toBe(true) // the notes that come in normal use: who is on, the measurement
+    const page = await Bun.file(new URL('../src/components/VoicePage.tsx', import.meta.url)).text()
+    expect(page).toMatch(/class="lvl-read"><span data-db[^>]*><\/span><span data-speaking[^>]*><\/span><\/div>/) // not in the row of the bar: it wrapped
+    for (const hook of ['data-who', 'data-measure-note']) expect(page).toMatch(new RegExp(`class="muted note" ${hook}`))
+  })
 })
 
 describe('the routes', () => {
@@ -1025,6 +1035,12 @@ describe('the routes', () => {
     const res = await get(`/servers/${server.id}/voice`, ADMIN)
     const t = await res.text()
     expect(t).toContain('data-voice'); expect(t).toContain('data-join'); expect(t).toContain('/public/voice.js')
+    // two cards: who is on (join, the list, the volumes) and the player's own microphone (how it opens, the filter, the level)
+    expect((t.match(/class="f c-gray vc"/g) ?? []).length).toBe(2)
+    const first = t.indexOf('On the voice chat'), second = t.indexOf('Your microphone')
+    expect(first).toBeGreaterThan(-1); expect(second).toBeGreaterThan(first)
+    for (const mine of ['data-join', 'data-people', 'data-who', 'data-count']) expect(t.indexOf(mine), mine).toBeLessThan(second)
+    for (const mine of ['data-mode="vad"', 'data-filter="on"', 'data-monitor', 'data-level', 'data-threshold', 'data-measure', 'data-auto', 'data-close-threshold']) expect(t.indexOf(mine), mine).toBeGreaterThan(second)
     expect(t).toContain(`data-token="/servers/${server.id}/voice/token"`)
     // the same kind of controls as the replay's (buttons that are pressed), not browser radios with their labels stacked under them
     expect(t).toContain('data-mode="vad" aria-pressed="true"'); expect(t).toContain('data-mode="ptt" aria-pressed="false"')

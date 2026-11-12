@@ -203,7 +203,12 @@ html.theater{overflow:hidden}
 .lvl i.open{background:#256b30}
 .lvl b{position:absolute;top:-.25rem;bottom:-.25rem;width:2px;margin-left:-1px;background:#991b1b}
 .lvl b.c{background:none;width:0;border-left:2px dashed #991b1b}
+.vcs{display:flex;flex-direction:column;gap:1rem}
+.vc .ft{margin-bottom:0}
+.vc .note{min-height:1.4em}
+.vc .lvl-read{display:flex;gap:1rem;align-items:baseline;min-height:1.6em}
 .vc .db{min-width:5.5rem}
+.vc .talk{min-width:5rem}
 .vc .lvl-legend{font-size:.85rem}
 .vc summary{cursor:pointer;font-weight:700}
 .scale{height:.6rem;margin:.5rem 0 .2rem}
