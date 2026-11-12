@@ -583,6 +583,28 @@ describe('the page\'s code', () => {
     t.done()
   })
 
+  test('a measurement that was begun before leaving does not end a later one, and does not write to the page after leaving', async () => {
+    const { page, t, post } = await joined()
+    page.listeners['[data-measure]']!.click!()
+    const stale = page.timeouts.filter(x => x.ms === 3000).at(-1)! // the first measurement's 3 second timer
+    page.listeners['[data-join]']!.click!() // leave
+    await new Promise(r => setTimeout(r, 30))
+    // the stale timer fires after the player left: it must leave the page as it is
+    const noteAfterLeave = page.parts['[data-measure-note]'].textContent
+    stale.fn()
+    expect(page.parts['[data-measure-note]'].textContent).toBe(noteAfterLeave)
+    // join again and measure again; the first timer then fires in the middle of the second measurement
+    page.listeners['[data-join]']!.click!()
+    await new Promise(r => setTimeout(r, 30))
+    page.listeners['[data-measure]']!.click!()
+    expect(page.parts['[data-measure]'].disabled).toBe(true)
+    for (let i = 0; i < 25; i++) t.gateNodes[1].port.onmessage({ data: { t: i * 0.05, level: -65, open: false } })
+    stale.fn()
+    expect(page.parts['[data-measure]'].disabled).toBe(true) // still measuring
+    expect(page.parts['[data-measure-note]'].textContent).toContain('3 seconds')
+    t.done()
+  })
+
   test('"Adjust by itself": off by default; on, it follows the room\'s floor while the gate is closed, never while it is open, and off keeps the last value and gives the sliders back', async () => {
     const { page, t, post } = await joined()
     const node = t.gateNodes[0]

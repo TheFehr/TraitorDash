@@ -171,11 +171,13 @@ function start(root: HTMLElement) {
   measureBtn.addEventListener('click', () => {
     if (measuring) return
     if (!room || !mic) { measureNote.textContent = 'Join the voice chat first: the room is measured through your microphone.'; return }
-    measuring = []
+    const mine: number[] = []
+    measuring = mine
     measureBtn.disabled = true
     measureNote.textContent = 'Stay quiet for 3 seconds…'
     window.setTimeout(() => {
-      const levels = measuring ?? []
+      if (measuring !== mine) return // the player left meanwhile (and may have begun another measurement): this one is over
+      const levels = mine
       measuring = null; measureBtn.disabled = false
       const r = calibrate(levels)
       if (!r.ok) {
