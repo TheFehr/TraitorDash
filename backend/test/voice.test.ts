@@ -972,7 +972,59 @@ describe('the meter\'s styles', () => {
     expect(/^\.vc \.note\{[^}]*min-height:/m.test(css)).toBe(true) // the notes that come in normal use: who is on, the measurement
     const page = await Bun.file(new URL('../src/components/VoicePage.tsx', import.meta.url)).text()
     expect(page).toMatch(/class="lvl-read"><span data-db[^>]*><\/span><span data-speaking[^>]*><\/span><\/div>/) // not in the row of the bar: it wrapped
-    for (const hook of ['data-who', 'data-measure-note']) expect(page).toMatch(new RegExp(`class="muted note" ${hook}`))
+    for (const hook of ['data-who', 'data-measure-note']) expect(page).toMatch(new RegExp(`class="muted note[ "][^>]*${hook}`))
+  })
+
+  // Measured in Chromium (Playwright, 1100 and 390 px wide, every state the code puts the page in, every element's box before and after):
+  // a pressed toggle was 6.4 px wider and 7.6 px taller than an unpressed one (the shared rule ".f .tog[aria-pressed=true]" has a higher
+  // specificity than ".vc .tog", so it gave a 2 px border and less padding), so every row with a toggle jumped, and the whole page under it;
+  // "Join voice" to "Leave voice" widened the button by 15.7 px and pushed the status; a status of 10 to 30 characters moved the count by up
+  // to 40 px; a long error or a long list of names made their row 130 px (237 on a phone) taller; the filter and gate notes pushed the level
+  // section 23 px down. These tests hold what fixed it; the browser is not run here.
+  test('a toggle is the same box pressed and unpressed: same padding, same border width, only the colours change', async () => {
+    const css = await Bun.file(new URL('../src/components/styles.ts', import.meta.url)).text()
+    const body = (selector: string) => new RegExp('^' + selector.replace(/[.[\]=]/g, '\\$&') + '\\{([^}]*)\\}', 'm').exec(css)?.[1]
+    const base = body('.vc .tog')!, pressed = body('.vc.f .tog[aria-pressed=true]')
+    expect(pressed, 'a rule for the pressed toggle that beats ".f .tog[aria-pressed=true]" (four classes against three)').toBeDefined()
+    const padding = (b: string) => /padding:([^;]+)/.exec(b)?.[1]
+    expect(padding(pressed!)).toBe(padding(base))
+    expect(pressed).toContain('border-width:1px')
+    expect(body('.tog')).toMatch(/border:1px solid/) // the unpressed border; the shared pressed rule's 2px border is what the rule above undoes
+    // and nothing else under .vc that changes the size of a toggle when it is pressed, hovered, focused or pressed with the mouse
+    for (const m of css.matchAll(/^([^{}\n]*\.vc[^{}\n]*(?::hover|:focus|:active|:disabled|\[aria-pressed)[^{}\n]*)\{([^}]*)\}/gm)) {
+      if (m[1] === '.vc.f .tog[aria-pressed=true]') continue // the one that restates the base padding, checked above
+      expect(m[2], m[1]).not.toMatch(/(?:^|;)\s*(padding|margin|font-size|font-weight|letter-spacing|width|min-width|height|min-height)\s*:/)
+      expect(m[2], m[1]).not.toMatch(/border(?:-width)?:\s*[2-9]/)
+    }
+  })
+
+  test('the things whose text changes have a fixed width or one line, so what is beside and under them stays put', async () => {
+    const css = await Bun.file(new URL('../src/components/styles.ts', import.meta.url)).text()
+    const rule = (sel: string) => new RegExp('^' + sel.replace(/[.[\]=]/g, '\\$&') + '\\{([^}]*)\\}', 'm').exec(css)?.[1] ?? ''
+    expect(rule('.vc .jn')).toMatch(/min-width:/) // "Join voice" to "Leave voice"
+    for (const sel of ['.vc [data-status]', '.vc [data-who]']) {
+      expect(rule(sel), sel).toContain('white-space:nowrap'); expect(rule(sel), sel).toContain('text-overflow:ellipsis') // a long error or list is one line
+    }
+    expect(rule('.vc [data-status]')).toMatch(/flex:1 1 [\d.]+rem/) // takes the width left, never wraps the count to another line
+    expect(rule('.vc [data-count]')).toMatch(/min-width:/)
+    expect(rule('.vc .mnote')).toMatch(/min-height:2\.8em/) // two lines kept free, and four on a phone
+    expect(css).toMatch(/@media \(max-width:640px\)\{\.vc \.mnote\{min-height:5\.6em\}\}/)
+    expect(rule('.vc .lvl-read')).toContain('align-items:flex-start') // a baseline alignment moved "talking" 15 px when the reading came
+    expect(Number(/min-width:([\d.]+)rem/.exec(rule('.vc .db'))?.[1])).toBeGreaterThanOrEqual(6.5) // "-100 dBFS" fits
+    expect(rule('.vc .pct')).toMatch(/min-width:3rem/); expect(rule('.vc .pname')).toMatch(/min-width:9rem/)
+    // the notes that only come when something failed are the last thing in the card, so nothing is under them to be pushed
+    const page = await Bun.file(new URL('../src/components/VoicePage.tsx', import.meta.url)).text()
+    const at = (hook: string) => page.indexOf(hook)
+    for (const hook of ['data-filter-note', 'data-gate-note']) {
+      expect(at(hook), hook).toBeGreaterThan(at('data-ptt-box')); expect(at(hook), hook).toBeGreaterThan(at('data-close-out'))
+      expect(page.slice(at(hook)), hook).not.toMatch(/class="cap"|<button/) // nothing but the card's end under them
+    }
+  })
+
+  test('the status and the who-is-on line keep the whole text in the title when the line cuts it', async () => {
+    const code = await Bun.file(new URL('../src/voice.ts', import.meta.url)).text()
+    expect(code).toMatch(/const say = \(el: HTMLElement, text: string\) => \{ el\.textContent = text; el\.title = text \}/)
+    expect(code).not.toMatch(/\b(status|who)\.textContent\s*=/) // every write goes through say()
   })
 })
 
