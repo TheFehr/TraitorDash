@@ -334,7 +334,7 @@ export interface MapViewProps {
   map: MapRow | null
   name: string
   next: string | null
-  plan: (MapPlanMeta & { levels: Level[] }) | null
+  plan: (MapPlanMeta & { levels: Level[], /** The size of the pictures (planFrame), so that their room is kept while they load. */ frame?: { width: number, height: number } }) | null
   /** Exact geometry (RFC 11); undefined when the operator has not switched the feature on. */
   geometry?: { requested: boolean, status?: string, detail?: string | null, info?: GeometryInfo | null }
 }
@@ -434,7 +434,7 @@ export const MapViewPage = ({ ctx, server, map, name, next, plan, geometry }: Ma
                 {plan.levels.map(l => (
                   <figure>
                     <a href={`${mapPath(id, name)}/plan.svg?level=${l.index}`}>
-                      <img loading="lazy" alt={`Floor plan of ${name}, level ${l.index}`} src={`${mapPath(id, name)}/plan.svg?level=${l.index}`} />
+                      <img loading="lazy" width={plan.frame?.width} height={plan.frame?.height} alt={`Floor plan of ${name}, level ${l.index}`} src={`${mapPath(id, name)}/plan.svg?level=${l.index}`} />
                     </a>
                     <figcaption>Level {l.index} of {plan.levels.length}: {l.lo === l.hi ? l.lo : `${l.lo} to ${l.hi}`} units, {l.cells} floor cells</figcaption>
                   </figure>

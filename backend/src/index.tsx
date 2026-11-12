@@ -39,7 +39,7 @@ import { StatsPage, RoundPage, PlayerPage } from './components/StatsPages'
 import { NotFound } from './components/CaseFile'
 import { adminOf, link, type Ctx } from './components/kit'
 import { ctxOf, isEmbed, limited, respond, pageLimiter, pageHeaders } from './services/pages'
-import { renderPlanSvg, planLevels } from './services/mapplan'
+import { renderPlanSvg, planLevels, planFrame } from './services/mapplan'
 import * as stats from './services/stats'
 import { ROUND_ID, SMALL_INT } from './services/validators'
 
@@ -373,7 +373,7 @@ app.get('/servers/:serverId/maps/:map', async (c) => {
   if (!admin && (!geometryEnabled() || g?.status !== 'parsed')) return c.redirect(ctx.embed ? file : `/servers/${serverId}/maps`) // nothing for a plain user to see
 
   const meta = admin ? Store.getMapPlans(serverId).find(p => p.map === name) : undefined
-  const plan = meta && grid ? { ...meta, levels: planLevels(JSON.parse(grid)) } : null
+  const plan = meta && grid ? { ...meta, levels: planLevels(JSON.parse(grid)), frame: planFrame(JSON.parse(grid)) } : null
   const hasView = geometryEnabled() && g?.status === 'parsed'
   return respond(c, ctx,
     <MapViewPage ctx={ctx} server={server} map={map} name={name} next={nextOf(state)} plan={plan}
@@ -617,7 +617,7 @@ app.get('/servers/:serverId/rounds/:roundId/replay', async (c) => {
   return respond(c, ctx,
     <ReplayPage ctx={ctx} server={server} round={{ id: round.roundId, map: round.map, result: round.result, duration: round.duration }}
       hasTrack={!!track} src={`/servers/${serverId}/rounds/${encodeURIComponent(roundId)}/track.json${query}`}
-      pinned={!!track?.meta.pinned} here={here} bots={bots}
+      pinned={!!track?.meta.pinned} here={here} bots={bots} counts={{ players: round.players.length, deaths: stats.getDeathCount(serverId, roundId) }}
       pinnedCount={adminOf(ctx) ? { used: Store.getTrackUsage(serverId).pinned, max: Store.getTrackConfig().maxPinned } : undefined} />,
     { scripts: !!track })
 })

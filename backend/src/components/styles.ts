@@ -8,8 +8,10 @@ const FONTS = [
   ['Barlow Condensed', 600, 'barlow-condensed-600'],
   ['Barlow Condensed', 800, 'barlow-condensed-800'],
 ] as const
+/** The font files the faces load, for the preload links of the shell (a font that is already there at the first layout never moves the text). */
+export const FONT_URLS = FONTS.map(([, , file]) => `/fonts/${file}.woff2`)
 const FONT_FACES = FONTS.map(([family, weight, file]) =>
-  `@font-face{font-family:"${family}";font-weight:${weight};font-display:swap;src:url(/fonts/${file}.woff2) format("woff2")}`).join('')
+  `@font-face{font-family:"${family}";font-weight:${weight};font-display:optional;src:url(/fonts/${file}.woff2) format("woff2")}`).join('')
 
 /** The palette, named by what it is used for rather than by its colour. */
 const ROOT = `:root{--ink:#2a2418;--paper:#e9dfc4;--muted:#a89f8c;--good:#4ade80;--dim:#5f5846;--amber:#e9b44c;--night:#14110e;--rule:#8a7f65;--ink2:#4a4334;--bad:#f87171;--warn:#fbbf24;--line:#3a342a;--soft:#d9d0bd;--edge:#6b6455;--mist:#b9b2a0;--deep:#991b1b;--blush:#fca5a5;--desk:#1a1612;--mono:"Courier Prime","Courier New",monospace;--cond:"Barlow Condensed",sans-serif}
@@ -17,6 +19,7 @@ const ROOT = `:root{--ink:#2a2418;--paper:#e9dfc4;--muted:#a89f8c;--good:#4ade80
 
 const BASE = `
 *{box-sizing:border-box}
+html{scrollbar-gutter:stable}
 body{margin:0;background:var(--desk) repeating-linear-gradient(90deg,rgba(0,0,0,.12) 0 2px,transparent 2px 7px);color:#e8eaed;font:17px/1.35 "Barlow Condensed","Arial Narrow",sans-serif;font-weight:600}
 a{color:inherit;text-decoration:none}
 .w{max-width:56rem;margin:0 auto;padding:1rem}
@@ -158,7 +161,15 @@ html.theater{overflow:hidden}
 .ticks{position:absolute;left:0;right:0;top:0;height:1.2rem;pointer-events:none}
 .tick{position:absolute;top:0;bottom:0;width:2px;background:#dc2626;pointer-events:none}
 .tick-revive{background:#34d399}.tick-role{background:#a78bfa}
-.time{font-family:var(--mono);font-weight:400}
+.time{font-family:var(--mono);font-weight:400;min-width:13ch}
+/* room kept for what the script fills in, so that the panels below do not move when the track arrives (measured at 1100 and 390 px: the time text was 10 px wider before the round starts, "-0:05 / 4:55"; the players list grew from 0 to 224 px; the selected player's line from 0 to 46; the map note from 0 to 18 or 37; the level row left with 33 or 77 px) */
+.replay [data-players]{min-height:min(14rem,calc(var(--n,0) * 1.73rem))}
+.replay [data-deaths]{min-height:min(14rem,calc(var(--n,0) * 3.4rem))}
+.replay [data-player-events]{height:7rem}
+.replay [data-selected-role]{min-height:2.7em}
+.replay [data-background]{min-height:1.35em}
+@media (max-width:30rem){.replay [data-background]{min-height:2.7em}}
+.replay .gone{visibility:hidden}
 .tog.play{min-width:4.5rem}
 .list{max-height:14rem;overflow-y:auto;margin:.2rem 0 0;padding:0;list-style:none}
 .lnk{background:none;border:0;padding:0;margin:0;color:inherit;font:inherit;text-align:left;cursor:pointer;text-decoration:underline;letter-spacing:0;text-transform:none}
@@ -251,7 +262,7 @@ a.pn:hover{border-color:var(--amber)}
 .tile{display:flex;justify-content:space-between;align-items:center;gap:.8rem;margin-top:0}
 .tile.off{background:#1c1914;color:var(--mist)}
 .tile .go{font-size:.8rem;letter-spacing:.1em;text-transform:uppercase;color:var(--amber);white-space:nowrap}
-.tile .val{display:block;font-family:var(--mono);font-weight:400;font-size:.85rem;color:#93c5fd}
+.tile .val{display:block;min-height:1.35em;font-family:var(--mono);font-weight:400;font-size:.85rem;color:#93c5fd}
 .stack{display:flex;flex-direction:column;gap:2rem}
 .team{display:inline-block;font-size:1.3rem;letter-spacing:.1em;margin:0 0 .2rem;padding:.05rem .7rem;border:1px solid;background:var(--night)}
 .status{display:inline-flex;align-items:center;gap:.5rem;padding:.3rem .8rem;border:1px solid var(--edge);font-weight:800;letter-spacing:.08em;text-transform:uppercase;font-size:.9rem}
@@ -292,6 +303,7 @@ table.data .cv{font-size:.8rem;overflow-wrap:normal;white-space:nowrap}
 .call h3{margin:0 0 .3rem;color:inherit;font-size:1rem}
 .call.ok h3{color:var(--good)}.call.wait h3{color:var(--warn)}.call.bad h3{color:var(--blush)}
 .copy{display:flex;gap:.7rem;align-items:stretch;margin-top:.6rem}
+.copy .ab{min-width:4.6rem;text-align:center}
 .copy .code{flex:1;background:var(--night);border:1px solid var(--line);padding:.6rem .8rem;word-break:break-all;user-select:all;font-size:.9rem}
 details{margin-top:.8rem;color:var(--mist)}
 summary{cursor:pointer;color:var(--soft)}
@@ -306,6 +318,12 @@ form.add input{flex:1;min-width:14rem}
 .jump a span{font-weight:400}
 .jump .dot{color:var(--bad)}
 .cfg [data-group]{scroll-margin-top:3.4rem}
+.cfg{padding-bottom:6.5rem}
+.fh{display:flex;align-items:flex-start;justify-content:space-between;gap:.2rem .8rem}
+.fh .fl{flex:1 1 auto;min-width:0}
+.fx{flex:none;display:flex;align-items:center;gap:.6rem;min-height:1.9rem;white-space:nowrap}
+.fx .src{margin-left:0}
+@media (max-width:30rem){.fh{flex-direction:column}.fx{flex-wrap:wrap;white-space:normal}}
 .cfg .sub{font-size:.78rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;opacity:.75;margin:.9rem 0 0}
 @media (prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}
 .fld{display:flex;flex-direction:column;gap:.4rem;padding:.7rem .9rem;background:#1c1914;border:1px solid var(--line)}

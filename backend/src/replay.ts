@@ -253,7 +253,7 @@ async function start(root: HTMLElement) {
     all.type = 'button'; all.dataset.level = 'all'
     all.addEventListener('click', () => { upTo = 'all'; followLevel = false; syncFollowBox(); hooks.level() })
     levelBar.append(all)
-  } else levelBar?.closest('[data-levels-wrap]')?.setAttribute('hidden', '')
+  } else levelBar?.closest('[data-levels-wrap]')?.classList.add('gone') // unseen but its room stays: taking it out moved everything below it (33 px at 1100, 77 px at 390)
   const followBox = el<HTMLInputElement>(root, '[data-follow-level]')
   const syncFollowBox = () => { if (followBox) followBox.checked = followLevel }
   followBox?.addEventListener('change', () => { followLevel = followBox.checked; showLevels(); changed() })
@@ -534,7 +534,7 @@ async function start(root: HTMLElement) {
       leafMeshes.push(...mergedLeaves, ...props.foliage.filter(m => m.visible)) // the ones that could not be merged stay as they are
       const leavesBox = el<HTMLInputElement>(root, '[data-leaves]')
       for (const m of leafMeshes) m.visible = !!leavesBox?.checked
-      if (leafMeshes.length === 0) leavesBox?.closest('label')?.setAttribute('hidden', '')
+      if (leafMeshes.length === 0) leavesBox?.closest('label')?.classList.add('gone')
       model.traverse(o => { o.matrixAutoUpdate = false })
       const b = boxWithout(model, ['detached']) // in three's Y-up
       // back to Source's Z-up: (x, y, z) three = (x, z, -y) Source

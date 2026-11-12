@@ -169,7 +169,8 @@ export const ServerSettingsForm = ({ serverId, state, storage, mapCooldown = tru
           {jump.map(j => (
             <a href={`#${j.id}`} data-jump-to={j.id} {...{ 'x-bind:aria-current': `active === '${j.id}' ? 'true' : 'false'` }}>
               {j.title} <span>{j.count}</span>
-              <span class="dot" x-cloak="true" aria-label="unsaved changes" {...{ 'x-show': `groupDirty('${j.id}')` }}> ●</span>
+              {/* hidden with visibility, not display: the dot keeps its width, so the links beside it do not slide sideways when a value is edited */}
+              <span class="dot" style="visibility:hidden" aria-label="unsaved changes" {...{ 'x-bind:style': `{ visibility: groupDirty('${j.id}') ? 'visible' : 'hidden' }` }}> ●</span>
             </a>
           ))}
         </nav>
@@ -222,24 +223,34 @@ const SettingField = ({ s, reported, saved, running }: { s: BridgeSetting, repor
   return (
     <div class={s.kind === 'bool' ? 'fld row' : 'fld'} data-setting={name}>
       <div>
-        <label class="fl" for={name}>
-          {s.label}{' '}
-          <span class={`src ${reported ? 'live' : 'default'}`} title={reported ? 'Reported by the game server' : 'Not reported yet'}>{reported ? 'live' : 'not reported'}</span>
-          <span class="src missing" x-cloak="true" title="Not at its default" {...{ 'x-show': `!atDefault('${name}')` }}> changed</span>
-          <span class="src default" x-cloak="true" x-text={`status('${name}')`} {...{ 'x-show': `status('${name}')` }}></span>
-        </label>
+        <FieldHead name={name} label={s.label} status reset={reported}
+          tag={<span class={`src ${reported ? 'live' : 'default'}`} title={reported ? 'Reported by the game server' : 'Not reported yet'}>{reported ? 'live' : 'not reported'}</span>} />
         <span class="cv">{name}</span>
         <span class="hint">{s.explain}</span>
         <span class="hint">Takes effect {s.applies}.{' '}{range && <>Range {range}. </>}Default {s.kind === 'bool' ? (s.default === '1' ? 'on' : 'off') : `${s.default} ${s.unit}`}.</span>
         {fileDiffers && <span class="hint" data-file-differs>Set on the console since: the configuration file holds {saved}{s.unit ? ` ${s.unit}` : ''} and applies it at the next start.</span>}
-        {reported && (
-          <button type="button" class="ab" x-show={`current['${name}'] !== defaults['${name}']`} x-cloak="true" x-on:click={`current['${name}'] = defaults['${name}']`}>Reset to default</button>
-        )}
       </div>
       {control}
     </div>
   )
 }
+
+/**
+ * The head of a field: the label with its fixed tag on the left, and on the right what comes and goes (the "changed" tag, the state after a
+ * save, the Reset button). That corner has a height of its own (the button's) and is a row of its own on a phone, so a button or a tag that
+ * appears when a value is edited does not push the rest of the field down (it did, by 28 px, in every field: 0.01 of layout shift per edit,
+ * and the whole page below moved).
+ */
+const FieldHead = ({ name, label, tag, status = false, reset = true }: { name: string, label: string, tag: any, status?: boolean, reset?: boolean }) => (
+  <div class="fh">
+    <label class="fl" for={name}>{label}{' '}{tag}</label>
+    <span class="fx">
+      <span class="src missing" x-cloak="true" title="Not at its default" {...{ 'x-show': `!atDefault('${name}')` }}>changed</span>
+      {status && <span class="src default" x-cloak="true" x-text={`status('${name}')`} {...{ 'x-show': `status('${name}')` }}></span>}
+      {reset && <button type="button" class="ab" x-show={`current['${name}'] !== defaults['${name}']`} x-cloak="true" x-on:click={`current['${name}'] = defaults['${name}']`}>Reset to default</button>}
+    </span>
+  </div>
+)
 
 /** How much room the replays use and the two limits (RFC 12, 3.4): fields like the others, saved with them, applied at once. */
 const StorageFields = ({ storage: t }: { storage: TracksInfo }) => (
@@ -260,14 +271,9 @@ const StorageFields = ({ storage: t }: { storage: TracksInfo }) => (
 const StorageField = ({ name, label, unit, shown, ceiling, explain }: { name: string, label: string, unit: string, shown: number, ceiling: number, explain: string }) => (
   <div class="fld" data-setting={name}>
     <div>
-      <label class="fl" for={name}>
-        {label}{' '}
-        <span class="src live" title="Kept by the dashboard">dashboard</span>
-        <span class="src missing" x-cloak="true" title="Not at its default" {...{ 'x-show': `!atDefault('${name}')` }}> changed</span>
-      </label>
+      <FieldHead name={name} label={label} tag={<span class="src live" title="Kept by the dashboard">dashboard</span>} />
       <span class="hint">{explain}</span>
       <span class="hint">Takes effect at once. Range 0 to {ceiling} {unit}. Default {shown} {unit} (empty).</span>
-      <button type="button" class="ab" x-show={`current['${name}'] !== defaults['${name}']`} x-cloak="true" x-on:click={`current['${name}'] = defaults['${name}']`}>Reset to default</button>
     </div>
     <input type="number" id={name} aria-label={label} min="0" max={ceiling} step="1" inputmode="numeric" placeholder={`default (${shown})`} {...{ 'x-model': `current['${name}']` }} />
   </div>
@@ -279,14 +285,9 @@ const MapCooldownField = () => (
     <h3>Maps</h3>
     <div class="fld row" data-setting={COOLDOWN}>
       <div>
-        <label class="fl" for={COOLDOWN}>
-          Show the vote's map cooldown{' '}
-          <span class="src live" title="Kept by the dashboard">dashboard</span>
-          <span class="src missing" x-cloak="true" title="Not at its default" {...{ 'x-show': `!atDefault('${COOLDOWN}')` }}> changed</span>
-        </label>
+        <FieldHead name={COOLDOWN} label="Show the vote's map cooldown" tag={<span class="src live" title="Kept by the dashboard">dashboard</span>} />
         <span class="hint">On: a map that is on the vote addon's cooldown list is marked on the maps page and not counted as votable. Off: it is not marked, and a map in the pool that only the cooldown held back counts as votable. This changes only what the dashboard shows, not the vote on the game server.</span>
         <span class="hint">Takes effect at once. Default on.</span>
-        <button type="button" class="ab" x-show={`current['${COOLDOWN}'] !== defaults['${COOLDOWN}']`} x-cloak="true" x-on:click={`current['${COOLDOWN}'] = defaults['${COOLDOWN}']`}>Reset to default</button>
       </div>
       <input type="checkbox" class="switch" id={COOLDOWN} aria-label="Show the vote's map cooldown" x-model={`current['${COOLDOWN}']`} />
     </div>

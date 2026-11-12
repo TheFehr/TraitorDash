@@ -275,8 +275,8 @@ describe('sort controls and card markup', () => {
     expect(html).toContain('data-min-karma="400"')
   })
 
-  test('each card has a place for the sorted value, shown only when not sorting by name', () => {
-    expect(html).toContain('x-show="sortBy !== &#39;name&#39;"')
+  test('each card has a place for the sorted value, always there (empty when sorting by name) so a sort does not make the cards taller', () => {
+    expect(html).not.toContain('x-show="sortBy !== &#39;name&#39;"')
     expect(html).toContain('valueText($el.closest(&#39;[data-role]&#39;))')
   })
 

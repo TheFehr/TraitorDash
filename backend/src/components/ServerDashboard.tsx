@@ -95,6 +95,9 @@ const metricAttributes = (metrics?: RoleMetrics): Record<string, string> => {
 
 export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }) => {
   const isOnline = isServerOnline(server.last_seen)
+  // What Alpine shows at its start ("Enabled only" is on, all teams, no filter), drawn by the server as well so that nothing moves when Alpine starts
+  // (a disabled role's tile was drawn and then hidden, 0.19 of layout shift at 1100 px; the sort button and the count were empty and then filled).
+  const enabledCount = roles.filter((r: any) => r.enabled !== false).length
 
   // Group roles by team
   const groups = roles.reduce((acc: any, role: any) => {
@@ -170,7 +173,7 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
                 class="ab"
                 title="Reverse the order"
                 x-text="desc ? '\u2193 high to low' : '\u2191 low to high'"
-              ></button>
+              >{'↑ low to high'}</button>
             </label>
 
             <label>
@@ -178,13 +181,15 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
               <span>One list (ignore teams)</span>
             </label>
 
-            <span class="count" x-text="`Showing ${shown()} of ${total()}`"></span>
+            <span class="count" x-text="`Showing ${shown()} of ${total()}`">{`Showing ${enabledCount} of ${roles.length}`}</span>
           </div>
         )}
 
-        <p x-show="shown() === 0" x-cloak="true" class="muted m0" style="text-align:center;padding:2rem;border:2px dashed #3a342a">
-          No roles match these filters.
-        </p>
+        {sortedGroups.length > 0 && (
+          <p x-show="shown() === 0" x-cloak="true" class="muted m0" style="text-align:center;padding:2rem;border:2px dashed #3a342a">
+            No roles match these filters.
+          </p>
+        )}
 
         {sortedGroups.length === 0 ? (
           <div class="pn c-edge">
@@ -197,7 +202,7 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
             x-bind:style="{ display: flat ? 'grid' : '', gridTemplateColumns: flat ? 'repeat(auto-fill, minmax(17rem, 1fr))' : '', gap: flat ? '1.5rem 1rem' : '' }"
           >
           {sortedGroups.map(([team, roleList]: [string, any]) => (
-            <section x-show="sectionVisible($el)" x-bind:class="flat ? 'contents' : ''">
+            <section x-show="sectionVisible($el)" x-bind:class="flat ? 'contents' : ''" style={roleList.some((r: any) => r.enabled) ? undefined : 'display:none'}>
               <h2 class="team" x-show="!flat" style={`color:${teamHexOf(gameTeams, team)};border-color:${teamHexOf(gameTeams, team)}`}>
                 {teamLabel(team)}
               </h2>
@@ -211,7 +216,7 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
                     {...metricAttributes(role.metrics)}
                     x-show="visible($el)"
                     x-bind:style="{ order: rank($el) }"
-                    style={role.colour && HEX6.test(role.colour) ? `--c:${role.colour}` : undefined}
+                    style={[role.colour && HEX6.test(role.colour) ? `--c:${role.colour}` : '', role.enabled ? '' : 'display:none'].filter(Boolean).join(';') || undefined}
                     class={`pn tile${role.enabled ? '' : ' off'}`}
                   >
                     <div style="min-width:0">
@@ -221,8 +226,6 @@ export const ServerDashboard = ({ server, roles }: { server: any, roles: any[] }
                       </strong>
                       <span
                         class="val"
-                        x-show="sortBy !== 'name'"
-                        x-cloak="true"
                         x-text="valueText($el.closest('[data-role]'))"
                       ></span>
                     </div>
