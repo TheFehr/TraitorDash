@@ -46,10 +46,45 @@ const ALLOW: Record<string, string> = {
 }
 /** The ratchet on ALLOW: fails when the list grows. Lower it when it shrinks. */
 const ALLOW_MAX = 31
+/** What each allow-listed selector holds that is not on the scale, exactly. The list above lets a selector off; this pins what it may keep, so a new
+ *  raw margin or a changed padding on an allowed selector (`button{margin:9rem}`) fails too. Change an entry only on purpose. */
+const PINNED: Record<string, string> = {
+  '.sections a,.sections span[aria-current]': 'padding:.2rem .7rem',
+  '.bar a': 'padding:.05rem .6rem',
+  'input[type=search]': 'padding:.3rem .6rem',
+  'button': 'padding:.35rem .9rem',
+  '.stamp': 'padding:0 .35rem',
+  '.ledger': 'gap:.1rem 1.5rem',
+  '.ledger div': 'padding:.2rem 0',
+  'table.set th': 'padding:.2rem .4rem .2rem 0',
+  'table.set td': 'padding:.22rem .4rem .22rem 0',
+  '.mark': 'padding:0 .4rem',
+  '.win': 'padding:.12rem 0',
+  'table.log th': 'padding:.15rem .5rem .25rem 0',
+  'table.log td': 'padding:.28rem .5rem .28rem 0',
+  '.res': 'padding:0 .3rem',
+  '.tape': 'padding:0 .45rem',
+  '.btn': 'padding:.15rem .8rem',
+  '.pill': 'padding:0 .3rem',
+  '.filt a': 'padding:.12rem .65rem',
+  '.prow': 'padding:.15rem .3rem',
+  '.tog': 'padding:.05rem .7rem',
+  '.vc .tog': 'padding:.3rem .9rem',
+  '.lvl b': 'margin-left:-1px',
+  '.f input:not([type]),.f input[type=text],.f input[inputmode]': 'padding:.25rem .5rem',
+  '.team': 'padding:.05rem .7rem',
+  '.status': 'padding:.3rem .8rem',
+  'select,input[type=number],input[type=text].dk,.dk': 'padding:.3rem .6rem',
+  '.ab': 'padding:.2rem .85rem',
+  '.jump a': 'padding:.55rem .15rem',
+  '.cfg': 'padding-bottom:6.5rem',
+  '.side .find input': 'padding:.3rem .6rem',
+  '.ritem': 'padding:.35rem .6rem',
+}
 /** The ratchet on raw spacing values in the components' inline style attributes. Lower it when it shrinks. */
 const INLINE_RAW_MAX = 0
 
-const LAYOUT_PROP = /^(?:gap|row-gap|column-gap|margin(?:-(?:top|right|bottom|left))?|padding(?:-(?:top|right|bottom|left))?)$/
+const LAYOUT_PROP = /^(?:(?:grid-)?(?:row-|column-)?gap|(?:margin|padding)(?:-(?:top|right|bottom|left|inline|block)(?:-(?:start|end))?)?)$/
 
 /** Split at the top level of a value: whitespace outside parentheses. */
 function tokens(value: string): string[] {
@@ -123,6 +158,8 @@ describe('the spacing scale (RFC 30)', () => {
     for (const [sel, decls] of ALL) { const bad = rawIn(decls); if (bad.length) raw[sel] = [...(raw[sel] ?? []), ...bad] }
     const unlisted = Object.keys(raw).filter(sel => !(sel in ALLOW))
     expect(unlisted.map(sel => `${sel} { ${raw[sel]!.join('; ')} }`), 'raw spacing outside the allow-list: use a step of the scale (docs/UI_DESIGN.md, spacing), or list the selector with a reason').toEqual([])
+    // what an allowed selector may keep is pinned, not open
+    expect(Object.fromEntries(Object.entries(raw).filter(([sel]) => sel in ALLOW).map(([sel, r]) => [sel, r.join('; ')])), 'an allow-listed selector holds a raw value that PINNED does not list').toEqual(PINNED)
     // an entry that no longer has a raw value is removed, so the list only gets shorter
     expect(Object.keys(ALLOW).filter(sel => !(sel in raw)), 'allow-list entries that hold no raw value any more: remove them and lower ALLOW_MAX').toEqual([])
   })
@@ -136,8 +173,10 @@ describe('the spacing scale (RFC 30)', () => {
     const found: string[] = []
     for (const file of new Glob('*.tsx').scanSync(new URL('../src/components/', import.meta.url).pathname)) {
       const text = await Bun.file(new URL(`../src/components/${file}`, import.meta.url)).text()
-      for (const m of text.matchAll(/(?<![\w:-])(x-bind:)?style=(?:"([^"]*)"|\{`([^`]*)`\})/g)) {
-        const body = m[2] ?? m[3] ?? ''
+      for (const m of text.matchAll(/(?<![\w:-])(x-bind:)?style=(?:"([^"]*)"|'([^']*)'|\{`([^`]*)`\}|\{\{([^}]*)\}\})/g)) {
+        // style={{ marginTop: '13px' }}: an object of camelCase keys, read as css
+        if (m[5] !== undefined) { for (const bad of rawIn([...m[5].matchAll(/(\w+)\s*:\s*(?:'([^']*)'|"([^"]*)"|`([^`]*)`|([^,\s]+))/g)].map(k => `${k[1]!.replace(/[A-Z]/g, c => '-' + c.toLowerCase())}:${k[2] ?? k[3] ?? k[4] ?? k[5]}`).join(';'))) found.push(`${file}: ${bad}`); continue }
+        const body = m[2] ?? m[3] ?? m[4] ?? ''
         // a style="..." is css; an x-bind:style is an object of camelCase keys and string values
         const css = m[1]
           ? [...body.matchAll(/\b(gap|margin\w*|padding\w*)\s*:\s*([^,}]*)/g)].map(k => `${k[1]!.replace(/[A-Z]/g, c => '-' + c.toLowerCase())}:${[...k[2]!.matchAll(/'([^']*)'/g)].map(q => q[1]).join(' ')}`).join(';')
