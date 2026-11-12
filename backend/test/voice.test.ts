@@ -335,7 +335,7 @@ describe('the page\'s code', () => {
   const LIVEKIT_FAKE = `
     export const RoomEvent = { TrackSubscribed: 'ts', TrackUnsubscribed: 'tu', ParticipantConnected: 'pc', ParticipantDisconnected: 'pd', Reconnecting: 'rc', Reconnected: 'rd', Disconnected: 'dc' }
     export class Room {
-      constructor() { globalThis.__room = this; globalThis.__handlers = {}; this.remoteParticipants = new Map(); this.localParticipant = { publishTrack: async (t) => { globalThis.__log.push('published ' + (t === globalThis.__mic ? 'raw' : 'filtered')) } } }
+      constructor() { globalThis.__room = this; globalThis.__handlers = {}; this.remoteParticipants = new Map(); this.localParticipant = { publishTrack: async (t, o) => { globalThis.__log.push('published ' + (t === globalThis.__mic ? 'raw' : 'filtered') + ' dtx=' + o.dtx) } } }
       on(ev, fn) { globalThis.__handlers[ev] = fn } async connect(url, token, opts) { globalThis.__log.push('connect autoSubscribe=' + opts.autoSubscribe) } async startAudio() {} async disconnect() {}
     }
     export class LocalAudioTrack {
@@ -380,7 +380,10 @@ describe('the page\'s code', () => {
     const parts: Record<string, any> = {}
     parts['[data-people]'] = node()
     parts['[data-who]'] = node()
-    for (const sel of ['[data-join]', '[data-status]', '[data-level]', '[data-marker]', '[data-speaking]', '[data-threshold]', '[data-count]', '[data-audio]', '[data-vad-box]', '[data-ptt-box]', '[data-ptt-key]', '[data-monitor]', '[data-filter-note]']) parts[sel] = el(sel)
+    for (const sel of ['[data-join]', '[data-status]', '[data-level]', '[data-marker]', '[data-marker-close]', '[data-speaking]', '[data-db]', '[data-threshold-out]', '[data-close-out]', '[data-measure]', '[data-measure-note]', '[data-gate-note]', '[data-count]', '[data-audio]', '[data-vad-box]', '[data-ptt-box]', '[data-ptt-key]', '[data-monitor]', '[data-filter-note]']) parts[sel] = el(sel)
+    parts['[data-threshold]'] = el('[data-threshold]', { value: '-50' })
+    parts['[data-close-threshold]'] = el('[data-close-threshold]', { value: '-56' })
+    parts['[data-auto]'] = el('[data-auto]'); attrs['[data-auto]']!['aria-pressed'] = 'false'
     const modes = [el('vad', { dataset: { mode: 'vad' } }), el('ptt', { dataset: { mode: 'ptt' }, disabled: true })]
     const filters = [el('on', { dataset: { filter: 'on' } }), el('off', { dataset: { filter: 'off' } })]
     attrs['on']!['aria-pressed'] = 'true'; attrs['off']!['aria-pressed'] = 'false'
@@ -390,7 +393,7 @@ describe('the page\'s code', () => {
     const timeouts: { fn: Function, ms: number }[] = []
     const win = { addEventListener() {}, setInterval: (fn: Function) => { timers.push(fn); return timers.length }, clearInterval() {},
       setTimeout: (fn: Function, ms: number) => { timeouts.push({ fn, ms }); return timeouts.length }, clearTimeout() {} }
-    const store = new Map<string, string>([['mode', 'ptt']]) // a saved choice of the disabled mode
+    const store = new Map<string, string>([['td_voice_mode', 'ptt'], ['td_voice_threshold', '30']]) // a saved choice of the disabled mode, and the old linear threshold (dropped by RFC 29)
     const local = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v) } }
     const run = (extra: Record<string, unknown> = {}) => {
       const names = ['document', 'window', 'localStorage', ...Object.keys(extra)]
@@ -404,14 +407,20 @@ describe('the page\'s code', () => {
     expect(() => page.run()).not.toThrow()
     expect(page.listeners['[data-join]']!.click).toBeInstanceOf(Function)
     expect(page.listeners['[data-threshold]']!.input).toBeInstanceOf(Function)
-    expect(page.parts['[data-marker]'].style.left).toBe('12%') // the line where the microphone opens is placed
+    expect(page.listeners['[data-close-threshold]']!.input).toBeInstanceOf(Function)
+    // the lines are placed on the dBFS meter (-80 to 0): the defaults -50 and -56, the old saved linear 30 is not carried over
+    expect(page.parts['[data-marker]'].style.left).toBe('37.5%')
+    expect(page.parts['[data-marker-close]'].style.left).toBe('30%')
+    expect(page.parts['[data-threshold-out]'].textContent).toBe('-50 dBFS')
+    expect(page.parts['[data-measure-note]'].textContent).toContain('Not measured yet') // a player without a new setting is offered the measurement
+    expect(page.attrs['[data-auto]']!['aria-pressed']).toBe('false') // adjusting by itself is off by default
     // the disabled mode is not taken from a saved choice: nothing was switched to it
     page.listeners['vad']!.click!()
     expect([page.modes[0]!.getAttribute('aria-pressed'), page.modes[1]!.getAttribute('aria-pressed')]).toEqual(['true', 'false'])
   })
 
   /** Everything a join needs: the fake microphone, audio context, fetch; returns what the test looks at. */
-  function setup(opts: { rnnoiseFails?: boolean } = {}) {
+  function setup(opts: { rnnoiseFails?: boolean, gateFails?: boolean, chainFails?: boolean } = {}) {
     const log: string[] = []
     const g = globalThis as any
     g.__log = log; g.__rnnoiseFails = !!opts.rnnoiseFails
@@ -423,14 +432,22 @@ describe('the page\'s code', () => {
     const gains: { gain: { value: number } }[] = []
     const gate = { contexts: 0, rate: 0 }
     let sourceTracks: any[] = []
+    const sound = { v: 0.1 } // what the fake microphone's copy gives the analyser (0.1 is -20 dBFS)
+    const gateNodes: any[] = [] // the gate's worklet node, as the page made it
+    class FakeGateNode {
+      sent: any[] = []
+      port = { onmessage: null as null | ((e: { data: unknown }) => void), postMessage: (m: unknown) => { this.sent.push(m) } }
+      constructor(public ctx: unknown, public name: string, public options: any) { gateNodes.push(this) }
+      connect() {}
+    }
     class FakeContext {
       destination = {}
-      audioWorklet = { addModule: async (u: string) => { log.push('worklet ' + u) } }
+      audioWorklet = { addModule: async (u: string) => { log.push('worklet ' + u); if (opts.gateFails && u === '/public/gate.js') throw new Error('no such file') } }
       constructor(o: { sampleRate: number }) { gate.contexts++; gate.rate = o.sampleRate }
       async resume() { log.push('resume') } async close() {}
       createGain() { const n = { gain: { value: 1 }, connect() {} }; gains.push(n); return n }
-      createMediaStreamDestination() { return { stream: { getAudioTracks: () => [outTrack] } } }
-      createAnalyser() { return { fftSize: 0, getFloatTimeDomainData: (buf: Float32Array) => buf.fill(sourceTracks.length && sourceTracks.every(t => t.enabled) ? 0.1 : 0) } }
+      createMediaStreamDestination() { if (opts.chainFails) throw new Error('no destination'); return { stream: { getAudioTracks: () => [outTrack] } } }
+      createAnalyser() { return { fftSize: 0, getFloatTimeDomainData: (buf: Float32Array) => buf.fill(sourceTracks.length && sourceTracks.every(t => t.enabled) ? sound.v : 0) } }
       createMediaStreamSource(stream: any) { sourceTracks = stream.tracks; return { connect() {} } }
     }
     class FakeStream { constructor(public tracks: any[]) {} }
@@ -438,10 +455,21 @@ describe('the page\'s code', () => {
     const fetchFake = async (url: string) => (url.includes('/people')
       ? { ok: true, json: async () => ({ people: state.people }) }
       : { ok: true, json: async () => ({ url: 'wss://lk.test', token: 'tok' }) })
-    return { log, g, rawTrack, outTrack, gains, gate, state, globals: { AudioContext: FakeContext, MediaStream: FakeStream, fetch: fetchFake }, done() { delete g.__log; delete g.__mic; delete g.__rnnoiseFails; delete g.__room; delete g.__handlers } }
+    return { log, g, rawTrack, outTrack, gains, gate, gateNodes, sound, state, globals: { AudioContext: FakeContext, MediaStream: FakeStream, AudioWorkletNode: FakeGateNode, fetch: fetchFake }, done() { delete g.__log; delete g.__mic; delete g.__rnnoiseFails; delete g.__room; delete g.__handlers } }
   }
 
-  test('a join: the context is made in the click at 48 kHz, the microphone goes through the filter, the meter listens to a copy that stays on, and speaking opens the microphone', async () => {
+  /** A join, done: the page with the fake browser and the join finished. */
+  async function joined(opts: Parameters<typeof setup>[0] = {}) {
+    const page = await load()
+    const t = setup(opts)
+    page.run(t.globals)
+    page.listeners['[data-join]']!.click!()
+    await new Promise(r => setTimeout(r, 30))
+    const post = (level: number, open = false, at = 0) => t.gateNodes[0].port.onmessage({ data: { t: at, level, open } })
+    return { page, t, post }
+  }
+
+  test('a join: the context is made in the click at 48 kHz, the microphone goes through the filter and the gate, the track is published ON and never muted, and the meter follows what the gate posts', async () => {
     const page = await load()
     const t = setup()
     page.run(t.globals)
@@ -451,16 +479,131 @@ describe('the page\'s code', () => {
     expect(t.log).toContain('connect autoSubscribe=false') // the dashboard decides who is heard, not the page
     expect(t.log).toContain('load /public/rnnoise/rnnoise.wasm /public/rnnoise/rnnoise_simd.wasm')
     expect(t.log).toContain('worklet /public/rnnoise/worklet.js')
-    expect(t.log).toContain('published filtered') // what is sent is the filter's output, not the raw microphone
+    expect(t.log).toContain('worklet /public/gate.js')
+    expect(t.log.indexOf('worklet /public/rnnoise/worklet.js')).toBeLessThan(t.log.indexOf('worklet /public/gate.js')) // the gate comes after the filter
+    expect(t.log).toContain('published filtered dtx=true') // what is sent is the chain's output, not the raw microphone; silence suppression asked for
     expect(page.parts['[data-status]'].textContent).toBe('Connected.')
     expect(page.parts['[data-filter-note]'].textContent).toBe('')
-    expect(t.outTrack.enabled).toBe(false) // closed until the player speaks
-    expect(t.outTrack.copy.enabled).toBe(true) // but what the meter listens to is on
-
-    page.timers[0]!() // one look of the meter: speech at level 40, the threshold is 12
-    expect(parseFloat(page.parts['[data-level]'].style.width)).toBeCloseTo(40, 3)
-    expect(t.log.at(-1)).toBe('unmute')
+    expect(page.parts['[data-gate-note]'].textContent).toBe('')
+    expect(t.gateNodes).toHaveLength(1)
+    expect(t.gateNodes[0].name).toBe('td-gate')
+    expect(t.gateNodes[0].options.processorOptions).toEqual({ open: -50, close: -56 }) // the worklet starts with the page's thresholds
+    // the gain does the opening: the published track is never switched off, nothing is muted, and no second copy is listened to
     expect(t.outTrack.enabled).toBe(true)
+    expect(t.outTrack.copy).toBeNull()
+    expect(t.log).not.toContain('mute'); expect(t.log).not.toContain('unmute')
+    expect(page.timers).toHaveLength(0) // no 50 ms timer of the page: the worklet posts the levels
+
+    // the worklet says: -30 dBFS, gate open
+    t.gateNodes[0].port.onmessage({ data: { t: 0.05, level: -30, open: true } })
+    expect(page.parts['[data-level]'].style.width).toBe('62.5%') // -30 on a -80 to 0 scale
+    expect(page.parts['[data-speaking]'].textContent).toBe('talking') // the mark is the gate's state
+    expect(page.parts['[data-db]'].textContent).toBe('-30 dBFS')
+    t.gateNodes[0].port.onmessage({ data: { t: 0.1, level: -70, open: false } })
+    expect(page.parts['[data-speaking]'].textContent).toBe('')
+    expect(page.parts['[data-level]'].style.width).toBe('12.5%')
+    expect(t.log).not.toContain('mute'); expect(t.log).not.toContain('unmute') // still never
+    t.done()
+  })
+
+  test('the sensitivity slider sets the open threshold and the close one follows at the same distance; the advanced slider changes the distance; all is sent to the gate and remembered', async () => {
+    const { page, t } = await joined()
+    const node = t.gateNodes[0]
+    const sens = page.parts['[data-threshold]'], close = page.parts['[data-close-threshold]']
+    sens.value = '-45'; page.listeners['[data-threshold]']!.input!()
+    expect(node.sent.at(-1)).toEqual({ type: 'set', open: -45, close: -51 })
+    expect(page.parts['[data-marker]'].style.left).toBe('43.75%'); expect(page.parts['[data-marker-close]'].style.left).toBe('36.25%')
+    expect(close.value).toBe('-51'); expect(page.parts['[data-close-out]'].textContent).toBe('-51 dBFS')
+    expect(page.store.get('td_voice_gate_open')).toBe('-45'); expect(page.store.get('td_voice_gate_close')).toBe('-51')
+    close.value = '-60'; page.listeners['[data-close-threshold]']!.input!()
+    expect(node.sent.at(-1)).toEqual({ type: 'set', open: -45, close: -60 })
+    sens.value = '-40'; page.listeners['[data-threshold]']!.input!() // the distance (15 dB) is kept
+    expect(node.sent.at(-1)).toEqual({ type: 'set', open: -40, close: -55 })
+    close.value = '-30'; page.listeners['[data-close-threshold]']!.input!() // never above the open one
+    expect(node.sent.at(-1)).toEqual({ type: 'set', open: -40, close: -40 })
+    t.done()
+  })
+
+  test('the saved thresholds are read at the start (the old linear one is not), and a page with none offers the measurement', async () => {
+    const page = await load()
+    page.store.set('td_voice_gate_open', '-42'); page.store.set('td_voice_gate_close', '-50')
+    page.run()
+    expect(page.parts['[data-marker]'].style.left).toBe('47.5%'); expect(page.parts['[data-marker-close]'].style.left).toBe('37.5%')
+    expect(page.parts['[data-threshold]'].value).toBe('-42'); expect(page.parts['[data-close-threshold]'].value).toBe('-50')
+    expect(page.parts['[data-measure-note]'].textContent).toBe('')
+    // nonsense in the store falls back to the defaults
+    const other = await load()
+    other.store.set('td_voice_gate_open', '12'); other.store.set('td_voice_gate_close', 'abc') // 12 is above the range (a leftover of the old scale)
+    other.run()
+    expect(other.parts['[data-marker]'].style.left).toBe('37.5%')
+    expect(other.parts['[data-measure-note]'].textContent).toContain('Not measured yet')
+    // the saved automatic switch
+    const auto = await load()
+    auto.store.set('td_voice_gate_auto', '1')
+    auto.run()
+    expect(auto.attrs['[data-auto]']!['aria-pressed']).toBe('true')
+    expect(auto.parts['[data-threshold]'].disabled).toBe(true); expect(auto.parts['[data-close-threshold]'].disabled).toBe(true)
+  })
+
+  test('"Measure my room": 3 seconds of the posted levels, then the thresholds are set from them and the page says what it set', async () => {
+    const { page, t, post } = await joined()
+    page.listeners['[data-measure]']!.click!()
+    expect(page.parts['[data-measure-note]'].textContent).toContain('3 seconds')
+    expect(page.parts['[data-measure]'].disabled).toBe(true)
+    const wait = page.timeouts.filter(x => x.ms === 3000).at(-1)!
+    for (let i = 0; i < 60; i++) post(i % 4 === 0 ? -66 : -65, false, i * 0.05) // a quiet room, around -65
+    wait.fn()
+    expect(page.parts['[data-measure]'].disabled).toBe(false)
+    expect(t.gateNodes[0].sent.at(-1)).toEqual({ type: 'set', open: -55, close: -59 })
+    expect(page.store.get('td_voice_gate_open')).toBe('-55'); expect(page.store.get('td_voice_gate_close')).toBe('-59')
+    expect(page.parts['[data-measure-note]'].textContent).toBe('Your room is at -65 dBFS. The microphone opens at -55 dBFS and closes at -59 dBFS.')
+    expect(page.parts['[data-marker]'].style.left).toBe('31.25%')
+    t.done()
+  })
+
+  test('"Measure my room" asks to try again when the levels vary, and changes nothing; before joining it says to join first', async () => {
+    const early = await load()
+    early.run(setup().globals)
+    early.listeners['[data-measure]']!.click!()
+    expect(early.parts['[data-measure-note]'].textContent).toContain('Join the voice chat first')
+
+    const { page, t, post } = await joined()
+    page.listeners['[data-measure]']!.click!()
+    const wait = page.timeouts.filter(x => x.ms === 3000).at(-1)!
+    for (let i = 0; i < 60; i++) post(i % 6 < 3 ? -60 : -30, false, i * 0.05) // somebody talks
+    wait.fn()
+    expect(page.parts['[data-measure-note]'].textContent).toContain('try again')
+    expect(t.gateNodes[0].sent.filter((m: any) => m.type === 'set')).toHaveLength(1) // only the one at the start
+    expect(page.store.get('td_voice_gate_open')).toBeUndefined()
+    // too little heard
+    page.listeners['[data-measure]']!.click!()
+    const wait2 = page.timeouts.filter(x => x.ms === 3000).at(-1)!
+    post(-60); wait2.fn()
+    expect(page.parts['[data-measure-note]'].textContent).toContain('Not enough')
+    t.done()
+  })
+
+  test('"Adjust by itself": off by default; on, it follows the room\'s floor while the gate is closed, never while it is open, and off keeps the last value and gives the sliders back', async () => {
+    const { page, t, post } = await joined()
+    const node = t.gateNodes[0]
+    for (let i = 0; i < 100; i++) post(-62, false, i * 0.05)
+    expect(node.sent.filter((m: any) => m.type === 'set')).toHaveLength(1) // off: nothing moves
+    page.listeners['[data-auto]']!.click!()
+    expect(page.attrs['[data-auto]']!['aria-pressed']).toBe('true'); expect(page.store.get('td_voice_gate_auto')).toBe('1')
+    expect(page.parts['[data-threshold]'].disabled).toBe(true); expect(page.parts['[data-close-threshold]'].disabled).toBe(true)
+    for (let i = 0; i < 40; i++) post(-62, false, 10 + i * 0.05)
+    expect(node.sent.at(-1)).toEqual({ type: 'set', open: -52, close: -56 }) // floor -62: open +10, close +6
+    expect(page.store.get('td_voice_gate_open')).toBe('-52')
+    // speech: the gate is open, nothing is followed
+    const sets = node.sent.length
+    for (let i = 0; i < 400; i++) post(-20, true, 12 + i * 0.05)
+    expect(node.sent.length).toBe(sets)
+    page.listeners['[data-auto]']!.click!()
+    expect(page.attrs['[data-auto]']!['aria-pressed']).toBe('false'); expect(page.store.get('td_voice_gate_auto')).toBe('0')
+    expect(page.parts['[data-threshold]'].disabled).toBe(false)
+    expect(page.parts['[data-threshold]'].value).toBe('-52') // the last value stays
+    for (let i = 0; i < 100; i++) post(-40, false, 40 + i * 0.05)
+    expect(node.sent.length).toBe(sets) // off again: it does not move
     t.done()
   })
 
@@ -572,7 +715,7 @@ describe('the page\'s code', () => {
     t.done()
   })
 
-  test('when the filter cannot start the microphone is sent as it is, the join still works, and the page says so', async () => {
+  test('when the filter cannot start the gate still works, the microphone is sent without the filter, and the page says so', async () => {
     const page = await load()
     const t = setup({ rnnoiseFails: true })
     const warn = console.warn; console.warn = () => {}
@@ -581,13 +724,67 @@ describe('the page\'s code', () => {
       page.listeners['[data-join]']!.click!()
       await new Promise(r => setTimeout(r, 30))
     } finally { console.warn = warn }
-    expect(t.log).toContain('published raw')
+    expect(t.log).toContain('published filtered dtx=true') // the chain's output (the gate), not the raw microphone
     expect(page.parts['[data-status]'].textContent).toBe('Connected.')
     expect(page.parts['[data-filter-note]'].textContent).toContain('could not start')
     expect(page.filters.every(f => f.disabled)).toBe(true)
-    // the meter and the detection still work, on a copy of the raw microphone
+    expect(t.gateNodes).toHaveLength(1)
+    // switching the filter on does not leave the sound without a way: the dry path stays open
+    page.listeners['on']!.click!()
+    expect([t.gains[0]!.gain.value, t.gains[1]!.gain.value]).toEqual([1, 0])
+    t.gateNodes[0].port.onmessage({ data: { t: 0.1, level: -30, open: true } })
+    expect(page.parts['[data-speaking]'].textContent).toBe('talking')
+    expect(t.log).not.toContain('mute')
+    t.done()
+  })
+
+  test('when the gate cannot start the join still works: the page says so and does the opening itself with the mute, as before, on a copy of the sound', async () => {
+    const page = await load()
+    const t = setup({ gateFails: true })
+    const warn = console.warn; console.warn = () => {}
+    try {
+      page.run(t.globals)
+      page.listeners['[data-join]']!.click!()
+      await new Promise(r => setTimeout(r, 30))
+    } finally { console.warn = warn }
+    expect(page.parts['[data-status]'].textContent).toBe('Connected.')
+    expect(page.parts['[data-gate-note]'].textContent).toContain('gate could not start')
+    expect(t.gateNodes).toHaveLength(0)
+    expect(t.log).toContain('published filtered dtx=true') // the filter's output goes on
+    expect(t.outTrack.enabled).toBe(false) // closed until the player speaks
+    expect(t.outTrack.copy.enabled).toBe(true) // but what is listened to is on
+    page.timers[0]!() // one look: the fake microphone is at 0.1 (-20 dBFS), above the threshold of -50
+    expect(parseFloat(page.parts['[data-level]'].style.width)).toBeCloseTo(75, 3)
+    expect(page.parts['[data-speaking]'].textContent).toBe('talking')
+    expect(t.log.at(-1)).toBe('unmute')
+    expect(t.outTrack.enabled).toBe(true)
+    // the sound stops: the microphone stays open for the 250 ms hold (4 looks of 50 ms), then closes
+    t.sound.v = 0
+    for (let i = 0; i < 4; i++) page.timers[0]!()
+    expect(t.log.at(-1)).toBe('unmute')
     page.timers[0]!()
-    expect(parseFloat(page.parts['[data-level]'].style.width)).toBeCloseTo(40, 3)
+    expect(t.log.at(-1)).toBe('mute')
+    expect(page.parts['[data-speaking]'].textContent).toBe('')
+    t.done()
+  })
+
+  test('when the whole chain cannot be built the microphone is sent as it is, the join still works, and the page does the opening', async () => {
+    const page = await load()
+    const t = setup({ chainFails: true })
+    const warn = console.warn; console.warn = () => {}
+    try {
+      page.run(t.globals)
+      page.listeners['[data-join]']!.click!()
+      await new Promise(r => setTimeout(r, 30))
+    } finally { console.warn = warn }
+    expect(t.log).toContain('published raw dtx=true')
+    expect(page.parts['[data-status]'].textContent).toBe('Connected.')
+    expect(page.parts['[data-filter-note]'].textContent).toContain('could not start')
+    expect(page.parts['[data-gate-note]'].textContent).toContain('gate could not start')
+    expect(page.filters.every(f => f.disabled)).toBe(true)
+    page.timers[0]!()
+    expect(parseFloat(page.parts['[data-level]'].style.width)).toBeCloseTo(75, 3) // the meter and the detection still work, on a copy of the raw microphone
+    expect(t.log.at(-1)).toBe('unmute')
     t.done()
   })
 })
@@ -606,6 +803,16 @@ describe('the noise filter files', () => {
     }
     expect(copy).toContain('LICENSE') // MIT, and the licence of RNNoise is in the package's: it goes along
     expect(await Bun.file(root + '.gitignore').text()).toContain('src/public/rnnoise/')
+  })
+
+  test('the build makes the gate worklet (/public/gate.js) from its source, as one file, and keeps it out of git; the page loads that address', async () => {
+    const root = new URL('..', import.meta.url).pathname
+    const pkg = JSON.parse(await Bun.file(root + 'package.json').text())
+    expect(pkg.scripts['build:js']).toContain('bun build src/gate-worklet.ts --outfile src/public/gate.js --minify --format=iife')
+    expect(pkg.scripts['watch:js']).toContain('src/gate-worklet.ts --outfile src/public/gate.js')
+    expect(await Bun.file(root + '.gitignore').text()).toContain('src/public/gate.js')
+    expect(await Bun.file(root + 'src/voice.ts').text()).toContain("addModule('/public/gate.js')")
+    expect(await Bun.file(root + 'src/gate-worklet.ts').text()).toContain("registerProcessor('td-gate'")
   })
 })
 
@@ -700,6 +907,11 @@ describe('the routes', () => {
     expect(t).toContain('data-mode="vad" aria-pressed="true"'); expect(t).toContain('data-mode="ptt" aria-pressed="false"')
     expect(t).toMatch(/<button[^>]*data-mode="ptt"[^>]* disabled/) // holding a key cannot work from a browser tab while the game has the focus: stage 2 (the desktop app)
     expect(t).toContain('data-level'); expect(t).toContain('data-marker'); expect(t).toContain('data-threshold')
+    // the gate's controls (RFC 29): both markers, the close slider under "Advanced", the measurement, the automatic switch
+    expect(t).toContain('data-marker-close'); expect(t).toContain('data-close-threshold'); expect(t).toContain('Advanced')
+    expect(t).toMatch(/data-threshold[^>]*min="-70"[^>]*max="-20"/)
+    expect(t).toContain('data-measure'); expect(t).toContain('Measure my room')
+    expect(t).toMatch(/<button[^>]*data-auto="true" aria-pressed="false"/); expect(t).toContain('Adjust by itself')
     expect(t).not.toContain('type="radio"'); expect(t).not.toContain('<meter')
     expect(t).not.toContain(CFG.secret); expect(t).not.toContain(CFG.key)
     expect(res.headers.get('content-security-policy')).toContain("connect-src 'self' wss://lk.test https://lk.test;")

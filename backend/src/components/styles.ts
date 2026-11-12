@@ -198,10 +198,14 @@ html.theater{overflow:hidden}
 .vc .person{display:flex;flex-wrap:wrap;gap:.4rem 1rem;align-items:center;padding:.25rem 0;border-top:1px solid var(--dim)}
 .vc .pname{min-width:9rem;font-weight:700;overflow-wrap:anywhere}
 .vc .pct{min-width:3rem;text-align:right}
-.lvl{position:relative;width:12rem;height:.9rem;background:#fff8e6;border:1px solid var(--dim)}
-.lvl i{display:block;height:100%;width:0;background:var(--ink2)}
+.lvl{position:relative;width:18rem;max-width:100%;height:1rem;border:1px solid var(--dim);background:linear-gradient(to right,#fff8e6 0,#fff8e6 43.75%,#d9ecd3 43.75%,#d9ecd3 85%,#f2cfc9 85%,#f2cfc9 100%)}
+.lvl i{display:block;height:50%;margin-top:25%;width:0;background:var(--ink2)}
 .lvl i.open{background:#256b30}
 .lvl b{position:absolute;top:-.25rem;bottom:-.25rem;width:2px;margin-left:-1px;background:#991b1b}
+.lvl b.c{background:none;width:0;border-left:2px dashed #991b1b}
+.vc .db{min-width:5.5rem}
+.vc .lvl-legend{font-size:.85rem}
+.vc summary{cursor:pointer;font-weight:700}
 .scale{height:.6rem;margin:.5rem 0 .2rem}
 .ends{display:flex;justify-content:space-between;font-size:.8rem}
 .sw{display:inline-block;position:relative;width:1rem;height:1rem;vertical-align:-.2rem;margin-right:.4rem}
