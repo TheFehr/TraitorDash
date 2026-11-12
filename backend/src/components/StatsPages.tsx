@@ -1,4 +1,4 @@
-import { Sections, Shell } from './CaseFile'
+import { PageHead, Shell } from './CaseFile'
 import { pidOf } from '../services/playerIds'
 import { Bar, Crumbs, Num, ServerName, Pills, Result, Tabs, When, WinTable, Who, adminOf, link, qs, rateClass, teamHex, type Ctx } from './kit'
 import { signinUrl } from '../middleware/session'
@@ -106,9 +106,9 @@ export const StatsPage = (p: StatsPageProps) => {
   const tab = (view: View) => link(ctx, path, { ...k, view: view === 'overview' ? undefined : view, sort: view === 'leaders' && p.sort !== 'rounds' ? p.sort : undefined })
   return (
     <Shell title={`Round stats | ${server.name}`} embed={ctx.embed} viewer={ctx.viewer} scripts={admin ? ['/public/confirm.js'] : []}>
-      <Crumbs><ServerName ctx={ctx} server={server} /></Crumbs>
-      <h1>Round stats</h1>
-      {!ctx.embed && <Sections serverId={id} current="stats" admin={adminOf(ctx)} />}
+      <PageHead serverId={id} embed={ctx.embed} admin={adminOf(ctx)} current="stats" crumbs={<ServerName ctx={ctx} server={server} />}>
+        <h1>Round stats</h1>
+      </PageHead>
       {p.bots && <p class="foot" style="color:#e9b44c">Including bot test rounds</p>}
       <Tabs label="Round stats" current={p.view} items={VIEWS.map(v => ({ key: v.key, label: v.label, href: tab(v.key) }))} />
 
@@ -327,8 +327,7 @@ export const RoundPage = ({ ctx, server, round, deaths, firstBlood, hasReplay, c
   const replayPath = `${here(id)}/rounds/${encodeURIComponent(round.roundId)}/replay`
   return (
     <Shell title={`${round.map ?? 'Round'} | ${server.name}`} embed={ctx.embed} viewer={ctx.viewer}>
-      <Crumbs><a href={link(ctx, `${here(id)}/stats`, { view: 'rounds', bots })}>Rounds</a> / <When iso={round.startedAt} now={ctx.now} /></Crumbs>
-      {!ctx.embed && <Sections serverId={id} admin={adminOf(ctx)} />}
+      <PageHead serverId={id} embed={ctx.embed} admin={adminOf(ctx)} crumbs={<><a href={link(ctx, `${here(id)}/stats`, { view: 'rounds', bots })}>Rounds</a> / <When iso={round.startedAt} now={ctx.now} /></>} />
       <div class="f big" style={`--c:${teamHex(round.result, ctx)}`}>
         <div class="stamp" style={`--c:${teamHex(round.result, ctx)}`}>{teamLabel(round.result)}</div>
         <h1>{round.map ? prettyMap(round.map) : 'Unknown map'}</h1>
@@ -386,10 +385,10 @@ export const PlayerPage = ({ ctx, server, player, by = 'end', bots, weapons }: P
   const path = `${here(id)}/players/${pidOf(player.steamId)}`
   return (
     <Shell title={`${player.nick} | ${server.name}`} embed={ctx.embed} viewer={ctx.viewer}>
-      <Crumbs><ServerName ctx={ctx} server={server} /> / <a href={link(ctx, `${here(id)}/stats`, { view: 'leaders', bots })}>Round stats</a></Crumbs>
-      <h1>{player.nick}</h1>
-      <p class="muted m0">{player.steamId}</p>
-      {!ctx.embed && <Sections serverId={id} admin={adminOf(ctx)} />}
+      <PageHead serverId={id} embed={ctx.embed} admin={adminOf(ctx)} crumbs={<><ServerName ctx={ctx} server={server} /> / <a href={link(ctx, `${here(id)}/stats`, { view: 'leaders', bots })}>Round stats</a></>}>
+        <h1>{player.nick}</h1>
+        <p class="muted m0">{player.steamId}</p>
+      </PageHead>
       <div class="nums">
         <Num label="Rounds" value={player.rounds} />
         <Num label="Win rate" value={pct(player.wins, player.rounds)} />

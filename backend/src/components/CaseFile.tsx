@@ -20,6 +20,20 @@ export const Sections = ({ serverId, current, admin = false }: { serverId: strin
   </nav>
 )
 
+/**
+ * The head of every page of a server, in one order and made in one place (decided 2026-11-12, after the pages had drifted apart: some put the
+ * section buttons before the title and some after, one had the server's name and another a link and a word): the way back (`crumbs`: the
+ * server's name, as text, on a section's own page; the path back on a page below it), then the site's sections, then the page's own title
+ * and what belongs right under it (`children`). A page does not compose these by hand.
+ */
+export const PageHead = ({ serverId, crumbs, current, embed = false, admin = false, children }: { serverId: string, crumbs: any, current?: Section, embed?: boolean, admin?: boolean, children?: any }) => (
+  <>
+    <div class="crumbs">{crumbs}</div>
+    {!embed && <Sections serverId={serverId} current={current} admin={admin} />}
+    {children}
+  </>
+)
+
 /** Who is looking, for the header of a page on the website. */
 export interface Viewer { steamId: string, admin: boolean }
 

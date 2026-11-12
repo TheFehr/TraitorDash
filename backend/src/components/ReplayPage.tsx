@@ -1,4 +1,4 @@
-import { Sections, Shell } from './CaseFile'
+import { PageHead, Shell } from './CaseFile'
 import { Crumbs, Who, adminOf, link, type Ctx } from './kit'
 import { duration } from '../format'
 import { teamLabel } from '../teamColours'
@@ -30,9 +30,9 @@ export const ReplayPage = ({ ctx, server, round, hasTrack, src, pinned, here, pi
   const back = link(ctx, `/servers/${id}/rounds/${encodeURIComponent(round.id)}`, { bots })
   return (
     <Shell title={`Replay | ${server.name}`} embed={ctx.embed} viewer={ctx.viewer} scripts={hasTrack ? ['/public/replay.js', ...(admin ? ['/public/confirm.js'] : [])] : []}>
-      <Crumbs><a href={link(ctx, `/servers/${id}/stats`, { view: 'rounds', bots })}>Rounds</a> / <a href={back}>{round.map ? prettyMap(round.map) : 'Round'}</a> / Replay</Crumbs>
-      {!ctx.embed && <Sections serverId={id} admin={adminOf(ctx)} />}
-      <h1>Round replay</h1>
+      <PageHead serverId={id} embed={ctx.embed} admin={adminOf(ctx)} crumbs={<><a href={link(ctx, `/servers/${id}/stats`, { view: 'rounds', bots })}>Rounds</a> / <a href={back}>{round.map ? prettyMap(round.map) : 'Round'}</a> / Replay</>}>
+        <h1>Round replay</h1>
+      </PageHead>
       <p class="muted" style="margin:0 0 var(--space-3)">
         {round.map ? prettyMap(round.map) : 'unknown map'} · {teamLabel(round.result)} · {duration(round.duration)}
         {pinned && <span data-pinned class="pill ok ml2">Pinned</span>}

@@ -1,4 +1,4 @@
-import { Sections, Shell } from './CaseFile'
+import { PageHead, Shell } from './CaseFile'
 import { Bar, Crumbs, ServerName, Num, When, Who, adminOf, link, teamHex, type Ctx } from './kit'
 import { signinUrl } from '../middleware/session'
 import { duration, mapSize } from '../format'
@@ -105,9 +105,9 @@ export const MapsPage = ({ ctx, server, state, maps, activity, showAll, plans, m
   const known = maps.some(m => m.votable !== null)
   return (
     <Shell title={`Maps | ${server.name}`} embed={ctx.embed} viewer={ctx.viewer}>
-      <Crumbs><ServerName ctx={ctx} server={server} /></Crumbs>
-      <h1>Map files</h1>
-      {!ctx.embed && <Sections serverId={id} current="maps" admin={adminOf(ctx)} />}
+      <PageHead serverId={id} embed={ctx.embed} admin={adminOf(ctx)} current="maps" crumbs={<ServerName ctx={ctx} server={server} />}>
+        <h1>Map files</h1>
+      </PageHead>
       {state === null || maps.length === 0
         ? <div class="f"><h2 class="ft">No maps yet</h2><span>The server sends its maps when the bridge starts; this page fills in within a minute of that.</span></div>
         : (
@@ -221,8 +221,7 @@ export const MapFilePage = ({ ctx, server, name, map, state, activity, has3d, ha
   const view = link(ctx, mapPath(id, name))
   return (
     <Shell title={`${name} | ${server.name}`} embed={ctx.embed} viewer={ctx.viewer}>
-      <Crumbs><a href={link(ctx, `${here(id)}/maps`)}>All maps</a> / {prettyMap(name)}</Crumbs>
-      {!ctx.embed && <Sections serverId={id} current="maps" admin={adminOf(ctx)} />}
+      <PageHead serverId={id} embed={ctx.embed} admin={adminOf(ctx)} current="maps" crumbs={<><a href={link(ctx, `${here(id)}/maps`)}>All maps</a> / {prettyMap(name)}</>} />
       <div class="f big" style={`--c:${tabColour(map)}`}>
         <h1>{prettyMap(name)}</h1>
         <p class="file sp1">{name}</p>
@@ -348,8 +347,7 @@ export const MapViewPage = ({ ctx, server, map, name, next, plan, geometry }: Ma
   const hasView = geometry?.status === 'parsed' && !!geometry.info
   return (
     <Shell title={`${name} | ${server.name}`} embed={ctx.embed} viewer={ctx.viewer} scripts={hasView ? ['/public/mapview.js'] : []}>
-      <Crumbs><a href={link(ctx, `${here(id)}/maps`)}>All maps</a> / <a href={link(ctx, `${mapPath(id, name)}/rounds`)}>{prettyMap(name)}</a></Crumbs>
-      {!ctx.embed && <Sections serverId={id} current="maps" admin={adminOf(ctx)} />}
+      <PageHead serverId={id} embed={ctx.embed} admin={adminOf(ctx)} current="maps" crumbs={<><a href={link(ctx, `${here(id)}/maps`)}>All maps</a> / <a href={link(ctx, `${mapPath(id, name)}/rounds`)}>{prettyMap(name)}</a></>} />
       <h1>{prettyMap(name)}</h1>
       <p class="file" style="margin:0 0 var(--space-1)">{name}</p>
       <p class="sp1">

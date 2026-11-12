@@ -1,5 +1,5 @@
-import { Sections, Shell } from './CaseFile'
-import { Crumbs, adminOf, type Ctx } from './kit'
+import { PageHead, Shell } from './CaseFile'
+import { adminOf, type Ctx } from './kit'
 
 // The voice page (RFC 27): the markup voice.ts finds its parts in, in two cards: who is on the voice chat (join, the list, the volumes) and the
 // player's own microphone (how it opens, the filter, the level and the sensitivity). Everything that happens is done by that code; without
@@ -17,10 +17,10 @@ export const VoicePage = ({ ctx, server, enabled }: VoicePageProps) => {
   const id = server.id
   return (
     <Shell title={`Voice | ${server.name}`} embed={ctx.embed} viewer={ctx.viewer} scripts={enabled ? ['/public/voice.js'] : []}>
-      <Crumbs><a href={`/servers/${id}/stats`}>{server.name}</a> / Voice</Crumbs>
-      {!ctx.embed && <Sections serverId={id} current="voice" admin={adminOf(ctx)} />}
-      <h1>Voice chat</h1>
-      <p class="muted" style="margin:0 0 var(--space-3)">Talk to the other players of the server while you play.</p>
+      <PageHead serverId={id} embed={ctx.embed} admin={adminOf(ctx)} current="voice" crumbs={server.name}>
+        <h1>Voice chat</h1>
+        <p class="muted" style="margin:0 0 var(--space-3)">Talk to the other players of the server while you play.</p>
+      </PageHead>
       {!enabled ? (
         <div data-voice-off class="f c-gray">Voice chat is not set up on this dashboard.</div>
       ) : (

@@ -1,5 +1,5 @@
 import type { RoleView, RoleListEntry, Maker } from '../services/roleview'
-import { Sections, Shell, type Viewer } from './CaseFile'
+import { PageHead, Shell, type Viewer } from './CaseFile'
 
 const qs = (o: { embed?: boolean, players?: number | null, q?: string }) => {
   const parts: string[] = []
@@ -40,9 +40,9 @@ export const RoleListPage = ({ server, roles, query, embed, admin, viewer, playe
   const made = roles.filter(r => stateOf(r, players) === 'made').length
   return (
     <Shell title={`Roles | ${server.name}`} embed={embed} viewer={viewer}>
-      <div class="crumbs">{embed ? server.name : <>{server.name} / Roles</>}</div>
-      {!embed && <Sections serverId={server.id} current="roles" admin={admin} />}
-      <h1>Role files</h1>
+      <PageHead serverId={server.id} embed={embed} admin={admin} current="roles" crumbs={server.name}>
+        <h1>Role files</h1>
+      </PageHead>
       <form class="find" method="get" action={base}>
         {embed && <input type="hidden" name="embed" value="1" />}
         {players !== null && <input type="hidden" name="players" value={String(players)} />}
@@ -83,8 +83,7 @@ export const RolePage = ({ server, role, embed, admin, viewer, players = null }:
   const state = stateOf(role, players)
   return (
     <Shell title={`${role.name} | ${server.name}`} embed={embed} viewer={viewer}>
-      <div class="crumbs"><a href={`/servers/${server.id}/roles${qs({ embed, players })}`}>All roles</a> / {role.name}</div>
-      {!embed && <Sections serverId={server.id} current="roles" admin={admin} />}
+      <PageHead serverId={server.id} embed={embed} admin={admin} current="roles" crumbs={<><a href={`/servers/${server.id}/roles${qs({ embed, players })}`}>All roles</a> / {role.name}</>} />
       <article class="f big" style={`--c:${role.color}`}>
         <i class={`stamp ${state === 'off' ? 'off' : ''}`}>{state === 'off' ? 'disabled' : role.team || 'no team'}</i>
         <h1>{role.name}</h1>
