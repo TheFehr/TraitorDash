@@ -255,7 +255,7 @@ describe('renderPlanSvg: one storey', () => {
 
 describe('the legend inside every picture', () => {
   const many = () => storeys({ 48: 40, 272: 40 })
-  const texts = (s: string) => (s.match(/<text[^>]*>[^<]*<\/text>/g) ?? []).map(t => t.replace(/<[^>]+>/g, ''))
+  const texts = (s: string) => [...s.matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map(m => m[1]!)
 
   test('a gradient bar in the same colours as the squares', () => {
     const s = renderPlanSvg(many(), 'ttt_a')!

@@ -1,4 +1,5 @@
 import { expect, test, describe } from 'bun:test'
+import { escapeRe } from './helpers'
 import { PUBLIC_CSS, ADMIN_CSS } from '../src/components/styles'
 
 // Text contrast on the paper cards. The palette (docs/UI_DESIGN.md, 2b) says which colour is for which ground: --muted is for the DARK ground,
@@ -26,7 +27,7 @@ describe('text contrast on the cards', () => {
   })
 
   test('quiet text inside a paper card (.f .muted) is --dim, and the dark cards (.f.few, .f.off) keep --muted', () => {
-    const rule = (sel: string) => new RegExp('^' + sel.replace(/[.[\]=]/g, '\\$&') + '\\{([^}]*)\\}', 'm').exec(PUBLIC_CSS)?.[1]
+    const rule = (sel: string) => new RegExp('^' + escapeRe(sel) + '\\{([^}]*)\\}', 'm').exec(PUBLIC_CSS)?.[1]
     expect(rule('.f .muted')).toContain('color:var(--dim)')
     expect(rule('.muted')).toContain('color:var(--muted)') // everywhere else it stays what it was (the dark ground)
     const dark = /\.f\.few,\.f\.off\{background:(#[0-9a-fA-F]{6})/.exec(PUBLIC_CSS)?.[1]

@@ -1,4 +1,5 @@
 import { expect, test, describe, beforeAll, beforeEach, afterAll } from 'bun:test'
+import { escapeRe } from './helpers'
 import { createHmac } from 'node:crypto'
 import { serializeSigned } from 'hono/utils/cookie'
 
@@ -1047,7 +1048,7 @@ describe('the meter\'s styles', () => {
   // section 23 px down. These tests hold what fixed it; the browser is not run here.
   test('a toggle is the same box pressed and unpressed: same padding, same border width, only the colours change', async () => {
     const css = await Bun.file(new URL('../src/components/styles.ts', import.meta.url)).text()
-    const body = (selector: string) => new RegExp('^' + selector.replace(/[.[\]=]/g, '\\$&') + '\\{([^}]*)\\}', 'm').exec(css)?.[1]
+    const body = (selector: string) => new RegExp('^' + escapeRe(selector) + '\\{([^}]*)\\}', 'm').exec(css)?.[1]
     // The pressed look is the shared rule's, which marks it with a border colour and an inset line and never touches the padding or the
     // border width (it used to give a 2 px border and less padding, which the voice page's own padding could not undo). So here: the
     // voice page's toggle padding is set once, on the base rule, and the shared pressed rule leaves the box alone.
@@ -1066,7 +1067,7 @@ describe('the meter\'s styles', () => {
 
   test('the things whose text changes have a fixed width or one line, so what is beside and under them stays put', async () => {
     const css = await Bun.file(new URL('../src/components/styles.ts', import.meta.url)).text()
-    const rule = (sel: string) => new RegExp('^' + sel.replace(/[.[\]=]/g, '\\$&') + '\\{([^}]*)\\}', 'm').exec(css)?.[1] ?? ''
+    const rule = (sel: string) => new RegExp('^' + escapeRe(sel) + '\\{([^}]*)\\}', 'm').exec(css)?.[1] ?? ''
     // The cards sit as the cards of the other pages do (RFC 30: the shared ".stack" has --space-4 between the cards, as ".g" has between its rows,
     // and the room for the first card's tab above the first): each card has a coloured tab (--tab) above it that takes up part of that space,
     // and with a smaller gap the tab nearly touched the card above it (the owner noticed: the maps page and this page looked different).
@@ -1194,7 +1195,7 @@ describe('the routes', () => {
     expect(await stats()).toContain(link)
     expect(await (await get(`/servers/${server.id}/maps`, ADMIN)).text()).toContain(link) // every page with the section links
     const here = await (await get(`/servers/${server.id}/voice`, ADMIN)).text()
-    expect(here).toMatch(new RegExp(`<a ${link.replace(/[/]/g, '\\/')}[^>]*aria-current="page"`))
+    expect(here).toMatch(new RegExp(`<a ${escapeRe(link)}[^>]*aria-current="page"`))
     configureVoice(null)
     expect(await stats()).not.toContain(link)
   })

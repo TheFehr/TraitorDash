@@ -280,7 +280,7 @@ describe('traitordash_status', () => {
 
   test('a refused URL is shown with the reason', () => {
     const lines = status(withConfig({ url: 'http://public.example', token: 't' }))
-    expect(lines.some(l => l.includes('http://public.example') && l.toLowerCase().includes('refused'))).toBe(true)
+    expect(lines.some(l => /\bhttp:\/\/public\.example\b/.test(l) && l.toLowerCase().includes('refused'))).toBe(true)
   })
 })
 

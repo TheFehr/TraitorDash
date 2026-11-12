@@ -1,4 +1,5 @@
 import { expect, test, describe, beforeAll, beforeEach, afterAll } from 'bun:test'
+import { withoutElements } from './helpers'
 import { Database } from 'bun:sqlite'
 import { serializeSigned } from 'hono/utils/cookie'
 
@@ -297,7 +298,7 @@ describe('the pages', () => {
   const get = async (path: string, as: string | null = null) =>
     app.fetch(new Request(`http://localhost${path}`, { headers: as ? { Cookie: await cookie(as) } : {} }))
   const text = async (path: string, as: string | null = null) => { const r = await get(path, as); return { status: r.status, text: await r.text() } }
-  const noScript = (t: string) => t.replace(/<script[\s\S]*?<\/script>/g, '')
+  const noScript = (t: string) => withoutElements(t, 'script')
 
   test('the Weapons tab lists the weapons, sorted by a link, with no script of its own', async () => {
     await sendOk(round())
