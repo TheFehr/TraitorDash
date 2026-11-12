@@ -252,6 +252,20 @@
         "string",
         "max:128"
       ]
+    },
+    {
+      "sort": 17,
+      "name": "Steam Web API key",
+      "description": "For the names on the voice chat's list of people when neither the game nor a round knows them (RFC 28). Empty means no Steam lookup. Admin-only.",
+      "env_variable": "STEAM_API_KEY",
+      "default_value": "",
+      "user_viewable": false,
+      "user_editable": false,
+      "rules": [
+        "nullable",
+        "string",
+        "max:64"
+      ]
     }
   ]
 }

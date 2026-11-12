@@ -11,6 +11,7 @@ import { refreshAllWorkshopText } from './services/workshopText'
 import { ReplayPage } from './components/ReplayPage'
 import { VoicePage } from './components/VoicePage'
 import { joinToken, roomOf, voiceConfig, voiceHub } from './services/voice'
+import { steamNames } from './services/steamNames'
 import { gzipSync } from 'node:zlib'
 import { getRolesWithState } from './services/roles'
 import { getAdminId, getSession, openSignin, signinUrl, safeNext, type Session } from './middleware/session'
@@ -650,7 +651,7 @@ app.post('/servers/:serverId/voice/token', async (c) => {
   if (!cfg) return c.json({ error: 'Voice chat is not set up' }, 503)
   if (voiceTokenLimiter.hit(session.steamId) > 0) return c.json({ error: 'Too many requests; slow down' }, 429)
   voiceHub.watch(serverId)
-  return c.json({ url: cfg.url, token: joinToken(cfg, roomOf(serverId), session.steamId, (voiceHub.nameOf(serverId, session.steamId) ?? Store.getNick(serverId, session.steamId) ?? session.steamId).slice(0, 64)) })
+  return c.json({ url: cfg.url, token: joinToken(cfg, roomOf(serverId), session.steamId, (voiceHub.nameOf(serverId, session.steamId) ?? Store.getNick(serverId, session.steamId) ?? steamNames.names([session.steamId]).get(session.steamId) ?? session.steamId).slice(0, 64)) })
 })
 
 export const voicePeopleLimiter = new RateLimiter(60, 60_000)
@@ -665,7 +666,11 @@ app.get('/servers/:serverId/voice/people', async (c) => {
   if (voicePeopleLimiter.hit(session.steamId) > 0) return c.json({ error: 'Too many requests; slow down' }, 429)
   const list = await voiceHub.people(serverId)
   c.header('Cache-Control', 'no-store')
-  return c.json({ people: list.map(p => ({ id: p.id, name: (p.name && p.name !== p.id ? p.name : voiceHub.nameOf(serverId, p.id) ?? Store.getNick(serverId, p.id) ?? p.id).slice(0, 64) })) })
+  // The order of RFC 28, 2: what the media server holds (fixed when the person joined), the game now, the last round, Steam, the SteamID64.
+  // Steam is asked (in the background) only for the people on this list that the first ones do not know.
+  const known = list.map(p => p.name && p.name !== p.id ? p.name : voiceHub.nameOf(serverId, p.id) ?? Store.getNick(serverId, p.id))
+  const fromSteam = steamNames.names(list.filter((_, i) => known[i] === null).map(p => p.id))
+  return c.json({ people: list.map((p, i) => ({ id: p.id, name: (known[i] ?? fromSteam.get(p.id) ?? p.id).slice(0, 64) })) })
 })
 
 app.get('/servers/:serverId/players/:playerId', async (c) => {
