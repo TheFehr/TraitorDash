@@ -169,9 +169,9 @@ describe('voice.lua', () => {
   })
 
   test('says nothing new until something changes, and the same again every five seconds', () => {
-    const r = play('Run(8)') // 8 looks of half a second: 4 seconds
+    const r = play('Run(16)') // 16 looks of a quarter of a second: 4 seconds
     expect(r.sent).toHaveLength(1)
-    const r2 = play('Run(12)') // 6 seconds
+    const r2 = play('Run(24)') // 6 seconds
     expect(r2.sent).toHaveLength(2)
     expect(r2.sent.map(m => m.body.seq)).toEqual([1, 2])
     expect(r2.sent[1]!.body.alive).toEqual([A, B, C])
@@ -284,6 +284,39 @@ describe('voice.lua', () => {
     test('does not depend on the state messages: it works with traitordash_voice off', () => {
       const r = play('OUT = { cmds = CMDS, sent = #SENT }', { on: false, mute: true })
       expect(r.out).toEqual({ cmds: ['sv_voiceenable 0'], sent: 0 })
+    })
+  })
+
+  describe('a death reaches the dashboard at once (it must be heard by the living for under a second)', () => {
+    test('the look is every quarter of a second', () => {
+      expect(play('OUT = { delay = TIMERS.TraitorDash_VoiceState.delay }').out).toEqual({ delay: 0.25 })
+    })
+
+    test('a death is counted from the hook, even while the game still says the player is on the living team', () => {
+      const r = play(`
+        Run(1)
+        Fire("TTT2PostPlayerDeath", B)  -- B.alive is still true: the game has not changed the team yet
+        Flush()
+      `)
+      expect(r.sent.map(m => m.body.alive)).toEqual([[A, B, C], [A, C]])
+    })
+
+    test('and again a moment later, in case the game was not done with the death yet', () => {
+      const r = play('Run(1) Fire("TTT2PostPlayerDeath", B) OUT = { queued = #SIMPLE }')
+      expect(r.out.queued).toBe(2) // one at once, one 0.15 s later
+    })
+
+    test('a spawn undoes it (a revival), and the team is the answer again after the grace', () => {
+      const revived = play('Run(1) Fire("TTT2PostPlayerDeath", B) Flush() Fire("PlayerSpawn", B) Flush()')
+      expect(revived.sent.map(m => m.body.alive)).toEqual([[A, B, C], [A, C], [A, B, C]])
+      // a player still on the living team two seconds after the hook is alive (the hook was early, or the revival came without a spawn)
+      const grace = play('Run(1) Fire("TTT2PostPlayerDeath", B) Flush() Run(10)')
+      expect(grace.sent.map(m => m.body.alive)).toEqual([[A, B, C], [A, C], [A, B, C]])
+    })
+
+    test('with voice off the death hook does nothing', () => {
+      const r = play('Fire("TTT2PostPlayerDeath", B) Flush()', { on: false })
+      expect(r.sent).toEqual([])
     })
   })
 

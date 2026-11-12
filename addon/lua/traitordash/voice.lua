@@ -21,7 +21,8 @@ local cv_voice = CreateConVar("traitordash_voice", "0", {FCVAR_ARCHIVE}, "Send t
 local cv_mute = CreateConVar("traitordash_voice_mute_game", "0", {FCVAR_ARCHIVE}, "Turn the game's own voice off (sv_voiceenable 0) while the dashboard's voice chat is used (1/0).")
 
 local TIMER = "TraitorDash_VoiceState"
-local CHECK_EVERY = 0.5 -- seconds between looks at who is alive
+local CHECK_EVERY = 0.25 -- seconds between looks at who is alive (a loop over about ten players: cheap)
+local DEATH_GRACE = 2 -- seconds a player who has just died counts as dead whatever the team still says
 local REPEAT_EVERY = 5  -- seconds before an unchanged state is sent again
 local MAX_ALIVE = 128
 
@@ -45,12 +46,24 @@ end
 
 -- The living players who are people, by SteamID64, in a fixed order. IsTerror is what TTT counts as alive: a player being revived
 -- is not one until the game says so, and a spectator never is.
+-- Who has just died, by SteamID64, and when: the death hook says a player died, but the game may change their team a moment after it, and a
+-- look in between would still see them alive and keep them audible to the living until the next look. A death is therefore counted at
+-- once, from the hook; it is undone by the player spawning again (a revival), and in any case after DEATH_GRACE seconds, when the team
+-- itself is the answer again.
+local justDied = {}
+local function JustDied(sid)
+    local at = justDied[sid]
+    if not at then return false end
+    if CurTime() - at >= DEATH_GRACE then justDied[sid] = nil return false end
+    return true
+end
+
 local function Alive()
     local list = {}
     for _, ply in ipairs(player.GetAll()) do
         if IsValid(ply) and not ply:IsBot() and ply:IsTerror() then
             local sid = ply:SteamID64()
-            if sid and #sid == 17 and #list < MAX_ALIVE then list[#list + 1] = sid end
+            if sid and #sid == 17 and #list < MAX_ALIVE and not JustDied(sid) then list[#list + 1] = sid end
         end
     end
     table.sort(list)
@@ -178,8 +191,19 @@ end
 hook.Add("TTTPrepareRound", "TraitorDash_VoicePrepare", function() hookPhase = "prep"; Soon(); SafeApplyGameVoice() end)
 hook.Add("TTTBeginRound", "TraitorDash_VoiceBegin", function() hookPhase = "active"; Soon() end)
 hook.Add("TTTEndRound", "TraitorDash_VoiceEnd", function() hookPhase = "over"; Soon() end)
-hook.Add("TTT2PostPlayerDeath", "TraitorDash_VoiceDeath", Soon)
-hook.Add("PlayerSpawn", "TraitorDash_VoiceSpawn", Soon)
+hook.Add("TTT2PostPlayerDeath", "TraitorDash_VoiceDeath", function(victim)
+    if not cv_voice:GetBool() then return end
+    if IsValid(victim) and victim.SteamID64 then
+        local sid = victim:SteamID64()
+        if sid and #sid == 17 then justDied[sid] = CurTime() end
+    end
+    Soon()
+    timer.Simple(0.15, SafeCheck) -- and again a moment later, in case the game was not done with the death yet
+end)
+hook.Add("PlayerSpawn", "TraitorDash_VoiceSpawn", function(ply)
+    if IsValid(ply) and ply.SteamID64 then justDied[ply:SteamID64() or ""] = nil end -- a spawn is a revival (or a new round): alive again
+    Soon()
+end)
 hook.Add("PlayerDisconnected", "TraitorDash_VoiceLeft", Soon)
 hook.Add("TTT2AddedEvent", "TraitorDash_VoiceEvent", Soon)
 

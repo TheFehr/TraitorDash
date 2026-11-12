@@ -163,6 +163,8 @@ class FakeRoom {
   people: Participant[] = []
   subs = new Map<string, Set<string>>() // listener identity -> tracks
   calls: string[] = []
+  order: string[] = [] // every call that changed something, in the order it was made: 'drop', 'add', 'name'
+  latency = 0 // ms each call to the media server takes (a real one is a round trip)
   renames: string[] = []
   failNext = false
   failName = false
@@ -173,13 +175,17 @@ class FakeRoom {
   }
   leave(identity: string) { this.people = this.people.filter(p => p.identity !== identity); this.subs.delete(identity) }
   api = {
-    listParticipants: async () => this.people.map(p => ({ ...p })),
+    listParticipants: async () => { if (this.latency) await new Promise(r => setTimeout(r, this.latency)); return this.people.map(p => ({ ...p })) },
     updateParticipantName: async (_room: string, identity: string, name: string) => {
+      if (this.latency) await new Promise(r => setTimeout(r, this.latency))
+      this.order.push('name')
       if (this.failName) { this.failName = false; throw new Error('down') }
       this.renames.push(`${identity.slice(-2)}=${name}`)
       const p = this.people.find(x => x.identity === identity); if (p) p.name = name
     },
     updateSubscriptions: async (_room: string, identity: string, tracks: string[], subscribe: boolean) => {
+      if (this.latency) await new Promise(r => setTimeout(r, this.latency))
+      this.order.push(subscribe ? 'add' : 'drop')
       if (this.failNext) { this.failNext = false; throw new Error('down') }
       this.calls.push(`${identity.slice(-2)}${subscribe ? '+' : '-'}${tracks.length}`)
       const set = this.subs.get(identity)!
@@ -871,6 +877,64 @@ describe('the noise filter files', () => {
     expect(await Bun.file(root + '.gitignore').text()).toContain('src/public/gate.js')
     expect(await Bun.file(root + 'src/voice.ts').text()).toContain("addModule('/public/gate.js')")
     expect(await Bun.file(root + 'src/gate-worklet.ts').text()).toContain("registerProcessor('td-gate'")
+  })
+})
+
+describe('how long a death takes to reach the ears (the living must stop hearing the dead in under a second)', () => {
+  const ten = Array.from({ length: 10 }, (_, i) => `7656119800000${String(i + 10).padStart(4, '0')}`)
+  const setup = (latency: number) => {
+    const room = new FakeRoom()
+    const hub = new VoiceHub(room.api, () => 10_000, () => {})
+    for (const id of ten) room.join(id)
+    room.latency = latency
+    return { room, hub }
+  }
+
+  test('ten players: the pass costs about two round trips of the media server, not one per player (parallel; it was 20+ calls in a row)', async () => {
+    const { room, hub } = setup(20)
+    hub.setState('srv', { boot: 1, seq: 1, phase: 'active', alive: ten, names: {} })
+    await hub.reconcile('srv')
+    room.order.length = 0
+    hub.setState('srv', { boot: 1, seq: 2, phase: 'active', alive: ten.slice(1), names: {} }) // the first player dies
+    const t0 = performance.now()
+    await hub.reconcile('srv')
+    const ms = performance.now() - t0
+    // read the room (20 ms) + all the unsubscriptions at once (20 ms) + the dead player's new subscriptions (20 ms): about 60 ms. One after
+    // another it was 20 + 9 x 20 + 20 = 220 ms with only ten players and an instant media server.
+    expect(ms).toBeLessThan(140)
+    expect(hub.lastPassMs).toBeLessThan(140)
+    expect(room.hears(ten[1]!)).not.toContain(ten[0]) // the dead is no longer heard by the living
+    expect(room.hears(ten[0]!)).toEqual(ten.slice(1).sort()) // and hears everyone
+  })
+
+  test('the tracks to take away go before the tracks to give, and nothing to do with names comes before either', async () => {
+    const { room, hub } = setup(5)
+    hub.setNameResolver((_s, id) => (id === ten[2] ? 'Somebody' : null))
+    room.people.forEach(p => { p.name = p.identity })
+    hub.setState('srv', { boot: 1, seq: 1, phase: 'active', alive: ten, names: {} })
+    await hub.reconcile('srv')
+    room.order.length = 0
+    hub.setNameResolver((_s, id) => (id === ten[2] ? 'Somebody else' : null)) // a name is still to be put right, in the very pass of the death
+    hub.setState('srv', { boot: 1, seq: 2, phase: 'active', alive: ten.slice(1), names: {} })
+    await hub.reconcile('srv')
+    const firstName = room.order.indexOf('name')
+    const lastRouting = Math.max(room.order.lastIndexOf('drop'), room.order.lastIndexOf('add'))
+    expect(room.order).toContain('drop')
+    expect(firstName).toBeGreaterThan(-1) // there was a name to put right...
+    expect(firstName).toBeGreaterThan(lastRouting) // ...and it was done after all the routing: a name never delays a mute
+    // per listener the drop comes first: the first call made for the dead player's death is a drop
+    expect(room.order[0]).toBe('drop')
+  })
+
+  test('a slow media server is said in the log, with how slow (so a death that takes long can be found)', async () => {
+    const room = new FakeRoom()
+    const logs: string[] = []
+    const hub = new VoiceHub(room.api, () => 10_000, (m) => logs.push(m))
+    for (const id of ten.slice(0, 3)) room.join(id)
+    room.latency = 450
+    await hub.reconcile('srv')
+    expect(hub.lastPassMs).toBeGreaterThan(400)
+    expect(logs.some(l => /a pass took \d+ ms/.test(l))).toBe(true)
   })
 })
 

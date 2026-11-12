@@ -222,9 +222,13 @@ export class VoiceHub {
     return next
   }
 
+  /** How long the last pass took, from asking the media server who is in the room to its last answer (ms): the time a death takes to reach the ears. */
+  lastPassMs = 0
+
   private async pass(serverId: string): Promise<number> {
     const api = this.api
     if (!api) return 0
+    const started = performance.now()
     let calls = 0
     try {
       const room = roomOf(serverId)
@@ -239,28 +243,16 @@ export class VoiceHub {
       if (this.watched.has(serverId)) this.watched.set(serverId, 0)
       // Now and then everything is given again from nothing, in case a call was lost without an error.
       if (now - (this.lastFull.get(serverId) ?? 0) > 30_000) { this.applied.delete(serverId); this.lastFull.set(serverId, now) }
-      // The name each participant shows in the room is the one in their token, made when they joined: a player the dashboard knew nothing about
-      // then (a Steam name still on its way, a nick the game server had not sent) shows as digits to the others until this puts it right.
-      if (this.nameFor) {
-        const done = this.named.get(serverId) ?? new Map<string, string>()
-        this.named.set(serverId, done)
-        const here = new Set(parts.map(p => p.sid))
-        for (const sid of [...done.keys()]) if (!here.has(sid)) done.delete(sid)
-        for (const p of parts) {
-          const want = this.nameFor(serverId, p.identity)?.slice(0, 64)
-          if (!want || want === p.name || done.get(p.sid) === want) continue
-          try { await api.updateParticipantName(room, p.identity, want); done.set(p.sid, want); calls++ } catch (err) {
-            this.log(`[Voice] could not set the name of ${p.identity}: ${(err as Error).message}`)
-          }
-        }
-      }
       const book = this.applied.get(serverId) ?? new Map<string, Set<string>>()
       this.applied.set(serverId, book)
       const present = new Set(parts.map(p => p.sid))
       for (const sid of [...book.keys()]) if (!present.has(sid)) book.delete(sid)
       const everyTrack = new Set(parts.flatMap(p => p.audio))
       const state = this.states.get(serverId) ?? null
-      for (const listener of parts) {
+      // What a death must reach the ears of the others within a second (a dead player must not be heard by the living): so the listeners are
+      // all done at once, not one after another, and for each one the tracks to take away go before the tracks to give. One call each way at
+      // most per listener, in parallel: about two round trips to the media server in all, however many players there are.
+      await Promise.all(parts.map(async (listener) => {
         const want = new Set<string>()
         for (const speaker of parts) {
           if (speaker.sid !== listener.sid && canHear(state, listener.identity, speaker.identity, now)) for (const t of speaker.audio) want.add(t)
@@ -269,12 +261,29 @@ export class VoiceHub {
         const add = [...want].filter(t => !have.has(t))
         const drop = [...have].filter(t => !want.has(t) && everyTrack.has(t))
         try {
-          if (add.length) { await api.updateSubscriptions(room, listener.identity, add, true); calls++ }
           if (drop.length) { await api.updateSubscriptions(room, listener.identity, drop, false); calls++ }
+          if (add.length) { await api.updateSubscriptions(room, listener.identity, add, true); calls++ }
           book.set(listener.sid, want)
         } catch (err) {
           this.log(`[Voice] could not set what ${listener.identity} hears: ${(err as Error).message}`)
         }
+      }))
+      this.lastPassMs = performance.now() - started
+      if (this.lastPassMs > 400) this.log(`[Voice] a pass took ${Math.round(this.lastPassMs)} ms (the media server is slow; a death reaches the others that much later)`)
+      // The name each participant shows in the room is the one in their token, made when they joined: a player the dashboard knew nothing about
+      // then (a Steam name still on its way, a nick the game server had not sent) shows as digits to the others until this puts it right.
+      // After the routing, never before it: nothing here may delay a mute.
+      if (this.nameFor) {
+        const done = this.named.get(serverId) ?? new Map<string, string>()
+        this.named.set(serverId, done)
+        for (const sid of [...done.keys()]) if (!present.has(sid)) done.delete(sid)
+        await Promise.all(parts.map(async (p) => {
+          const want = this.nameFor!(serverId, p.identity)?.slice(0, 64)
+          if (!want || want === p.name || done.get(p.sid) === want) return
+          try { await api.updateParticipantName(room, p.identity, want); done.set(p.sid, want); calls++ } catch (err) {
+            this.log(`[Voice] could not set the name of ${p.identity}: ${(err as Error).message}`)
+          }
+        }))
       }
     } catch (err) {
       this.log(`[Voice] could not read the room of ${serverId}: ${(err as Error).message}`)
