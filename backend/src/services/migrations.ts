@@ -511,6 +511,11 @@ export const migrations: Array<(db: Database) => void> = [
   (db) => {
     db.run('ALTER TABLE servers ADD COLUMN map_cooldown INTEGER')
   },
+
+  // v30 (RFC 28): profile names from the Steam Web API, for the voice chat. A NULL name is a miss (no profile, or no name), kept for less time.
+  (db) => {
+    db.run('CREATE TABLE steam_names (steam_id TEXT PRIMARY KEY, name TEXT, fetched_at INTEGER NOT NULL)')
+  },
 ]
 
 /** Brings `db` up to the latest schema, in one transaction. */

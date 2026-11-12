@@ -64,6 +64,17 @@ describe('pelican/egg-traitordash.json', () => {
     expect(vars.LIVEKIT_API_SECRET.user_viewable).toBe(false)
     expect(vars.LIVEKIT_API_SECRET.user_editable).toBe(false)
   })
+
+  test('STEAM_API_KEY (RFC 28) is read by the app, declared, empty by default, nullable and admin-only', () => {
+    const steam = fs.readFileSync(path.join(root, 'backend/src/services/steamNames.ts'), 'utf8')
+    expect(steam).toContain('process.env.STEAM_API_KEY')
+    const v = vars.STEAM_API_KEY
+    expect(v).toBeDefined()
+    expect(v.default_value).toBe('')
+    expect(v.rules).toContain('nullable')
+    expect(v.user_viewable).toBe(false)
+    expect(v.user_editable).toBe(false)
+  })
 })
 
 describe('the installer script (exact map geometry, RFC 11)', () => {
