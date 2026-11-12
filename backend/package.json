@@ -7,7 +7,7 @@
     "dev": "bun run --hot src/index.tsx",
     "watch:js": "bun build src/frontend.ts --outdir src/public --watch & bun build src/confirm.ts --outdir src/public --watch & bun build src/mapview.ts --outdir src/public --format=iife --watch & bun build src/replay.ts --outdir src/public --format=iife --watch & bun build src/voice.ts --outdir src/public --format=iife --watch & bun build src/gate-worklet.ts --outfile src/public/gate.js --format=iife --watch",
     "build:js": "bun build src/frontend.ts --outdir src/public --minify && bun build src/confirm.ts --outdir src/public --minify && bun build src/mapview.ts --outdir src/public --minify --format=iife && bun build src/replay.ts --outdir src/public --minify --format=iife && bun build src/voice.ts --outdir src/public --minify --format=iife && bun build src/gate-worklet.ts --outfile src/public/gate.js --minify --format=iife && bun run scripts/oldbrowsers.ts src/public/frontend.js src/public/confirm.js src/public/mapview.js src/public/replay.js && bun run copy:rnnoise",
-    "copy:rnnoise": "mkdir -p src/public/rnnoise && cp node_modules/@sapphi-red/web-noise-suppressor/dist/rnnoise/workletProcessor.js src/public/rnnoise/worklet.js && cp node_modules/@sapphi-red/web-noise-suppressor/dist/rnnoise.wasm node_modules/@sapphi-red/web-noise-suppressor/dist/rnnoise_simd.wasm src/public/rnnoise/ && cp node_modules/@sapphi-red/web-noise-suppressor/LICENSE src/public/rnnoise/LICENSE",
+    "copy:rnnoise": "bun run scripts/copy-rnnoise.ts",
     "build": "bun run build:js",
     "source-hash": "bun run scripts/source-hash.ts",
     "prepare": "cd .. && husky backend/.husky || true"
