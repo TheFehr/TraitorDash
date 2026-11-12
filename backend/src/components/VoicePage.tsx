@@ -33,7 +33,7 @@ export const VoicePage = ({ ctx, server, enabled }: VoicePageProps) => {
             </p>
 
             <div class="row">
-              <button data-join type="button" class="tog">Join voice</button>
+              <button data-join type="button" class="tog jn">Join voice</button>
               <span data-status role="status">Not connected.</span>
               <span class="muted">Connected: <span data-count>0</span></span>
             </div>
@@ -65,7 +65,6 @@ export const VoicePage = ({ ctx, server, enabled }: VoicePageProps) => {
                 <button type="button" data-filter="off" aria-pressed="false" class="tog">Off</button>
                 <button type="button" data-monitor aria-pressed="false" class="tog">Hear myself</button>
               </div>
-              <p class="muted" data-filter-note></p>
               <p class="muted">The filter (RNNoise) takes fans, keys and other noise out of your voice before it is sent. "Hear myself" plays your microphone back to you as the others hear it: use headphones, or it will howl.</p>
             </div>
 
@@ -84,7 +83,7 @@ export const VoicePage = ({ ctx, server, enabled }: VoicePageProps) => {
                 <button type="button" data-measure class="tog">Measure my room</button>
                 <button type="button" data-auto aria-pressed="false" class="tog">Adjust by itself</button>
               </div>
-              <p class="muted note" data-measure-note role="status"></p>
+              <p class="muted note mnote" data-measure-note role="status"></p>
               <p class="muted">"Measure my room" listens for 3 seconds while you stay quiet and sets the line for you. "Adjust by itself" keeps following the room's noise while you are not talking (it is off until you switch it on).</p>
               <details>
                 <summary>Advanced</summary>
@@ -95,7 +94,6 @@ export const VoicePage = ({ ctx, server, enabled }: VoicePageProps) => {
                 </div>
                 <p class="muted" style="margin-top:.35rem">The microphone stays open until the sound has been below this level for a quarter of a second. It cannot be higher than the opening level.</p>
               </details>
-              <p class="muted" data-gate-note role="status"></p>
             </div>
 
             <div data-ptt-box style="display:none">
@@ -105,6 +103,9 @@ export const VoicePage = ({ ctx, server, enabled }: VoicePageProps) => {
                 <span class="muted">Works only while this tab has the focus; a helper app for use during the game comes later.</span>
               </div>
             </div>
+
+            <p class="muted" data-filter-note role="status"></p>
+            <p class="muted" data-gate-note role="status"></p>
           </div>
 
           <div data-audio style="display:none"></div>

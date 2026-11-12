@@ -69,6 +69,8 @@ function start(root: HTMLElement) {
   const $ = <T extends HTMLElement>(sel: string) => root.querySelector<T>(sel)!
   const join = $<HTMLButtonElement>('[data-join]')
   const status = $('[data-status]')
+  // The status and the who-is-on line are one line each (cut with an ellipsis, so a long error cannot grow the row); the title holds the whole text.
+  const say = (el: HTMLElement, text: string) => { el.textContent = text; el.title = text }
   const level = $<HTMLElement>('[data-level]')
   const marker = $<HTMLElement>('[data-marker]')
   const markerClose = $<HTMLElement>('[data-marker-close]')
@@ -285,7 +287,7 @@ function start(root: HTMLElement) {
       const data = res.ok ? await res.json() as { people?: { id: string, name: string }[] } : null
       if (data && Array.isArray(data.people) && !room) {
         count.textContent = String(data.people.length)
-        who.textContent = data.people.length ? 'On now: ' + data.people.map(p => p.name).join(', ') : 'Nobody is on the voice chat.'
+        say(who, data.people.length ? 'On now: ' + data.people.map(p => p.name).join(', ') : 'Nobody is on the voice chat.')
       }
     } catch { /* the next look tries again */ }
     if (!room) pollTimer = window.setTimeout(poll, 5000)
@@ -313,13 +315,13 @@ function start(root: HTMLElement) {
     dbOut.textContent = ''
     people()
     join.textContent = 'Join voice'
-    status.textContent = 'Not connected.'
+    say(status, 'Not connected.')
     void poll()
   }
 
   const enter = async () => {
     join.disabled = true
-    status.textContent = 'Connecting…'
+    say(status, 'Connecting…')
     ctx = new AudioContext({ sampleRate: 48000 }) // (the noise filter needs 48 kHz) here, in the click, not after the awaits below: a browser starts an audio context that is made later suspended
     try {
       const res = await fetch(root.dataset.token!, { method: 'POST', credentials: 'same-origin' })
@@ -332,8 +334,8 @@ function start(root: HTMLElement) {
       r.on(RoomEvent.ParticipantConnected, people)
       r.on(RoomEvent.ParticipantDisconnected, people)
       r.on(RoomEvent.ParticipantNameChanged, people) // the dashboard puts a name right after the player has joined (RFC 28)
-      r.on(RoomEvent.Reconnecting, () => { status.textContent = 'Reconnecting…' })
-      r.on(RoomEvent.Reconnected, () => { status.textContent = 'Connected.' })
+      r.on(RoomEvent.Reconnecting, () => { say(status, 'Reconnecting…') })
+      r.on(RoomEvent.Reconnected, () => { say(status, 'Connected.') })
       r.on(RoomEvent.Disconnected, () => { if (room === r) void leave() })
       await r.connect(url, token, { autoSubscribe: false })
       room = r
@@ -368,14 +370,14 @@ function start(root: HTMLElement) {
         await watchFallback(mic)
       }
       window.clearTimeout(pollTimer)
-      who.textContent = ''
+      say(who, '')
       people()
       join.textContent = 'Leave voice'
-      status.textContent = 'Connected.'
+      say(status, 'Connected.')
     } catch (err) {
       await leave()
       const denied = err instanceof DOMException && (err.name === 'NotAllowedError' || err.name === 'NotFoundError')
-      status.textContent = denied ? 'The microphone is not allowed or not found.' : `Could not connect: ${(err as Error).message}`
+      say(status, denied ? 'The microphone is not allowed or not found.' : `Could not connect: ${(err as Error).message}`)
     } finally {
       join.disabled = false
     }

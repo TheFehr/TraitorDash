@@ -205,6 +205,11 @@ html.theater{overflow:hidden}
 .vc .row{display:flex;flex-wrap:wrap;gap:.5rem 1rem;align-items:center}
 .vc .cap{margin:0 0 .35rem}
 .vc .tog{margin-right:0;padding:.3rem .9rem;font-size:1rem}
+.vc.f .tog[aria-pressed=true]{padding:.3rem .9rem;border-width:1px;border-color:var(--ink)}
+.vc .jn{min-width:9.5rem}
+.vc [data-status]{flex:1 1 11rem;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vc [data-count]{display:inline-block;min-width:2ch}
+.vc [data-who]{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .vc input[type=range]{width:11rem;accent-color:var(--ink);margin:0}
 .vc input[type=text]{width:3rem;text-align:center}
 .vc .person{display:flex;flex-wrap:wrap;gap:.4rem 1rem;align-items:center;padding:.25rem 0;border-top:1px solid var(--dim)}
@@ -218,8 +223,10 @@ html.theater{overflow:hidden}
 .vcs{display:flex;flex-direction:column;gap:1rem}
 .vc .ft{margin-bottom:0}
 .vc .note{min-height:1.4em}
-.vc .lvl-read{display:flex;gap:1rem;align-items:baseline;min-height:1.6em}
-.vc .db{min-width:5.5rem}
+.vc .lvl-read{display:flex;gap:1rem;align-items:flex-start;min-height:1.6em}
+.vc .mnote{min-height:2.8em}
+@media (max-width:640px){.vc .mnote{min-height:5.6em}}
+.vc .db{min-width:6.5rem}
 .vc .talk{min-width:5rem}
 .vc .lvl-legend{font-size:.85rem}
 .vc summary{cursor:pointer;font-weight:700}
