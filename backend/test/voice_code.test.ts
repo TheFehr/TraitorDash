@@ -13,6 +13,7 @@ import { VoiceCodes, CODE_ALPHABET, CODE_TTL_MS, PLAYER_WAIT_MS, MAX_CODES, MAX_
 
 const ADMIN = '76561198000000000', P1 = '76561198000000041', P2 = '76561198000000042', P3 = '76561198000000043'
 
+const SRV = 'srv-A'
 const store = (start = 1_000_000) => {
   const clock = { now: start }
   return { clock, codes: new VoiceCodes(() => clock.now) }
@@ -31,7 +32,7 @@ describe('the code', () => {
     const { codes } = store()
     const seen = new Set<string>()
     for (let i = 0; i < 200; i++) {
-      const code = codeOf(codes.issue(`7656119800000${String(1000 + i)}`))
+      const code = codeOf(codes.issue(`7656119800000${String(1000 + i)}`, SRV))
       expect(code).toMatch(/^[23456789BCDFGHJKMNPQRSTVWXYZ]{6}$/)
       expect(showCode(code)).toMatch(/^[23456789BCDFGHJKMNPQRSTVWXYZ]{3}-[23456789BCDFGHJKMNPQRSTVWXYZ]{3}$/)
       seen.add(code)
@@ -50,26 +51,43 @@ describe('the code', () => {
 
   test('what was issued is redeemed in any spelling the person types', () => {
     const { codes } = store()
-    const code = codeOf(codes.issue(P1))
-    expect(codes.redeem(showCode(code).toLowerCase().replace('-', ' '))).toBe(P1)
+    const code = codeOf(codes.issue(P1, SRV))
+    expect(codes.redeem(showCode(code).toLowerCase().replace('-', ' '))?.steamId).toBe(P1)
+  })
+})
+
+describe('the server that issued a code', () => {
+  test('a code remembers the server it was issued for, and redeeming gives it with the player', () => {
+    const { codes } = store()
+    const a = codeOf(codes.issue(P1, 'srv-A')), b = codeOf(codes.issue(P2, 'srv-B'))
+    expect(codes.redeem(b)).toEqual({ steamId: P2, serverId: 'srv-B' })
+    expect(codes.redeem(a)).toEqual({ steamId: P1, serverId: 'srv-A' })
+  })
+
+  test('the same player asking from another server later gets that server', () => {
+    const { clock, codes } = store()
+    codeOf(codes.issue(P1, 'srv-A'))
+    clock.now += PLAYER_WAIT_MS
+    const second = codeOf(codes.issue(P1, 'srv-B'))
+    expect(codes.redeem(second)?.serverId).toBe('srv-B')
   })
 })
 
 describe('single use, five minutes, replacement', () => {
   test('a code is used up by the first entry: the same code again gives nothing', () => {
     const { codes } = store()
-    const code = codeOf(codes.issue(P1))
-    expect(codes.redeem(code)).toBe(P1)
+    const code = codeOf(codes.issue(P1, SRV))
+    expect(codes.redeem(code)?.steamId).toBe(P1)
     expect(codes.redeem(code)).toBeNull()
     expect(codes.size).toBe(0)
   })
 
   test('a code works until exactly five minutes after it was made, and not at five minutes', () => {
     const { clock, codes } = store()
-    const a = codeOf(codes.issue(P1)), b = codeOf(codes.issue(P2)), c = codeOf(codes.issue(P3))
+    const a = codeOf(codes.issue(P1, SRV)), b = codeOf(codes.issue(P2, SRV)), c = codeOf(codes.issue(P3, SRV))
     expect(CODE_TTL_MS).toBe(300_000)
     clock.now += CODE_TTL_MS - 1
-    expect(codes.redeem(a)).toBe(P1)
+    expect(codes.redeem(a)?.steamId).toBe(P1)
     clock.now += 1
     expect(codes.redeem(b)).toBeNull()
     clock.now += 60_000
@@ -78,42 +96,42 @@ describe('single use, five minutes, replacement', () => {
 
   test('a new code for a player replaces the old one, which no longer works', () => {
     const { clock, codes } = store()
-    const first = codeOf(codes.issue(P1))
+    const first = codeOf(codes.issue(P1, SRV))
     clock.now += PLAYER_WAIT_MS
-    const second = codeOf(codes.issue(P1))
+    const second = codeOf(codes.issue(P1, SRV))
     expect(second).not.toBe(first)
     expect(codes.redeem(first)).toBeNull()
-    expect(codes.redeem(second)).toBe(P1)
+    expect(codes.redeem(second)?.steamId).toBe(P1)
     expect(codes.size).toBe(0)
   })
 
   test('a player gets one new code every ten seconds, and is told how long to wait; another player is not held up', () => {
     const { clock, codes } = store()
-    codeOf(codes.issue(P1))
+    codeOf(codes.issue(P1, SRV))
     clock.now += PLAYER_WAIT_MS - 1
-    expect(codes.issue(P1)).toEqual({ wait: 1 })
-    expect('code' in codes.issue(P2)).toBe(true)
+    expect(codes.issue(P1, SRV)).toEqual({ wait: 1 })
+    expect('code' in codes.issue(P2, SRV)).toBe(true)
     clock.now += 1
-    expect('code' in codes.issue(P1)).toBe(true)
+    expect('code' in codes.issue(P1, SRV)).toBe(true)
   })
 
   test('the replaced code does not take the new one with it when it expires', () => {
     const { clock, codes } = store()
-    codeOf(codes.issue(P1))
+    codeOf(codes.issue(P1, SRV))
     clock.now += 200_000
-    const second = codeOf(codes.issue(P1))
+    const second = codeOf(codes.issue(P1, SRV))
     clock.now += 200_000 // the first would have expired by now; the second has 100 s left
-    expect(codes.redeem(second)).toBe(P1)
+    expect(codes.redeem(second)?.steamId).toBe(P1)
   })
 })
 
 describe('the cap and the sweep', () => {
   test('there are never more than the cap; the oldest goes first', () => {
     const { clock, codes } = store()
-    const first = codeOf(codes.issue('76561198000009999'))
+    const first = codeOf(codes.issue('76561198000009999', SRV))
     for (let i = 0; i < MAX_CODES + 20; i++) {
       clock.now += 1
-      codes.issue(`7656119800${String(100000 + i)}`)
+      codes.issue(`7656119800${String(100000 + i)}`, SRV)
     }
     expect(codes.size).toBe(MAX_CODES)
     expect(codes.redeem(first)).toBeNull()
@@ -121,10 +139,10 @@ describe('the cap and the sweep', () => {
 
   test('every call sweeps what has expired: asking for a code frees the memory of the old ones', () => {
     const { clock, codes } = store()
-    for (let i = 0; i < 50; i++) codes.issue(`7656119800${String(100000 + i)}`)
+    for (let i = 0; i < 50; i++) codes.issue(`7656119800${String(100000 + i)}`, SRV)
     expect(codes.size).toBe(50)
     clock.now += CODE_TTL_MS
-    codes.issue(P1)
+    codes.issue(P1, SRV)
     expect(codes.size).toBe(1)
     clock.now += CODE_TTL_MS
     codes.redeem('222222')

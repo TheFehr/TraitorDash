@@ -165,8 +165,8 @@ auth.get('/game', async (c) => {
   return c.redirect(target)
 })
 
-// A code from the game, typed on the voice page (RFC 31). A form post from the page itself; the answer is a redirect to
-// that page, with the cookie when the code was right. A wrong, a used, an expired code and a player who may not sign in
+// A code from the game, typed on the voice page or on the short address /voice (RFC 31). A form post from the page itself; the answer is a redirect to
+// the voice page of the server that issued the code, with the cookie when the code was right. A wrong, a used, an expired code and a player who may not sign in
 // all give the same answer, so nothing says which codes exist.
 export const voiceCodeLimiter = new RateLimiter(10, 60_000)
 const VOICE_PAGE = /^\/servers\/[A-Za-z0-9_-]{1,64}\/voice$/
@@ -188,8 +188,9 @@ auth.post('/voice-code', async (c) => {
   const body = await c.req.parseBody().catch(() => ({} as Record<string, unknown>))
   const to = safeNext(body.to)
   const page = to && VOICE_PAGE.test(to) ? to : null
-  const steamId = voiceCodes.redeem(body.code)
-  if (steamId && maySignIn(steamId)) {
+  const redeemed = voiceCodes.redeem(body.code)
+  if (redeemed && maySignIn(redeemed.steamId)) {
+    const steamId = redeemed.steamId
     setCookie(c, VOICE_COOKIE, makeVoiceCookie(steamId), {
       path: '/',
       httpOnly: true,
@@ -197,10 +198,12 @@ auth.post('/voice-code', async (c) => {
       maxAge: VOICE_COOKIE_SECONDS,
       sameSite: 'Lax',
     })
-    return c.redirect(page ?? '/', 303)
+    // The page of the server that issued the code, wherever the form was (the short address `/voice` has no server of its own).
+    const issuer = `/servers/${redeemed.serverId}/voice`
+    return c.redirect(VOICE_PAGE.test(issuer) ? issuer : '/', 303)
   }
   voiceCodes.noteFailure()
-  return c.redirect(page ? `${page}?code=failed` : '/', 303)
+  return c.redirect(`${page ?? '/voice'}?code=failed`, 303)
 })
 
 auth.post('/voice-logout', async (c) => {

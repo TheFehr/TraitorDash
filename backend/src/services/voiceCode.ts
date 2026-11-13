@@ -38,7 +38,7 @@ const makeCode = (): string => {
 }
 
 export class VoiceCodes {
-  private byCode = new Map<string, { steamId: string, expires: number }>()
+  private byCode = new Map<string, { steamId: string, serverId: string, expires: number }>()
   private byPlayer = new Map<string, string>()
   private lastIssued = new Map<string, number>()
   private failures: { start: number, count: number } | null = null
@@ -62,8 +62,8 @@ export class VoiceCodes {
     for (const [id, at] of this.lastIssued) if (t - at >= PLAYER_WAIT_MS) this.lastIssued.delete(id)
   }
 
-  /** A new code for the player (it replaces their earlier one), or the seconds to wait when they asked a moment ago. */
-  issue(steamId: string): { code: string } | { wait: number } {
+  /** A new code for the player, tied to the server that asked (it replaces their earlier one), or the seconds to wait when they asked a moment ago. */
+  issue(steamId: string, serverId: string): { code: string } | { wait: number } {
     this.sweep()
     const t = this.now()
     const last = this.lastIssued.get(steamId)
@@ -73,20 +73,20 @@ export class VoiceCodes {
     let code = makeCode()
     while (this.byCode.has(code)) code = makeCode()
     while (this.byCode.size >= MAX_CODES) this.drop(this.byCode.keys().next().value as string)
-    this.byCode.set(code, { steamId, expires: t + CODE_TTL_MS })
+    this.byCode.set(code, { steamId, serverId, expires: t + CODE_TTL_MS })
     this.byPlayer.set(steamId, code)
     this.lastIssued.set(steamId, t)
     return { code }
   }
 
-  /** The player a typed code belongs to; the code is used up. Null for anything else (wrong, used, expired: not told apart). */
-  redeem(input: unknown): string | null {
+  /** The player a typed code belongs to and the server that issued it; the code is used up. Null for anything else (wrong, used, expired: not told apart). */
+  redeem(input: unknown): { steamId: string, serverId: string } | null {
     this.sweep()
     const code = normaliseCode(input)
     const entry = code ? this.byCode.get(code) : undefined
     if (!code || !entry) return null
     this.drop(code)
-    return entry.steamId
+    return { steamId: entry.steamId, serverId: entry.serverId }
   }
 
   /** Counts a failed entry. */

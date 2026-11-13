@@ -641,7 +641,7 @@ api.post('/v1/voice-codes', getServer, async (c) => {
   if (read.tooLarge) return c.json({ error: 'the request is too large' }, 413)
   const steamId = read.body?.steam_id
   if (typeof steamId !== 'string' || !STEAM_ID64.test(steamId)) return c.json({ error: 'steam_id must be a SteamID64' }, 400)
-  const made = voiceCodes.issue(steamId)
+  const made = voiceCodes.issue(steamId, server.id)
   if ('wait' in made) return tooMany(c, made.wait, 'This player asked a moment ago')
   c.header('Cache-Control', 'no-store')
   return c.json({ success: true, code: showCode(made.code), ttl: CODE_TTL_MS / 1000, path: `/servers/${server.id}/voice` })
