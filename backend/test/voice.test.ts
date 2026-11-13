@@ -1270,7 +1270,7 @@ describe('the meter\'s styles', () => {
     // The pressed look is the shared rule's, which marks it with a border colour and an inset line and never touches the padding or the
     // border width (it used to give a 2 px border and less padding, which the voice page's own padding could not undo). So here: the
     // voice page's toggle padding is set once, on the base rule, and the shared pressed rule leaves the box alone.
-    const base = body('.vc .tog')!, pressed = body('.f .tog[aria-pressed=true]')
+    const base = body('.vc .tog,.vc .check')!, pressed = body('.f .tog[aria-pressed=true]')
     expect(base).toMatch(/padding:/)
     expect(pressed, 'the shared rule for a pressed toggle').toBeDefined()
     expect(pressed).not.toMatch(/(?:^|;)\s*(padding|margin|border-width|border|width|height|font-size|font-weight)\s*:/)

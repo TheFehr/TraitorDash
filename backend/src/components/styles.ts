@@ -211,7 +211,7 @@ html.theater{overflow:hidden}
 .vc p{margin:0}
 .vc .row{display:flex;flex-wrap:wrap;gap:var(--space-2) var(--space-3);align-items:center}
 .vc .cap{margin:0 0 var(--space-1)}
-.vc .tog{margin-right:0;padding:.3rem .9rem;font-size:1rem}
+.vc .tog,.vc .check{margin-right:0;padding:.3rem .9rem;font-size:1rem}
 .vc .jn{min-width:9.5rem}
 .vc [data-status]{flex:1 1 11rem;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .vc [data-count]{display:inline-block;min-width:2ch}
@@ -234,8 +234,13 @@ html.theater{overflow:hidden}
 .vc .cnote{min-height:2.8em}
 @media (max-width:640px){.vc .cnote{min-height:5.6em}}
 .vc .checks{display:flex;flex-wrap:wrap;gap:var(--space-1) var(--space-3);align-items:center}
-.vc .check{display:inline-flex;align-items:center;gap:var(--space-1);cursor:pointer}
-.vc .check input{margin:0}
+/* a multi-choice toggle: the real checkbox stays (focus, keyboard, screen readers) but is hidden; the label is drawn like .tog with a check mark in a reserved slot, so size never changes */
+.vc .check{position:relative;display:inline-flex;align-items:center;gap:var(--space-1);background:var(--line);border:1px solid var(--rule);color:var(--soft);font-family:var(--cond);font-weight:800;letter-spacing:.06em;text-transform:uppercase;cursor:pointer}
+.vc .check input{position:absolute;opacity:0;width:1px;height:1px;margin:0;overflow:hidden}
+.vc .check::before{content:"\\2713";display:inline-block;width:1em;text-align:center;color:transparent}
+.f.vc .check:has(input:checked){background:#fff8e6;color:var(--ink);border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.f.vc .check:has(input:checked)::before{color:var(--ink)}
+.vc .check:has(input:focus-visible){outline:2px solid var(--deep);outline-offset:2px}
 .vc .check:has(input:disabled){opacity:.55;cursor:default}
 .vc .db{min-width:6.5rem}
 .vc .talk{min-width:5rem}
