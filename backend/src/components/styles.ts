@@ -229,10 +229,13 @@ html.theater{overflow:hidden}
 .vc .ft{margin-bottom:0}
 .vc .note{min-height:1.4em}
 .vc .lvl-read{display:flex;gap:var(--space-3);align-items:flex-start;min-height:1.6em}
-.vc .mnote{min-height:2.8em}
-@media (max-width:640px){.vc .mnote{min-height:5.6em}}
-.vc .cnote{min-height:2.8em}
-@media (max-width:640px){.vc .cnote{min-height:5.6em}}
+/* The two status lines under the buttons always hold a text, and are as tall as the fullest one (lines of 1.35em: the longest note, the
+   measurement result, wraps to 2 lines from 730 px up, 3 from 505, 4 from 410, 5 from 360 and 6 below, measured in Chromium from 320 to 1100). */
+.vc .mnote,.vc .cnote{min-height:2.7em}
+@media (max-width:729px){.vc .mnote,.vc .cnote{min-height:4.05em}}
+@media (max-width:504px){.vc .mnote,.vc .cnote{min-height:5.4em}}
+@media (max-width:409px){.vc .mnote,.vc .cnote{min-height:6.75em}}
+@media (max-width:359px){.vc .mnote,.vc .cnote{min-height:8.1em}}
 .vc .checks{display:flex;flex-wrap:wrap;gap:var(--space-1) var(--space-3);align-items:center}
 .vc .check{display:inline-flex;align-items:center;gap:var(--space-1);cursor:pointer}
 .vc .check input{margin:0}

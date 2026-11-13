@@ -552,7 +552,7 @@ describe('the page\'s code', () => {
     page.run()
     expect(page.parts['[data-marker]'].style.left).toBe('47.5%'); expect(page.parts['[data-marker-close]'].style.left).toBe('37.5%')
     expect(page.parts['[data-threshold]'].value).toBe('-42'); expect(page.parts['[data-close-threshold]'].value).toBe('-50')
-    expect(page.parts['[data-measure-note]'].textContent).toBe('')
+    expect(page.parts['[data-measure-note]'].textContent).toBe('Not measured in this visit: the sensitivity is the one you set before.') // never empty: the line has a text of its own
     // nonsense in the store falls back to the defaults
     const other = await load()
     other.store.set('td_voice_gate_open', '12'); other.store.set('td_voice_gate_close', 'abc') // 12 is above the range (a leftover of the old scale)
@@ -857,6 +857,9 @@ describe('the page\'s code', () => {
   describe('what opens the microphone (RFC 29, 4.4)', () => {
     const tick = async (box: any, page: any, name: string, on: boolean) => { box.checked = on; await page.listeners[name]!.change!() }
     const LOUD = '[data-cond-loud]', SPEECH = '[data-cond-speech]'
+    const COND_LOUD = 'The microphone opens when the sound is above the opening level.'
+    const COND_BOTH = 'The microphone opens when the sound is above the opening level and the filter hears speech.'
+    const COND_SPEECH = 'The microphone opens when the filter hears speech. The loudness line is not used.'
     const posted = (t: any, type: string) => t.gateNodes[0].sent.filter((m: any) => m.type === type)
 
     test('the two boxes are in the markup, loudness ticked and speech not, and the page tells the player what each does', async () => {
@@ -865,7 +868,7 @@ describe('the page\'s code', () => {
       expect(page).toMatch(/<input type="checkbox" data-cond-speech \/>/)
       expect(page).not.toMatch(/data-cond-speech[^>]*checked/)
       expect(page).toContain('Microphone opens when:'); expect(page).toContain('the sound is loud enough'); expect(page).toContain('it sounds like speech')
-      expect(page).toMatch(/data-cond-note role="status"><\/p>/) // a line of its own for the note, empty at first
+      expect(page).toMatch(/data-cond-note role="status">The microphone opens when the sound is above the opening level\.<\/p>/) // a line of its own for the note, never empty: the default is there before the code runs
       // they sit under the two buttons of "Microphone opens", in the same card
       expect(page.indexOf('data-cond-loud')).toBeGreaterThan(page.indexOf('data-mode="ptt"'))
       expect(page.indexOf('data-cond-loud')).toBeLessThan(page.indexOf('Noise filter'))
@@ -877,7 +880,7 @@ describe('the page\'s code', () => {
       expect(page.parts[SPEECH].disabled).toBe(false); expect(page.parts[LOUD].disabled).toBe(false)
       expect(posted(t, 'conditions')).toEqual([{ type: 'conditions', loud: true, speech: false }]) // what the gate is told at the join
       expect(page.parts['[data-threshold]'].disabled).toBe(false); expect(page.parts['[data-measure]'].disabled).toBe(false); expect(page.parts['[data-auto]'].disabled).toBe(false)
-      expect(page.parts['[data-cond-note]'].textContent).toBe('')
+      expect(page.parts['[data-cond-note]'].textContent).toBe(COND_LOUD)
       expect(page.store.has('td_voice_gate_cond')).toBe(false) // nothing is saved until the player chooses
       t.done()
     })
@@ -926,12 +929,43 @@ describe('the page\'s code', () => {
       await tick(page.parts[LOUD], page, LOUD, false)
       expect(page.parts['[data-threshold]'].disabled).toBe(true); expect(page.parts['[data-close-threshold]'].disabled).toBe(true)
       expect(page.parts['[data-measure]'].disabled).toBe(true); expect(page.parts['[data-auto]'].disabled).toBe(true)
-      expect(page.parts['[data-cond-note]'].textContent).toContain('Only speech decides')
+      expect(page.parts['[data-cond-note]'].textContent).toBe(COND_SPEECH)
       await tick(page.parts[LOUD], page, LOUD, true) // both: loudness is a condition again
       expect(page.parts['[data-threshold]'].disabled).toBe(false); expect(page.parts['[data-close-threshold]'].disabled).toBe(false)
       expect(page.parts['[data-measure]'].disabled).toBe(false); expect(page.parts['[data-auto]'].disabled).toBe(false)
-      expect(page.parts['[data-cond-note]'].textContent).toBe('')
+      expect(page.parts['[data-cond-note]'].textContent).toBe(COND_BOTH)
       t.done()
+    })
+
+    test('the line under the boxes is never empty: it says what the current choice does, and follows the boxes', async () => {
+      const { page, t } = await joined()
+      const note = () => page.parts['[data-cond-note]'].textContent
+      expect(note()).toBe(COND_LOUD) // loudness only, from the start
+      await tick(page.parts[SPEECH], page, SPEECH, true); expect(note()).toBe(COND_BOTH)
+      await tick(page.parts[LOUD], page, LOUD, false); expect(note()).toBe(COND_SPEECH)
+      await tick(page.parts[LOUD], page, LOUD, true); expect(note()).toBe(COND_BOTH)
+      await tick(page.parts[SPEECH], page, SPEECH, false); expect(note()).toBe(COND_LOUD)
+      await tick(page.parts[LOUD], page, LOUD, false) // the last box cannot be unticked: the other one is ticked instead, and the line says so
+      expect(note()).toBe(COND_SPEECH)
+      expect(COND_LOUD).toContain('above the opening level'); expect(COND_BOTH).toContain('and the filter hears speech'); expect(COND_SPEECH).toContain('The loudness line is not used')
+      t.done()
+    })
+
+    test('a saved choice is described from the first moment, and the notes about a failed start still win over the description', async () => {
+      for (const [saved, want] of [['loud', COND_LOUD], ['both', COND_BOTH], ['speech', COND_SPEECH]] as const) {
+        const page = await load(); page.store.set('td_voice_gate_cond', saved)
+        const t = setup(); page.run(t.globals)
+        expect(page.parts['[data-cond-note]'].textContent, saved).toBe(want)
+        t.done()
+      }
+      for (const opts of [{ rnnoiseFails: true }, { gateFails: true }, { chainFails: true }]) {
+        const page = await load(); page.store.set('td_voice_gate_cond', 'speech')
+        const t = setup(opts)
+        const warn = console.warn; console.warn = () => {}
+        try { page.run(t.globals); page.listeners['[data-join]']!.click!(); await new Promise(r => setTimeout(r, 30)) } finally { console.warn = warn }
+        expect(page.parts['[data-cond-note]'].textContent, JSON.stringify(opts)).toBe('The speech check needs the noise filter and the voice gate, and one of them could not start: the microphone opens by loudness.')
+        t.done()
+      }
     })
 
     test('with "Adjust by itself" on, the sliders stay off when loudness is ticked again; and in speech alone it does not follow the room', async () => {
@@ -1302,8 +1336,10 @@ describe('the meter\'s styles', () => {
     }
     expect(rule('.vc [data-status]')).toMatch(/flex:1 1 [\d.]+rem/) // takes the width left, never wraps the count to another line
     expect(rule('.vc [data-count]')).toMatch(/min-width:/)
-    expect(rule('.vc .mnote')).toMatch(/min-height:2\.8em/) // two lines kept free, and four on a phone
-    expect(css).toMatch(/@media \(max-width:640px\)\{\.vc \.mnote\{min-height:5\.6em\}\}/)
+    // The two status lines (the measurement and the way the microphone opens) always hold a text and keep the height of their fullest text (lines
+    // of 1.35em, as Chromium wraps the longest one from 320 to 1100 px: 2 lines from 730, 3 from 505, 4 from 410, 5 from 360, 6 below).
+    expect(rule('.vc .mnote,.vc .cnote')).toMatch(/min-height:2\.7em/)
+    for (const [max, em] of [[729, '4.05'], [504, '5.4'], [409, '6.75'], [359, '8.1']]) expect(css).toContain(`@media (max-width:${max}px){.vc .mnote,.vc .cnote{min-height:${em}em}}`)
     expect(rule('.vc .lvl-read')).toContain('align-items:flex-start') // a baseline alignment moved "talking" 15 px when the reading came
     expect(Number(/min-width:([\d.]+)rem/.exec(rule('.vc .db'))?.[1])).toBeGreaterThanOrEqual(6.5) // "-100 dBFS" fits
     expect(rule('.vc .pct')).toMatch(/min-width:3rem/)
