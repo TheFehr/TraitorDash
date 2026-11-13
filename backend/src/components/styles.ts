@@ -229,10 +229,17 @@ html.theater{overflow:hidden}
 .vc .ft{margin-bottom:0}
 .vc .note{min-height:1.4em}
 .vc .lvl-read{display:flex;gap:var(--space-3);align-items:flex-start;min-height:1.6em}
-.vc .mnote{min-height:2.8em}
-@media (max-width:640px){.vc .mnote{min-height:5.6em}}
-.vc .cnote{min-height:2.8em}
-@media (max-width:640px){.vc .cnote{min-height:5.6em}}
+/* The two status lines always hold a text, and are as tall as their fullest one (lines of 1.35em). The measurement line: the longest, the result, wraps to 2 lines from 730 px up, 3 from 505, 4 from 410, 5 from 360 and 6 below (measured in Chromium from 320 to 1100). */
+.vc .mnote{min-height:2.7em}
+@media (max-width:729px){.vc .mnote{min-height:4.05em}}
+@media (max-width:504px){.vc .mnote{min-height:5.4em}}
+@media (max-width:409px){.vc .mnote{min-height:6.75em}}
+@media (max-width:359px){.vc .mnote{min-height:8.1em}}
+/* The line about how the microphone opens has shorter texts: 1 line from 810 px up, 2 from 440, 3 from 330, 4 below (a little earlier, to be safe). */
+.vc .cnote{min-height:1.35em}
+@media (max-width:819px){.vc .cnote{min-height:2.7em}}
+@media (max-width:449px){.vc .cnote{min-height:4.05em}}
+@media (max-width:339px){.vc .cnote{min-height:5.4em}}
 .vc .checks{display:flex;flex-wrap:wrap;gap:var(--space-1) var(--space-3);align-items:center}
 /* a multi-choice toggle: the real checkbox stays (focus, keyboard, screen readers) but is hidden; the label is drawn like .tog with a check mark in a reserved slot, so size never changes */
 .vc .check{position:relative;display:inline-flex;align-items:center;gap:var(--space-1);background:var(--line);border:1px solid var(--rule);color:var(--soft);font-family:var(--cond);font-weight:800;letter-spacing:.06em;text-transform:uppercase;cursor:pointer}

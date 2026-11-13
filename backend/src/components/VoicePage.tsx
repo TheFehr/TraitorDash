@@ -119,8 +119,8 @@ export const VoicePage = ({ ctx, server, enabled, forget = false }: VoicePagePro
                 <label class="check"><input type="checkbox" data-cond-loud checked /> the sound is loud enough</label>
                 <label class="check"><input type="checkbox" data-cond-speech /> it sounds like speech</label>
               </div>
-              <p class="muted note cnote mt1" data-cond-note role="status"></p>
-              <p class="muted mt1">Loud enough alone can open on a keyboard, a door or a hum. With both ticked the sound must also sound like speech (the noise filter's guess), which keeps most of those out. With speech alone the sound level does not matter, so a quiet voice gets through, and the sensitivity below is not used.</p>
+              <p class="muted note cnote mt1" data-cond-note role="status">The microphone opens when the sound is above the opening level.</p>
+              <p class="muted mt1">Loud enough alone can open on a keyboard, a door or a hum; with speech ticked as well, most of those stay out.</p>
               <p class="muted mt1">Holding a key to talk needs a small desktop app (a browser tab cannot hear a key while the game has the focus); it comes later.</p>
             </div>
 
@@ -149,7 +149,7 @@ export const VoicePage = ({ ctx, server, enabled, forget = false }: VoicePagePro
                 <button type="button" data-measure class="tog">Measure my room</button>
                 <button type="button" data-auto aria-pressed="false" class="tog">Adjust by itself</button>
               </div>
-              <p class="muted note mnote" data-measure-note role="status"></p>
+              <p class="muted note mnote" data-measure-note role="status">Not measured yet: join, stay quiet, and press "Measure my room" so the microphone opens at the right level for your room.</p>
               <p class="muted">"Measure my room" listens for 3 seconds while you stay quiet and sets the line for you. "Adjust by itself" keeps following the room's noise while you are not talking (it is off until you switch it on).</p>
               <details>
                 <summary>Advanced</summary>
