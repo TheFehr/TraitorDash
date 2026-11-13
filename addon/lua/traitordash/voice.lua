@@ -207,6 +207,66 @@ end)
 hook.Add("PlayerDisconnected", "TraitorDash_VoiceLeft", Soon)
 hook.Add("TTT2AddedEvent", "TraitorDash_VoiceEvent", Soon)
 
+-- `!voice` (RFC 31): a player who wants the voice page in their own browser, without a Steam sign-in, gets a short code in the chat, for
+-- them alone. A GMod client cannot open a link in the player's browser (gui.OpenURL opens the Steam overlay, which has no microphone),
+-- so the player types the code on the voice page. The dashboard makes the code and only for the server's token. Only what has the shape
+-- of a code, and of a path, is printed; nothing else the dashboard says is repeated to the player.
+local CODE_SHAPE = "^[2-9BCDFGHJKMNPQRSTVWXYZ][2-9BCDFGHJKMNPQRSTVWXYZ][2-9BCDFGHJKMNPQRSTVWXYZ]%-[2-9BCDFGHJKMNPQRSTVWXYZ][2-9BCDFGHJKMNPQRSTVWXYZ][2-9BCDFGHJKMNPQRSTVWXYZ]$"
+local PATH_SHAPE = "^/servers/[%w_%-]+/voice$"
+local CODE_EVERY = 10 -- seconds between two requests of one player
+local lastCode = {}   -- SteamID64 -> CurTime() of the last accepted request
+local UNAVAILABLE = "Voice code unavailable, try again in a moment."
+
+--- The address a player can reach: the public https address (as for the role guide) when one is set, else the bridge's own.
+local function ShownBase(cfg)
+    local guide = TraitorDash.RoleGuide
+    local raw = TraitorDash.GetPublicUrlRaw and TraitorDash.GetPublicUrlRaw() or ""
+    if guide and guide.CleanPublicUrl then
+        local base = guide.CleanPublicUrl(raw)
+        if base then return base end
+    end
+    return cfg.url
+end
+
+--- Chat: `!voice`. Returns "" (hide the line) when it was ours, else nil. Off unless traitordash_voice is on.
+function Voice.OnChat(ply, text)
+    if type(text) ~= "string" then return nil end
+    local command, rest = text:match("^%s*!(%a+)%s*(.*)$")
+    if not command or command:lower() ~= "voice" or rest ~= "" then return nil end
+    if not cv_voice:GetBool() then return nil end
+    if not IsValid(ply) or ply:IsBot() then return "" end
+    local id = ply:SteamID64()
+    if type(id) ~= "string" or #id ~= 17 or not id:match("^%d+$") then return "" end
+    local now = CurTime()
+    if lastCode[id] and now - lastCode[id] < CODE_EVERY then return "" end
+    lastCode[id] = now
+    local cfg = TraitorDash.GetConfig and TraitorDash.GetConfig()
+    local payload = util.TableToJSON({ steam_id = id })
+    if not cfg or not cfg.url or cfg.token == "" or not payload then ply:ChatPrint(UNAVAILABLE) return "" end
+    HTTP({
+        url = cfg.url .. "/api/v1/voice-codes",
+        method = "POST",
+        headers = { ["Content-Type"] = "application/json", ["Authorization"] = "Bearer " .. cfg.token },
+        body = payload,
+        timeout = 10,
+        success = function(code, body)
+            if not IsValid(ply) then return end
+            local parsed = code == 200 and type(body) == "string" and util.JSONToTable(body) or nil
+            local shown = type(parsed) == "table" and parsed.code or nil
+            local path = type(parsed) == "table" and parsed.path or nil
+            if type(shown) ~= "string" or not shown:match(CODE_SHAPE) or type(path) ~= "string" or not path:match(PATH_SHAPE) then
+                ply:ChatPrint(UNAVAILABLE)
+                return
+            end
+            ply:ChatPrint("Voice code " .. shown .. " (5 minutes). Open " .. ShownBase(cfg) .. path .. " in your browser and type it there.")
+        end,
+        failed = function() if IsValid(ply) then ply:ChatPrint(UNAVAILABLE) end end,
+    })
+    return ""
+end
+
+hook.Add("PlayerSay", "TraitorDash_VoiceCode", function(ply, text) return Voice.OnChat(ply, text) end)
+
 if cvars and cvars.AddChangeCallback then
     cvars.AddChangeCallback("traitordash_voice", function() Apply() end, "TraitorDash_VoiceSwitch")
     cvars.AddChangeCallback("traitordash_voice_mute_game", function() SafeApplyGameVoice() end, "TraitorDash_VoiceMuteGame")
