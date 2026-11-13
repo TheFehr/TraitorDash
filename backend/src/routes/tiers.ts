@@ -15,6 +15,8 @@ export type Tier = 'public' | 'user' | 'admin' | 'bridge' | 'credential' | 'logi
 export const TIERS: Record<string, Tier> = {
   'GET /health': 'public',
   'GET /': 'public',
+  // The short address of the voice page (RFC 31, 10): a code typed here leads to the server that issued it; it names no server.
+  'GET /voice': 'public',
   'GET /servers/:serverId/stats': 'public',
   'GET /servers/:serverId/maps': 'public',
   'GET /servers/:serverId/players/:playerId': 'public',

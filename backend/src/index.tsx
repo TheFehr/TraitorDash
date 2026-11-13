@@ -9,7 +9,7 @@ import { Store, viewLogDays } from './services/Store'
 import { buildReplay } from './services/replay'
 import { refreshAllWorkshopText } from './services/workshopText'
 import { ReplayPage } from './components/ReplayPage'
-import { VoicePage, VoiceEntryPage } from './components/VoicePage'
+import { VoicePage, VoiceEntryPage, VoiceCodePage } from './components/VoicePage'
 import { getVoiceSession, getVoiceSessionVia } from './services/voiceSession'
 import { joinToken, roomOf, voiceConfig, voiceHub } from './services/voice'
 import { steamNames } from './services/steamNames'
@@ -622,6 +622,18 @@ app.get('/servers/:serverId/rounds/:roundId/replay', async (c) => {
       pinned={!!track?.meta.pinned} here={here} bots={bots} counts={{ players: round.players.length, deaths: stats.getDeathCount(serverId, roundId) }}
       pinnedCount={adminOf(ctx) ? { used: Store.getTrackUsage(serverId).pinned, max: Store.getTrackConfig().maxPinned } : undefined} />,
     { scripts: !!track })
+})
+
+/**
+ * The short address (RFC 31, 10): a code typed here goes to the voice page of the server that issued it (POST /auth/voice-code). Nothing
+ * here names a server, so nothing says whether one exists or has voice; without a media server the dashboard has no codes at all.
+ */
+app.get('/voice', async (c) => {
+  const ctx = await ctxOf(c)
+  if (!voiceConfig() || ctx.embed) return c.redirect('/')
+  const over = limited(c)
+  if (over) return over
+  return respond(c, ctx, <VoiceCodePage ctx={ctx} failed={c.req.query('code') === 'failed'} />, { noStore: true })
 })
 
 /** The voice page (RFC 27): signed-in users only; in the game nobody is sent to the Steam login. */

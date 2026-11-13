@@ -216,17 +216,24 @@ describe('the entry route', () => {
     expect(voiceCookieOf(res)).not.toBeNull()
   })
 
-  test('where it goes: only a voice page of this site; anything else is the home page (with the cookie all the same)', async () => {
-    for (const to of ['https://evil.example/servers/x/voice', '//evil.example', '/servers/x/stats', '/servers/x/voice/token', '/servers/x/voice?next=1', '/\\evil', '/servers/../voice', '', '/servers//voice']) {
+  test('where it goes: a right code always to the issuing server\'s voice page, whatever `to` says; a failure only back to a voice page of this site, else /voice', async () => {
+    for (const to of ['https://evil.example/servers/x/voice', '//evil.example', '/servers/x/stats', '/servers/x/voice/token', '/servers/x/voice?next=1', '/\\evil', '/servers/../voice', '', '/servers//voice', `/servers/${server.id}/voice`]) {
       const made = await (await bridge({ steam_id: fresh() })).json()
       const res = await enter(made.code, { to })
       expect(res.status, to).toBe(303)
-      expect(res.headers.get('location'), to).toBe('/')
+      expect(res.headers.get('location'), to).toBe(`/servers/${server.id}/voice`)
+      expect(voiceCookieOf(res), to).not.toBeNull()
+      const failed = await enter('222-222', { to })
+      expect(failed.headers.get('location'), to).toBe(to === `/servers/${server.id}/voice` ? `${to}?code=failed` : '/voice?code=failed')
     }
-    const made = await (await bridge({ steam_id: OTHER })).json()
-    expect((await enter(made.code, { omitTo: true })).headers.get('location')).toBe('/')
-    const failed = await enter('222-222', { to: 'https://evil.example/servers/x/voice' })
-    expect(failed.headers.get('location')).toBe('/')
+  })
+
+  test('a code from server A typed on the page of server B lands on A\'s page, with the cookie', async () => {
+    const other = Store.addServer('Other Voice') as any
+    const made = await (await bridge({ steam_id: USER })).json()
+    const res = await enter(made.code, { to: `/servers/${other.id}/voice` })
+    expect(res.headers.get('location')).toBe(`/servers/${server.id}/voice`)
+    expect(voiceCookieOf(res)).not.toBeNull()
   })
 
   test('a player who may not sign in gets no cookie, and the code is used up', async () => {
@@ -434,9 +441,131 @@ describe('where it is NOT read: every other route answers as for an anonymous vi
     expect(tiers.TIERS['POST /api/v1/voice-codes']).toBe('bridge')
     expect(tiers.TIERS['POST /auth/voice-code']).toBe('login')
     expect(tiers.TIERS['POST /auth/voice-logout']).toBe('login')
+    expect(tiers.TIERS['GET /voice']).toBe('public')
     expect(tiers.TIERS['GET /servers/:serverId/voice']).toBe('user')
     expect(tiers.TIERS['POST /servers/:serverId/voice/token']).toBe('user')
     expect(tiers.TIERS['GET /servers/:serverId/voice/people']).toBe('user')
+  })
+})
+
+describe('the short address /voice', () => {
+  const second = () => Store.addServer('Second Voice Server') as { id: string, token: string }
+  const bridgeFor = (srv: { token: string }, id: string) => bridge({ steam_id: id }, srv.token)
+  /** What the form of /voice posts: the code and no `to`. */
+  const vpost = (code: string, headers: Record<string, string> = SAME) => enter(code, { headers, omitTo: true })
+
+  test('the bridge stores the issuing server with the code', async () => {
+    const made = await (await bridge({ steam_id: USER })).json()
+    expect(voiceCodes.redeem(made.code)).toEqual({ steamId: USER, serverId: server.id })
+  })
+
+  test('the page shows the code form and no Steam link, a muted hint, no server; never cached', async () => {
+    const res = await get('/voice')
+    expect(res.status).toBe(200)
+    expect(res.headers.get('cache-control')).toBe('no-store')
+    const html = await res.text()
+    expect(html).toContain('action="/auth/voice-code"')
+    expect(html).toMatch(/name="code"/)
+    expect(html).not.toContain('name="to"')
+    // no sign-in that would have to know the server (the site header's own generic link, which returns home, is not the page's)
+    expect(html).not.toContain('/auth/steam?next=')
+    expect(html).not.toContain('Sign in with Steam instead')
+    expect(html.slice(html.indexOf('<h1'))).not.toContain('/auth/steam')
+    expect(html).toContain('No code? Say <b>!voice</b> in the game.')
+    expect(html).not.toContain('class="sections"') // no server, so no section buttons
+    expect(html).not.toContain('<script')
+    expect(html).not.toContain(VOICE_CODE_FAILED)
+    expect(html).not.toContain(server.id)
+    expect(res.headers.get('content-security-policy')).toContain("form-action 'self'")
+  })
+
+  test('after a failure the same page says the fixed message in the reserved line, and nothing else changes; the query is not printed', async () => {
+    const plain = await (await get('/voice')).text()
+    const failed = await (await get('/voice?code=failed')).text()
+    const line = (html: string) => /<p class="note vmsg"[^>]*>(.*?)<\/p>/.exec(html)
+    expect(line(plain)?.[1]).toBe('')
+    expect(line(failed)?.[1]).toBe(VOICE_CODE_FAILED)
+    expect(failed.replace(VOICE_CODE_FAILED, '')).toBe(plain)
+    expect(await (await get('/voice?code=%3Cb%3Ex')).text()).toBe(plain)
+  })
+
+  test('a visitor with a session sees the form too; in the game\'s window and without a media server it redirects home', async () => {
+    const withSession = await (await get('/voice', { Cookie: await adminCookie() })).text()
+    expect(withSession).toContain('action="/auth/voice-code"')
+    expect((await get('/voice?embed=1')).status).toBe(302)
+    configureVoice(null)
+    const res = await get('/voice')
+    expect(res.status).toBe(302)
+    expect(res.headers.get('location')).toBe('/')
+  })
+
+  test('the right code (no `to`) sets the cookie and goes to the voice page of the server that issued it', async () => {
+    const made = await (await bridge({ steam_id: USER })).json()
+    const res = await vpost(made.code)
+    expect(res.status).toBe(303)
+    expect(res.headers.get('location')).toBe(`/servers/${server.id}/voice`)
+    expect(res.headers.get('cache-control')).toBe('no-store')
+    expect(res.headers.get('referrer-policy')).toBe('no-referrer')
+    expect(vs.readVoiceCookie(voiceCookieOf(res))).toBe(USER)
+  })
+
+  test('with two servers, a code issued by A lands on A\'s page and one issued by B on B\'s', async () => {
+    const b = second()
+    const fromA = await (await bridgeFor(server, fresh())).json()
+    const fromB = await (await bridgeFor(b, fresh())).json()
+    expect((await vpost(fromB.code)).headers.get('location')).toBe(`/servers/${b.id}/voice`)
+    expect((await vpost(fromA.code)).headers.get('location')).toBe(`/servers/${server.id}/voice`)
+  })
+
+  test('a wrong, used and expired code give one answer: back to /voice?code=failed, no cookie', async () => {
+    const used = await (await bridge({ steam_id: USER })).json()
+    await vpost(used.code)
+    const expired = await (await bridge({ steam_id: OTHER })).json()
+    now += CODE_TTL_MS
+    for (const code of ['222-222', used.code, expired.code, '', 'garbage']) {
+      const res = await vpost(code)
+      expect({ status: res.status, location: res.headers.get('location'), cookies: res.headers.getSetCookie().length }, code).toEqual({ status: 303, location: '/voice?code=failed', cookies: 0 })
+    }
+  })
+
+  test('a cross-origin post is refused and uses no code', async () => {
+    const made = await (await bridge({ steam_id: USER })).json()
+    for (const headers of [{ 'Sec-Fetch-Site': 'cross-site' }, { Origin: 'https://evil.example' }, {}]) {
+      const res = await vpost(made.code, headers as Record<string, string>)
+      expect(res.status, JSON.stringify(headers)).toBe(403)
+    }
+    expect(vs.readVoiceCookie(voiceCookieOf(await vpost(made.code)))).toBe(USER)
+  })
+
+  test('the same limiters apply: ten tries an address a minute, and sixty failures in all', async () => {
+    process.env.TRUST_PROXY = '1'
+    const from = (ip: string) => ({ ...SAME, 'X-Forwarded-For': ip })
+    for (let i = 0; i < 10; i++) expect((await vpost('222-222', from('203.0.113.5'))).status).toBe(303)
+    const over = await vpost('222-222', from('203.0.113.5'))
+    expect(over.status).toBe(429)
+    expect(Number(over.headers.get('retry-after'))).toBeGreaterThan(0)
+    expect((await vpost('222-222', from('203.0.113.6'))).status).toBe(303)
+    authMod.voiceCodeLimiter.reset()
+    for (let i = 0; i < MAX_FAILURES_PER_WINDOW; i++) voiceCodes.noteFailure()
+    const made = await (await bridge({ steam_id: USER })).json()
+    expect((await vpost(made.code, from('203.0.113.7'))).status).toBe(429)
+  })
+
+  test('a code of a server that has been deleted still pairs the browser; the page it goes to answers as it always does', async () => {
+    const gone = second()
+    const made = await (await bridgeFor(gone, USER)).json()
+    Store.deleteServer(gone.id)
+    const res = await vpost(made.code)
+    expect(res.headers.get('location')).toBe(`/servers/${gone.id}/voice`)
+    const page = await get(`/servers/${gone.id}/voice`, withVoice(voiceCookieOf(res)!))
+    expect(page.status).toBe(302)
+    expect(page.headers.get('location')).toBe('/')
+  })
+
+  test('the page names no server and does not change with the servers there are', async () => {
+    const before = await (await get('/voice')).text()
+    second()
+    expect(await (await get('/voice')).text()).toBe(before)
   })
 })
 

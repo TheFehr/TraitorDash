@@ -26,10 +26,10 @@ export const Sections = ({ serverId, current, admin = false }: { serverId: strin
  * server's name, as text, on a section's own page; the path back on a page below it), then the site's sections, then the page's own title
  * and what belongs right under it (`children`). A page does not compose these by hand.
  */
-export const PageHead = ({ serverId, crumbs, current, embed = false, admin = false, children }: { serverId: string, crumbs: any, current?: Section, embed?: boolean, admin?: boolean, children?: any }) => (
+export const PageHead = ({ serverId, crumbs, current, embed = false, admin = false, children }: { serverId?: string, crumbs: any, current?: Section, embed?: boolean, admin?: boolean, children?: any }) => (
   <>
     <div class="crumbs">{crumbs}</div>
-    {!embed && <Sections serverId={serverId} current={current} admin={admin} />}
+    {!embed && serverId && <Sections serverId={serverId} current={current} admin={admin} />}
     {children}
   </>
 )

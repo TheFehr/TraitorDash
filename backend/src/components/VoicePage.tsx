@@ -16,9 +16,28 @@ export interface VoicePageProps {
   forget?: boolean
 }
 
+/** The code card of both entry pages. The line for the message is always there with its height reserved, so a failed code moves nothing. */
+const CodeCard = ({ to, failed, last }: { to?: string, failed: boolean, last: any }) => (
+  <div class="stack">
+    <div class="f c-gray vc">
+      <div class="ft">Join with a code from the game</div>
+      <p>Say <b>!voice</b> in the game chat. The game shows you a code that works for 5 minutes. Type it here.</p>
+      <form method="post" action="/auth/voice-code" class="vform">
+        {to && <input type="hidden" name="to" value={to} />}
+        <label for="td-code" class="cap">Code</label>
+        <div class="row">
+          <input id="td-code" name="code" type="text" class="code" placeholder="K7F-3QX" maxlength={12} autocomplete="off" autocapitalize="characters" spellcheck={false} required />
+          <button type="submit" class="tog jn">Join</button>
+        </div>
+      </form>
+      <p class="note vmsg" role="alert">{failed ? VOICE_CODE_FAILED : ''}</p>
+      {last}
+    </div>
+  </div>
+)
+
 /**
- * What a visitor without a session sees (RFC 31): the form for the code the game shows, or the Steam sign-in. The line for the
- * message is always there with its height reserved, so a failed code does not move the Steam link.
+ * What a visitor without a session sees (RFC 31): the form for the code the game shows, or the Steam sign-in.
  */
 export const VoiceEntryPage = ({ ctx, server, failed, signin }: { ctx: Ctx, server: { id: string, name: string }, failed: boolean, signin: string }) => (
   <Shell title={`Voice | ${server.name}`} embed={ctx.embed} viewer={ctx.viewer}>
@@ -26,22 +45,22 @@ export const VoiceEntryPage = ({ ctx, server, failed, signin }: { ctx: Ctx, serv
       <h1>Voice chat</h1>
       <p class="muted" style="margin:0 0 var(--space-3)">Talk to the other players of the server while you play.</p>
     </PageHead>
-    <div class="stack">
-      <div class="f c-gray vc">
-        <div class="ft">Join with a code from the game</div>
-        <p>Say <b>!voice</b> in the game chat. The game shows you a code that works for 5 minutes. Type it here.</p>
-        <form method="post" action="/auth/voice-code" class="vform">
-          <input type="hidden" name="to" value={`/servers/${server.id}/voice`} />
-          <label for="td-code" class="cap">Code</label>
-          <div class="row">
-            <input id="td-code" name="code" type="text" class="code" placeholder="K7F-3QX" maxlength={12} autocomplete="off" autocapitalize="characters" spellcheck={false} required />
-            <button type="submit" class="tog jn">Join</button>
-          </div>
-        </form>
-        <p class="note vmsg" role="alert">{failed ? VOICE_CODE_FAILED : ''}</p>
-        <p class="muted">No Steam sign-in is needed, and this browser is remembered for 30 days (for this page only). Not in the game right now? <a href={signin}>Sign in with Steam instead</a>.</p>
-      </div>
-    </div>
+    <CodeCard to={`/servers/${server.id}/voice`} failed={failed}
+      last={<p class="muted">No Steam sign-in is needed, and this browser is remembered for 30 days (for this page only). Not in the game right now? <a href={signin}>Sign in with Steam instead</a>.</p>} />
+  </Shell>
+)
+
+/**
+ * The short address `/voice` (RFC 31, 10): the same form with no server in it; the code says which server's voice page to go to. No Steam
+ * link, because a sign-in needs a server page to come back to.
+ */
+export const VoiceCodePage = ({ ctx, failed }: { ctx: Ctx, failed: boolean }) => (
+  <Shell title="Voice | TraitorDash" embed={ctx.embed} viewer={ctx.viewer}>
+    <PageHead crumbs="TraitorDash" embed={ctx.embed}>
+      <h1>Voice chat</h1>
+      <p class="muted" style="margin:0 0 var(--space-3)">Talk to the other players of the server while you play.</p>
+    </PageHead>
+    <CodeCard failed={failed} last={<p class="muted">No code? Say <b>!voice</b> in the game.</p>} />
   </Shell>
 )
 
