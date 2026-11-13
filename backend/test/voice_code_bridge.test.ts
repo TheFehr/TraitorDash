@@ -95,7 +95,8 @@ describe('!voice in voice.lua', () => {
   test('the line is hidden (the hook returns an empty string) and the code goes to the one player who asked, with the address to open', () => {
     const r = play('RESULT = Say(ALICE, "!voice")')
     expect(r.result).toBe('')
-    expect(r.chat).toEqual([[A, 'Voice code K7F-3QX (5 minutes). Open https://dash.example.org/servers/srv-1/voice in your browser and type it there.']])
+    expect(r.chat).toEqual([[A, 'Voice code K7F-3QX (5 minutes). Open https://dash.example.org/voice in your browser and type it there.']])
+    expect(r.chat[0]![1]).not.toContain('/servers/') // the long address wraps over three chat lines
     expect(r.calls).toHaveLength(1)
     expect(r.calls[0]).toMatchObject({ url: 'http://10.0.0.5:3000/api/v1/voice-codes', method: 'POST', auth: 'Bearer tok' })
     expect(r.payload).toEqual({ steam_id: A })
@@ -173,8 +174,8 @@ describe('!voice in voice.lua', () => {
   })
 
   test('the address is the public https one when it is set and fine, else the bridge\'s own', () => {
-    expect(play('PUBLIC = "http://plain.example.org" RESULT = Say(ALICE, "!voice")').chat[0]![1]).toContain('Open http://10.0.0.5:3000/servers/srv-1/voice ')
-    expect(play('PUBLIC = "https://dash.example.org/" RESULT = Say(ALICE, "!voice")').chat[0]![1]).toContain('Open https://dash.example.org/servers/srv-1/voice ')
+    expect(play('PUBLIC = "http://plain.example.org" RESULT = Say(ALICE, "!voice")').chat[0]![1]).toContain('Open http://10.0.0.5:3000/voice ')
+    expect(play('PUBLIC = "https://dash.example.org/" RESULT = Say(ALICE, "!voice")').chat[0]![1]).toContain('Open https://dash.example.org/voice ')
   })
 
   test('a player who left before the answer comes gets nothing printed (no error)', () => {

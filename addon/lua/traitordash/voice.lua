@@ -258,7 +258,8 @@ function Voice.OnChat(ply, text)
                 ply:ChatPrint(UNAVAILABLE)
                 return
             end
-            ply:ChatPrint("Voice code " .. shown .. " (5 minutes). Open " .. ShownBase(cfg) .. path .. " in your browser and type it there.")
+            -- The short address, not the server's own page: that one wraps over three chat lines and cannot be typed; the code knows the server.
+            ply:ChatPrint("Voice code " .. shown .. " (5 minutes). Open " .. ShownBase(cfg) .. "/voice in your browser and type it there.")
         end,
         failed = function() if IsValid(ply) then ply:ChatPrint(UNAVAILABLE) end end,
     })
