@@ -28,6 +28,7 @@ export const TIERS: Record<string, Tier> = {
   'GET /servers/:serverId/playermodel.glb': 'user',
   'GET /servers/:serverId/rounds/:roundId/replay': 'user',
   'GET /servers/:serverId/rounds/:roundId/track.json': 'user',
+  // The three voice routes also take the voice cookie (RFC 31, `getVoiceSession`); the page answers a visitor without a session with the code form.
   'GET /servers/:serverId/voice': 'user',
   'POST /servers/:serverId/voice/token': 'user',
   'GET /servers/:serverId/voice/people': 'user',
@@ -69,6 +70,7 @@ export const TIERS: Record<string, Tier> = {
   'POST /api/v1/roleaddons': 'bridge',
   'POST /api/v1/roledescriptions': 'bridge',
   'POST /api/v1/ingame-keys': 'bridge',
+  'POST /api/v1/voice-codes': 'bridge',
   'GET /api/v1/whoami': 'bridge',
   'POST /api/v1/poll': 'bridge',
   'POST /api/v1/pair': 'credential',
@@ -76,5 +78,7 @@ export const TIERS: Record<string, Tier> = {
   'GET /auth/steam': 'login',
   'GET /auth/game': 'login',
   'GET /auth/steam/callback': 'login',
+  'POST /auth/voice-code': 'login',
+  'POST /auth/voice-logout': 'login',
   'POST /auth/logout': 'login',
 }

@@ -89,7 +89,7 @@ describe('nothing composes a head by hand', () => {
         seen.push(f + ':' + (sectionPage ? 'section' : 'way back'))
       }
     }
-    expect(seen.filter(s => s.endsWith('section')).length).toBe(4) // Round stats, Maps, Roles, Voice
+    expect(seen.filter(s => s.endsWith('section')).length).toBe(5) // Round stats, Maps, Roles, Voice and its entry page (RFC 31)
     expect(seen.filter(s => s.endsWith('way back')).length).toBe(6) // round, player, map, a map's rounds, role, replay
   })
 

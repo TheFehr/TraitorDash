@@ -235,7 +235,9 @@ describe('the sweep: every route is declared, and behaves as declared', () => {
       const res = await req(url(r.path), { method: r.method, headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: r.method === 'GET' ? undefined : '' })
       if (tier === 'admin') expect([401, 403, 302], `${key} gave ${res.status} to an anonymous visitor`).toContain(res.status)
       if (tier === 'user') {
-        const ok = res.status === 401 || (res.status === 302 && String(res.headers.get('location')).startsWith('/auth/steam')) || res.status === 302
+        // the voice page answers a visitor with its code form (RFC 31) when the dashboard has a media server
+        const entry = key === 'GET /servers/:serverId/voice' && res.status === 200 && (await res.text()).includes('action="/auth/voice-code"')
+        const ok = res.status === 401 || (res.status === 302 && String(res.headers.get('location')).startsWith('/auth/steam')) || res.status === 302 || entry
         expect(ok, `${key} gave ${res.status} to an anonymous visitor`).toBe(true)
       }
       if (tier === 'public') expect([401, 403], `${key} refused an anonymous visitor`).not.toContain(res.status)

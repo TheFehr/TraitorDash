@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { getSession, openSignin } from '../middleware/session'
+import { getSession, openSignin, type Session } from '../middleware/session'
 import { RateLimiter } from './rateLimit'
 import { clientAddress } from './gates'
 import { browserOf, type Ctx } from '../components/kit'
@@ -31,8 +31,9 @@ export const pageHeaders = (scripts = false, connect: string[] = [], wasm = fals
 export const isEmbed = (c: any): boolean => ['1', 'true'].includes(c.req.query('embed') ?? '')
 
 /** Who is asking and where the page is shown. */
-export async function ctxOf(c: any): Promise<Ctx> {
-  const session = await getSession(c)
+export async function ctxOf(c: any, given?: { session: Session | null }): Promise<Ctx> {
+  // `given`: a page that takes a session of its own kind too (the voice page, RFC 31) has looked already.
+  const session = given ? given.session : await getSession(c)
   const serverId = c.req.param?.('serverId') as string | undefined
   return {
     embed: isEmbed(c),
@@ -56,13 +57,14 @@ export const limited = (c: any) => {
  * The answer for a page: its headers, and an ETag so a repeat costs nothing. What the page shows
  * depends on who asks, so no shared cache may keep it; an admin's page is checked on every request.
  */
-export function respond(c: any, ctx: Ctx, page: { toString(): string }, opts: { scripts?: boolean, status?: 200 | 404, connect?: string[], wasm?: boolean } = {}) {
+export function respond(c: any, ctx: Ctx, page: { toString(): string }, opts: { scripts?: boolean, status?: 200 | 404, connect?: string[], wasm?: boolean, noStore?: boolean } = {}) {
   const headers = pageHeaders(opts.scripts, opts.connect, opts.wasm)
   if (ctx.embed) headers['X-Robots-Tag'] = 'noindex'
   const html = '<!DOCTYPE html>' + page.toString()
-  if (opts.status && opts.status !== 200) {
+  // `noStore`: a page that is the answer to a sign-in must not be shown again from the browser's cache (the voice page, RFC 31)
+  if (opts.noStore || (opts.status && opts.status !== 200)) {
     headers['Cache-Control'] = 'no-store'
-    return c.html(html, opts.status, headers)
+    return c.html(html, opts.status ?? 200, headers)
   }
   headers['Cache-Control'] = ctx.viewer?.admin ? 'private, max-age=0, must-revalidate' : 'private, max-age=30'
   const etag = 'W/"' + createHash('sha1').update(html).digest('hex').slice(0, 20) + '"'

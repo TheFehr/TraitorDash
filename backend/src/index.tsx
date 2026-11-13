@@ -9,7 +9,8 @@ import { Store, viewLogDays } from './services/Store'
 import { buildReplay } from './services/replay'
 import { refreshAllWorkshopText } from './services/workshopText'
 import { ReplayPage } from './components/ReplayPage'
-import { VoicePage } from './components/VoicePage'
+import { VoicePage, VoiceEntryPage } from './components/VoicePage'
+import { getVoiceSession, getVoiceSessionVia } from './services/voiceSession'
 import { joinToken, roomOf, voiceConfig, voiceHub } from './services/voice'
 import { steamNames } from './services/steamNames'
 import { gzipSync } from 'node:zlib'
@@ -628,15 +629,23 @@ app.get('/servers/:serverId/voice', async (c) => {
   const found = serverOf(c)
   if (!found) return c.redirect('/')
   const { serverId, server } = found
-  const ctx = await ctxOf(c)
+  // The real session, the game's, or the voice cookie a code from the game gave (RFC 31): this page and its two data routes are the only readers of that cookie.
+  const via = await getVoiceSessionVia(c)
+  const ctx = await ctxOf(c, via)
   const here = `/servers/${serverId}/voice`
-  if (!ctx.viewer) return c.redirect(signinOr(here, `/servers/${serverId}/stats`))
+  const cfg = voiceConfig()
+  if (!ctx.viewer) {
+    // Nobody is sent to Steam from here: the code form is the answer, with the Steam sign-in as the other way in. Without a media server there is nothing to join.
+    if (!cfg || ctx.embed) return c.redirect(signinOr(here, `/servers/${serverId}/stats`))
+    const over = limited(c)
+    if (over) return over
+    return respond(c, ctx, <VoiceEntryPage ctx={ctx} server={server} failed={c.req.query('code') === 'failed'} signin={signinUrl(here)} />, { noStore: true })
+  }
   const over = limited(c)
   if (over) return over
-  const cfg = voiceConfig()
   // The page may reach the media server and nothing else besides this site (the policy of every page names what it may connect to), and may
   // compile WebAssembly (the noise filter, RNNoise); no other page may.
-  return respond(c, ctx, <VoicePage ctx={ctx} server={server} enabled={!!cfg} />, { scripts: !!cfg, wasm: !!cfg, connect: cfg ? [cfg.url, cfg.url.replace(/^ws/i, 'http')] : [] })
+  return respond(c, ctx, <VoicePage ctx={ctx} server={server} enabled={!!cfg} forget={via.viaCookie} />, { scripts: !!cfg, wasm: !!cfg, connect: cfg ? [cfg.url, cfg.url.replace(/^ws/i, 'http')] : [], noStore: true })
 })
 
 // What the room shows for each player follows what the dashboard knows (RFC 28): the game's nick, a round's, Steam's. Only players who are on the voice chat are asked about.
@@ -646,7 +655,7 @@ export const voiceTokenLimiter = new RateLimiter(20, 60_000)
 
 /** A token to join the server's voice room as the signed-in player (their SteamID64 is their name there, which is how the rules find them). */
 app.post('/servers/:serverId/voice/token', async (c) => {
-  const session = await getSession(c)
+  const session = await getVoiceSession(c)
   if (!session) return c.json({ error: 'Sign-in required', signin: '/auth/steam' }, 401)
   const serverId = c.req.param('serverId')
   if (!Store.getServerById(serverId)) return c.json({ error: 'Not found' }, 404)
@@ -661,7 +670,7 @@ export const voicePeopleLimiter = new RateLimiter(60, 60_000)
 
 /** Who is on the server's voice chat now (RFC 27, 7): for the count and the names the page shows before a player has joined. Not who is alive. */
 app.get('/servers/:serverId/voice/people', async (c) => {
-  const session = await getSession(c)
+  const session = await getVoiceSession(c)
   if (!session) return c.json({ error: 'Sign-in required', signin: '/auth/steam' }, 401)
   const serverId = c.req.param('serverId')
   if (!Store.getServerById(serverId)) return c.json({ error: 'Not found' }, 404)

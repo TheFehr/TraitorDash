@@ -25,6 +25,8 @@ export const SESSION_COOKIE_SECURE = /^https:\/\//i.test((process.env.BASE_URL |
 export const SESSION_COOKIE = SESSION_COOKIE_SECURE ? '__Host-steam_id' : 'steam_id'
 /** The session a game vouches for (RFC 16, 4): a separate cookie, so it can never be taken for a sign-in, and never an admin's. */
 export const GAME_COOKIE = SESSION_COOKIE_SECURE ? '__Host-td_game' : 'td_game'
+/** The cookie a code from the game gives (RFC 31): read by the voice page and its data routes only, never by getSession. */
+export const VOICE_COOKIE = SESSION_COOKIE_SECURE ? '__Host-td_voice' : 'td_voice'
 
 // Comma-separated SteamID64s allowed to administer. Empty list = nobody (fail closed).
 const ADMIN_STEAM_IDS = new Set(

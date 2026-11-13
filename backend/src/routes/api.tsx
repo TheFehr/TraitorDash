@@ -14,7 +14,8 @@ import { NONCE, signResponse } from '../services/signing'
 import { FINGERPRINT, NAME, ROUND_ID, STEAM_ID, STEAM_ID64, WSID } from '../services/validators'
 import { bridgeSetting, checkSettingValue, cleanReport, formatSettingCommand } from '../services/bridgeSettings'
 import { makeGameKey, KEY_TTL_SECONDS } from '../services/gameKey'
-import { parseVoiceState, voiceHub } from '../services/voice'
+import { parseVoiceState, voiceConfig, voiceHub } from '../services/voice'
+import { voiceCodes, showCode, CODE_TTL_MS } from '../services/voiceCode'
 
 type Variables = {
   server: {
@@ -624,6 +625,26 @@ api.post('/v1/ingame-keys', getServer, async (c) => {
   // numbers, and a SteamID64 does not fit in one exactly.
   const keys = [...new Set(players as string[])].map(id => ({ steam_id: id, key: makeGameKey(id, now) }))
   return c.json({ success: true, keys, ttl: KEY_TTL_SECONDS })
+})
+
+// A code for a player who is in the game (RFC 31): `!voice` in the chat asks for it, the player types it on the voice page in
+// their own browser. Only the server's token can ask, so a player cannot get a code for somebody else; one new code per player
+// every 10 seconds (the store's own limit), and a few a minute for a server.
+export const voiceCodesLimiter = new RateLimiter(20, 60_000)
+
+api.post('/v1/voice-codes', getServer, async (c) => {
+  const server = c.get('server')
+  if (!voiceConfig()) return c.json({ error: 'Voice chat is not set up' }, 503)
+  const wait = voiceCodesLimiter.hit(server.id)
+  if (wait > 0) return tooMany(c, wait, 'Too many code requests; slow down')
+  const read = await readJson(c, 4 * 1024)
+  if (read.tooLarge) return c.json({ error: 'the request is too large' }, 413)
+  const steamId = read.body?.steam_id
+  if (typeof steamId !== 'string' || !STEAM_ID64.test(steamId)) return c.json({ error: 'steam_id must be a SteamID64' }, 400)
+  const made = voiceCodes.issue(steamId)
+  if ('wait' in made) return tooMany(c, made.wait, 'This player asked a moment ago')
+  c.header('Cache-Control', 'no-store')
+  return c.json({ success: true, code: showCode(made.code), ttl: CODE_TTL_MS / 1000, path: `/servers/${server.id}/voice` })
 })
 
 // The bridge uploads a finished floor-plan scan (RFC 10, 4.5). The latest plan per map is kept.

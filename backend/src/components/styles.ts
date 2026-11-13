@@ -241,6 +241,13 @@ html.theater{overflow:hidden}
 .vc .talk{min-width:5rem}
 .vc .lvl-legend{font-size:.85rem}
 .vc summary{cursor:pointer;font-weight:700}
+.vc .vform{display:flex;flex-direction:column;gap:var(--space-1)}
+.vc input.code{width:9rem;text-align:left;text-transform:uppercase;letter-spacing:.12em;font-size:1.1rem}
+.vc .vmsg{min-height:1.4em;color:var(--deep);font-weight:700}
+@media (max-width:780px){.vc .vmsg{min-height:2.8em}}
+@media (max-width:440px){.vc .vmsg{min-height:4.2em}}
+.vc .lnkbtn,.vc p a{color:var(--ink)}
+.vc p a{text-decoration:underline}
 .scale{height:.6rem;margin:var(--space-2) 0 var(--space-1)}
 .ends{display:flex;justify-content:space-between;font-size:.8rem}
 .sw{display:inline-block;position:relative;width:1rem;height:1rem;vertical-align:-.2rem;margin-right:var(--space-2)}

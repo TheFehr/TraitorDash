@@ -1,7 +1,10 @@
 import { Hono } from 'hono'
 import { setSignedCookie, setCookie, getCookie, deleteCookie } from 'hono/cookie'
-import { SESSION_SECRET, SESSION_COOKIE, GAME_COOKIE, SESSION_COOKIE_SECURE, isAdmin, openSignin, isBlocked, safeNext, maySignIn } from '../middleware/session'
+import { SESSION_SECRET, SESSION_COOKIE, GAME_COOKIE, VOICE_COOKIE, SESSION_COOKIE_SECURE, isAdmin, openSignin, isBlocked, safeNext, maySignIn } from '../middleware/session'
 import { readGameKey, GAME_SESSION_SECONDS } from '../services/gameKey'
+import { voiceCodes } from '../services/voiceCode'
+import { makeVoiceCookie, VOICE_COOKIE_SECONDS } from '../services/voiceSession'
+import { sameSiteForm } from '../middleware/csrf'
 import { clientAddress } from '../services/gates'
 import { RateLimiter } from '../services/rateLimit'
 
@@ -162,10 +165,58 @@ auth.get('/game', async (c) => {
   return c.redirect(target)
 })
 
+// A code from the game, typed on the voice page (RFC 31). A form post from the page itself; the answer is a redirect to
+// that page, with the cookie when the code was right. A wrong, a used, an expired code and a player who may not sign in
+// all give the same answer, so nothing says which codes exist.
+export const voiceCodeLimiter = new RateLimiter(10, 60_000)
+const VOICE_PAGE = /^\/servers\/[A-Za-z0-9_-]{1,64}\/voice$/
+
+const noStore = (c: any) => {
+  c.header('Cache-Control', 'no-store')
+  c.header('Referrer-Policy', 'no-referrer')
+}
+
+auth.post('/voice-code', async (c) => {
+  noStore(c)
+  if (!sameSiteForm(c)) return c.text('Cross-site request refused', 403)
+  const address = clientAddress(c)
+  const wait = Math.max(address ? voiceCodeLimiter.hit(address) : 0, voiceCodes.lockedFor())
+  if (wait > 0) {
+    c.header('Retry-After', String(wait))
+    return c.text('Too many attempts; wait a moment', 429)
+  }
+  const body = await c.req.parseBody().catch(() => ({} as Record<string, unknown>))
+  const to = safeNext(body.to)
+  const page = to && VOICE_PAGE.test(to) ? to : null
+  const steamId = voiceCodes.redeem(body.code)
+  if (steamId && maySignIn(steamId)) {
+    setCookie(c, VOICE_COOKIE, makeVoiceCookie(steamId), {
+      path: '/',
+      httpOnly: true,
+      secure: SESSION_COOKIE_SECURE || process.env.NODE_ENV === 'production',
+      maxAge: VOICE_COOKIE_SECONDS,
+      sameSite: 'Lax',
+    })
+    return c.redirect(page ?? '/', 303)
+  }
+  voiceCodes.noteFailure()
+  return c.redirect(page ? `${page}?code=failed` : '/', 303)
+})
+
+auth.post('/voice-logout', async (c) => {
+  noStore(c)
+  if (!sameSiteForm(c)) return c.text('Cross-site request refused', 403)
+  deleteCookie(c, VOICE_COOKIE, { path: '/', secure: SESSION_COOKIE_SECURE })
+  const body = await c.req.parseBody().catch(() => ({} as Record<string, unknown>))
+  const to = safeNext(body.to)
+  return c.redirect(to && VOICE_PAGE.test(to) ? to : '/', 303)
+})
+
 // POST only: a GET could be triggered by any page (an image tag) and log the admin out.
 auth.post('/logout', (c) => {
   deleteCookie(c, SESSION_COOKIE, { path: '/', secure: SESSION_COOKIE_SECURE })
   deleteCookie(c, GAME_COOKIE, { path: '/', secure: SESSION_COOKIE_SECURE })
+  deleteCookie(c, VOICE_COOKIE, { path: '/', secure: SESSION_COOKIE_SECURE })
   return c.redirect('/')
 })
 

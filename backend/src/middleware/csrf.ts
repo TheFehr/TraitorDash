@@ -7,6 +7,24 @@ const hostOf = (url: string): string | null => {
   try { return new URL(url).host } catch { return null }
 }
 
+/**
+ * Whether a form post comes from a page of this site (RFC 31, the code entry): stricter than `sameOrigin`, which lets a
+ * request without an Origin pass. Here the browser must say so: `Sec-Fetch-Site: same-origin`, or, where it sends no
+ * such header, an `Origin` that is this site. Neither header, or another site, is refused: a form that signs a browser in
+ * must not be postable from another site's page (login CSRF).
+ */
+export const sameSiteForm = (c: any): boolean => {
+  const fetchSite = c.req.header('Sec-Fetch-Site')
+  if (fetchSite) return fetchSite === 'same-origin'
+  const origin = c.req.header('Origin')
+  const originHost = origin ? hostOf(origin) : null
+  if (!originHost) return false
+  for (const h of [c.req.header('Host'), c.req.header('X-Forwarded-Host'), process.env.BASE_URL && hostOf(process.env.BASE_URL)]) {
+    if (h && h === originHost) return true
+  }
+  return false
+}
+
 export const sameOrigin = async (c: any, next: any) => {
   if (SAFE.has(c.req.method)) return next()
   // Bridge calls authenticate with a bearer token, not a cookie.

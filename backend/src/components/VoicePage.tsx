@@ -1,5 +1,6 @@
 import { PageHead, Shell } from './CaseFile'
 import { adminOf, type Ctx } from './kit'
+import { VOICE_CODE_FAILED } from '../services/voiceCode'
 
 // The voice page (RFC 27): the markup voice.ts finds its parts in, in two cards: who is on the voice chat (join, the list, the volumes) and the
 // player's own microphone (how it opens, the filter, the level and the sensitivity). Everything that happens is done by that code; without
@@ -11,9 +12,40 @@ export interface VoicePageProps {
   server: { id: string, name: string }
   /** Whether the dashboard has a media server to join (LIVEKIT_URL and the keys are set). */
   enabled: boolean
+  /** Whether only the voice cookie (RFC 31) says who this is: then the page offers to forget this browser. */
+  forget?: boolean
 }
 
-export const VoicePage = ({ ctx, server, enabled }: VoicePageProps) => {
+/**
+ * What a visitor without a session sees (RFC 31): the form for the code the game shows, or the Steam sign-in. The line for the
+ * message is always there with its height reserved, so a failed code does not move the Steam link.
+ */
+export const VoiceEntryPage = ({ ctx, server, failed, signin }: { ctx: Ctx, server: { id: string, name: string }, failed: boolean, signin: string }) => (
+  <Shell title={`Voice | ${server.name}`} embed={ctx.embed} viewer={ctx.viewer}>
+    <PageHead serverId={server.id} embed={ctx.embed} admin={false} current="voice" crumbs={server.name}>
+      <h1>Voice chat</h1>
+      <p class="muted" style="margin:0 0 var(--space-3)">Talk to the other players of the server while you play.</p>
+    </PageHead>
+    <div class="stack">
+      <div class="f c-gray vc">
+        <div class="ft">Join with a code from the game</div>
+        <p>Say <b>!voice</b> in the game chat. The game shows you a code that works for 5 minutes. Type it here.</p>
+        <form method="post" action="/auth/voice-code" class="vform">
+          <input type="hidden" name="to" value={`/servers/${server.id}/voice`} />
+          <label for="td-code" class="cap">Code</label>
+          <div class="row">
+            <input id="td-code" name="code" type="text" class="code" placeholder="K7F-3QX" maxlength={12} autocomplete="off" autocapitalize="characters" spellcheck={false} required />
+            <button type="submit" class="tog jn">Join</button>
+          </div>
+        </form>
+        <p class="note vmsg" role="alert">{failed ? VOICE_CODE_FAILED : ''}</p>
+        <p class="muted">No Steam sign-in is needed, and this browser is remembered for 30 days (for this page only). Not in the game right now? <a href={signin}>Sign in with Steam instead</a>.</p>
+      </div>
+    </div>
+  </Shell>
+)
+
+export const VoicePage = ({ ctx, server, enabled, forget = false }: VoicePageProps) => {
   const id = server.id
   return (
     <Shell title={`Voice | ${server.name}`} embed={ctx.embed} viewer={ctx.viewer} scripts={enabled ? ['/public/voice.js'] : []}>
@@ -44,6 +76,14 @@ export const VoicePage = ({ ctx, server, enabled }: VoicePageProps) => {
               <div data-people></div>
               <p class="muted mt1">Everyone on the voice chat is listed, whether or not you can hear them right now (during a round the game decides that). Your volumes and mutes are remembered on this device.</p>
             </div>
+
+            {forget && (
+              <form method="post" action="/auth/voice-logout" class="vforget">
+                <input type="hidden" name="to" value={`/servers/${id}/voice`} />
+                <span class="muted">This browser joined with a code from the game, for 30 days. </span>
+                <button type="submit" class="lnkbtn">Forget this browser</button>
+              </form>
+            )}
           </div>
 
           <div class="f c-gray vc">
