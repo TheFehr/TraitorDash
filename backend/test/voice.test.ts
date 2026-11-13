@@ -858,8 +858,8 @@ describe('the page\'s code', () => {
     const tick = async (box: any, page: any, name: string, on: boolean) => { box.checked = on; await page.listeners[name]!.change!() }
     const LOUD = '[data-cond-loud]', SPEECH = '[data-cond-speech]'
     const COND_LOUD = 'The microphone opens when the sound is above the opening level.'
-    const COND_BOTH = 'The microphone opens when the sound is above the opening level and the filter hears speech.'
-    const COND_SPEECH = 'The microphone opens when the filter hears speech. The loudness line is not used.'
+    const COND_BOTH = 'The microphone opens when the sound is loud and the filter hears speech.'
+    const COND_SPEECH = 'The microphone opens when the filter hears speech. Loudness is not used.'
     const posted = (t: any, type: string) => t.gateNodes[0].sent.filter((m: any) => m.type === type)
 
     test('the two boxes are in the markup, loudness ticked and speech not, and the page tells the player what each does', async () => {
@@ -947,7 +947,7 @@ describe('the page\'s code', () => {
       await tick(page.parts[SPEECH], page, SPEECH, false); expect(note()).toBe(COND_LOUD)
       await tick(page.parts[LOUD], page, LOUD, false) // the last box cannot be unticked: the other one is ticked instead, and the line says so
       expect(note()).toBe(COND_SPEECH)
-      expect(COND_LOUD).toContain('above the opening level'); expect(COND_BOTH).toContain('and the filter hears speech'); expect(COND_SPEECH).toContain('The loudness line is not used')
+      expect(COND_LOUD).toContain('above the opening level'); expect(COND_BOTH).toContain('and the filter hears speech'); expect(COND_SPEECH).toContain('Loudness is not used')
       t.done()
     })
 
@@ -963,7 +963,7 @@ describe('the page\'s code', () => {
         const t = setup(opts)
         const warn = console.warn; console.warn = () => {}
         try { page.run(t.globals); page.listeners['[data-join]']!.click!(); await new Promise(r => setTimeout(r, 30)) } finally { console.warn = warn }
-        expect(page.parts['[data-cond-note]'].textContent, JSON.stringify(opts)).toBe('The speech check needs the noise filter and the voice gate, and one of them could not start: the microphone opens by loudness.')
+        expect(page.parts['[data-cond-note]'].textContent, JSON.stringify(opts)).toBe('The speech check could not start: the microphone opens by loudness.')
         t.done()
       }
     })
@@ -1338,8 +1338,11 @@ describe('the meter\'s styles', () => {
     expect(rule('.vc [data-count]')).toMatch(/min-width:/)
     // The two status lines (the measurement and the way the microphone opens) always hold a text and keep the height of their fullest text (lines
     // of 1.35em, as Chromium wraps the longest one from 320 to 1100 px: 2 lines from 730, 3 from 505, 4 from 410, 5 from 360, 6 below).
-    expect(rule('.vc .mnote,.vc .cnote')).toMatch(/min-height:2\.7em/)
-    for (const [max, em] of [[729, '4.05'], [504, '5.4'], [409, '6.75'], [359, '8.1']]) expect(css).toContain(`@media (max-width:${max}px){.vc .mnote,.vc .cnote{min-height:${em}em}}`)
+    expect(rule('.vc .mnote')).toMatch(/min-height:2\.7em/)
+    for (const [max, em] of [[729, '4.05'], [504, '5.4'], [409, '6.75'], [359, '8.1']]) expect(css).toContain(`@media (max-width:${max}px){.vc .mnote{min-height:${em}em}}`)
+    // the way-the-microphone-opens line: its fullest text is a single line from 810 px up
+    expect(rule('.vc .cnote')).toMatch(/min-height:1\.35em/)
+    for (const [max, em] of [[819, '2.7'], [449, '4.05'], [339, '5.4']]) expect(css).toContain(`@media (max-width:${max}px){.vc .cnote{min-height:${em}em}}`)
     expect(rule('.vc .lvl-read')).toContain('align-items:flex-start') // a baseline alignment moved "talking" 15 px when the reading came
     expect(Number(/min-width:([\d.]+)rem/.exec(rule('.vc .db'))?.[1])).toBeGreaterThanOrEqual(6.5) // "-100 dBFS" fits
     expect(rule('.vc .pct')).toMatch(/min-width:3rem/)

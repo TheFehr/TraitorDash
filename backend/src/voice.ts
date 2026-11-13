@@ -161,9 +161,9 @@ function start(root: HTMLElement) {
   const MEASURE_NONE = 'Not measured yet: join, stay quiet, and press "Measure my room" so the microphone opens at the right level for your room.'
   const MEASURE_SAVED = 'Not measured in this visit: the sensitivity is the one you set before.'
   const COND_LOUD = 'The microphone opens when the sound is above the opening level.'
-  const COND_BOTH = 'The microphone opens when the sound is above the opening level and the filter hears speech.'
+  const COND_BOTH = 'The microphone opens when the sound is loud and the filter hears speech.'
   const COND_PTT = 'The microphone opens while you hold the key.'
-  const COND_SPEECH = 'The microphone opens when the filter hears speech. The loudness line is not used.'
+  const COND_SPEECH = 'The microphone opens when the filter hears speech. Loudness is not used.'
   const savedMode = store.get('mode'); if (savedMode === 'ptt' && !modes.find(m => m.dataset.mode === 'ptt')?.disabled) pick('ptt') // the button is off for now: a saved choice of it is ignored
   const savedOpen = num(store.get('gate_open')), savedClose = num(store.get('gate_close'))
   if (savedOpen !== null && savedOpen >= GATE.minDb && savedOpen <= GATE.maxDb) {
@@ -186,7 +186,7 @@ function start(root: HTMLElement) {
   const showCond = () => {
     condLoud.checked = effective() !== 'speech'; condSpeech.checked = effective() !== 'loud'
     condSpeech.disabled = !speechOk || mode() === 'ptt'; condLoud.disabled = mode() === 'ptt'
-    if (!speechOk) condNote.textContent = 'The speech check needs the noise filter and the voice gate, and one of them could not start: the microphone opens by loudness.'
+    if (!speechOk) condNote.textContent = 'The speech check could not start: the microphone opens by loudness.'
     else if (mode() === 'ptt') condNote.textContent = COND_PTT
     else condNote.textContent = speechOnly() ? COND_SPEECH : effective() === 'both' ? COND_BOTH : COND_LOUD
     showAuto()
