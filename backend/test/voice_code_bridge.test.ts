@@ -25,7 +25,11 @@ const PRELUDE = `
   timer = { Create = function() end, Exists = function() return false end, Remove = function() end, Simple = function() end }
   PRINTED = {}
   print = function(...) end
-  util = { TableToJSON = function(t) LAST_PAYLOAD = t return "{json}" end }
+  util = { TableToJSON = function(t) LAST_PAYLOAD = t return "{json}" end, AddNetworkString = function(n) REGISTERED[#REGISTERED + 1] = n end }
+  NETS = {}
+  net = { Start = function(n) CUR = { name = n } end, WriteString = function(v) CUR.value = v end,
+    Send = function(p) CUR.to = p.id NETS[#NETS + 1] = CUR end, Broadcast = function() CUR.to = "ALL" NETS[#NETS + 1] = CUR end }
+  REGISTERED = {}
   CALLS = {}
   REPLY = { code = 200, body = '{"success":true,"code":"K7F-3QX","ttl":300,"path":"/servers/srv-1/voice"}' }
   PENDING = nil
@@ -65,7 +69,7 @@ function play(script: string, opts: { on?: boolean, files?: string[] } = {}) {
     if (opts.on !== false) run('CVARS.traitordash_voice = "1"')
     for (const f of opts.files ?? ['util.lua', 'rolemenu.lua']) {
       // the role guide gives voice.lua the cleaning of the public address; it needs a few things of the game it does not use here
-      if (f === 'rolemenu.lua') run('util.AddNetworkString = function() end net = {} roles = {} CLIENT = false SERVER = true')
+      if (f === 'rolemenu.lua') run('roles = {} CLIENT = false SERVER = true')
       run(read(f))
     }
     run(read('voice.lua'))
@@ -83,19 +87,51 @@ function play(script: string, opts: { on?: boolean, files?: string[] } = {}) {
       end
       local calls = {}
       for i, c in ipairs(CALLS) do calls[i] = { url = c.url, method = c.method, auth = c.headers.Authorization, body = c.body } end
-      OUT_JSON = enc({ chat = CHAT, calls = calls, payload = LAST_PAYLOAD, result = RESULT })
+      OUT_JSON = enc({ nets = NETS, registered = REGISTERED, chat = CHAT, calls = calls, payload = LAST_PAYLOAD, result = RESULT })
     `)
     lua.lua_getglobal(L, to_luastring('OUT_JSON'))
-    return JSON.parse(to_jsstring(lua.lua_tostring(L, -1))) as { chat: [string, string][], calls: { url: string, method: string, auth: string, body: string }[], payload: any, result: any }
+    return JSON.parse(to_jsstring(lua.lua_tostring(L, -1))) as { nets: { name: string, value: string, to: string }[], registered: string[], chat: [string, string][], calls: { url: string, method: string, auth: string, body: string }[], payload: any, result: any }
   } finally { lua.lua_close(L) }
 }
 const A = '76561198000000001'
+
+describe('!voice in voice.lua: the code on the clipboard', () => {
+  test('the net message is registered; on success exactly one goes to the asking player alone, carrying the code', () => {
+    const r = play('RESULT = Say(ALICE, "!voice")')
+    expect(r.registered).toContain('TraitorDash_VoiceCode')
+    expect(r.nets).toEqual([{ name: 'TraitorDash_VoiceCode', value: 'K7F-3QX', to: A }])
+  })
+
+  test('another player asking gets a message of their own', () => {
+    const r = play('Say(ALICE, "!voice") Say(BOB, "!voice")')
+    expect(r.nets.map(n => n.to)).toEqual([A, '76561198000000002'])
+  })
+
+  test('no message on a failure, a refusal, a bad shape, no configuration, a repeat, a bot, voice off or another line', () => {
+    const bodies = [
+      '{ fail = "timeout" }', '{ code = 429, body = "{}" }', '{ code = 200, body = "not json" }',
+      '{ code = 200, body = \'{"code":"k7f-3qx","path":"/servers/a/voice"}\' }',
+      '{ code = 200, body = \'{"code":"K7F-3QX","path":"/x"}\' }',
+    ]
+    for (const reply of bodies) expect(play(`REPLY = ${reply} RESULT = Say(ALICE, "!voice")`).nets, reply).toEqual([])
+    expect(play('CONFIG = {} Say(ALICE, "!voice")').nets).toEqual([])
+    expect(play('Say(BOT, "!voice")').nets).toEqual([])
+    expect(play('Say(ALICE, "!voice")', { on: false }).nets).toEqual([])
+    expect(play('Say(ALICE, "!voice now")').nets).toEqual([])
+    expect(play('Say(ALICE, "!voice") NOW = NOW + 1 Say(ALICE, "!voice")').nets).toHaveLength(1) // the repeat within 10 s sends nothing
+  })
+
+  test('a player who left before the answer gets no message', () => {
+    const r = play('HOLD = true Say(ALICE, "!voice") IsValid = function(v) return v ~= ALICE and v ~= nil end PENDING.success(200, REPLY.body)')
+    expect(r.nets).toEqual([])
+  })
+})
 
 describe('!voice in voice.lua', () => {
   test('the line is hidden (the hook returns an empty string) and the code goes to the one player who asked, with the address to open', () => {
     const r = play('RESULT = Say(ALICE, "!voice")')
     expect(r.result).toBe('')
-    expect(r.chat).toEqual([[A, 'Voice code K7F-3QX (5 minutes). Open https://dash.example.org/voice in your browser and type it there.']])
+    expect(r.chat).toEqual([[A, 'Voice code K7F-3QX (5 minutes). It is on your clipboard: open https://dash.example.org/voice in your browser and paste it.']])
     expect(r.chat[0]![1]).not.toContain('/servers/') // the long address wraps over three chat lines
     expect(r.calls).toHaveLength(1)
     expect(r.calls[0]).toMatchObject({ url: 'http://10.0.0.5:3000/api/v1/voice-codes', method: 'POST', auth: 'Bearer tok' })
@@ -174,8 +210,8 @@ describe('!voice in voice.lua', () => {
   })
 
   test('the address is the public https one when it is set and fine, else the bridge\'s own', () => {
-    expect(play('PUBLIC = "http://plain.example.org" RESULT = Say(ALICE, "!voice")').chat[0]![1]).toContain('Open http://10.0.0.5:3000/voice ')
-    expect(play('PUBLIC = "https://dash.example.org/" RESULT = Say(ALICE, "!voice")').chat[0]![1]).toContain('Open https://dash.example.org/voice ')
+    expect(play('PUBLIC = "http://plain.example.org" RESULT = Say(ALICE, "!voice")').chat[0]![1]).toContain('open http://10.0.0.5:3000/voice ')
+    expect(play('PUBLIC = "https://dash.example.org/" RESULT = Say(ALICE, "!voice")').chat[0]![1]).toContain('open https://dash.example.org/voice ')
   })
 
   test('a player who left before the answer comes gets nothing printed (no error)', () => {
@@ -186,5 +222,50 @@ describe('!voice in voice.lua', () => {
       PENDING.success(200, REPLY.body)
     `)
     expect(r.chat).toEqual([])
+  })
+})
+
+// The client file: only a string with exactly the shape of a code ever reaches the clipboard.
+describe('traitordash_voice_cl.lua', () => {
+  const CLIENT_FILE = fs.readFileSync(path.join(DIR, '../autorun/client/traitordash_voice_cl.lua'), 'utf8')
+  function receive(msg: string | null, client = true): { copied: string[], registered: string[] } {
+    const L = lauxlib.luaL_newstate()
+    lualib.luaL_openlibs(L)
+    const run = (code: string) => {
+      if (lauxlib.luaL_dostring(L, to_luastring(code)) !== lua.LUA_OK) throw new Error(to_jsstring(lua.lua_tostring(L, -1)))
+    }
+    try {
+      if (msg === null) lua.lua_pushnil(L)
+      else lua.lua_pushstring(L, to_luastring(msg))
+      lua.lua_setglobal(L, to_luastring('MSG'))
+      run(`CLIENT = ${client} COPIED = {} RECV = {}
+        net = { Receive = function(n, fn) RECV[n] = fn end, ReadString = function() return MSG end }
+        function SetClipboardText(t) COPIED[#COPIED + 1] = t end`)
+      run(CLIENT_FILE)
+      run('if RECV.TraitorDash_VoiceCode then RECV.TraitorDash_VoiceCode() end')
+      run(`local r = {} for k in pairs(RECV) do r[#r + 1] = k end
+        OUT = table.concat(COPIED, "\\1") .. "\\2" .. table.concat(r, ",") .. "\\2" .. #COPIED`)
+      lua.lua_getglobal(L, to_luastring('OUT'))
+      const [c, r, n] = to_jsstring(lua.lua_tostring(L, -1)).split('\x02')
+      return { copied: Number(n) === 0 ? [] : c!.split('\x01'), registered: r ? r.split(',') : [] }
+    } finally { lua.lua_close(L) }
+  }
+
+  test('a valid code is copied, once, as it is', () => {
+    const r = receive('K7F-3QX')
+    expect(r.registered).toEqual(['TraitorDash_VoiceCode'])
+    expect(r.copied).toEqual(['K7F-3QX'])
+    expect(receive('R73-NND').copied).toEqual(['R73-NND'])
+  })
+
+  test('anything that is not exactly a code is not copied', () => {
+    const bad = ['', 'K7F-3QXZ', 'K7F-3Q', 'k7f-3qx', 'K7F3QX', '1234-ABC', 'https://evil.example/x', 'K7F-3Q0', 'K7O-3QX', 'K7F-3Q1', 'K7I-3QX', 'K7L-3QX', 'AEI-3QX',
+      'K7F-3QX\n', '\nK7F-3QX', ' K7F-3QX', 'K7F-3QX ', 'K7F-3QX\0', 'K7F-3QX\nrm -rf', 'K7F--3QX']
+    for (const b of bad) expect(receive(b).copied, JSON.stringify(b)).toEqual([])
+    expect(receive(null).copied).toEqual([])
+  })
+
+  test('on a server (not a client) the file does nothing', () => {
+    expect(receive('K7F-3QX', false)).toEqual({ copied: [], registered: [] })
   })
 })

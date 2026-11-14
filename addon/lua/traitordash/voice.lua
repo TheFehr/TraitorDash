@@ -217,6 +217,9 @@ local CODE_EVERY = 10 -- seconds between two requests of one player
 local lastCode = {}   -- SteamID64 -> CurTime() of the last accepted request
 local UNAVAILABLE = "Voice code unavailable, try again in a moment."
 
+-- The code also goes to the asking player's own client (to that player alone), which puts it on their clipboard (RFC 31, 11); the client checks the shape again.
+if SERVER and util.AddNetworkString then util.AddNetworkString("TraitorDash_VoiceCode") end
+
 --- The address a player can reach: the public https address (as for the role guide) when one is set, else the bridge's own.
 local function ShownBase(cfg)
     local guide = TraitorDash.RoleGuide
@@ -259,7 +262,10 @@ function Voice.OnChat(ply, text)
                 return
             end
             -- The short address, not the server's own page: that one wraps over three chat lines and cannot be typed; the code knows the server.
-            ply:ChatPrint("Voice code " .. shown .. " (5 minutes). Open " .. ShownBase(cfg) .. "/voice in your browser and type it there.")
+            net.Start("TraitorDash_VoiceCode")
+            net.WriteString(shown)
+            net.Send(ply)
+            ply:ChatPrint("Voice code " .. shown .. " (5 minutes). It is on your clipboard: open " .. ShownBase(cfg) .. "/voice in your browser and paste it.")
         end,
         failed = function() if IsValid(ply) then ply:ChatPrint(UNAVAILABLE) end end,
     })
