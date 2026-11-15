@@ -1,9 +1,10 @@
 import {
   WebGLRenderer, Scene, PerspectiveCamera, HemisphereLight, AmbientLight, DirectionalLight, Color,
-  Box3, ConeGeometry, Group, Mesh as MeshClass, MeshBasicMaterial, TextureLoader,
+  Box3, ConeGeometry, Group, Mesh as MeshClass, type Material, MeshBasicMaterial, TextureLoader,
   type LoadingManager, type Mesh, type MeshStandardMaterial, type BufferGeometry, type Object3D, type Plane,
 } from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 
 /** What the map view and the replay start from: the same renderer, lit scene and camera, so a map looks the same in both. */
 
@@ -12,7 +13,7 @@ export const BACKGROUND = 0x14110e
 
 /** A renderer on the canvas, with clipping on (the level cutaway) and the pixel ratio capped (2, or 1.5 on a touch screen). Throws without WebGL. */
 export function makeRenderer(canvas: HTMLCanvasElement): WebGLRenderer {
-  const renderer = new WebGLRenderer({ canvas, antialias: true })
+  const renderer = new WebGLRenderer({ canvas, antialias: true, stencil: true }) // (the stencil buffer: the follow camera's ghost of the player, RFC 34)
   renderer.localClippingEnabled = true
   // A phone's screen has three or more pixels for each of the page's: drawing all of them is what makes it slow, so a touch screen gets at most one and a half
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, navigator.maxTouchPoints > 0 ? 1.5 : 2))
@@ -234,4 +235,27 @@ export function makeSpawnMarkers(model: Object3D, spawns: SpawnPoint[], cut: Pla
   }
   space.add(group)
   return group
+}
+
+/**
+ * Draws `meshes` (props placed in the map) as one mesh for each material, in the place they are, also where a material has only one; the ones given are hidden.
+ * Hundreds of props are hundreds of draw calls, which is what a phone is slowest at. A set that cannot be put together (different attributes) is left as it is.
+ * Returns the merged meshes made, added to `root`.
+ */
+export function mergeDrawn(root: Object3D, meshes: Mesh[]): Mesh[] {
+  const made: Mesh[] = []
+  const byMaterial = new Map<Material, Mesh[]>()
+  for (const m of meshes) { const list = byMaterial.get(m.material as Material); if (list) list.push(m); else byMaterial.set(m.material as Material, [m]) }
+  for (const [material, list] of byMaterial) {
+    const parts = list.map(m => { const g = m.geometry.clone(); g.applyMatrix4(m.matrixWorld); return g })
+    const merged = mergeGeometries(parts, false)
+    parts.forEach(g => g.dispose())
+    if (!merged) continue
+    const one = new MeshClass(merged, material)
+    one.name = 'props-merged'
+    root.add(one)
+    made.push(one)
+    for (const m of list) m.visible = false
+  }
+  return made
 }

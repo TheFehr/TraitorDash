@@ -9,12 +9,12 @@ import { hex } from './teamColours'
 import { depthOf } from './bodyDepth'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { clone as cloneRig } from 'three/examples/jsm/utils/SkeletonUtils.js'
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { startFlat } from './replayflat'
-import { offerBrowser, levelColour, paintPlain, makeCamera, makeRenderer, makeScene, mapLoader, prepareDecoration, prepareMovable, prepareProps, prepareWater, lyingPlaces, boxWithout, type Painted } from './sceneKit'
+import { offerBrowser, levelColour, paintPlain, makeCamera, makeRenderer, makeScene, mapLoader, prepareDecoration, prepareMovable, prepareProps, prepareWater, lyingPlaces, boxWithout, mergeDrawn, type Painted } from './sceneKit'
+import { holeUniforms, patchHole, updateHole, ghostFigure, ghostShown } from './followHole'
 import {
-  decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, shownLevels, FADE, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, bodyAt, thingAt, movedProps, killerDiedBefore, reviveSource, revivePose, fitLabel,
+  decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, shownLevels, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, bodyAt, thingAt, movedProps, killerDiedBefore, reviveSource, revivePose, fitLabel,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
 } from './replaylogic'
 
@@ -368,108 +368,10 @@ async function start(root: HTMLElement) {
   world.rotation.x = -Math.PI / 2
   scene.add(world)
 
-  // ---- seeing through what is between the camera and the player (the follow camera)
-  // The camera sits behind the player, and whatever is on the way (a wall, a building, a tree) would hide them. Instead of pulling the
-  // camera forward, what is in a cone from the camera to the player's head is faded out, with a screen-door pattern so nothing has to be
-  // sorted. A prop is faded as a whole, by where its middle is (every prop knows its middle and its size); a wall by each pixel; a floor
-  // only where it is above the line from the camera to the player's feet (a ceiling, or a ledge that hides their legs). Nothing is faded beyond the player.
-  // radius (units) from which a prop is faded by the pixel and not as a whole: a tree crown or a bush is cut out where it is in the way, and one
-  // whose middle is by the player (its leaves hanging over their head) is not skipped because its middle is past the end of the line
-  const BIG_PROP = 60
-  const lineOfSight = { uCam: { value: new Vector3() }, uHead: { value: new Vector3() } }
-  const CUT_GLSL = `
-    uniform vec3 uCam;
-    uniform vec3 uHead;
-    // 1 where a thing at p (of size r) is in the way of the line of sight from uCam to uHead, 0 where it is not; ceiling: only above the line
-    float cutAt(vec3 p, float r, float ceiling) {
-      vec3 ab = uHead - uCam;
-      float l2 = dot(ab, ab);
-      if (l2 < 1.0) return 0.0;
-      float t = dot(p - uCam, ab) / l2;
-      // an object of size r whose middle is behind the camera can still surround it (the camera inside a helicopter), so the lower limit
-      // allows for the size; a pixel (r = 0) keeps the plain limit
-      // nothing is faded at the player or beyond: the last stretch is a fixed 8 units (it was 8% of the line, about 25, and a wall 17 units in front of
-      // the player, with their body behind it, stayed solid)
-      // beyond the player a floor is faded only where it is above their head, within a box beyond and beside them (overheadFade in replaylogic.ts)
-      if (ceiling > 0.5 && t > 1.0) {
-        if (p.y < uHead.y + ${FADE.headroom.toFixed(1)}) return 0.0;
-        vec2 dir = ab.xz; float dl = length(dir); dir = dl < 0.001 ? vec2(1.0, 0.0) : dir / dl;
-        vec2 rel = p.xz - uHead.xz;
-        float along = dot(rel, dir);
-        if (along < 0.0) return 0.0;
-        float side = length(rel - dir * along);
-        return (1.0 - smoothstep(${(0.6 * FADE.past).toFixed(1)}, ${FADE.past.toFixed(1)}, along)) * (1.0 - smoothstep(${(0.6 * FADE.side).toFixed(1)}, ${FADE.side.toFixed(1)}, side));
-      }
-      float last = 1.0 - 8.0 / sqrt(l2);
-      if (ceiling > 0.5) last = 1.0;
-      if (t < -0.05 - r / sqrt(l2) || t > last) return 0.0;
-      vec3 q = uCam + ab * clamp(t, 0.0, 1.0);
-      float radius = ${FADE.base.toFixed(1)} + ${FADE.gain.toFixed(1)} * (1.0 - t);
-      // a floor is faded only where it can hide some of the player: above the line from the camera to their feet (a ledge below the line to the
-      // head still hides their legs; one below the line to the feet hides nothing and is what they stand on)
-      if (ceiling > 0.5) {
-        // (a ledge that hides their feet lies exactly on the line to the feet, so the test allows a margin below it; the floor they stand
-        // on is kept by a second test, against the height of their feet)
-        float ground = uHead.y - 64.0;
-        float feet = uCam.y + (ground - uCam.y) * clamp(t, 0.0, 1.0);
-        if (p.y < feet - 24.0 || p.y < ground + 16.0) return 0.0;
-        radius *= 0.8;
-      }
-      // the cone reaches higher than it is wide: what is above the line (a wall top, a roof, a branch) hides the surroundings of the player
-      // as much as what is beside it, and the camera looks down, so a round cone left them in the picture
-      vec3 off = p - q;
-      if (off.y > 0.0) off.y *= 0.55;
-      float d = length(off) - r * 0.5;
-      return 1.0 - smoothstep(radius * 0.75, radius, d);
-    }
-    float screenDoor(vec2 f) { return fract(52.9829189 * fract(dot(f, vec2(0.06711056, 0.00583715)))); }`
-  /** Makes a material fade what is on the line of sight: 'prop' (whole objects, from `aObject` = the middle and size), 'wall' or 'floor' (each pixel). */
-  function seeThrough(material: Material, kind: 'prop' | 'wall' | 'floor') {
-    material.customProgramCacheKey = () => `seethrough-${kind}`
-    material.onBeforeCompile = shader => {
-      shader.uniforms.uCam = lineOfSight.uCam
-      shader.uniforms.uHead = lineOfSight.uHead
-      // a prop that is large (a building, a wall) is faded by the pixel like a wall: its middle can be far from the line of sight while the
-      // camera is inside it, and the whole object cannot fade because a corner of it is in the way
-      const piece = kind === 'prop' ? 'varying float vCut;\nvarying float vBig;\nvarying vec3 vWorldC;' : 'varying vec3 vWorldC;'
-      shader.vertexShader = shader.vertexShader
-        .replace('void main() {', `${CUT_GLSL}\n${kind === 'prop' ? 'attribute vec4 aObject;' : ''}\n${piece}\nvoid main() {`)
-        .replace('#include <begin_vertex>', `#include <begin_vertex>\n${kind === 'prop' ? `vBig = aObject.w > ${BIG_PROP.toFixed(1)} ? 1.0 : 0.0; vCut = vBig > 0.5 ? 0.0 : cutAt(aObject.xyz, aObject.w, 0.0); vWorldC = (modelMatrix * vec4(transformed, 1.0)).xyz;` : 'vWorldC = (modelMatrix * vec4(transformed, 1.0)).xyz;'}`)
-      const test = kind === 'prop' ? 'max(vCut, vBig > 0.5 ? cutAt(vWorldC, 0.0, 0.0) : 0.0)' : `cutAt(vWorldC, 0.0, ${kind === 'floor' ? '1.0' : '0.0'})`
-      shader.fragmentShader = shader.fragmentShader
-        .replace('void main() {', `${CUT_GLSL}\n${piece}\nvoid main() {`)
-        .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>\n{ float c = ${test}; if (c > 0.0 && screenDoor(gl_FragCoord.xy) < c) discard; }`)
-    }
-  }
-
-  /** Draws `meshes` (props placed in the map) as one mesh for each material, in the place they are, even where a material has only one; the ones given are hidden. A set that cannot be put together (different attributes) is left as it is. Returns the merged meshes made. */
-  const mergeDrawn = (root: Object3D, meshes: Mesh[]): Mesh[] => {
-    const made: Mesh[] = []
-    const byMaterial = new Map<Material, Mesh[]>()
-    for (const m of meshes) { const list = byMaterial.get(m.material as Material); if (list) list.push(m); else byMaterial.set(m.material as Material, [m]) }
-    for (const [material, list] of byMaterial) {
-      // (also a material with one mesh: the fade needs the attribute that is made here, and a prop that is not merged is never faded)
-      const parts = list.map(m => {
-        const g = m.geometry.clone(); g.applyMatrix4(m.matrixWorld)
-        // every vertex of a prop knows where the prop's middle is and how big it is, so a prop can be faded as one
-        g.computeBoundingSphere()
-        const c = g.boundingSphere!, n = g.getAttribute('position').count, a = new Float32Array(n * 4)
-        for (let i = 0; i < n; i++) a.set([c.center.x, c.center.y, c.center.z, c.radius], i * 4)
-        g.setAttribute('aObject', new BufferAttribute(a, 4))
-        return g
-      })
-      const merged = mergeGeometries(parts, false)
-      parts.forEach(g => g.dispose())
-      if (!merged) continue
-      seeThrough(material, 'prop') // (only a material that is drawn merged has the attribute it needs)
-      const one = new Mesh(merged, material)
-      one.name = 'props-merged'
-      root.add(one)
-      made.push(one)
-      for (const m of list) m.visible = false
-    }
-    return made
-  }
+  // ---- the hole the follow camera makes (RFC 34): what is nearer than the followed player and inside a circle around them on the screen is cut
+  // away, by one rule for walls, floors and props (followHole.ts); the player is drawn once more as a ghost where something still covers them
+  const hole = holeUniforms()
+  const patchHoles = (...materials: Material[]) => { for (const m of new Set(materials)) patchHole(m, hole) }
 
   // ---- the background
   const cut = new Plane(new Vector3(0, -1, 0), 1e9)
@@ -508,7 +410,7 @@ async function start(root: HTMLElement) {
         mesh.material.clippingPlanes = [cut]
         mesh.material.metalness = 0
         mesh.material.roughness = 1
-        seeThrough(mesh.material, isWall ? 'wall' : 'floor')
+        patchHole(mesh.material, hole)
         if (isWall) wallMeshes.push(mesh)
         painted.push({ mesh, wall: isWall, level: l.index })
       })
@@ -539,6 +441,7 @@ async function start(root: HTMLElement) {
       model.updateMatrixWorld(true)
       // Hundreds of props are hundreds of draw calls, which is what a phone is slowest at: the props of one material are drawn as one mesh
       // (the separate ones stay, unseen, for the camera). Then nothing of the map moves, so its matrices are not worked out again each frame.
+      patchHoles(...props.solid.map(m => m.material as Material), ...props.foliage.map(m => m.material as Material))
       const mergedSolid = mergeDrawn(model, props.solid)
       groundMeshes.push(...lyingPlaces(painted, [...mergedSolid, ...props.solid.filter(m => m.visible)]))
       const mergedLeaves = mergeDrawn(model, props.foliage)
@@ -636,6 +539,11 @@ async function start(root: HTMLElement) {
   const matte = (c: number) => new MeshStandardMaterial({ color: c, metalness: 0, roughness: 0.8 })
   const LEGS = 0x2b3547, SKIN = 0xe2c3a0
 
+  /** The ghost of a figure (RFC 34, 4.2): its meshes drawn again in a flat colour where something covers them; hidden until the figure is the followed player's. */
+  const ghostOf = (g: Group, colour: number) => {
+    g.userData.ghost = ghostFigure(g, colour)
+  }
+
   /** A person standing at the origin facing +x, in the team's colour; `dim` for a body that lies where its player died. */
   const figure = (colour: number, dim: boolean) => {
     if (moving) {
@@ -650,6 +558,7 @@ async function start(root: HTMLElement) {
       for (const [name, clip] of moving.clips) { const a = mixer.clipAction(clip); a.play(); a.setEffectiveWeight(0); actions.set(name, a) }
       g.userData.cloth = cloth // so a change of team can repaint it
       g.userData.rig = { mixer, actions }
+      if (!dim) ghostOf(g, colour)
       return g
     }
     if (real) {
@@ -657,6 +566,7 @@ async function start(root: HTMLElement) {
       const cloth = new MeshStandardMaterial({ color: dim ? new Color(colour).multiplyScalar(0.45).getHex() : colour, metalness: 0, roughness: 0.8, side: DoubleSide })
       g.add(new Mesh(real.geometry, cloth))
       g.userData.cloth = cloth // so a change of team can repaint it
+      if (!dim) ghostOf(g, colour)
       return g
     }
     const g = new Group()
@@ -669,6 +579,7 @@ async function start(root: HTMLElement) {
     g.add(torso, head, nose)
     for (const y of [-18, 18]) { const a = new Mesh(armGeo, cloth); a.position.set(0, y, 47); g.add(a) }
     g.userData.cloth = cloth // so a change of team can repaint it
+    if (!dim) ghostOf(g, colour)
     return g
   }
 
@@ -934,6 +845,7 @@ async function start(root: HTMLElement) {
       if (colour !== m.colour) { // a conversion: the figure, its pin and its name change colour at that moment
         m.colour = colour
         ;(m.body.userData.cloth as MeshStandardMaterial).color.setHex(colour)
+        m.body.userData.ghost?.material.color.setHex(colour)
         ;(m.lying.userData.cloth as MeshStandardMaterial).color.setHex(colour).multiplyScalar(0.45)
         const look = lookOf(m, id, colour)
         ;(m.label.material as SpriteMaterial).map = look.label
@@ -952,6 +864,7 @@ async function start(root: HTMLElement) {
       const dim = typeof upto === 'number' && lv > 0 && lv < upto
       // a dead player is the body where they fell, not also the figure of their last sample (the two are both there at the moment of death)
       m.group.visible = p !== null && !above && currentDeath(data.deaths, data.events, id, ms) === null
+      for (const gm of (m.body.userData.ghost?.meshes ?? []) as Mesh[]) gm.visible = ghostShown(camMode, selected, id, m.group.visible) // the followed player's, in the follow camera only
       ;(m.label.material as SpriteMaterial).opacity = dim ? 0.35 : 1
       ;(m.pin.material as SpriteMaterial).opacity = dim ? 0.35 : 1
       if (p) {
@@ -1048,11 +961,11 @@ async function start(root: HTMLElement) {
       const dx = Math.cos(follow.yaw), dy = Math.sin(follow.yaw)
       // Source (x, y, z) -> three (x, z, -y)
       persp.position.set(px - dx * 300, pz + 170, -(py - dy * 300))
-      lineOfSight.uCam.value.copy(persp.position)
-      lineOfSight.uHead.value.set(px, pz + 64, -py)
       tmp.set(px + dx * 90, pz + 50, -(py + dy * 90))
       persp.lookAt(tmp)
-    } else lineOfSight.uHead.value.copy(lineOfSight.uCam.value) // no line of sight, nothing is faded
+      // the hole is made around where the player is drawn (the settled camera follows them a little behind)
+      updateHole(hole, persp, tmp.set(mine.x, mine.z, -mine.y), true)
+    } else updateHole(hole, camera, null, false) // no follow camera, no hole
     scrub.value = String(ms)
     setText(timeEl, `${stamp(ms)} / ${stamp(data.length)}`)
     render()
