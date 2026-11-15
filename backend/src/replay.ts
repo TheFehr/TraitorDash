@@ -12,7 +12,7 @@ import { clone as cloneRig } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { startFlat } from './replayflat'
-import { offerBrowser, levelColour, paintPlain, makeCamera, makeRenderer, makeScene, mapLoader, prepareMovable, prepareProps, prepareWater, boxWithout, type Painted } from './sceneKit'
+import { offerBrowser, levelColour, paintPlain, makeCamera, makeRenderer, makeScene, mapLoader, prepareDecoration, prepareMovable, prepareProps, prepareWater, lyingPlaces, boxWithout, type Painted } from './sceneKit'
 import {
   decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, shownLevels, FADE, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, bodyAt, thingAt, movedProps, killerDiedBefore, reviveSource, revivePose, fitLabel,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
@@ -92,7 +92,7 @@ async function start(root: HTMLElement) {
   let levelHold: LevelHold | null = null, levelHoldFor: string | null = null // the level the cut follows, held for a moment when the player is found lower (replaylogic: holdLevel)
   let upTo: number | 'all' = 'all'
   // What the drawing behind the page does when something changes: the WebGL scene or the flat canvas sets these.
-  const hooks = { paint: () => {}, level: () => {}, walls: (_on: boolean) => {}, leaves: (_on: boolean) => {}, resize: () => {} }
+  const hooks = { paint: () => {}, level: () => {}, walls: (_on: boolean) => {}, leaves: (_on: boolean) => {}, water: (_on: boolean) => {}, decoration: (_on: boolean) => {}, resize: () => {} }
 
   // ---- the page's own parts that do not need WebGL: the round's deaths, the player list, the notes
   const notes = el(root, '[data-notes]')
@@ -259,6 +259,9 @@ async function start(root: HTMLElement) {
   followBox?.addEventListener('change', () => { followLevel = followBox.checked; showLevels(); changed() })
   el<HTMLInputElement>(root, '[data-walls]')?.addEventListener('change', e => hooks.walls((e.target as HTMLInputElement).checked))
   el<HTMLInputElement>(root, '[data-leaves]')?.addEventListener('change', e => hooks.leaves((e.target as HTMLInputElement).checked))
+  // Water and Decoration (RFC 33): the same switches as the map page, shown only when the loaded model has the group
+  el<HTMLInputElement>(root, '[data-water]')?.addEventListener('change', e => hooks.water((e.target as HTMLInputElement).checked))
+  el<HTMLInputElement>(root, '[data-decoration]')?.addEventListener('change', e => hooks.decoration((e.target as HTMLInputElement).checked))
 
   // ---- controls
   const playBtn = el<HTMLButtonElement>(root, '[data-play]')!
@@ -474,8 +477,9 @@ async function start(root: HTMLElement) {
   const wallMeshes: Mesh[] = []
   // The leaves of the map's plants (Glass and leaves, RFC 18, 4.6): drawn with their own textures, cut out as the game does; a switch to see the ground through them
   const leafMeshes: Mesh[] = []
-  // What a body can lie on: the floors of the map and its solid props (not the walls, the leaves or the water)
+  // What a body can lie on: the floors of the map and its solid props (not the walls, the leaves, the water or the decoration: `lyingPlaces`)
   const groundMeshes: Mesh[] = []
+  let waterNode: Object3D | null = null, decorationNode: Object3D | null = null
   let bounds = new Box3(new Vector3(-512, -512, -64), new Vector3(512, 512, 256)) // Source coordinates
 
   const finish = (b: Box3) => { bounds = b }
@@ -508,7 +512,14 @@ async function start(root: HTMLElement) {
         if (isWall) wallMeshes.push(mesh)
         painted.push({ mesh, wall: isWall, level: l.index })
       })
-      prepareWater(model, cut)
+      waterNode = prepareWater(model, cut)
+      decorationNode = prepareDecoration(model, cut)
+      for (const [node, attr] of [[waterNode, '[data-water]'], [decorationNode, '[data-decoration]']] as const) {
+        const box = el<HTMLInputElement>(root, attr)
+        if (!node || !box) continue
+        box.closest('label')?.classList.remove('gone') // the room was kept, so the row does not move when it appears
+        node.visible = box.checked
+      }
       const props = prepareProps(model, cut)
       // A prop of the map that moved in this round is drawn by its box (RFC 20, 4.8), so it is taken out of the map where it stood, before the props are merged.
       const propNodes = model.getObjectByName('props')?.children ?? []
@@ -529,7 +540,7 @@ async function start(root: HTMLElement) {
       // Hundreds of props are hundreds of draw calls, which is what a phone is slowest at: the props of one material are drawn as one mesh
       // (the separate ones stay, unseen, for the camera). Then nothing of the map moves, so its matrices are not worked out again each frame.
       const mergedSolid = mergeDrawn(model, props.solid)
-      groundMeshes.push(...painted.filter(q => !q.wall).map(q => q.mesh), ...mergedSolid, ...props.solid.filter(m => m.visible))
+      groundMeshes.push(...lyingPlaces(painted, [...mergedSolid, ...props.solid.filter(m => m.visible)]))
       const mergedLeaves = mergeDrawn(model, props.foliage)
       leafMeshes.push(...mergedLeaves, ...props.foliage.filter(m => m.visible)) // the ones that could not be merged stay as they are
       const leavesBox = el<HTMLInputElement>(root, '[data-leaves]')
@@ -1051,6 +1062,8 @@ async function start(root: HTMLElement) {
   hooks.level = () => { showLevels(); render() }
   hooks.walls = on => { for (const m of wallMeshes) m.visible = on; render() }
   hooks.leaves = on => { for (const m of leafMeshes) m.visible = on; render() }
+  hooks.water = on => { if (waterNode) waterNode.visible = on; render() }
+  hooks.decoration = on => { if (decorationNode) decorationNode.visible = on; render() }
   hooks.resize = resize
 
   const setCam = (mode: 'orbit' | 'top' | 'follow') => {

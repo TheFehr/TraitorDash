@@ -303,6 +303,25 @@ describe('the 3D view on the map page', () => {
     expect(html).toContain(', water')
   })
 
+  test('a map with decoration (func_illusionary) gets the Decoration switch, on, beside Walls and Water, and one without gets none (RFC 33, 4.4)', async () => {
+    const quads = flatQuads([0, 300])
+    const withDeco = buildBsp({ ...quads, entities: '{ "classname" "worldspawn" }\n{ "classname" "func_illusionary" "model" "*1" }', models: [{ firstFace: 0, numFaces: 1 }, { firstFace: 1, numFaces: 1 }] })
+    report(serverId, [M('ttt_a', fpOf(withDeco))])
+    await toggle(serverId, 'ttt_a', true)
+    await geo.runGeometryQueue(writer(withDeco))
+    const html = await page()
+    expect(html).toMatch(/<input type="checkbox" data-decoration="true" checked=""\/> Decoration/)
+    expect(html.indexOf('data-walls')).toBeLessThan(html.indexOf('data-decoration')) // in the row of the other switches
+    expect(html).toContain('2 triangles, 1 level') // the decoration is not a level, and not counted in the map's triangles
+    expect(await page()).not.toContain('data-water') // and no water switch: this map has none
+    // a map with none
+    report(serverId, [M('ttt_a', FP)])
+    db.run('DELETE FROM map_geometry')
+    await toggle(serverId, 'ttt_a', true)
+    await geo.runGeometryQueue(writer(file))
+    expect(await page()).not.toContain('data-decoration')
+  })
+
   test('parts apart and spawns get their switches (off), only when the mesh has them', async () => {
     await toggle(serverId, 'ttt_a', true)
     await geo.runGeometryQueue(writer(file))

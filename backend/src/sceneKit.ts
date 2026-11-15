@@ -124,6 +124,31 @@ export function prepareMovable(model: Object3D, cut: Plane): Object3D | null {
 }
 
 /**
+ * The decoration node of a model (`func_illusionary`, RFC 33, 4.4), if it has one: cut like the levels and matte; the textures come from the file.
+ * It is a group of its own and a player walks through it, so it is **not** a place a body can lie on (`lyingPlaces`).
+ */
+export function prepareDecoration(model: Object3D, cut: Plane): Object3D | null {
+  const node = model.getObjectByName('decoration') ?? null
+  node?.traverse(o => {
+    if (!(o as Mesh).isMesh) return
+    const mesh = o as Mesh<BufferGeometry, MeshStandardMaterial>
+    mesh.material = mesh.material.clone()
+    mesh.material.clippingPlanes = [cut]
+    mesh.material.metalness = 0
+    mesh.material.roughness = 1
+  })
+  return node
+}
+
+/**
+ * What a body can lie on in the replay (RFC 22, RFC 12): the floors of the map and its solid props, and nothing else. Not the walls, the leaves, the water,
+ * the parts that move or the decoration (RFC 33, 4.4): a brush a player walks through gives a body no ground.
+ */
+export function lyingPlaces(painted: Painted[], solidProps: Mesh[]): Mesh[] {
+  return [...painted.filter(q => !q.wall).map(q => q.mesh), ...solidProps]
+}
+
+/**
  * A loader for the map's file. The textures in it (the leaves of the plants, RFC 18, 4.6) are PNG images inside the file; the loader's
  * own way of reading them fetches a `blob:` address, which the page's policy does not allow (`connect-src 'self'`), so they are read as
  * images (`img-src` has `blob:`), the way an older browser does it, and the policy stays as strict as it was.

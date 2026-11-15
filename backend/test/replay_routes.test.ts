@@ -260,6 +260,11 @@ describe('the replay page', () => {
     // the leaves of the map's plants are a switch, on: drawn with their textures (Yucatan, 2026-11-05)
     expect(r.text).toContain('<input type="checkbox" data-leaves="true" checked=""/> Leaves')
     expect(r.text).toContain('<input type="checkbox" data-walls="true" checked=""/> Walls')
+    // RFC 33: Water and Decoration beside them, on, and unseen (their room kept, as the Leaves switch's is) until the loaded map has the group
+    expect(r.text).toContain('<label class="gone"><input type="checkbox" data-water="true" checked=""/> Water</label>')
+    expect(r.text).toContain('<label class="gone"><input type="checkbox" data-decoration="true" checked=""/> Decoration</label>')
+    expect(r.text.indexOf('data-leaves')).toBeLessThan(r.text.indexOf('data-water'))
+    expect(r.text.indexOf('data-water')).toBeLessThan(r.text.indexOf('data-decoration'))
     expect(r.text).not.toContain('data-colour') // no colour switch: the map is always textured
     expect(r.text).toContain('data-cam="top"')
     expect(r.text).toContain('not what they could see') // the fixed line: it is not a line-of-sight source

@@ -3,7 +3,7 @@ import {
   Box3, Vector3, Mesh, MeshStandardMaterial, Plane, type Object3D, type BufferGeometry,
 } from 'three'
 import {
-  boxWithout, makeCamera, makeRenderer, makeScene, makeSpawnMarkers, mapLoader, paintPlain, prepareDetached, prepareMovable, prepareProps, prepareWater,
+  boxWithout, makeCamera, makeRenderer, makeScene, makeSpawnMarkers, mapLoader, paintPlain, prepareDecoration, prepareDetached, prepareMovable, prepareProps, prepareWater,
   type Painted, type SpawnPoint,
 } from './sceneKit'
 import { startMapFlat } from './mapflat'
@@ -37,6 +37,7 @@ function start(root: HTMLElement) {
   let water: Object3D | null = null
   let detached: Object3D | null = null
   let movable: Object3D | null = null
+  let decoration: Object3D | null = null
   let spawnMarkers: Object3D | null = null
   let propMeshes: { solid: Mesh[], foliage: Mesh[] } = { solid: [], foliage: [] }
   const draw = () => renderer.render(scene, camera)
@@ -99,6 +100,10 @@ function start(root: HTMLElement) {
     if (movable) movable.visible = (e.target as HTMLInputElement).checked
     draw()
   })
+  root.querySelector<HTMLInputElement>('[data-decoration]')?.addEventListener('change', e => {
+    if (decoration) decoration.visible = (e.target as HTMLInputElement).checked
+    draw()
+  })
   root.querySelector<HTMLInputElement>('[data-parts]')?.addEventListener('change', e => {
     if (detached) detached.visible = (e.target as HTMLInputElement).checked
     draw()
@@ -138,6 +143,7 @@ function start(root: HTMLElement) {
       water = prepareWater(model, cut)
       propMeshes = prepareProps(model, cut)
       movable = prepareMovable(model, cut)
+      decoration = prepareDecoration(model, cut)
       // Parts apart from the map are hidden until asked for; they are painted like a level but do not decide where the camera looks.
       const apart = prepareDetached(model, cut)
       if (apart) { detached = apart.node; painted.push(...apart.painted) }

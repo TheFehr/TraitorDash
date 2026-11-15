@@ -73,6 +73,8 @@ export const ReplayPage = ({ ctx, server, round, hasTrack, src, pinned, here, pi
                 <label><input type="checkbox" data-follow-level checked /> Follow the selected player's level</label>
                 <label><input type="checkbox" data-walls checked /> Walls</label>
                 <label><input type="checkbox" data-leaves checked /> Leaves</label>
+                <label class="gone"><input type="checkbox" data-water checked /> Water</label>
+                <label class="gone"><input type="checkbox" data-decoration checked /> Decoration</label>
               </div>
             </div>
             <p data-background class="foot"></p>

@@ -408,6 +408,7 @@ export const MapViewPage = ({ ctx, server, map, name, next, plan, geometry }: Ma
               </span>
               <label><input type="checkbox" data-walls checked /> Walls</label>
               {geometry.info.water ? <label><input type="checkbox" data-water checked /> Water</label> : null}
+              {geometry.info.decoration ? <label><input type="checkbox" data-decoration checked /> Decoration</label> : null}
               {geometry.info.props?.placed ? <label><input type="checkbox" data-props checked /> Props</label> : null}
               {geometry.info.props?.foliage ? <label><input type="checkbox" data-foliage checked /> Glass and leaves</label> : null}
               {geometry.info.movable ? <label><input type="checkbox" data-movable checked /> Movable parts</label> : null}
