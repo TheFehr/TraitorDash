@@ -319,4 +319,4 @@ describe('a mesh with one of each new class (the bytes are pinned)', () => {
 })
 
 // Taken from the first build of this map with RFC 33 (generation 14); a change to what the writer or the extractor makes of these classes changes it on purpose.
-const PINNED = 'b2d2c23f84cceef8778cc0ffb6423a14eea071811f5468dfe8f213658cdc24d5'
+const PINNED = '8e12c033cb7fd8873f9e2132de8341455fcb2a360d7bdaf0cf848768d39352f2'

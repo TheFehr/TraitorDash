@@ -13,10 +13,11 @@
  * 12 (13 with the game's own models): the limits on the props are far above any real map (3 000 000 triangles, 20 000 places, 5 000 models, 250 000 triangles a model) and only guard against a broken file, so no map loses props (six did at 600 000: the water slide of `ttt_waterworld_tropical`).
  * 13 (14 with the game's own models): the map's coverage record is stored with the mesh (RFC 32): what the map holds that the pipeline draws, ignores on purpose or misses. The mesh itself is unchanged; the number goes up so that every stored mesh is rebuilt once and gets a record.
  * 14 (15 with the game's own models): the missing map elements of RFC 33: buttons, tank trains, breakable and reflective glass, screens and belts are drawn, the water brush is water, `func_illusionary` is a decoration group of its own, and a brush entity that is hidden at the start (`startdisabled`, `rendermode 10`) is not drawn.
+ * 15 (16 with the game's own models): entity keys are read in lower case, so a brush entity that the map hides at the start (`StartDisabled 1`, `RenderMode 10`) is no longer drawn (RFC 33, 9a): the lava trap of `ttt_minecraft_b7_summer` was drawn over its floor.
  * The part nodes of RFC 20 stage 1 are written by every build from now on, but are not a generation of their own: the generation is raised when the replay needs them (stage 3).
  */
-export const MESH_VERSION = 14
-export const MESH_VERSION_GAME = 15
+export const MESH_VERSION = 15
+export const MESH_VERSION_GAME = 16
 
 /** The generation a backend wants: the one with the game's own models when it has them, else the one without. */
 export const meshVersion = (withGameContent: boolean) => withGameContent ? MESH_VERSION_GAME : MESH_VERSION

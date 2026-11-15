@@ -287,8 +287,8 @@ describe('the record only counts: the mesh is what it was', () => {
   // constructed map, without the tally, and the GLB of the whole build. A change to what the extractor draws changes them on purpose; a change to the record must not.
   const SURFACES = '3ce81cfca85e2977eeeb16931db8261b57defa0ecae9c393305cf14d15f7f110'
   // RFC 33 raised the mesh generation from 13 to 14, which the file carries in its header (`meshVersion`): the bytes of this map were 'bf0f5e87de00d0015e409fd417ba05ced73cff6128e76852c30394b2e154132a' at 13
-  // (checked: with the number put back to 13 the build of the same map gives that hash again, so RFC 33 changes no byte of a map with none of its classes). This is the hash at 14.
-  const GLB = 'e4fcdf92efa5a6d30417760dd804363da693d9a6162d88b9892c1b10c80fb88c'
+  // (checked: with the number put back to 13 the build of the same map gives that hash again, so RFC 33 changes no byte of a map with none of its classes). This is the hash at 14; RFC 33, 9a raised the generation to 15, and the hash below is the one at 15 (only that number in the header differs).
+  const GLB = 'e4311210737322bef02ac43e3639d5cb081586abf6e09c49f2b5df646af12f90'
   const sha = (x: string | Uint8Array) => createHash('sha256').update(x).digest('hex')
 
   test('the surfaces of the constructed map are the same triangles, faces, mappings and statistics', async () => {
@@ -317,12 +317,12 @@ describe('the record only counts: the mesh is what it was', () => {
 })
 
 describe('the mesh generations', () => {
-  test('both went up by one (14 and 15) and still differ, and a backend asks for the one that fits it', () => {
-    expect(MESH_VERSION).toBe(14)
-    expect(MESH_VERSION_GAME).toBe(15)
+  test('both went up by one (15 and 16) and still differ, and a backend asks for the one that fits it', () => {
+    expect(MESH_VERSION).toBe(15)
+    expect(MESH_VERSION_GAME).toBe(16)
     expect(MESH_VERSION_GAME).not.toBe(MESH_VERSION)
-    expect(meshVersion(false)).toBe(14)
-    expect(meshVersion(true)).toBe(15)
+    expect(meshVersion(false)).toBe(15)
+    expect(meshVersion(true)).toBe(16)
   })
 
   test('the history in meshVersion.ts names this generation and RFC 33 (and the one before it, RFC 32)', () => {
