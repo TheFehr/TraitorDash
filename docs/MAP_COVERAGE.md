@@ -6,7 +6,7 @@ This is the catalogue of [RFC 32](rfcs/RFC-032.md): for every kind of thing a ma
 |---|---|
 | drawn | The pipeline draws it. |
 | invisible | Not drawn, and nothing is lost: a player never sees it. |
-| gap | A player sees it and the pipeline does not draw it. [RFC 33](rfcs/RFC-033.md) builds these, ranked by the survey. |
+| gap | A player sees it and the pipeline does not draw it. [RFC 33](rfcs/RFC-033.md) built the ones the survey ranked, so the registry has no gap entry now; a class seen in a map and not classified is `unknown` until someone decides. |
 | not read | A part of the file the pipeline does not read, with a note on what drawing it would take. |
 | unknown | Not in the registry: seen in a map and not classified. It is never a row of these tables; it shows on the admin page (`/servers/:serverId/map-coverage`) by itself, and is a task. |
 
@@ -64,13 +64,23 @@ Entities that own a model `*N` (a brush). A key that ends in `*` stands for ever
 | `func_breakable` | drawn | A brush entity that stands still: its faces are drawn with the world where the map puts it (RFC 18, 4.2). |
 | `func_lod` | drawn | A brush entity that stands still: its faces are drawn with the world where the map puts it (RFC 18, 4.2). |
 | `func_wall_toggle` | drawn | A brush entity that stands still: its faces are drawn with the world where the map puts it (RFC 18, 4.2). |
+| `func_breakable_surf` | drawn | A brush entity that stands still: its faces are drawn with the world where the map puts it (RFC 18, 4.2). |
+| `func_monitor` | drawn | A brush entity that stands still: its faces are drawn with the world where the map puts it (RFC 18, 4.2). |
+| `func_conveyor` | drawn | A brush entity that stands still: its faces are drawn with the world where the map puts it (RFC 18, 4.2). |
+| `func_reflective_glass` | drawn | A brush entity that stands still: its faces are drawn with the world where the map puts it (RFC 18, 4.2). |
 | `func_door` | drawn | A brush entity that can move: drawn at its starting place as a part of its own, which the replay moves (RFC 18, 4.2, RFC 20). |
 | `func_door_rotating` | drawn | A brush entity that can move: drawn at its starting place as a part of its own, which the replay moves (RFC 18, 4.2, RFC 20). |
 | `func_movelinear` | drawn | A brush entity that can move: drawn at its starting place as a part of its own, which the replay moves (RFC 18, 4.2, RFC 20). |
 | `func_rotating` | drawn | A brush entity that can move: drawn at its starting place as a part of its own, which the replay moves (RFC 18, 4.2, RFC 20). |
 | `func_tracktrain` | drawn | A brush entity that can move: drawn at its starting place as a part of its own, which the replay moves (RFC 18, 4.2, RFC 20). |
+| `func_tanktrain` | drawn | A brush entity that can move: drawn at its starting place as a part of its own, which the replay moves (RFC 18, 4.2, RFC 20). |
+| `func_button` | drawn | A brush entity that can move: drawn at its starting place as a part of its own, which the replay moves (RFC 18, 4.2, RFC 20). |
+| `func_rot_button` | drawn | A brush entity that can move: drawn at its starting place as a part of its own, which the replay moves (RFC 18, 4.2, RFC 20). |
+| `momentary_rot_button` | drawn | A brush entity that can move: drawn at its starting place as a part of its own, which the replay moves (RFC 18, 4.2, RFC 20). |
 | `func_physbox` | drawn | A brush entity that can move: drawn at its starting place as a part of its own, which the replay moves (RFC 18, 4.2, RFC 20). |
 | `func_physbox_multiplayer` | drawn | A brush entity that can move: drawn at its starting place as a part of its own, which the replay moves (RFC 18, 4.2, RFC 20). |
+| `func_water_analog` | drawn | The water brush (a pool a map raises or lowers): its upward liquid faces are drawn as water, moved by `startposition` along `movedir`; the rise during the round is not shown (RFC 33, 4.2). |
+| `func_illusionary` | drawn | A brush a player sees and walks through: drawn in a group of its own (Decoration), never a floor or a wall; a face below the map is left out (RFC 33, 4.4). |
 
 ### Brush entity classes: invisible
 
@@ -82,17 +92,13 @@ Entities that own a model `*N` (a brush). A key that ends in `*` stands for ever
 | `func_occluder` | invisible | A volume the engine uses to hide what is behind it; invisible. |
 | `func_precipitation` | invisible | A volume that rain or snow falls in; the volume itself is invisible (the weather is not drawn). |
 | `env_embers` | invisible | A volume that particle embers rise from; the brush is a volume, the particles are not drawn. |
+| `func_dustcloud` | invisible | A volume that a dust cloud of particles fills; the brush is a volume, the particles are not drawn (RFC 33, 4.6). |
+| `func_buyzone` | invisible | A zone where a player may buy; a volume, not a surface (RFC 33, 4.6). |
+| `func_bomb_target` | invisible | A zone where a bomb can be planted; a volume, not a surface (RFC 33, 4.6). |
+| `game_zone_player` | invisible | A zone that counts the players inside it for the map's logic; a volume, not a surface (RFC 33, 4.6). |
+| `ttt_traitor_check` | invisible | A zone of the TTT game, used like a trigger; a volume, not a surface (RFC 33, 4.6). |
 | `func_dustmotes` | invisible | A volume that floating dust is drawn in; the brush is a volume, the particles are not drawn. |
 | `func_smokevolume` | invisible | A volume that smoke particles fill; the brush is a volume, the particles are not drawn. |
-
-### Brush entity classes: gap
-
-| Key | Status | What the pipeline does |
-|---|---|---|
-| `func_button` | gap | A button a player presses: it is not drawn, so the view has a hole (or the wall behind it) where the button is. |
-| `func_breakable_surf` | gap | Breakable glass (a window): not drawn, so a window is a hole in the wall. |
-| `func_water_analog` | gap | Water that a map raises or lowers (a pool, a flood): not drawn, so the pool is a dry floor. RFC 33. |
-| `func_illusionary` | gap | A brush a player sees and walks through (a fake wall, a hologram): not drawn. |
 
 ## Features of the file
 
