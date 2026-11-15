@@ -654,7 +654,8 @@ export async function extractMapEntities(src: ByteSource, limits: SpawnLimits = 
       }
       entity = null; key = null
     } else if (entity) {
-      if (key === null) key = m[1]!
+      // Keys are read in lower case: Hammer writes `StartDisabled` and `WaveHeight` with capitals and `origin` without, and the lookups above are all lower case (RFC 33: the hidden-at-start rule never fired on real maps while keys kept their case).
+      if (key === null) key = m[1]!.toLowerCase()
       else { entity[key] = m[1]!; key = null }
     }
   }

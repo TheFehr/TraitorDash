@@ -91,6 +91,18 @@ describe('stage A: the classes, and the rules every brush entity follows (sectio
     }
   })
 
+  test('keys are read in any case: Hammer writes StartDisabled (found on a real map: the lava trap was drawn over its floor, because only the lower case spelling was read)', async () => {
+    const all = [...MOVABLE, ...FIXED, 'func_water_analog', 'func_illusionary', 'func_brush']
+    for (const hidden of ['"StartDisabled" "1"', '"STARTDISABLED" "1"', '"RenderMode" "10"', '"startDisabled" "1.0"']) {
+      const file = map(all.map((_, i) => ({ z: 10 + i })), all.map(() => 1), all.map((c, i) => ent(c, i + 1, hidden)))
+      expect(await fixtures(file), hidden).toEqual([])
+    }
+    for (const shown of ['"StartDisabled" "0"', '"RenderMode" "0"']) {
+      const file = map(all.map((_, i) => ({ z: 10 + i })), all.map(() => 1), all.map((c, i) => ent(c, i + 1, shown)))
+      expect((await fixtures(file)).length, shown).toBe(all.length)
+    }
+  })
+
   test('hiddenAtStart: the two keys, as finite numbers', () => {
     expect(hiddenAtStart({ startdisabled: '1' })).toBe(true)
     expect(hiddenAtStart({ rendermode: '10' })).toBe(true)
