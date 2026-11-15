@@ -1,6 +1,7 @@
 import { rm } from 'node:fs/promises'
 import { Store } from './Store'
 import { BspError, extractMapEntities, extractSurfaces, readHeader, type ByteSource } from '../maps/bsp'
+import { buildCoverage, type CoverageRecord } from '../maps/coverage'
 import { buildPropSet, type StockModels, type StockTextures } from '../maps/propset'
 import { nearTriangles, pickTags, pickTriangles, surfacesToGlb, type SurfaceTextures } from '../maps/meshGlb'
 import { findParts, soupOfKinds, trianglesOfKinds } from '../maps/parts'
@@ -19,6 +20,8 @@ export interface GeometryInfo {
   storeys?: boolean, detached?: number, movable?: number, spawns?: number
   /** The materials the faces of the map name, and what became of the largest: textures, plain colours, and how many textures are the game's own (RFC 18, 5). */
   surface?: SurfaceReport
+  /** What the map holds, counted per entry of the coverage registry (RFC 32). A mesh made before the record existed has none. */
+  coverage?: CoverageRecord
   props?: { placed: number, models: number, foliage: number, /** Textures written for the leaves of the plants (RFC 18, 4.6). */ leafTextures?: number, leafTexturesFromGame?: number, cards?: number, fromGame?: number, unavailable: number, unreadable: number, dropped: number }
 }
 
@@ -41,7 +44,7 @@ export async function buildGeometry(src: ByteSource, map: string, fingerprint: s
   try {
     const header = await readHeader(src)
     if (header.fingerprint !== fingerprint) return { ok: false, error: 'The file is not the version of the map the server has (fingerprint differs).' }
-    const { spawns, skyCameras, fixtureModels, entityProps } = await extractMapEntities(src)
+    const { spawns, skyCameras, fixtureModels, entityProps, census } = await extractMapEntities(src)
     const surfaces = await extractSurfaces(src, {}, fixtureModels)
     // The parts by shared corners: the skybox goes, detached parts are kept apart (RFC 18, 4.4).
     const found = findParts([surfaces.floors, surfaces.walls], { spawns, skyCameras })
@@ -63,11 +66,15 @@ export async function buildGeometry(src: ByteSource, map: string, fingerprint: s
       }, src, pak, textures)
       surface = built.surface; surfaceReport = built.report
     } catch (e) { console.warn(`[Geometry] The textures of the surfaces of ${map} could not be made: ${e instanceof Error ? e.message : e}`) }
+    // The coverage record only counts what the reads above saw (RFC 32); a map whose record fails is still a map.
+    let coverage: CoverageRecord | undefined
+    try { coverage = await buildCoverage(src, header, surfaces.tally, census) } catch (e) { console.warn(`[Geometry] The coverage record of ${map} could not be made: ${e instanceof Error ? e.message : e}`) }
     const out = await surfacesToGlb({ ...surfaces, ...cleaned, surface, water, movable: surfaces.movable, movableParts: surfaces.movableParts, detached, spawns, props: set }, { map })
     if (!out) return { ok: false, error: 'The map has no surfaces to draw.' }
     return { ok: true, glb: out.glb, note: report.stockError ? `The game's own models could not all be fetched: ${report.stockError}` : undefined, info: {
       vertices: out.info.vertices, triangles: out.info.triangles, levels: out.info.levels.length, water: out.info.waterTriangles, storeys: out.info.storeys, detached: out.info.detached.triangles, movable: out.info.movable, spawns: out.info.spawns,
       ...(surfaceReport ? { surface: surfaceReport } : {}),
+      ...(coverage ? { coverage } : {}),
       props: { placed: report.drawnPlacements, models: report.drawnModels, foliage: report.foliageModels, leafTextures: report.leafTextures, leafTexturesFromGame: report.leafTexturesFromGame, cards: report.cards, fromGame: report.fromGame, unavailable: report.unavailable, unreadable: report.unreadable + report.tooBig, dropped: report.dropped },
     } }
   } catch (e) {

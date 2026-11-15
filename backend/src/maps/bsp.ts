@@ -87,6 +87,31 @@ const SKIP_FLAGS = 0x4 | 0x2 | 0x40 | 0x80 | 0x100 | 0x200
 // A liquid surface (water, lava, slime): drawn as water, never as a floor (RFC 18, 4.1).
 const SURF_WARP = 0x8
 
+/** The surface flags of a texinfo in the BSP format (`SURF_*` of the SDK's bspflags.h), by bit. The coverage record names a face's flags with these (RFC 32). */
+export const SURFACE_FLAGS: readonly (readonly [number, string])[] = [
+  [0x1, 'LIGHT'], [0x2, 'SKY2D'], [0x4, 'SKY'], [0x8, 'WARP'], [0x10, 'TRANS'], [0x20, 'NOPORTAL'], [0x40, 'TRIGGER'], [0x80, 'NODRAW'],
+  [0x100, 'HINT'], [0x200, 'SKIP'], [0x400, 'NOLIGHT'], [0x800, 'BUMPLIGHT'], [0x1000, 'NOSHADOWS'], [0x2000, 'NODECALS'], [0x4000, 'NOCHOP'], [0x8000, 'HITBOX'],
+]
+const NAMED_FLAGS = SURFACE_FLAGS.reduce((n, [bit]) => n | bit, 0)
+
+/** A face's flags as one name, in the order of the bits (`NOLIGHT|BUMPLIGHT`); `-` for none; bits the format does not name are `OTHER`. */
+export const flagSetName = (flags: number): string => {
+  const names = SURFACE_FLAGS.filter(([bit]) => (flags & bit) !== 0).map(([, name]) => name)
+  if ((flags & ~NAMED_FLAGS) !== 0) names.push('OTHER')
+  return names.length ? names.join('|') : '-'
+}
+
+/**
+ * What the face loop counts for the coverage record (RFC 32, 4), for the faces of the world model: by flag set, and by what became of the face. Counting only:
+ * nothing here decides anything. `byMaterial` is how many faces were left out for the name of their material, by the rule that did it.
+ */
+export interface FaceTally {
+  worldFaces: number
+  byFlags: Record<string, number>
+  byOutcome: { floor: number, wall: number, ceiling: number, water: number, displacement: number, skippedByFlag: number, skippedByMaterial: number }
+  byMaterial: { sky: number, tools: number }
+}
+
 /**
  * Materials that are never a surface a player stands on or walks along, though their flags say nothing (RFC 18, 4.1a):
  * a sky picture pasted on ordinary brushes, the geometry of a 3D skybox, and the helper materials under `tools/`. The
@@ -181,6 +206,8 @@ export interface Surfaces {
   movable: number[]
   /** The same triangles, a part at a time, local to the part's origin (one entry for each model number). */
   movableParts: MovablePart[]
+  /** What the faces of the world model were, for the coverage record (RFC 32). */
+  tally: FaceTally
   stats: {
     faces: number, floorFaces: number, wallFaces: number, ceilingFaces: number, skipped: number, otherModelFaces: number
     /** Faces left out because of the name of their material, liquid surfaces seen, and brush-entity models drawn with the world. */
@@ -305,6 +332,8 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
     faces: numFaces, floorFaces: 0, wallFaces: 0, ceilingFaces: 0, skipped: 0, otherModelFaces, displacements: 0, displacementTriangles: 0,
     skippedByMaterial: 0, waterFaces: 0, fixtureModels: drawn.size - 1, movableFaces: 0,
   }
+  const tally: FaceTally = { worldFaces: 0, byFlags: {}, byOutcome: { floor: 0, wall: 0, ceiling: 0, water: 0, displacement: 0, skippedByFlag: 0, skippedByMaterial: 0 }, byMaterial: { sky: 0, tools: 0 } }
+  const flagNames = new Map<number, string>()
   for (const [f, fixture] of faceList()) {
     const at = f * RECORD.FACES
     const plane = faces.getUint16(at, true), side = faces.getUint8(at + 2)
@@ -317,8 +346,19 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
     if (firstEdge < 0 || firstEdge + numEdges > nSurf) throw new BspError(`face ${f} reaches past the surfedges`)
 
     const flags = tex.getInt32(texinfo * RECORD.TEXINFO + 64, true)
-    if ((flags & SKIP_FLAGS) !== 0) { stats.skipped++; continue }
-    if (isNotSurfaceMaterial(materialOf(texinfo))) { stats.skippedByMaterial++; continue }
+    const world = fixture === null
+    if (world) {
+      tally.worldFaces++
+      let name = flagNames.get(flags)
+      if (name === undefined) { name = flagSetName(flags); flagNames.set(flags, name) }
+      tally.byFlags[name] = (tally.byFlags[name] ?? 0) + 1
+    }
+    if ((flags & SKIP_FLAGS) !== 0) { stats.skipped++; if (world) tally.byOutcome.skippedByFlag++; continue }
+    if (isNotSurfaceMaterial(materialOf(texinfo))) {
+      stats.skippedByMaterial++
+      if (world) { tally.byOutcome.skippedByMaterial++; if (materialOf(texinfo).startsWith('tools/')) tally.byMaterial.tools++; else tally.byMaterial.sky++ }
+      continue
+    }
 
     let nx = planes.getFloat32(plane * RECORD.PLANES, true), ny = planes.getFloat32(plane * RECORD.PLANES + 4, true)
     let nz = planes.getFloat32(plane * RECORD.PLANES + 8, true)
@@ -368,6 +408,7 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
 
     if (dispinfo >= 0) {
       stats.displacements++
+      if (world) tally.byOutcome.displacement++
       faceRecords.push({ mapping: mappingFor(texinfo, fixture, turn) })
       displacement(f, dispinfo, corner, [nx, ny, nz], faceRecords.length - 1)
       continue
@@ -375,12 +416,14 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
 
     if ((flags & SURF_WARP) !== 0) {
       stats.waterFaces++
+      if (world) tally.byOutcome.water++
       if (nz >= 0.5) for (let k = 1; k + 1 < corner.length; k++) for (const v of [corner[0]!, corner[k]!, corner[k + 1]!]) water.push(...place(v))
       continue
     }
-    if (nz <= -FLOOR_NZ + 1e-6) { stats.ceilingFaces++; continue }
+    if (nz <= -FLOOR_NZ + 1e-6) { stats.ceilingFaces++; if (world) tally.byOutcome.ceiling++; continue }
     const isFloor = nz + 1e-6 >= FLOOR_NZ
     if (isFloor) stats.floorFaces++; else stats.wallFaces++
+    if (world) tally.byOutcome[isFloor ? 'floor' : 'wall']++
     const out = isFloor ? floors : walls, outFaces = isFloor ? floorFaces : wallFaces
     faceRecords.push({ mapping: mappingFor(texinfo, fixture, turn) })
     const record = faceRecords.length - 1
@@ -465,10 +508,17 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
     }
   }
 
-  return { fingerprint: header.fingerprint, version: header.version, revision: header.revision, floors, walls, floorFaces, wallFaces, faces: faceRecords, mappings, water, movable, movableParts: [...parts.values()].sort((a, b) => a.model - b.model), stats }
+  return { fingerprint: header.fingerprint, version: header.version, revision: header.revision, floors, walls, floorFaces, wallFaces, faces: faceRecords, mappings, water, movable, movableParts: [...parts.values()].sort((a, b) => a.model - b.model), tally, stats }
 }
 
 // ---- the entities we need: spawn points and the 3D skybox camera ---------------------------------
+
+/**
+ * What the entity lump holds, for the coverage record (RFC 32): the brush entities (the class and the model `*N` it owns) and how many entities there are of each other class.
+ * Names are as the file has them, cut to 64 characters, and not safe to show: `coverageRecord` cleans them. At most `MAX_CENSUS_CLASSES` different classes are kept, the rest are counted in `pointsOther`.
+ */
+export interface EntityCensus { brush: { class: string, model: number, /** It has a parent entity, which moves it: the extractor does not draw such an entity, whatever its class. */ parented: boolean }[], points: Map<string, number>, pointsOther: number }
+const MAX_CENSUS_CLASSES = 5000
 
 export interface Spawn { class: string, x: number, y: number, z: number }
 /** A model placed in the map: its path, where it stands, and its angles (pitch, yaw, roll, in degrees). */
@@ -498,7 +548,7 @@ function anglesOf(entity: Record<string, string>): [number, number, number] {
  * which sits inside the skybox section, far from the map), from the entity lump: a few tens of KB
  * of text, blocks of "key" "value" lines in braces. Only the header and that one lump are read.
  */
-export async function extractMapEntities(src: ByteSource, limits: SpawnLimits = {}): Promise<{ spawns: Spawn[], skyCameras: Point[], fixtureModels: Fixture[], entityProps: Placement[] }> {
+export async function extractMapEntities(src: ByteSource, limits: SpawnLimits = {}): Promise<{ spawns: Spawn[], skyCameras: Point[], fixtureModels: Fixture[], entityProps: Placement[], census: EntityCensus }> {
   const maxEntities = limits.maxEntities ?? 100_000
   const maxBytes = limits.maxEntityBytes ?? 4 * 1024 * 1024
   const header = await readHeader(src)
@@ -506,7 +556,8 @@ export async function extractMapEntities(src: ByteSource, limits: SpawnLimits = 
   if (lump.compressed) throw new BspError('the entity lump is compressed, which is not supported')
   if (lump.length > maxBytes) throw new BspError(`the entity lump is ${lump.length} bytes, over the limit of ${maxBytes}`)
   const spawns: Spawn[] = [], skyCameras: Point[] = [], fixtureModels: Fixture[] = [], entityProps: Placement[] = []
-  if (lump.length === 0) return { spawns, skyCameras, fixtureModels, entityProps }
+  const census: EntityCensus = { brush: [], points: new Map(), pointsOther: 0 }
+  if (lump.length === 0) return { spawns, skyCameras, fixtureModels, entityProps, census }
   const bytes = await src.read(lump.offset, lump.length)
   if (bytes.length !== lump.length) throw new BspError('short read of the entity lump')
   const text = Buffer.from(bytes).toString('latin1')
@@ -521,6 +572,14 @@ export async function extractMapEntities(src: ByteSource, limits: SpawnLimits = 
       entity = {}; key = null
     } else if (brace === '}') {
       const cls = entity?.['classname']
+      // Only counted, for the coverage record (RFC 32): a class that owns a model `*N` is a brush entity, any other is a point entity.
+      if (entity && cls && cls !== 'worldspawn') {
+        const owned = /^\*(\d{1,5})$/.exec(entity['model'] ?? '')
+        const name = cls.slice(0, 64)
+        if (owned && Number(owned[1]) > 0) census.brush.push({ class: name, model: Number(owned[1]), parented: !!entity['parentname'] })
+        else if (census.points.has(name) || census.points.size < MAX_CENSUS_CLASSES) census.points.set(name, (census.points.get(name) ?? 0) + 1)
+        else census.pointsOther++
+      }
       // A brush entity that stands still names its model `*N` and has no parent that could move it.
       if (entity && cls && (FIXTURE_CLASSES.test(cls) || MOVABLE_CLASSES.test(cls)) && /^\*\d{1,5}$/.test(entity['model'] ?? '') && !entity['parentname']) {
         const o = originOf(entity!) ?? { x: 0, y: 0, z: 0 }
@@ -542,7 +601,7 @@ export async function extractMapEntities(src: ByteSource, limits: SpawnLimits = 
       else { entity[key] = m[1]!; key = null }
     }
   }
-  return { spawns, skyCameras, fixtureModels, entityProps }
+  return { spawns, skyCameras, fixtureModels, entityProps, census }
 }
 
 /** The player spawns of a map (see extractMapEntities). */
