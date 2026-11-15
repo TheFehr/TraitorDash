@@ -52,10 +52,12 @@ describe('docs/MAP_COVERAGE.md and the registry say the same', () => {
     expect(doc).toContain('`HITBOX` (0x8000)')
   })
 
-  test('the document has the measurement of the real map, and the place for the totals over the maps of the server', () => {
+  test('the document has the measurement of the real map and the totals over the maps of the server', () => {
     expect(doc).toContain('## The measurement on a real map')
     expect(doc).toContain('ttt_67thway_rework_b1')
-    expect(doc).toContain("## Totals over the server's maps (to be filled after deployment)")
+    expect(doc).toMatch(/## Totals over the server's maps \(\d{4}-\d{2}-\d{2}/)
+    expect(doc).toContain('27 have a record')
+    expect(doc).toContain('`func_illusionary` | gap | 10 | 2 076 | 327')
     expect(doc).toMatch(/11 571 faces in the world model/)
   })
 })

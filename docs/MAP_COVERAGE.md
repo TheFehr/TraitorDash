@@ -209,6 +209,38 @@ The entities of a class that is drawn are not all drawn: an entity with a parent
 
 Light, fog and sun entities: 98.
 
-## Totals over the server's maps (to be filled after deployment)
+## Totals over the server's maps (2026-11-15, the coverage page after the first rebuild)
 
-After the update is deployed and the stored maps are rebuilt, the admin page `/servers/:serverId/map-coverage` adds the records of all the maps. Its totals and its ranked list of gaps are copied here, with the date, and are the snapshot [RFC 33](rfcs/RFC-033.md) starts from.
+Read from the admin page `/servers/:serverId/map-coverage` of the maintainer's server: 28 maps, **27 have a record** (`ttt_community_bowling_v5a` has no 3D mesh). Copied by hand from a screenshot, so the numbers are exact but the transcription is the author's.
+
+**Totals by status** (a world face is counted once, by its flags; ceilings, which the view leaves out on purpose, count with the drawn):
+
+| Status | World faces | Brush entities | Brush faces |
+|---|---|---|---|
+| drawn | 249 087 | 2 143 | 28 392 |
+| invisible | 10 147 | 936 | 7 794 |
+| gap | 0 | 906 | 3 269 |
+| not read | 0 | 0 | 0 |
+| unknown | 0 | 173 | 670 |
+
+**Gaps and unknowns, ranked by faces** (maps = number of maps with it; the largest map in brackets):
+
+| Entry | Status | Maps | Faces | Entities | Largest in |
+|---|---|---|---|---|---|
+| `func_illusionary` | gap | 10 | 2 076 | 327 | `ttt_minecraft_b7_summer` (663) |
+| `func_button` | gap | 23 | 622 | 262 | `ttt_airbus_b3` (126) |
+| `func_dustcloud` | unknown | 4 | 365 | 70 | `ttt_rooftops_2016_v1` (365) |
+| `func_water_analog` | gap | 7 | 319 | 87 | `ttt_cquestt` (130) |
+| `func_breakable_surf` | gap | 10 | 252 | 230 | `ttt_diescraper` (96) |
+| `func_rot_button` | unknown | 3 | 95 | 53 | `ttt_waterworld_tropical` (48) |
+| `ttt_traitor_check` | unknown | 7 | 65 | 16 | `ttt_airbus_b3` (47) |
+| `func_tanktrain` | unknown | 3 | 45 | 13 | `ttt_minecraft_b7_summer` (45) |
+| `func_buyzone` | unknown | 2 | 36 | 6 | `ttt_alps` (24) |
+| `func_bomb_target` | unknown | 2 | 24 | 4 | `ttt_alps` (12) |
+| `func_monitor` | unknown | 5 | 22 | 6 | `ttt_diescraper` (12) |
+| `game_zone_player` | unknown | 1 | 12 | 2 | `ttt_rooftops_2016_v1` (12) |
+| `func_conveyor` | unknown | 1 | 4 | 1 | `ttt_cquestt` (4) |
+| `func_reflective_glass` | unknown | 1 | 2 | 1 | `ttt_volcano` (2) |
+| `momentary_rot_button` | unknown | 1 | 0 | 1 | `ttt_airbus_b3` (0) |
+
+The maps with the most gap faces: `ttt_minecraft_b7_summer` 678, `ttt_pwp_v4` 675, `ttt_mc_skyislands` 342, `ttt_cquestt` 244, `ttt_alps` 243. Four maps have no gap faces (`ttt_community_bowling_re_v1b`, `ttt_forest_final` (one gap entity, no faces), `ttt_sandcrawler_v1`, `ttt_theship_v1`). **This is the snapshot that [RFC 33](rfcs/RFC-033.md) starts from.**
