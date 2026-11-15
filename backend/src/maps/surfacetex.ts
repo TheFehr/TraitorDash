@@ -35,6 +35,8 @@ export interface SurfaceInput {
   wallFaces: number[]
   /** The parts that can move: their triangles (local to the part) and the face of each. */
   parts?: { triangles: number[], faces?: number[] }[]
+  /** The decoration (RFC 33, 4.4): world-space triangles and the face of each, so its materials are counted too. */
+  decoration?: { triangles: number[], faces: number[] }
 }
 
 const area = (soup: number[], i: number) => {
@@ -56,6 +58,7 @@ export async function buildSurfaceTextures(input: SurfaceInput, src: ByteSource,
     for (let i = 0, t = 0; i < soup.length; i += 9, t++) areaOfMapping[input.faces[faces[t]!]!.mapping]! += area(soup, i)
   }
   for (const p of input.parts ?? []) if (p.faces) for (let i = 0, t = 0; i < p.triangles.length; i += 9, t++) areaOfMapping[input.faces[p.faces[t]!]!.mapping]! += area(p.triangles, i)
+  if (input.decoration) for (let i = 0, t = 0; i < input.decoration.triangles.length; i += 9, t++) areaOfMapping[input.faces[input.decoration.faces[t]!]!.mapping]! += area(input.decoration.triangles, i)
   input.mappings.forEach((m, k) => { if (m.material) byMaterial.set(m.material, (byMaterial.get(m.material) ?? 0) + areaOfMapping[k]!) })
   const ranked = [...byMaterial].sort((a, b) => b[1] - a[1]).slice(0, limits.materials).map(([name]) => name)
   report.materials = byMaterial.size

@@ -3,7 +3,7 @@ import { Store } from './Store'
 import { BspError, extractMapEntities, extractSurfaces, readHeader, type ByteSource } from '../maps/bsp'
 import { buildCoverage, type CoverageRecord } from '../maps/coverage'
 import { buildPropSet, type StockModels, type StockTextures } from '../maps/propset'
-import { nearTriangles, pickTags, pickTriangles, surfacesToGlb, type SurfaceTextures } from '../maps/meshGlb'
+import { aboveTheMap, nearTriangles, pickTags, pickTriangles, surfacesToGlb, type SurfaceTextures } from '../maps/meshGlb'
 import { findParts, soupOfKinds, trianglesOfKinds } from '../maps/parts'
 import { readPak } from '../maps/pak'
 import { buildSurfaceTextures, type SurfaceReport } from '../maps/surfacetex'
@@ -16,6 +16,8 @@ export const geometryEnabled = () => process.env.MAP_GEOMETRY === '1'
 /** What is stored about a mesh (and shown on the map page). `props` is what was drawn; `unavailable` models are the game's own, which the map does not carry. */
 export interface GeometryInfo {
   vertices: number, triangles: number, levels: number, water: number
+  /** Triangles of the decoration group (RFC 33, 4.4), only when there are some. */
+  decoration?: number
   /** False for a hill or terrain (no storeys); the triangles in detached parts; spawn points in the file. */
   storeys?: boolean, detached?: number, movable?: number, spawns?: number
   /** The materials the faces of the map name, and what became of the largest: textures, plain colours, and how many textures are the game's own (RFC 18, 5). */
@@ -54,6 +56,8 @@ export async function buildGeometry(src: ByteSource, map: string, fingerprint: s
     const apart = kind(['detached'])
     const detached = { ...apart, parts: found.parts.filter(p => p.kind === 'detached').sort((a, b) => b.triangles - a.triangles).map(p => ({ triangles: p.triangles, min: p.min.map(Math.round), max: p.max.map(Math.round) })) }
     const water = nearTriangles(surfaces.water, [cleaned.floors, cleaned.walls], 512)
+    // The decoration (RFC 33, 4.4) without what lies below the lowest floor of the map: the floors are those of the map itself, not of a detached part or the skybox.
+    const decoration = aboveTheMap(surfaces.decoration, surfaces.decorationFaces, cleaned.floors)
     const { set, report } = await buildPropSet(src, header, entityProps, boxOf(cleaned.floors, cleaned.walls), undefined, stock, textures)
     // The materials of the floors and walls: textures for the largest, plain colours for the next (RFC 18, 5). A map that cannot have them is drawn without.
     let surface: SurfaceTextures | undefined, surfaceReport: SurfaceReport | undefined
@@ -61,7 +65,7 @@ export async function buildGeometry(src: ByteSource, map: string, fingerprint: s
       const pak = await readPak(src, header.lumps[40]!)
       const built = await buildSurfaceTextures({
         mappings: surfaces.mappings, faces: surfaces.faces, floors: cleaned.floors, walls: cleaned.walls,
-        parts: surfaces.movableParts,
+        parts: surfaces.movableParts, decoration: { triangles: decoration.soup, faces: decoration.faces },
         floorFaces: pickTags(surfaces.floorFaces, mainAt[0]!), wallFaces: pickTags(surfaces.wallFaces, mainAt[1]!),
       }, src, pak, textures)
       surface = built.surface; surfaceReport = built.report
@@ -69,10 +73,10 @@ export async function buildGeometry(src: ByteSource, map: string, fingerprint: s
     // The coverage record only counts what the reads above saw (RFC 32); a map whose record fails is still a map.
     let coverage: CoverageRecord | undefined
     try { coverage = await buildCoverage(src, header, surfaces.tally, census) } catch (e) { console.warn(`[Geometry] The coverage record of ${map} could not be made: ${e instanceof Error ? e.message : e}`) }
-    const out = await surfacesToGlb({ ...surfaces, ...cleaned, surface, water, movable: surfaces.movable, movableParts: surfaces.movableParts, detached, spawns, props: set }, { map })
+    const out = await surfacesToGlb({ ...surfaces, ...cleaned, surface, water, movable: surfaces.movable, movableParts: surfaces.movableParts, decoration: decoration.soup, decorationFaces: decoration.faces, detached, spawns, props: set }, { map })
     if (!out) return { ok: false, error: 'The map has no surfaces to draw.' }
     return { ok: true, glb: out.glb, note: report.stockError ? `The game's own models could not all be fetched: ${report.stockError}` : undefined, info: {
-      vertices: out.info.vertices, triangles: out.info.triangles, levels: out.info.levels.length, water: out.info.waterTriangles, storeys: out.info.storeys, detached: out.info.detached.triangles, movable: out.info.movable, spawns: out.info.spawns,
+      vertices: out.info.vertices, triangles: out.info.triangles, levels: out.info.levels.length, water: out.info.waterTriangles, storeys: out.info.storeys, detached: out.info.detached.triangles, movable: out.info.movable, ...(out.info.decoration ? { decoration: out.info.decoration } : {}), spawns: out.info.spawns,
       ...(surfaceReport ? { surface: surfaceReport } : {}),
       ...(coverage ? { coverage } : {}),
       props: { placed: report.drawnPlacements, models: report.drawnModels, foliage: report.foliageModels, leafTextures: report.leafTextures, leafTexturesFromGame: report.leafTexturesFromGame, cards: report.cards, fromGame: report.fromGame, unavailable: report.unavailable, unreadable: report.unreadable + report.tooBig, dropped: report.dropped },

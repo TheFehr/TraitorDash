@@ -63,6 +63,25 @@ export function nearTriangles(soup: number[], around: number[][], margin: number
   return cropTriangles(soup, { minX: minX - margin, maxX: maxX + margin, minY: minY - margin, maxY: maxY + margin })
 }
 
+/**
+ * The decoration of a map without what lies below it (RFC 33, 4.4): a face whose highest point is lower than the lowest floor minus `margin` units is hidden by the
+ * world and not kept (a slab of lava under the map). The whole face goes, so a face is never cut in two; `faces` has the number of the face for each triangle of
+ * `soup`. A map with no floors keeps everything.
+ */
+export function aboveTheMap(soup: number[], faces: number[], floors: number[], margin = 64): { soup: number[], faces: number[] } {
+  let lowest = Infinity
+  for (let i = 2; i < floors.length; i += 3) lowest = Math.min(lowest, floors[i]!)
+  if (!Number.isFinite(lowest)) return { soup, faces }
+  const top = new Map<number, number>()
+  for (let t = 0; t < faces.length; t++) {
+    const f = faces[t]!
+    top.set(f, Math.max(top.get(f) ?? -Infinity, soup[t * 9 + 2]!, soup[t * 9 + 5]!, soup[t * 9 + 8]!))
+  }
+  const keep: number[] = []
+  for (let t = 0; t < faces.length; t++) if (top.get(faces[t]!)! >= lowest - margin) keep.push(t)
+  return { soup: pickTriangles(soup, keep), faces: pickTags(faces, keep) }
+}
+
 /** The models placed in a map (RFC 18, 4.3): each distinct model once, and every place it stands. */
 export interface PropSet {
   models: {
@@ -110,6 +129,8 @@ export interface GlbInfo {
   detached: { triangles: number, parts: number }
   /** Triangles of the parts that can move (doors, lifts, a collapsing building): a group of their own, in a colour of their own. */
   movable: number
+  /** Triangles of the decoration group (`func_illusionary`, RFC 33, 4.4): not floors, walls, water or parts, and not counted in `triangles`. */
+  decoration: number
   /** Spawn points written into the file. */
   spawns: number
   /** Textures and materials of the floors and walls (RFC 18, 5), when they have them. */
@@ -147,7 +168,9 @@ export interface SurfaceTextures {
   materials: SurfaceMaterial[]
   textures: { name: string, width: number, height: number, png: Uint8Array }[]
 }
-export interface MeshInput { surface?: SurfaceTextures, floors: number[], walls: number[], water?: number[], movable?: number[], movableParts?: MovablePart[], detached?: DetachedParts, spawns?: MeshSpawn[], props?: PropSet, fingerprint: string, version: number, revision: number }
+export interface MeshInput { surface?: SurfaceTextures, floors: number[], walls: number[], water?: number[], movable?: number[], movableParts?: MovablePart[],
+  /** The decoration (RFC 33, 4.4): world-space triangles and, for each, the face it came from (an index into `surface.faces`), for its texture. */
+  decoration?: number[], decorationFaces?: number[], detached?: DetachedParts, spawns?: MeshSpawn[], props?: PropSet, fingerprint: string, version: number, revision: number }
 /** A map has storeys when at least this share of its floor lies within 48 units of the height of one (see `storeyCoverage`). */
 export const STOREY_COVERAGE = 0.6
 const MAX_SPAWNS = 512
@@ -288,7 +311,8 @@ function indexedUv(soup: number[], uvs: number[]) {
  * triangles at all, or the crop took them all). Throws for input that is not triangles.
  */
 export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ glb: Uint8Array, info: GlbInfo } | null> {
-  check(s.floors, 'floors'); check(s.walls, 'walls'); if (s.movable) check(s.movable, 'movable')
+  check(s.floors, 'floors'); check(s.walls, 'walls'); if (s.movable) check(s.movable, 'movable'); if (s.decoration) check(s.decoration, 'decoration')
+  if (s.decoration && s.decoration.length > 0 && s.surface && (s.decorationFaces?.length ?? 0) !== s.decoration.length / 9) throw new RangeError('the textures must have one mapping for each triangle of the decoration')
   for (const p of s.movableParts ?? []) check(p.triangles, `movable part ${p.model}`)
   const cell = opts.cell ?? 64
 
@@ -342,7 +366,7 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
   const surfaceMaterials = new Map<string, ReturnType<typeof doc.createMaterial>>()
   let texturedTriangles = 0, colouredTriangles = 0
   const linear = (c: number) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)
-  const surfaceMaterial = (kind: 'floor' | 'wall', index: number) => {
+  const surfaceMaterial = (kind: 'floor' | 'wall' | 'decoration', index: number) => {
     const key = `${kind}|${index}`
     let mat = surfaceMaterials.get(key)
     if (!mat) {
@@ -367,7 +391,7 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
     const base = surface!.materialOf[rec.mapping] ?? -1
     return base >= 0 && surface!.materials[base]?.blendSteps ? base + Math.min(surface!.materials[base]!.blendSteps! - 1, rec.blend ?? 0) : base
   }
-  const addSurface = (mesh: ReturnType<typeof doc.createMesh>, name: string, kind: 'floor' | 'wall', soup: number[], tags: number[], plain: ReturnType<typeof doc.createMaterial>, texturedName = kind) => {
+  const addSurface = (mesh: ReturnType<typeof doc.createMesh>, name: string, kind: 'floor' | 'wall', soup: number[], tags: number[], plain: ReturnType<typeof doc.createMaterial>, texturedName: 'floor' | 'wall' | 'decoration' = kind) => {
     if (soup.length === 0) return
     // A surface with textures is cut into a primitive for each material (none: the plain floor or wall as before)
     const groups = new Map<number, number[]>()
@@ -409,7 +433,7 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
       k++
     }
   }
-  const info: GlbInfo = { vertices: 0, triangles: 0, droppedDegenerate: dropped, levels: [], storeys, detached: { triangles: 0, parts: 0 }, movable: 0, spawns: 0, waterTriangles: 0, props: { placements: 0, models: 0, triangles: 0 }, cropped }
+  const info: GlbInfo = { vertices: 0, triangles: 0, droppedDegenerate: dropped, levels: [], storeys, detached: { triangles: 0, parts: 0 }, movable: 0, decoration: 0, spawns: 0, waterTriangles: 0, props: { placements: 0, models: 0, triangles: 0 }, cropped }
   byLevel.forEach((lv) => {
     if (lv.floors.length === 0 && lv.walls.length === 0) return
     const index = info.levels.length + 1
@@ -492,6 +516,29 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
         .setIndices(doc.createAccessor('movable-indices').setType('SCALAR').setArray(indices).setBuffer(buffer)))
       info.movable = movableSoup.length / 9
       root.addChild(doc.createNode('movable').setMesh(mesh).setExtras(movableGroup(info.movable)))
+    }
+  }
+
+  // The decoration (RFC 33, 4.4): a group of its own, outside the levels (it is no floor, no wall and makes no storey), textured like the rest.
+  if (s.decoration && s.decoration.length > 0) {
+    let soup = s.decoration
+    let tags = s.surface ? s.decorationFaces! : []
+    if (opts.crop) {
+      const keep = croppedTriangles(soup, opts.crop)
+      if (s.surface) tags = pickTags(tags, keep)
+      soup = pickTriangles(soup, keep)
+    }
+    const live = areaTriangles(soup)
+    if (s.surface) tags = pickTags(tags, live)
+    soup = pickTriangles(soup, live)
+    if (soup.length > 0) {
+      const mesh = doc.createMesh('decoration')
+      const decorationMat = material('decoration', [0.7, 0.62, 0.5]) // made only when there is decoration, so a map without it is the same bytes as before
+      const before = info.triangles // the decoration is counted by itself, not with the map's triangles
+      addSurface(mesh, 'decoration', 'wall', soup, tags, decorationMat, 'decoration')
+      info.triangles = before
+      info.decoration = soup.length / 9
+      root.addChild(doc.createNode('decoration').setMesh(mesh).setExtras({ group: 'decoration', triangles: info.decoration }))
     }
   }
 
