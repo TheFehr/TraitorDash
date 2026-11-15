@@ -1,8 +1,8 @@
 import { expect, test, describe } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { extractMapEntities, extractSurfaces, readHeader, memorySource, bspFingerprint, FIXTURE_CLASSES, MOVABLE_CLASSES, SURFACE_FLAGS, flagSetName } from '../src/maps/bsp'
-import { COVERAGE, STATUSES, KINDS, lookup, cleanName, buildCoverage, asRecord, pointFeature, MAX_BRUSH_CLASSES, MAX_POINT_CLASSES, type CoverageRecord } from '../src/maps/coverage'
+import { extractMapEntities, extractSurfaces, readHeader, memorySource, bspFingerprint, FIXTURE_CLASSES, MOVABLE_CLASSES, WATER_CLASSES, DECORATION_CLASSES, SURFACE_FLAGS, flagSetName } from '../src/maps/bsp'
+import { COVERAGE, STATUSES, KINDS, alternatives, lookup, cleanName, buildCoverage, asRecord, pointFeature, MAX_BRUSH_CLASSES, MAX_POINT_CLASSES, type CoverageRecord } from '../src/maps/coverage'
 import { MESH_VERSION, MESH_VERSION_GAME, meshVersion } from '../src/maps/meshVersion'
 import { buildGeometry } from '../src/services/mapgeometry'
 import { buildBsp, flatQuads, LUMP } from './helpers/bsp_builder'
@@ -57,29 +57,39 @@ describe('the registry', () => {
   test('every class the extractor draws is drawn, and every drawn class is one the extractor draws (the lists of the code are the source)', () => {
     const drawn = COVERAGE.filter(e => e.kind === 'class' && e.status === 'drawn').map(e => e.key)
     expect(drawn.length).toBeGreaterThanOrEqual(12)
-    for (const k of drawn) expect(FIXTURE_CLASSES.test(k) || MOVABLE_CLASSES.test(k), `${k} is drawn in the registry but the extractor does not list it`).toBe(true)
-    for (const k of ['func_brush', 'func_wall', 'func_breakable', 'func_lod', 'func_wall_toggle', 'func_door', 'func_door_rotating', 'func_movelinear', 'func_rotating', 'func_tracktrain', 'func_physbox', 'func_physbox_multiplayer']) {
-      expect(FIXTURE_CLASSES.test(k) || MOVABLE_CLASSES.test(k), k).toBe(true)
+    const lists = [FIXTURE_CLASSES, MOVABLE_CLASSES, WATER_CLASSES, DECORATION_CLASSES]
+    for (const k of drawn) expect(lists.some(re => re.test(k)), `${k} is drawn in the registry but the extractor does not list it`).toBe(true)
+    for (const k of ['func_brush', 'func_wall', 'func_breakable', 'func_lod', 'func_wall_toggle', 'func_door', 'func_door_rotating', 'func_movelinear', 'func_rotating', 'func_tracktrain', 'func_physbox', 'func_physbox_multiplayer',
+      // RFC 33: buttons, a tank train, glass, screens, a belt, a mirror, the water brush and the decoration
+      'func_button', 'func_rot_button', 'momentary_rot_button', 'func_tanktrain', 'func_breakable_surf', 'func_monitor', 'func_conveyor', 'func_reflective_glass', 'func_water_analog', 'func_illusionary']) {
+      expect(lists.some(re => re.test(k)), k).toBe(true)
       expect(lookup('class', k), k).toMatchObject({ status: 'drawn' })
     }
   })
 
   test('a class that is added to the extractor lists is drawn in the registry without anyone adding a line, and the document test then asks for its row', () => {
     // the registry is made from the regexes; this is the property the test above leans on
-    const names = (re: RegExp) => /\(([\w|]+)\)\$$/.exec(re.source)![1]!.split('|').map(a => `func_${a}`)
-    for (const k of [...names(FIXTURE_CLASSES), ...names(MOVABLE_CLASSES)]) expect(COVERAGE.some(e => e.kind === 'class' && e.key === k && e.status === 'drawn'), k).toBe(true)
+    for (const k of [FIXTURE_CLASSES, MOVABLE_CLASSES, WATER_CLASSES, DECORATION_CLASSES].flatMap(alternatives)) expect(COVERAGE.some(e => e.kind === 'class' && e.key === k && e.status === 'drawn'), k).toBe(true)
   })
 
-  test('the classes the pipeline does not draw: triggers, clips, area portals, occluders and weather are invisible; buttons, breakable glass, water and illusionary brushes are gaps', () => {
-    for (const k of ['trigger_teleport', 'trigger_multiple', 'trigger_hurt', 'trigger_soundscape', 'trigger_anything_new', 'func_clip_vphysics', 'func_areaportal', 'func_areaportalwindow', 'func_occluder', 'func_precipitation', 'env_embers']) expect(lookup('class', k).status, k).toBe('invisible')
-    for (const k of ['func_button', 'func_breakable_surf', 'func_water_analog', 'func_illusionary']) expect(lookup('class', k).status, k).toBe('gap')
+  test('the classes the pipeline does not draw: triggers, clips, area portals, occluders, weather and the zones of RFC 33, 4.6 are invisible, with a note each', () => {
+    for (const k of ['trigger_teleport', 'trigger_multiple', 'trigger_hurt', 'trigger_soundscape', 'trigger_anything_new', 'func_clip_vphysics', 'func_areaportal', 'func_areaportalwindow', 'func_occluder', 'func_precipitation',
+      'func_dustcloud', 'func_buyzone', 'func_bomb_target', 'game_zone_player', 'ttt_traitor_check', 'env_embers']) expect(lookup('class', k).status, k).toBe('invisible')
+    for (const k of ['func_dustcloud', 'func_buyzone', 'func_bomb_target', 'game_zone_player', 'ttt_traitor_check', 'env_embers']) expect(lookup('class', k).note.length, k).toBeGreaterThan(20)
+  })
+
+  test('RFC 33 leaves no class of its table a gap or unknown: each is drawn or invisible, and the registry has no gap entry left', () => {
+    const table = ['func_illusionary', 'func_button', 'func_rot_button', 'momentary_rot_button', 'func_water_analog', 'func_breakable_surf', 'func_tanktrain', 'func_monitor', 'func_conveyor', 'func_reflective_glass',
+      'func_dustcloud', 'func_buyzone', 'func_bomb_target', 'game_zone_player', 'ttt_traitor_check', 'env_embers']
+    for (const k of table) expect(['drawn', 'invisible'], k).toContain(lookup('class', k).status)
+    expect(COVERAGE.filter(e => e.status === 'gap').map(e => e.key)).toEqual([])
   })
 
   test('a lookup: the exact entry first, then the longest `*` prefix, else unknown with no entry (and unknown is never an entry)', () => {
     expect(lookup('class', 'func_door')).toMatchObject({ status: 'drawn' })
     expect(lookup('class', 'trigger_made_up').entry!.key).toBe('trigger_*')
     expect(lookup('class', 'func_areaportalwindow').entry!.key).toBe('func_areaportal*')
-    for (const k of ['func_mystery_box', 'func_buttons', 'func_', 'trigger', 'ttt_traitor_check', 'xtrigger_hurt', '_']) expect(lookup('class', k), k).toMatchObject({ status: 'unknown', entry: null })
+    for (const k of ['func_mystery_box', 'func_buttons', 'func_', 'trigger', 'ttt_traitor_checks', 'xtrigger_hurt', '_']) expect(lookup('class', k), k).toMatchObject({ status: 'unknown', entry: null })
     expect(lookup('flag', 'OTHER').status).toBe('unknown')
     expect(lookup('flag', 'light').status, 'flag names are exact').toBe('unknown')
     expect(lookup('material', 'tools/*').status).toBe('invisible')
@@ -132,12 +142,12 @@ describe('the record of a small constructed map, against a hand count', () => {
     expect(r.worldFaces).toBe(2)
   })
 
-  test('the brush entities by class: faces from the models, a listed class drawn, a button a gap, a trigger invisible, a class nobody classified unknown', async () => {
+  test('the brush entities by class: faces from the models, a listed class drawn, a trigger invisible, a class nobody classified unknown', async () => {
     const r = await recordOf(coverageMap())
     expect(r.brush).toEqual([
+      { class: 'func_buttox', entities: 1, faces: 2, status: 'unknown' },
       { class: 'func_mystery_box', entities: 1, faces: 1, status: 'unknown' },
-      { class: 'func_button', entities: 1, faces: 2, status: 'gap' },
-      { class: 'func_water_analog', entities: 1, faces: 1, status: 'gap' },
+      { class: 'func_water_analox', entities: 1, faces: 1, status: 'unknown' },
       { class: 'func_brush', entities: 1, faces: 1, status: 'drawn' },
       { class: 'func_door', entities: 1, faces: 1, status: 'drawn' },
       { class: 'trigger_hurt', entities: 1, faces: 1, status: 'invisible' },
@@ -168,7 +178,7 @@ describe('the record of a small constructed map, against a hand count', () => {
 
   test('a model that is not in the file has no faces, and a brush entity of model 0 is a point entity', async () => {
     const r = await recordOf(coverageMap({ entities: entitiesOf(brush('func_button', 99), '{ "classname" "func_x" "model" "*0" }') }))
-    expect(r.brush).toEqual([{ class: 'func_button', entities: 1, faces: 0, status: 'gap' }])
+    expect(r.brush).toEqual([{ class: 'func_button', entities: 1, faces: 0, status: 'drawn' }])
     expect(r.points).toEqual([{ class: 'func_x', count: 1 }])
   })
 
@@ -206,7 +216,7 @@ describe('names from the map file (untrusted)', () => {
   test('in the record: a class is cleaned, two names that become one are one class, a long one is cut', async () => {
     const r = await recordOf(coverageMap({ entities: entitiesOf(brush('FUNC_BUTTON'), brush('func_button!'), brush('func_<b>x</b>'), brush('a'.repeat(100)), brush('<<<'),
       '{ "classname" "Info<Node>" "origin" "0 0 0" }') }))
-    expect(r.brush.find(b => b.class === 'func_button')).toMatchObject({ entities: 2, status: 'gap' })
+    expect(r.brush.find(b => b.class === 'func_button')).toMatchObject({ entities: 2, status: 'drawn' })
     for (const b of r.brush) expect(b.class, b.class).toMatch(/^[a-z0-9_*]{1,64}$/)
     expect(r.brush.map(b => b.class)).toContain('a'.repeat(64))
     expect(r.brush.map(b => b.class)).toContain('_')
@@ -276,15 +286,18 @@ describe('the record only counts: the mesh is what it was', () => {
   // These two hashes were taken from the code before the record existed (with only the version numbers raised): the surfaces the extractor gives for the
   // constructed map, without the tally, and the GLB of the whole build. A change to what the extractor draws changes them on purpose; a change to the record must not.
   const SURFACES = '3ce81cfca85e2977eeeb16931db8261b57defa0ecae9c393305cf14d15f7f110'
-  const GLB = 'bf0f5e87de00d0015e409fd417ba05ced73cff6128e76852c30394b2e154132a'
+  // RFC 33 raised the mesh generation from 13 to 14, which the file carries in its header (`meshVersion`): the bytes of this map were 'bf0f5e87de00d0015e409fd417ba05ced73cff6128e76852c30394b2e154132a' at 13
+  // (checked: with the number put back to 13 the build of the same map gives that hash again, so RFC 33 changes no byte of a map with none of its classes). This is the hash at 14.
+  const GLB = 'e4fcdf92efa5a6d30417760dd804363da693d9a6162d88b9892c1b10c80fb88c'
   const sha = (x: string | Uint8Array) => createHash('sha256').update(x).digest('hex')
 
   test('the surfaces of the constructed map are the same triangles, faces, mappings and statistics', async () => {
     const file = coverageMap()
     const src = memorySource(file)
     const ents = await extractMapEntities(src)
-    const { tally, ...rest } = await extractSurfaces(src, {}, ents.fixtureModels)
+    const { tally, decoration, decorationFaces, ...rest } = await extractSurfaces(src, {}, ents.fixtureModels)
     expect(tally.worldFaces).toBe(10)
+    expect([decoration, decorationFaces]).toEqual([[], []]) // RFC 33: the two new lists are empty for a map with none of its classes; everything else is hashed as it was
     expect(sha(JSON.stringify(rest))).toBe(SURFACES)
     // and the entities the drawing is told about are the ones before
     expect(ents.fixtureModels.map(f => f.model)).toEqual([1, 2])
@@ -304,16 +317,17 @@ describe('the record only counts: the mesh is what it was', () => {
 })
 
 describe('the mesh generations', () => {
-  test('both went up by one (13 and 14) and still differ, and a backend asks for the one that fits it', () => {
-    expect(MESH_VERSION).toBe(13)
-    expect(MESH_VERSION_GAME).toBe(14)
+  test('both went up by one (14 and 15) and still differ, and a backend asks for the one that fits it', () => {
+    expect(MESH_VERSION).toBe(14)
+    expect(MESH_VERSION_GAME).toBe(15)
     expect(MESH_VERSION_GAME).not.toBe(MESH_VERSION)
-    expect(meshVersion(false)).toBe(13)
-    expect(meshVersion(true)).toBe(14)
+    expect(meshVersion(false)).toBe(14)
+    expect(meshVersion(true)).toBe(15)
   })
 
-  test('the history in meshVersion.ts names this generation and RFC 32', () => {
+  test('the history in meshVersion.ts names this generation and RFC 33 (and the one before it, RFC 32)', () => {
     const text = readFileSync(new URL('../src/maps/meshVersion.ts', import.meta.url), 'utf8')
     expect(text).toMatch(/13 \(14 with the game's own models\).*RFC 32/)
+    expect(text).toMatch(/14 \(15 with the game's own models\).*RFC 33/)
   })
 })

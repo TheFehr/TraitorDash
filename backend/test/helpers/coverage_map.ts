@@ -1,7 +1,8 @@
 import { buildBsp, flatQuads, LUMP, type BspSpec } from './bsp_builder'
 
 // A small map for the coverage record (RFC 32): ten faces in the world model that cover every outcome, and one face each (two for the button)
-// in six brush-entity models. The hand count of what it holds is in test/coverage.test.ts.
+// in six brush-entity models. The hand count of what it holds is in test/coverage.test.ts. (Models *3 and *6 are classes nobody has classified, spelt like a button
+// and a water brush with one letter changed: those two were real classes until RFC 33 drew them, and the same length keeps the file, its fingerprint and so the hash of its mesh as they were.)
 
 export const F = { LIGHT: 0x1, SKY2D: 0x2, SKY: 0x4, WARP: 0x8, TRANS: 0x10, NOPORTAL: 0x20, TRIGGER: 0x40, NODRAW: 0x80, HINT: 0x100, SKIP: 0x200, NOLIGHT: 0x400, BUMPLIGHT: 0x800 } as const
 
@@ -17,7 +18,7 @@ const FACES: { flags: number, material: string, normal?: [number, number, number
   /* 7 */ { flags: 0, material: 'sky/mysky' },
   /* 8 */ { flags: F.TRANS, material: 'glass/ceiling', normal: [0, 0, -1] },
   /* 9 */ { flags: F.NOPORTAL, material: 'concrete/noportal' },
-  // the brush entities: *1 func_door, *2 func_brush, *3 func_button (two faces), *4 trigger_hurt, *5 func_mystery_box, *6 func_water_analog
+  // the brush entities: *1 func_door, *2 func_brush, *3 func_buttox (two faces), *4 trigger_hurt, *5 func_mystery_box, *6 func_water_analox
   /* 10 */ { flags: 0, material: 'metal/door' },
   /* 11 */ { flags: 0, material: 'concrete/fixture' },
   /* 12 */ { flags: 0, material: 'metal/button' },
@@ -34,10 +35,10 @@ export const COVERAGE_ENTITIES = [
   '{ "classname" "worldspawn" }',
   '{ "classname" "func_door" "model" "*1" "origin" "10 20 30" "targetname" "door1" }',
   '{ "classname" "func_brush" "model" "*2" }',
-  '{ "classname" "func_button" "model" "*3" }',
+  '{ "classname" "func_buttox" "model" "*3" }',
   '{ "classname" "trigger_hurt" "model" "*4" }',
   '{ "classname" "func_mystery_box" "model" "*5" }',
-  '{ "classname" "func_water_analog" "model" "*6" }',
+  '{ "classname" "func_water_analox" "model" "*6" }',
   '{ "classname" "light" "origin" "0 0 100" }', '{ "classname" "light" "origin" "0 0 200" }', '{ "classname" "light_spot" "origin" "0 0 300" }',
   '{ "classname" "env_fog_controller" "origin" "0 0 0" }',
   '{ "classname" "info_player_terrorist" "origin" "5 5 5" }', '{ "classname" "info_player_terrorist" "origin" "6 6 6" }',

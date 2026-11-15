@@ -75,14 +75,15 @@ describe('brush entities that stand still (RFC 18, 4.2)', () => {
     expect(found.map(f => f.movable === true)).toEqual([false, true, false])
   })
 
-  test('every kind of brush that can move is marked movable: doors, sliding and turning parts, trains, pushable crates (not buttons)', async () => {
-    const classes = ['func_door', 'func_door_rotating', 'func_movelinear', 'func_rotating', 'func_tracktrain', 'func_physbox', 'func_physbox_multiplayer']
-    const lump = ['{ "classname" "worldspawn" }', ...classes.map((c, i) => `{ "classname" "${c}" "model" "*${i + 1}" }`), '{ "classname" "func_button" "model" "*8" }'].join('\n')
-    const models = Array.from({ length: 9 }, (_, i) => ({ firstFace: i, numFaces: 1 }))
-    const bsp = buildBsp({ ...flatQuads([0, 10, 20, 30, 40, 50, 60, 70, 80]), entities: lump, models })
+  test('every kind of brush that can move is marked movable: doors, sliding and turning parts, trains, buttons and levers, pushable crates (RFC 33 added the buttons and the tank train)', async () => {
+    const classes = ['func_door', 'func_door_rotating', 'func_movelinear', 'func_rotating', 'func_tracktrain', 'func_physbox', 'func_physbox_multiplayer', 'func_tanktrain', 'func_button', 'func_rot_button', 'momentary_rot_button']
+    const lump = ['{ "classname" "worldspawn" }', ...classes.map((c, i) => `{ "classname" "${c}" "model" "*${i + 1}" }`), '{ "classname" "func_buttonx" "model" "*12" }', '{ "classname" "my_func_button" "model" "*13" }'].join('\n')
+    const models = Array.from({ length: 14 }, (_, i) => ({ firstFace: i, numFaces: 1 }))
+    const bsp = buildBsp({ ...flatQuads(Array.from({ length: 14 }, (_, i) => i * 10)), entities: lump, models })
     const found = (await extractMapEntities(memorySource(bsp))).fixtureModels
-    expect(found.map(f => f.model)).toEqual([1, 2, 3, 4, 5, 6, 7])
+    expect(found.map(f => f.model)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]) // a class that only contains the name (func_buttonx, my_func_button) is none of them
     expect(found.every(f => f.movable === true)).toBe(true)
+    expect(found.map(f => f.class)).toEqual(classes)
   })
 
   test('the faces of movable brushes go into a list of their own, where the map puts them, not into floors or walls', async () => {

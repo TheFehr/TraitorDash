@@ -3,7 +3,7 @@ import { serializeSigned } from 'hono/utils/cookie'
 import { bspFingerprint, memorySource } from '../src/maps/bsp'
 import { buildGeometry } from '../src/services/mapgeometry'
 import { summarise, worldFacesByStatus, flagSetStatus, sizeText } from '../src/services/coveragereport'
-import { asRecord, type CoverageRecord } from '../src/maps/coverage'
+import { asRecord, lookup, type CoverageRecord, type Kind, type Status } from '../src/maps/coverage'
 import { coverageMap, COVERAGE_ENTITIES } from './helpers/coverage_map'
 import { PUBLIC_CSS } from '../src/components/styles'
 
@@ -103,25 +103,29 @@ describe('what it shows (the real records of two constructed maps, one map from 
   test('the totals by status add up to the hand count of the records', async () => {
     const html = await page()
     // Three maps have a record: a, b and evil (a copy of a with one more unknown class). Each has 10 world faces: 7 drawn, 3 invisible.
-    // Brush entities (entities/faces) in a: drawn 2/2, invisible 1/1, gap 2/3, unknown 1/1. In b, one more button (2 faces) and one more trigger (1 face): invisible 2/2, gap 3/5. In evil: unknown 2/2.
-    expect(cells(html, 'data-status-row="drawn"').slice(2)).toEqual(['21', '6', '6'])
+    // Brush entities (entities/faces) in a: drawn 2/2 (a door, a brush), invisible 1/1, unknown 3/4 (the mystery box, and the two that are spelt like a button and a water brush).
+    // In b, one real button (2 faces, drawn since RFC 33) and one more trigger (1 face): drawn 3/4, invisible 2/2, unknown 3/4. In evil: a's, and one more unknown class (1/1): unknown 4/5.
+    // Since RFC 33 the registry has no gap left, so that row is zero on this page (the sums of a gap are tested with a status that is given, below).
+    expect(cells(html, 'data-status-row="drawn"').slice(2)).toEqual(['21', '7', '8'])
     expect(cells(html, 'data-status-row="invisible"').slice(2)).toEqual(['9', '4', '4'])
-    expect(cells(html, 'data-status-row="gap"').slice(2)).toEqual(['0', '7', '11'])
+    expect(cells(html, 'data-status-row="gap"').slice(2)).toEqual(['0', '0', '0'])
     expect(cells(html, 'data-status-row="not read"').slice(2)).toEqual(['0', '0', '0'])
-    expect(cells(html, 'data-status-row="unknown"').slice(2)).toEqual(['0', '4', '4'])
+    expect(cells(html, 'data-status-row="unknown"').slice(2)).toEqual(['0', '10', '13'])
   })
 
   test('the gaps are ranked by faces, with the number of maps, the totals and the map with the most', async () => {
     const html = await page()
     const keys = [...html.matchAll(/<tr data-gap="([^"]+)"/g)].map(m => m[1]!)
-    // by faces: the button (2 + 4 + 2 = 8), then the mystery box and the water (3 each: the tie goes by entities, maps, then name)
-    expect(keys.slice(0, 3)).toEqual(['class:func_button', 'class:func_mystery_box', 'class:func_water_analog'])
-    // button: a 2 faces (1 entity), b 4 (2), evil 2 (1): 3 maps, 8 faces, 4 entities, the most in b
-    const button = cells(html, 'data-gap="class:func_button"')
-    expect(button.slice(0, 3)).toEqual(['func_button', 'class', 'gap'])
-    expect(button.slice(3, 6)).toEqual(['3', '8', '4'])
-    expect(button[6]).toBe('ttt_cov_b (4)')
-    expect(html).toContain(`<a href="/servers/${serverId}/maps/ttt_cov_b">ttt_cov_b</a> (4)`)
+    // by faces: the class spelt like a button (2 faces in each of a, b and evil = 6), then the mystery box and the water-like one (3 each: the tie goes by entities, maps, then name), then the damaged name (shown as text)
+    expect(keys.slice(0, 4)).toEqual(['class:func_buttox', 'class:func_mystery_box', 'class:func_water_analox', 'class:&lt;img src=x onerror=alert(1)&gt;'])
+    // the real button is drawn now (RFC 33): it is in no list of gaps or unknowns
+    expect(keys).not.toContain('class:func_button'); expect(keys).not.toContain('class:func_water_analog')
+    // func_buttox: 2 faces (1 entity) in each of the three maps: 3 maps, 6 faces, 3 entities, the most in the first that has it (a tie keeps the first)
+    const button = cells(html, 'data-gap="class:func_buttox"')
+    expect(button.slice(0, 3)).toEqual(['func_buttox', 'class', 'unknown'])
+    expect(button.slice(3, 6)).toEqual(['3', '6', '3'])
+    expect(button[6]).toBe('ttt_cov_a (2)')
+    expect(html).toContain(`<a href="/servers/${serverId}/maps/ttt_cov_a">ttt_cov_a</a> (2)`)
     // ordered: every row has no more faces than the one before
     const faces = [...html.matchAll(/<tr data-gap="[^"]+">(.*?)<\/tr>/gs)].map(m => Number([...m[1]!.matchAll(/<td[^>]*>(.*?)<\/td>/gs)][4]![1]!.replace(/\D/g, '')))
     expect(faces).toEqual([...faces].sort((a, b) => b - a))
@@ -139,9 +143,9 @@ describe('what it shows (the real records of two constructed maps, one map from 
     expect(cells(html, 'data-map-row="ttt_cov_old"')[4]).toBe('no record yet')
     expect(cells(html, 'data-map-row="ttt_cov_queued"')[4]).toBe('3D queued')
     expect(html).toContain(`<a href="/servers/${serverId}/maps/ttt_cov_a">ttt_cov_a</a>`)
-    expect(cells(html, 'data-map-row="ttt_cov_b"').slice(1, 4)).toEqual(['5', '3', '1']) // gap faces: buttons 4 + water 1; gap entities 2 + 1; one unknown class
-    // the rows are by gap faces, the maps without a record last
-    expect([...html.matchAll(/<tr data-map-row="([^"]+)"/g)].map(m => m[1])).toEqual(['ttt_cov_b', 'ttt_cov_evil', 'ttt_cov_a', 'ttt_cov_old', 'ttt_cov_queued'])
+    expect(cells(html, 'data-map-row="ttt_cov_b"').slice(1, 4)).toEqual(['0', '0', '3']) // no gap faces or entities any more; three unknown classes
+    // the rows are by gap faces, then by the number of unknown classes, the maps without a record last
+    expect([...html.matchAll(/<tr data-map-row="([^"]+)"/g)].map(m => m[1])).toEqual(['ttt_cov_evil', 'ttt_cov_a', 'ttt_cov_b', 'ttt_cov_old', 'ttt_cov_queued'])
   })
 
   test('each map with a record has its record in a details block: flags, outcomes, classes, point entities, lumps', async () => {
@@ -218,20 +222,25 @@ describe('the sums (pure)', () => {
   test('the status is the registry\'s now: a class in a stored record that was classified since is counted by the new status', () => {
     const r = rec({ brush: [{ class: 'func_button', entities: 1, faces: 2, status: 'unknown' }] }) // the record was made when the class was not known
     const s = summarise([{ map: 'm', state: 'parsed', record: r }])
-    expect(s.totals.gap).toMatchObject({ brushEntities: 1, brushFaces: 2 })
+    expect(s.totals.drawn).toMatchObject({ brushEntities: 1, brushFaces: 2 }) // RFC 33 draws buttons: counted as drawn now, with no rebuild
     expect(s.totals.unknown.brushEntities).toBe(0)
+    expect(s.gaps).toEqual([])
   })
 
   test('ranking: faces, then entities, then the number of maps, then the name; the map with the most is kept', () => {
+    // the registry has no gap since RFC 33, so the status is given: these three classes are gaps here, as the three biggest were before the stage that drew them
+    const gap = (kind: string, key: string): Status => (kind === 'class' && ['func_button', 'func_breakable_surf', 'func_illusionary'].includes(key) ? 'gap' : lookup(kind as Kind, key).status)
     const mk = (cls: string, entities: number, faces: number) => rec({ brush: [{ class: cls, entities, faces, status: 'gap' }] })
     const s = summarise([
       { map: 'one', state: 'parsed', record: mk('func_button', 1, 5) }, { map: 'two', state: 'parsed', record: mk('func_button', 2, 9) },
       { map: 'three', state: 'parsed', record: mk('func_illusionary', 1, 14) }, { map: 'four', state: 'parsed', record: mk('func_breakable_surf', 3, 14) },
-    ])
+    ], gap)
     // all three have 14 faces: the button has 3 entities in 2 maps, the breakable glass 3 in 1, the illusionary brush 1
     expect(s.gaps.map(g => g.key)).toEqual(['func_button', 'func_breakable_surf', 'func_illusionary'])
     expect(s.gaps[0]).toMatchObject({ maps: 2, faces: 14, entities: 3, top: { map: 'two', faces: 9, entities: 2 } })
     expect(s.rows.map(r => r.map)).toEqual(['four', 'three', 'two', 'one'])
+    expect(s.totals.gap).toMatchObject({ brushEntities: 7, brushFaces: 42 })
+    expect(s.rows.find(r => r.map === 'two')).toMatchObject({ gapFaces: 9, gapEntities: 2 })
   })
 
   test('maps without a record are counted and kept out of every sum; the totals are zero with none', () => {

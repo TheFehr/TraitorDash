@@ -52,7 +52,10 @@ export function worldFacesByStatus(r: CoverageRecord): Record<Status, number> {
 
 const emptyTotals = (): StatusTotals => ({ worldFaces: 0, brushEntities: 0, brushFaces: 0 })
 
-export function summarise(inputs: CoverageInput[]): CoverageReport {
+/** What the registry says about a thing; the default. Another can be given (a test, to have a `gap`: the registry has none left since RFC 33). */
+export type StatusOf = (kind: Kind, key: string) => Status
+
+export function summarise(inputs: CoverageInput[], statusOf: StatusOf = (kind, key) => lookup(kind, key).status): CoverageReport {
   const totals = Object.fromEntries(STATUS_ORDER.map(s => [s, emptyTotals()])) as Record<Status, StatusTotals>
   const lumps = { lighting: 0, overlays: 0, cubemaps: 0, gameLump: 0, visibility: 0, pakfile: 0 }
   const pointFeatures: Record<string, number> = {}
@@ -62,7 +65,7 @@ export function summarise(inputs: CoverageInput[]): CoverageReport {
   let withRecord = 0
 
   const note = (map: string, kind: Kind, key: string, faces: number, entities: number, row: MapRow) => {
-    const { status } = lookup(kind, key)
+    const status = statusOf(kind, key)
     if (status !== 'gap' && status !== 'unknown') return
     const id = `${kind}:${key}`
     const g = gaps.get(id) ?? { kind, key, status, maps: 0, faces: 0, entities: 0, top: { map, faces: -1, entities: 0 } }
@@ -80,7 +83,7 @@ export function summarise(inputs: CoverageInput[]): CoverageReport {
     withRecord++
     const world = worldFacesByStatus(r)
     for (const s of STATUS_ORDER) totals[s].worldFaces += world[s]
-    for (const b of r.brush) { const t = totals[lookup('class', b.class).status]; t.brushEntities += b.entities; t.brushFaces += b.faces }
+    for (const b of r.brush) { const t = totals[statusOf('class', b.class)]; t.brushEntities += b.entities; t.brushFaces += b.faces }
     if (r.brushOther) { totals.unknown.brushEntities += r.brushOther.entities; totals.unknown.brushFaces += r.brushOther.faces }
     for (const k of Object.keys(lumps) as (keyof typeof lumps)[]) lumps[k] += r.lumps[k] ?? 0
     for (const [k, n] of Object.entries(r.pointFeatures)) pointFeatures[k] = (pointFeatures[k] ?? 0) + n

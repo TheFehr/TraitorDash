@@ -1,4 +1,4 @@
-import { FIXTURE_CLASSES, MOVABLE_CLASSES, SURFACE_FLAGS, type BspHeader, type ByteSource, type EntityCensus, type FaceTally } from './bsp'
+import { DECORATION_CLASSES, FIXTURE_CLASSES, MOVABLE_CLASSES, SURFACE_FLAGS, WATER_CLASSES, type BspHeader, type ByteSource, type EntityCensus, type FaceTally } from './bsp'
 
 // RFC 32: what the map pipeline does with each thing a Source map can hold. The registry below is the catalogue (docs/MAP_COVERAGE.md has the
 // same table in prose, and a test fails when they differ); the record (`buildCoverage`) counts, for one map, what it holds per entry.
@@ -13,10 +13,12 @@ export interface Entry { kind: Kind, key: string, status: RegistryStatus, note: 
 export const STATUSES: readonly Status[] = ['drawn', 'invisible', 'gap', 'not read', 'unknown']
 export const KINDS: readonly Kind[] = ['flag', 'material', 'class', 'feature']
 
-/** The names a class regex lists: `/^func_(a|b)$/` is `func_a`, `func_b`. The lists of the extractor are the source, so the registry cannot drift from them. */
-const alternatives = (re: RegExp): string[] => {
+/** The names a class regex lists: `/^func_(a|b)$/` is `func_a`, `func_b`; `/^func_a$/` is `func_a`. The lists of the extractor are the source, so the registry cannot drift from them. */
+export const alternatives = (re: RegExp): string[] => {
+  const single = /^\^(\w+)\$$/.exec(re.source)
+  if (single) return [single[1]!]
   const m = /^\^(\w*)\(([\w|]+)\)\$$/.exec(re.source)
-  if (!m) throw new Error(`the class list ${re.source} is not of the form ^prefix(a|b)$, which the coverage registry reads`)
+  if (!m) throw new Error(`the class list ${re.source} is not of the form ^prefix(a|b)$ or ^name$, which the coverage registry reads`)
   return m[2]!.split('|').map(a => m[1]! + a)
 }
 
@@ -46,23 +48,28 @@ const MATERIAL: [string, RegistryStatus, string][] = [
 
 const FIXTURE_NOTE = 'A brush entity that stands still: its faces are drawn with the world where the map puts it (RFC 18, 4.2).'
 const MOVABLE_NOTE = 'A brush entity that can move: drawn at its starting place as a part of its own, which the replay moves (RFC 18, 4.2, RFC 20).'
+const WATER_NOTE = 'The water brush (a pool a map raises or lowers): its upward liquid faces are drawn as water, moved by `startposition` along `movedir`; the rise during the round is not shown (RFC 33, 4.2).'
+const DECORATION_NOTE = 'A brush a player sees and walks through: drawn in a group of its own (Decoration), never a floor or a wall; a face below the map is left out (RFC 33, 4.4).'
 
 /** A class entry whose key ends in `*` stands for every class that begins with what comes before it. */
 const CLASSES: [string, RegistryStatus, string][] = [
   ...alternatives(FIXTURE_CLASSES).map((k): [string, RegistryStatus, string] => [k, 'drawn', FIXTURE_NOTE]),
   ...alternatives(MOVABLE_CLASSES).map((k): [string, RegistryStatus, string] => [k, 'drawn', MOVABLE_NOTE]),
+  ...alternatives(WATER_CLASSES).map((k): [string, RegistryStatus, string] => [k, 'drawn', WATER_NOTE]),
+  ...alternatives(DECORATION_CLASSES).map((k): [string, RegistryStatus, string] => [k, 'drawn', DECORATION_NOTE]),
   ['trigger_*', 'invisible', 'Every trigger (a volume that fires something when touched) is invisible to a player; its faces are not drawn.'],
   ['func_clip_vphysics', 'invisible', 'A volume that blocks physics objects only; invisible.'],
   ['func_areaportal*', 'invisible', 'A door of the map compiler that cuts the map into areas for visibility (area portals and their windows); invisible.'],
   ['func_occluder', 'invisible', 'A volume the engine uses to hide what is behind it; invisible.'],
   ['func_precipitation', 'invisible', 'A volume that rain or snow falls in; the volume itself is invisible (the weather is not drawn).'],
   ['env_embers', 'invisible', 'A volume that particle embers rise from; the brush is a volume, the particles are not drawn.'],
+  ['func_dustcloud', 'invisible', 'A volume that a dust cloud of particles fills; the brush is a volume, the particles are not drawn (RFC 33, 4.6).'],
+  ['func_buyzone', 'invisible', 'A zone where a player may buy; a volume, not a surface (RFC 33, 4.6).'],
+  ['func_bomb_target', 'invisible', 'A zone where a bomb can be planted; a volume, not a surface (RFC 33, 4.6).'],
+  ['game_zone_player', 'invisible', 'A zone that counts the players inside it for the map\'s logic; a volume, not a surface (RFC 33, 4.6).'],
+  ['ttt_traitor_check', 'invisible', 'A zone of the TTT game, used like a trigger; a volume, not a surface (RFC 33, 4.6).'],
   ['func_dustmotes', 'invisible', 'A volume that floating dust is drawn in; the brush is a volume, the particles are not drawn.'],
   ['func_smokevolume', 'invisible', 'A volume that smoke particles fill; the brush is a volume, the particles are not drawn.'],
-  ['func_button', 'gap', 'A button a player presses: it is not drawn, so the view has a hole (or the wall behind it) where the button is.'],
-  ['func_breakable_surf', 'gap', 'Breakable glass (a window): not drawn, so a window is a hole in the wall.'],
-  ['func_water_analog', 'gap', 'Water that a map raises or lowers (a pool, a flood): not drawn, so the pool is a dry floor. RFC 33.'],
-  ['func_illusionary', 'gap', 'A brush a player sees and walks through (a fake wall, a hologram): not drawn.'],
 ]
 
 const FEATURES: [string, RegistryStatus, string][] = [

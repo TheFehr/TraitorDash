@@ -123,8 +123,12 @@ export const isNotSurfaceMaterial = (material: string): boolean =>
 
 /** The brush entities that stand still: their faces are drawn with the world (RFC 18, 4.2). Doors, lifts, trains, buttons and triggers are not. */
 /** A brush entity that stands still: which model, and where it stands (its faces are stored around the model's own origin). */
-/** A brush entity placed in the world. `movable`: it can move (a door, a lift, a collapsing building), and is drawn where the map file puts it, apart from the rest. */
-export interface Fixture { model: number, x: number, y: number, z: number, pitch: number, yaw: number, roll: number, movable?: boolean, class?: string, name?: string }
+/**
+ * A brush entity placed in the world. `movable`: it can move (a door, a lift, a collapsing building), and is drawn where the map file puts it, apart from the rest.
+ * `water`: a water brush (RFC 33, 4.2): only its upward liquid faces are kept, as water, and x, y, z already include the move by `startposition`.
+ * `decoration`: a brush a player sees and walks through (RFC 33, 4.4): its faces go to a group of their own and are no floors or walls.
+ */
+export interface Fixture { model: number, x: number, y: number, z: number, pitch: number, yaw: number, roll: number, movable?: boolean, water?: boolean, decoration?: boolean, class?: string, name?: string }
 
 /**
  * A part that can move, as the mesh holds it (RFC 20, 4.2): its triangles are local to the entity's origin (as the map file stores
@@ -144,9 +148,13 @@ export function angleMatrix(pitch: number, yaw: number, roll: number): number[] 
   ]
 }
 
-export const FIXTURE_CLASSES = /^func_(brush|wall|breakable|lod|wall_toggle)$/
-/** Brush entities that can move: doors, lifts and sliding buildings, turning parts, trains, pushable crates. Their model sits where the mapper put it (a door shut). */
-export const MOVABLE_CLASSES = /^func_(door|door_rotating|movelinear|rotating|tracktrain|physbox|physbox_multiplayer)$/
+export const FIXTURE_CLASSES = /^func_(brush|wall|breakable|lod|wall_toggle|breakable_surf|monitor|conveyor|reflective_glass)$/
+/** Brush entities that can move: doors, lifts and sliding buildings, turning parts, trains, buttons and levers, pushable crates. Their model sits where the mapper put it (a door shut, a button out). */
+export const MOVABLE_CLASSES = /^(func_door|func_door_rotating|func_movelinear|func_rotating|func_tracktrain|func_tanktrain|func_button|func_rot_button|momentary_rot_button|func_physbox|func_physbox_multiplayer)$/
+/** The water brush (RFC 33, 4.2): a pool that a map raises or lowers. */
+export const WATER_CLASSES = /^func_water_analog$/
+/** Brushes a player sees and walks through (RFC 33, 4.4): drawn in a group of their own, never a floor or a wall. */
+export const DECORATION_CLASSES = /^func_illusionary$/
 const FLOOR_NZ = 0.7 // the steepest slope a player can walk up
 const MAX_FACE_EDGES = 4096
 const MAX_COORD = 131_072 // Source maps are at most +-16384; room to spare, far from float garbage
@@ -204,6 +212,9 @@ export interface Surfaces {
   water: number[]
   /** The triangles of brush entities that can move (any slope), where the map file puts them. */
   movable: number[]
+  /** The triangles of decoration brushes (`func_illusionary`, RFC 33, 4.4), any slope, and for each the face it came from (an index into `faces`, as the floors have). Not floors, not walls. */
+  decoration: number[]
+  decorationFaces: number[]
   /** The same triangles, a part at a time, local to the part's origin (one entry for each model number). */
   movableParts: MovablePart[]
   /** What the faces of the world model were, for the coverage record (RFC 32). */
@@ -307,8 +318,8 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
   }
   const faceList = function* () { for (const [from, n, fx] of ranges) for (let f = from; f < from + n; f++) yield [f, fx] as const }
 
-  const floors: number[] = [], walls: number[] = [], water: number[] = [], movable: number[] = []
-  const floorFaces: number[] = [], wallFaces: number[] = []
+  const floors: number[] = [], walls: number[] = [], water: number[] = [], movable: number[] = [], decoration: number[] = []
+  const floorFaces: number[] = [], wallFaces: number[] = [], decorationFaces: number[] = []
   const faceRecords: FaceRecord[] = []
   // How each face is textured: one mapping for each texinfo and brush entity (a texinfo is shared by faces of a plane, an entity moves them)
   const mappings: FaceMapping[] = []
@@ -402,6 +413,24 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
           // local to the origin, in sixty-fourths of a unit (exact in a float32; whole units where the map has them)
           part.triangles.push(Math.round(xyz[v * 3]! * 64) / 64, Math.round(xyz[v * 3 + 1]! * 64) / 64, Math.round(xyz[v * 3 + 2]! * 64) / 64)
         }
+      }
+      continue
+    }
+
+    if (fixture?.water) {
+      // A water brush (RFC 33, 4.2): the liquid faces that look up are the water; its underside and sides are dropped, so it is never a floor, a wall or a storey.
+      if ((flags & SURF_WARP) === 0 || dispinfo >= 0) continue
+      stats.waterFaces++
+      if (nz >= 0.5) for (let k = 1; k + 1 < corner.length; k++) for (const v of [corner[0]!, corner[k]!, corner[k + 1]!]) water.push(...place(v))
+      continue
+    }
+    if (fixture?.decoration) {
+      // Decoration (RFC 33, 4.4): drawn whatever the slope, in a group of its own; no floor, wall, storey or part comes of it.
+      if (dispinfo >= 0 || (flags & SURF_WARP) !== 0) continue
+      faceRecords.push({ mapping: mappingFor(texinfo, fixture, turn) })
+      for (let k = 1; k + 1 < corner.length; k++) {
+        decorationFaces.push(faceRecords.length - 1)
+        for (const v of [corner[0]!, corner[k]!, corner[k + 1]!]) decoration.push(...place(v))
       }
       continue
     }
@@ -508,7 +537,7 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
     }
   }
 
-  return { fingerprint: header.fingerprint, version: header.version, revision: header.revision, floors, walls, floorFaces, wallFaces, faces: faceRecords, mappings, water, movable, movableParts: [...parts.values()].sort((a, b) => a.model - b.model), tally, stats }
+  return { fingerprint: header.fingerprint, version: header.version, revision: header.revision, floors, walls, floorFaces, wallFaces, faces: faceRecords, mappings, water, movable, decoration, decorationFaces, movableParts: [...parts.values()].sort((a, b) => a.model - b.model), tally, stats }
 }
 
 // ---- the entities we need: spawn points and the 3D skybox camera ---------------------------------
@@ -541,6 +570,32 @@ function originOf(entity: Record<string, string>): Point | null {
 function anglesOf(entity: Record<string, string>): [number, number, number] {
   const a = (entity['angles'] ?? '0 0 0').trim().split(/\s+/).map(Number)
   return [0, 1, 2].map(i => (Number.isFinite(a[i]) ? a[i]! : 0)) as [number, number, number]
+}
+
+/** A keyvalue as a finite number, or null for anything else (missing, empty, text). */
+function finiteOf(v: string | undefined): number | null {
+  if (v === undefined || v.trim() === '') return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
+
+/** Is the brush entity hidden when the round starts (RFC 33, 3)? `startdisabled` 1, or `rendermode` 10 (kRenderNone), each read as a finite number. */
+export const hiddenAtStart = (entity: Record<string, string>): boolean => finiteOf(entity['startdisabled']) === 1 || finiteOf(entity['rendermode']) === 10
+
+const MAX_WATER_MOVE = 16_384
+
+/**
+ * Where a water brush stands at the start of the round (RFC 33, 4.2): its origin moved along `movedir` by `startposition` (0 to 1) times `movedistance` (0 to 16384),
+ * anything malformed counting as 0 and anything out of range being limited to it. `movedir` is angles ("pitch yaw roll"), turned into a direction as Source does for a
+ * movement direction: the forward vector (1, 0, 0) through the angle matrix. In Source pitch -90 points UP (+90 is down), so `movedir "-90 0 0"` moves the water up.
+ */
+export function waterOrigin(entity: Record<string, string>, origin: Point): Point {
+  const start = Math.min(1, Math.max(0, finiteOf(entity['startposition']) ?? 0))
+  const distance = Math.min(MAX_WATER_MOVE, Math.max(0, finiteOf(entity['movedistance']) ?? 0))
+  const [pitch, yaw, roll] = (entity['movedir'] ?? '0 0 0').trim().split(/\s+/).map(Number).concat([0, 0, 0]).slice(0, 3).map(n => (Number.isFinite(n) ? n : 0)) as [number, number, number]
+  const m = angleMatrix(pitch, yaw, roll)
+  const by = start * distance
+  return { x: origin.x + m[0]! * by, y: origin.y + m[3]! * by, z: origin.z + m[6]! * by }
 }
 
 /**
@@ -580,11 +635,13 @@ export async function extractMapEntities(src: ByteSource, limits: SpawnLimits = 
         else if (census.points.has(name) || census.points.size < MAX_CENSUS_CLASSES) census.points.set(name, (census.points.get(name) ?? 0) + 1)
         else census.pointsOther++
       }
-      // A brush entity that stands still names its model `*N` and has no parent that could move it.
-      if (entity && cls && (FIXTURE_CLASSES.test(cls) || MOVABLE_CLASSES.test(cls)) && /^\*\d{1,5}$/.test(entity['model'] ?? '') && !entity['parentname']) {
+      // A brush entity that stands still names its model `*N` and has no parent that could move it, and is not hidden at the start (RFC 33, 3).
+      const water = !!cls && WATER_CLASSES.test(cls), decoration = !!cls && DECORATION_CLASSES.test(cls)
+      if (entity && cls && (FIXTURE_CLASSES.test(cls) || MOVABLE_CLASSES.test(cls) || water || decoration) && /^\*\d{1,5}$/.test(entity['model'] ?? '') && !entity['parentname'] && !hiddenAtStart(entity)) {
         const o = originOf(entity!) ?? { x: 0, y: 0, z: 0 }
         const a = anglesOf(entity!)
-        fixtureModels.push({ model: Number(entity['model']!.slice(1)), ...o, pitch: a[0], yaw: a[1], roll: a[2], ...(MOVABLE_CLASSES.test(cls) ? { movable: true, class: cls, ...(entity['targetname'] ? { name: entity['targetname'].slice(0, 80) } : {}) } : {}) })
+        const at = water ? waterOrigin(entity!, o) : o
+        fixtureModels.push({ model: Number(entity['model']!.slice(1)), ...at, pitch: a[0], yaw: a[1], roll: a[2], ...(MOVABLE_CLASSES.test(cls) ? { movable: true, class: cls, ...(entity['targetname'] ? { name: entity['targetname'].slice(0, 80) } : {}) } : {}), ...(water ? { water: true } : {}), ...(decoration ? { decoration: true } : {}) })
       }
       const at = entity && cls ? originOf(entity) : null
       if (cls && at) {
