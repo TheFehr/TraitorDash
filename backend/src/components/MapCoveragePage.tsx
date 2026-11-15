@@ -99,7 +99,7 @@ export const MapCoveragePage = ({ ctx, server, report }: MapCoveragePageProps) =
                   ))}
                 </table>
               </div>
-              <p class="foot">Over the {report.withRecord} {report.withRecord === 1 ? 'map' : 'maps'} with a record. A world face is counted once, by its flags (ceilings, which the view leaves out on purpose, count with the drawn). Brush entities count by the status of their class.</p>
+              <p class="foot dark">Over the {report.withRecord} {report.withRecord === 1 ? 'map' : 'maps'} with a record. A world face is counted once, by its flags (ceilings, which the view leaves out on purpose, count with the drawn). Brush entities count by the status of their class.</p>
             </>
           ) : <p class="none" data-no-records>No map has a record yet: it is made when a map's 3D mesh is built.</p>}
         </div>
