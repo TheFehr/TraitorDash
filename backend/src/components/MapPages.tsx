@@ -130,6 +130,11 @@ export const MapsPage = ({ ctx, server, state, maps, activity, showAll, plans, m
                 {progress.failed > 0 ? ` (${progress.failed} failed)` : ''}. A map keeps its earlier 3D view until its new one is ready.
               </p>
             )}
+            {admin && meshStates && (
+              <p class="foot" data-coverage-link>
+                <a href={`/servers/${id}/map-coverage`}>Map coverage</a>: what the 3D view draws of these maps, leaves out on purpose and misses.
+              </p>
+            )}
             <div class="g">
               {listed.map(m => {
                 const a = activity.get(m.name)

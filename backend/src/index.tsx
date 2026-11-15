@@ -23,6 +23,9 @@ import { buildRoleView, listRoles, parsePlayers, publicRoles, publicRoleSettings
 import { RoleListPage, RolePage, RoleNotFound } from './components/RolePublic'
 import { HomePage } from './components/HomePage'
 import { MapsPage, MapFilePage, MapViewPage, nextOf, type KillzonesView } from './components/MapPages'
+import { MapCoveragePage } from './components/MapCoveragePage'
+import { summarise } from './services/coveragereport'
+import { asRecord } from './maps/coverage'
 import { isPid, steamIdOf } from './services/playerIds'
 import { renderKillzonesSvg, squaresOf, hottest, storeysOf, baseOfMap, baseOfPlan, rootSizeOf, footprintOfMap, footprintOfPlan, listedStoreys } from './services/killzones'
 import { flattened, storeyAt } from './maps/topdown'
@@ -341,6 +344,19 @@ app.get('/servers/:serverId/maps', async (c) => {
       plans={admin ? Store.getMapPlans(serverId) : undefined} meshes={meshes} viewLogDays={viewLogDays()}
       progress={admin && geometryEnabled() ? { ...Store.getGeometryProgress(), building: geometryBuilding() } : undefined}
       meshStates={admin && geometryEnabled() ? { states: new Map([...Store.getGeometryStates(serverId)].map(([name, g]) => [name, { status: g.status, version: g.version }])), wanted: Store.wantedMeshVersion(), building: geometryBuilding() } : undefined} />)
+})
+
+/**
+ * What the 3D pipeline draws of the maps of this server, ignores on purpose and misses (RFC 32, 5): the coverage records of their meshes added up. Admins only,
+ * read-only. Its path is outside `/maps/:map`, which is a map's name.
+ */
+app.get('/servers/:serverId/map-coverage', async (c) => {
+  const found = serverOf(c)
+  if (!found) return c.redirect('/')
+  const ctx = await ctxOf(c)
+  if (!adminOf(ctx)) return c.redirect('/')
+  const rows = [...Store.getGeometryStates(found.serverId)].map(([map, g]) => ({ map, state: g.status, record: asRecord((g.info as { coverage?: unknown } | null)?.coverage) }))
+  return respond(c, ctx, <MapCoveragePage ctx={ctx} server={found.server} report={summarise(rows)} />, { noStore: true })
 })
 
 const geometryProp = (serverId: string, name: string) => {

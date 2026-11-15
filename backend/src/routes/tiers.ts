@@ -40,6 +40,8 @@ export const TIERS: Record<string, Tier> = {
   'GET /servers/:serverId': 'admin',
   'GET /servers/:serverId/roles/:roleName/config': 'admin',
   'GET /servers/:serverId/views': 'admin',
+  // What the 3D pipeline draws, ignores and misses, summed over the maps (RFC 32): a maintenance page.
+  'GET /servers/:serverId/map-coverage': 'admin',
   'GET /servers/:serverId/maps/:map/plan.svg': 'admin',
   'GET /servers/:serverId/maps/:map/plan.json': 'admin',
   'POST /servers/:serverId/maps/:map/geometry': 'admin',

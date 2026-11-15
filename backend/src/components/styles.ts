@@ -145,6 +145,7 @@ h2+.f,h2+.plans,h2+p+.f{margin-top:var(--space-4)}
 .f .sections{margin:var(--space-2) 0 0}
 .f .sections a,.f .sections span[aria-current]{color:var(--ink);border-color:var(--dim)}
 .filt{display:grid;grid-template-columns:4.6rem 1fr;gap:var(--space-3);align-items:baseline;margin:var(--space-3) 0 0;font-size:.85rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink2)}
+.f details{margin-top:var(--space-3)}.f summary{cursor:pointer;font-weight:700}
 .f .ft+.filt{margin-top:var(--space-3)}.filt+.filt{margin-top:var(--space-2)}.filt+p,.filt+div{margin-top:var(--space-3)}
 .filt .chips{display:flex;flex-wrap:wrap;gap:var(--space-2)}
 .filt a{border:1px solid var(--dim);padding:.12rem .65rem;color:var(--ink);line-height:1.35;white-space:nowrap}

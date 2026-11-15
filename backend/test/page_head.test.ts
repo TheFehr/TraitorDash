@@ -79,7 +79,7 @@ describe('nothing composes a head by hand', () => {
     // The player page had "Server name / Round stats", the pattern of a section's own page, among pages that all begin with their list.
     const dir = new URL('../src/components/', import.meta.url).pathname
     const seen: string[] = []
-    for (const f of ['StatsPages.tsx', 'MapPages.tsx', 'RolePublic.tsx', 'ReplayPage.tsx', 'VoicePage.tsx']) {
+    for (const f of ['StatsPages.tsx', 'MapPages.tsx', 'MapCoveragePage.tsx', 'RolePublic.tsx', 'ReplayPage.tsx', 'VoicePage.tsx']) {
       const text = await Bun.file(dir + f).text()
       for (const m of text.matchAll(/crumbs=\{(.{0,28})/g)) {
         const start = m[1]!
@@ -90,12 +90,12 @@ describe('nothing composes a head by hand', () => {
       }
     }
     expect(seen.filter(s => s.endsWith('section')).length).toBe(5) // Round stats, Maps, Roles, Voice and its entry page (RFC 31)
-    expect(seen.filter(s => s.endsWith('way back')).length).toBe(6) // round, player, map, a map's rounds, role, replay
+    expect(seen.filter(s => s.endsWith('way back')).length).toBe(7) // round, player, map, a map's rounds, role, replay, the coverage of the maps (RFC 32)
   })
 
   test('every page of a server with a way back and a title uses PageHead', async () => {
     const dir = new URL('../src/components/', import.meta.url).pathname
-    for (const f of ['StatsPages.tsx', 'MapPages.tsx', 'RolePublic.tsx', 'ReplayPage.tsx', 'VoicePage.tsx']) {
+    for (const f of ['StatsPages.tsx', 'MapPages.tsx', 'MapCoveragePage.tsx', 'RolePublic.tsx', 'ReplayPage.tsx', 'VoicePage.tsx']) {
       const text = await Bun.file(dir + f).text()
       expect(text, f).toContain('<PageHead')
       expect(text, f + ' has its own crumbs line next to PageHead').not.toMatch(/<Crumbs>|class="crumbs"/)
