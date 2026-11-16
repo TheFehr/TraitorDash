@@ -96,9 +96,12 @@ describe('the rule (holeAt, in plain code)', () => {
     expect(cutAt(onSight(0.3, 15), wallNormal)).toBe(1) // on a ray that passes the body axis 15 units to the side (a body is 16 wide)
     expect(cutAt(onSight(0.8, 10), UP)).toBe(1)
   })
-  test('a surface on a pixel ray that misses the body stays, whatever it is: the window is the body dilated by `reach`, not the circle', () => {
-    for (const side of [HOLE.reach + 6, HOLE.reach + 20, HOLE.radius * 0.7]) for (const n of [wallNormal, new Vector3(0.6, 0.3, 0.74).normalize()]) expect(cutAt(onSight(0.5, side), n)).toBe(0) // (a face that looks up is a roof from shoulder height: below)
-    expect(cutAt(onSight(0.5, HOLE.radius * 0.5 + 300), wallNormal)).toBe(0)
+  test('a floor or a ceiling on a pixel ray that misses the body stays; a wall there is only opened by the wide window (9.6), and not outside the circle', () => {
+    const flat = new Vector3(0.2, 0.9, 0.2).normalize(), ceiling = UP.clone().negate()
+    // (a face that looks up is a roof from the chest up: onSight(0.5) is far above the head, so these are walls and slants)
+    for (const side of [HOLE.reach + 6, HOLE.reach + 20, HOLE.radius * 0.7]) expect(cutAt(onSight(0.5, side), new Vector3(0.6, 0.3, 0.74).normalize())).toBe(1) // wall-like: the wide window
+    for (const side of [HOLE.radius * 1.3, HOLE.radius * 2, HOLE.radius * 0.5 + 300]) for (const n of [wallNormal, new Vector3(0.6, 0.3, 0.74).normalize()]) expect(cutAt(onSight(0.5, side), n)).toBe(0) // outside the circle
+    void flat; void ceiling
   })
   test('behind the player it stays', () => {
     const chest = new Vector3(0, HOLE.chest, 0)
@@ -192,12 +195,15 @@ describe('the rule (holeAt, in plain code)', () => {
       const v = toView(cam, roofRay)
       expect(cutAt(roofRay, UP)).toBe(1)
       expect(cutAt(roofRay, UP.clone().negate())).toBe(1)
-      expect(cutAt(roofRay, wallNormal)).toBe(0) // a wall up there hides nothing
+      expect(cutAt(roofRay, wallNormal)).toBe(1) // a wall up there is a wall: the wide window opens it (9.6)
       void v
       // a roof that is far out of the circle stays
       expect(cutAt(toward(new Vector3(0, 100, 0).addScaledVector(right, HOLE.radius * 1.6), 0.6), UP)).toBe(0)
+      // a ceiling at 52 above their feet (a slab low over them, 67th Way 0:28: the room under it is wide) is already a roof: the ramp starts above the chest, not above the shoulders
+      const low = new Vector3(0, 52, 0).addScaledVector(toTheCamera, 50).addScaledVector(right, 25)
+      expect(cutAt(low, UP)).toBeGreaterThan(0.3); expect(cutAt(low, UP.clone().negate())).toBeGreaterThan(0.3)
       // a low flat face (a floor 30 above their feet, off their rays) is not a roof
-      expect(cutAt(toward(new Vector3(0, 50, 0).addScaledVector(right, 30), 0.97), UP)).toBe(0)
+      expect(cutAt(toward(new Vector3(0, 38, 0).addScaledVector(right, 30), 0.97), UP)).toBe(0)
     })
     test('the window is smooth: along a pixel row through the body no jump bigger than the edge allows, and the roof circle has no step either', () => {
       let prev = NaN, worst = 0
@@ -217,7 +223,7 @@ describe('the rule (holeAt, in plain code)', () => {
     })
     test('the constants: the margin is a few units over the body, the roof starts above the shoulders and ends over the head', () => {
       expect(HOLE.reach).toBeGreaterThanOrEqual(16); expect(HOLE.reach).toBeLessThanOrEqual(30)
-      expect(HOLE.roofFrom).toBeGreaterThan(HOLE.chest); expect(HOLE.roofTo).toBeLessThanOrEqual(HOLE.head + 8); expect(HOLE.roofTo).toBeGreaterThan(HOLE.roofFrom)
+      expect(HOLE.roofFrom).toBeGreaterThan(HOLE.chest); expect(HOLE.roofFrom).toBeLessThan(HOLE.floorTo + 40); expect(HOLE.reachFlat).toBeLessThan(HOLE.reach); expect(HOLE.reachFlat).toBeGreaterThanOrEqual(14); expect(HOLE.roofTo).toBeLessThanOrEqual(HOLE.head + 8); expect(HOLE.roofTo).toBeGreaterThan(HOLE.roofFrom)
       expect(HOLE.head).toBe(72)
     })
   })
@@ -344,6 +350,68 @@ describe('the rule (holeAt, in plain code)', () => {
     })
   })
 
+  describe('the wide window for walls (RFC 34, 9.6): a wall that covers the player is opened wide, a floor never is', () => {
+    const right = new Vector3().setFromMatrixColumn(cam.matrixWorld, 0)
+    const toCam = wallNormal.clone()
+    /** A point `gap` nearer than the chest (towards the camera), `side` to the right, `up` above the feet. */
+    const at = (gap: number, side: number, up: number) => new Vector3(0, up, 0).addScaledVector(toCam, gap).addScaledVector(right, side)
+    test('the regression of the owner\'s decision: a wall above the ankle line, nearer than the player, whose ray misses the body but is inside the circle, is cut', () => {
+      const p = at(60, 36, 80) // a wall 60 in front of them, 36 to the side, high on them
+      const v = toView(cam, p)
+      expect(v[2]!).toBeGreaterThan(view.ctr[2]) // nearer
+      expect(cutAt(p, wallNormal)).toBe(1)
+    })
+    test('a floor or a ceiling in the same place is not cut by it (the pool deck of 67th Way 0:44 stays): the window only opens walls', () => {
+      for (const up of [30, 40]) for (const n of [UP, UP.clone().negate()]) expect(cutAt(at(60, 36, up), n)).toBe(0)
+      expect(cutAt(at(60, 36, 80), UP)).toBe(1) // (a flat face from the chest up is a roof, 9.5: unchanged)
+    })
+    test('the wide window is the circle: outside it the wall stays', () => {
+      expect(cutAt(at(60, 150, 80), wallNormal)).toBe(0)
+    })
+    test('nothing below the ankle line: a wall whose pixel ray passes below the ankles stays, whatever its distance', () => {
+      expect(cutAt(at(100, 20, 0), wallNormal)).toBe(0)
+      expect(cutAt(at(60, 30, 10), wallNormal)).toBe(0)
+    })
+    test('a wall right behind the player (a house front they stand against, 67th Way 0:57) or level with them is no cover and stays', () => {
+      for (const gap of [-30, -15, 0]) expect(cutAt(at(gap, 50, 70), wallNormal)).toBeLessThan(0.1)
+      expect(cutAt(at(40, 40, 70), wallNormal)).toBeGreaterThan(0.9)
+    })
+    test('a wall beside the player stays: its plane lies well in front of them (the house wall at b7_summer 0:50), while a wall that covers them is cut', () => {
+      // a wall running along the way, 55 to the right of them and nearer than the chest: its face is turned to the left, towards the player
+      const beside = at(60, 55, 70)
+      const vb = toView(cam, beside)
+      const turned = normalToView(cam, right.clone().negate(), vb)
+      expect(holeAt(vb, turned, view)).toBeLessThan(0.05)
+      // the same place, a wall that faces the camera across them: cut
+      expect(cutAt(beside, wallNormal)).toBe(1)
+      // a wall along the way only 15 to the side: the player is nearly at its plane, it counts as cover
+      const near = at(60, 15, 70)
+      expect(holeAt(toView(cam, near), normalToView(cam, right.clone().negate(), toView(cam, near)), view)).toBeGreaterThan(0.9)
+    })
+    test('a floor-like face has the tighter margin: between `reachFlat` and `reach` from the body axis a wall is cut, a floor is not', () => {
+      const d = (HOLE.reachFlat + HOLE.reach) / 2
+      const p = toward0(new Vector3(0, 40, 0).addScaledVector(right, d), 0.7)
+      function toward0(target: Vector3, t: number) { return cam.position.clone().lerp(target, t) }
+      expect(cutAt(p, wallNormal)).toBe(1)
+      expect(cutAt(toward0(new Vector3(0, 40, 0).addScaledVector(right, d), 0.97), UP)).toBe(0) // a low floor (below the roof ramp)
+      expect(cutAt(toward0(new Vector3(0, 40, 0).addScaledVector(right, HOLE.reachFlat - 4), 0.97), UP)).toBeGreaterThan(0.5) // inside it
+    })
+    test('the wide window has no step: the circle edge, the near ramp and the side ramp change by little between neighbouring points', () => {
+      let prev = NaN, worst = 0
+      for (let side = 0; side <= 140; side += 0.05) { const c = cutAt(at(60, side, 80), wallNormal); if (!Number.isNaN(prev)) worst = Math.max(worst, Math.abs(c - prev)); prev = c }
+      expect(worst).toBeLessThan(0.1)
+      prev = NaN; worst = 0
+      for (let gap = -40; gap <= 60; gap += 0.05) { const c = cutAt(at(gap, 20, 70), wallNormal); if (!Number.isNaN(prev)) worst = Math.max(worst, Math.abs(c - prev)); prev = c }
+      expect(worst).toBeLessThan(0.02)
+    })
+    test('the constants', () => {
+      expect(HOLE.wide).toBe(1); expect(HOLE.wideSide).toBe(1)
+      expect(HOLE.wideNearFrom).toBeGreaterThan(0) // nothing level with or behind the centre
+      expect(HOLE.wideNearTo).toBeGreaterThan(HOLE.wideNearFrom)
+      expect(HOLE.wideNearTo).toBeLessThanOrEqual(HOLE.radius / 2)
+      expect(HOLE.wideFrom).toBeLessThan(HOLE.wideTo); expect(HOLE.wideTo).toBeLessThanOrEqual(0) // a plane behind them is never "beside"
+    })
+  })
   describe('only what lies between (RFC 34, 4.3, behind a constant)', () => {
     test('is off by default only if the build says so, and the rule does not change without the constant', () => {
       const p = toView(cam, onSight(0.5))

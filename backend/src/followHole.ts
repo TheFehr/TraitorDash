@@ -29,15 +29,27 @@ export const HOLE = {
   /** What is cut (RFC 34, 9.5): a surface is cut only when cutting it helps to see the player, and the hollow shell of the map shows interiors where it does not.
    *  1. The window: the surface lies on a pixel ray that passes within `reach` of the player's body axis (from `ankle` above the soles to `head`), so it can hide the body.
    *  2. The roof: a face that faces up or down (the ramp `upFrom`/`upTo`) and lies above the head (the ramp `roofFrom` to `roofTo` above the soles), inside the circle of `radius`.
-   *  Everything else inside the circle stays. `reach` is the body (about 16) plus a margin, tuned on the recorded moments. */
+   *  3. The wide window (RFC 34, 9.6): a wall-like face clearly nearer than the player, above the ankle line, inside the circle and not beside them, whatever its distance to the body ray.
+   *  Everything else inside the circle stays: floors, decks, ground, and what lies behind or beside the player. `reach` is the body (about 16) plus a margin, tuned on the recorded moments. */
   head: 72,
   reach: 24,
-  roofFrom: 56,
-  roofTo: 76,
+  /** The margin for a face that looks up or down (the ramp `upFrom`/`upTo`): a floor or a deck does not hide an arm that sticks out beside the body, and the ring of margin it cuts only opens the hollow shell beside the hip (67th Way 0:44). The ghost shows what such a face still covers. */
+  reachFlat: 17,
+  roofFrom: 44,
+  roofTo: 60,
   /** Only a face that really lies between the camera and the player is cut (RFC 34, 4.3): the face's plane is in front of their centre by `sideFrom` to `sideTo` units. */
   sideTest: false,
   sideFrom: 0,
   sideTo: 20,
+  /** The wide window for walls (RFC 34, 9.6): a wall-like face (|n.up| below `upFrom`, the ramp to `upTo`) nearer than the player, above the ankle line, inside the circle of `radius` is cut whatever its distance to the body ray (a wall that covers the player from the camera opens the room behind it). 1 switches it on, 0 off. Floors, decks and ground never get it. */
+  wide: 1,
+  /** With `wideSide` 1 the wide cut is only for a wall that is between the camera and the player, not one beside them: the signed distance from the player's centre to the wall's plane along its camera-facing normal, negative when they stand in front of it, is a ramp: below `wideFrom` not cut, above `wideTo` cut fully. A wall beside the player has the plane well in front of them (a house wall 60 and more at 0:50 of b7_summer, the pool wall at 67th Way 0:44); a wall that covers them has it at or behind them. The numbers are negative: the player may stand up to 25 units in front of the plane and the wall is still cut. */
+  wideSide: 1,
+  /** A wall is opened widely only when it is clearly in front of the body: its depth is nearer than their centre by `wideNearFrom` (not at all) to `wideNearTo` (fully). The wall right behind a player who stands against it (the front of a house at 67th Way 0:57) is no cover, and opening it shows the hollow shell. */
+  wideNearFrom: 8,
+  wideNearTo: 24,
+  wideFrom: -45,
+  wideTo: -25,
   /** The ghost: opacity of the flat colour drawn where something covers the player. */
   ghostOpacity: 0.5,
 }
@@ -70,10 +82,13 @@ float holeAt(vec3 P) {
   keep = max(keep, below);
   vec3 A = uCtr + uGround.xyz * ${f(HOLE.ankle - HOLE.chest)};
   vec3 B = uCtr + uGround.xyz * ${f(HOLE.head - HOLE.chest)};
-  float win = 1.0 - smoothstep(${f(HOLE.reach)} * (1.0 - ${f(HOLE.band)}), ${f(HOLE.reach)}, rayCapDist(P / length(P), A, B));
   float flatF = smoothstep(${f(HOLE.upFrom)}, ${f(HOLE.upTo)}, abs(dot(nf, uGround.xyz)));
+  float reachE = mix(${f(HOLE.reach)}, ${f(HOLE.reachFlat)}, flatF);
+  float win = 1.0 - smoothstep(reachE * (1.0 - ${f(HOLE.band)}), reachE, rayCapDist(P / length(P), A, B));
   float roof = flatF * smoothstep(${f(HOLE.roofFrom)}, ${f(HOLE.roofTo)}, h) * (1.0 - smoothstep(R * (1.0 - ${f(HOLE.band)}), R, length(d)));
-  float c = near * (1.0 - keep) * max(win, roof);
+  float rim = 1.0 - smoothstep(R * (1.0 - ${f(HOLE.band)}), R, length(d));
+  float wide = ${f(HOLE.wide)} * (1.0 - flatF) * rim${HOLE.wideSide ? ` * smoothstep(${f(HOLE.wideFrom)}, ${f(HOLE.wideTo)}, dot(nf, P - uCtr))` : ''};
+  float c = (1.0 - keep) * max(near * max(win, roof), smoothstep(${f(HOLE.wideNearFrom)}, ${f(HOLE.wideNearTo)}, dz) * wide);
 ${HOLE.sideTest ? `  c *= smoothstep(${f(HOLE.sideFrom)}, ${f(HOLE.sideTo)}, dot(nf, P - uCtr));\n` : ''}  return c;
 }`
 
@@ -85,7 +100,7 @@ export const holeUniforms = (): HoleUniforms => ({ uCtr: { value: new Vector3() 
  * The uniforms are the ones given, so updating them moves the hole of every material that has it.
  */
 export function patchHole(material: Material, u: HoleUniforms) {
-  material.customProgramCacheKey = () => `followhole-${HOLE.sideTest ? 'side' : 'plain'}`
+  material.customProgramCacheKey = () => `followhole-${HOLE.sideTest ? 'side' : 'plain'}-${HOLE.wide}${HOLE.wideSide}`
   material.onBeforeCompile = shader => {
     shader.uniforms.uCtr = u.uCtr
     shader.uniforms.uGround = u.uGround
@@ -145,10 +160,13 @@ export function holeAt(P: [number, number, number], nf: [number, number, number]
   const A: [number, number, number] = [0, 1, 2].map(i => u.ctr[i]! + u.ground[i]! * (HOLE.ankle - HOLE.chest)) as [number, number, number]
   const B: [number, number, number] = [0, 1, 2].map(i => u.ctr[i]! + u.ground[i]! * (HOLE.head - HOLE.chest)) as [number, number, number]
   const len = Math.hypot(P[0], P[1], P[2])
-  const win = 1 - smooth(HOLE.reach * (1 - HOLE.band), HOLE.reach, rayCapDist(len === 0 ? [0, 0, -1] : [P[0] / len, P[1] / len, P[2] / len], A, B))
   const flatF = smooth(HOLE.upFrom, HOLE.upTo, Math.abs(dot3(nf, u.ground)))
+  const reachE = HOLE.reach + (HOLE.reachFlat - HOLE.reach) * flatF
+  const win = 1 - smooth(reachE * (1 - HOLE.band), reachE, rayCapDist(len === 0 ? [0, 0, -1] : [P[0] / len, P[1] / len, P[2] / len], A, B))
   const roof = flatF * smooth(HOLE.roofFrom, HOLE.roofTo, h) * (1 - smooth(R * (1 - HOLE.band), R, Math.hypot(dx, dy)))
-  let c = near * (1 - keep) * Math.max(win, roof)
+  const rim = 1 - smooth(R * (1 - HOLE.band), R, Math.hypot(dx, dy))
+  const wide = HOLE.wide * (1 - flatF) * rim * (HOLE.wideSide ? smooth(HOLE.wideFrom, HOLE.wideTo, dot3(nf, [P[0] - u.ctr[0], P[1] - u.ctr[1], P[2] - u.ctr[2]])) : 1)
+  let c = (1 - keep) * Math.max(near * Math.max(win, roof), smooth(HOLE.wideNearFrom, HOLE.wideNearTo, dz) * wide)
   if (sideTest) c *= smooth(HOLE.sideFrom, HOLE.sideTo, dot3(nf, [P[0] - u.ctr[0], P[1] - u.ctr[1], P[2] - u.ctr[2]]))
   return c
 }
