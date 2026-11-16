@@ -92,13 +92,13 @@ describe('the rule (holeAt, in plain code)', () => {
   const cutAt = (p: Vector3, n: Vector3, sideTest = false) => { const v = toView(cam, p); return holeAt(v, normalToView(cam, n, v), view, sideTest) }
 
   test('something nearer than the player and inside the circle is cut', () => {
-    expect(cutAt(onSight(0.5), wallNormal)).toBe(1)
-    expect(cutAt(onSight(0.3, 20), wallNormal)).toBe(1)
-    expect(cutAt(onSight(0.8, HOLE.radius * 0.7), wallNormal)).toBe(1)
+    expect(cutAt(onSight(0.5), wallNormal)).toBe(1) // on the ray to the chest
+    expect(cutAt(onSight(0.3, 15), wallNormal)).toBe(1) // on a ray that passes the body axis 15 units to the side (a body is 16 wide)
+    expect(cutAt(onSight(0.8, 10), UP)).toBe(1)
   })
-  test('outside the circle it stays', () => {
+  test('a surface on a pixel ray that misses the body stays, whatever it is: the window is the body dilated by `reach`, not the circle', () => {
+    for (const side of [HOLE.reach + 6, HOLE.reach + 20, HOLE.radius * 0.7]) for (const n of [wallNormal, new Vector3(0.6, 0.3, 0.74).normalize()]) expect(cutAt(onSight(0.5, side), n)).toBe(0) // (a face that looks up is a roof from shoulder height: below)
     expect(cutAt(onSight(0.5, HOLE.radius * 0.5 + 300), wallNormal)).toBe(0)
-    expect(cutAt(onSight(0.9, HOLE.radius * 1.5), wallNormal)).toBe(0)
   })
   test('behind the player it stays', () => {
     const chest = new Vector3(0, HOLE.chest, 0)
@@ -166,6 +166,61 @@ describe('the rule (holeAt, in plain code)', () => {
       expect(HOLE.lowTo).toBeGreaterThan(HOLE.lowFrom)
     })
   })
+  describe('a surface is cut only if cutting it helps to see the player (RFC 34, 9.5): on a ray to the body, or a roof over their head', () => {
+    const right = new Vector3().setFromMatrixColumn(cam.matrixWorld, 0)
+    const toTheCamera = wallNormal.clone()
+    const slant = new Vector3(0.6, 0.3, 0.74).normalize()
+    /** The point `t` of the way from the camera to `target` (a surface there is hit by the pixel ray that goes on to `target`). */
+    const toward = (target: Vector3, t = 0.6) => cam.position.clone().lerp(target, t)
+    test('the bug (67th Way 0:44): a floor above the feet, nearer than the player, whose ray misses the body and which is not above the head, is kept', () => {
+      // the pool's coping: 30 above the feet (the player stands in the pool), 80 in front of them and 40 to the side, inside the old circle, a floor face, a wall face, a slanted one
+      const coping = new Vector3(0, 30, 0).addScaledVector(toTheCamera, 80).addScaledVector(right, 40)
+      const v = toView(cam, coping)
+      expect(v[2]).toBeGreaterThan(view.ctr[2]) // nearer than the player
+      for (const n of [UP, UP.clone().negate(), wallNormal, slant]) expect(holeAt(v, normalToView(cam, n, v), view)).toBe(0)
+      // and not even right beside the body, outside the margin
+      const beside = new Vector3(0, 30, 0).addScaledVector(toTheCamera, 80).addScaledVector(right, HOLE.reach + 12)
+      const vb = toView(cam, beside)
+      for (const n of [UP, wallNormal]) expect(holeAt(vb, normalToView(cam, n, vb), view)).toBe(0)
+    })
+    test('a surface on a ray that reaches the body is cut: the ledge, the wall and the slanted face between the camera and their hips, chest and head', () => {
+      for (const dy of [30, HOLE.chest, 60]) for (const n of [wallNormal, slant]) expect(cutAt(toward(new Vector3(0, dy, 0), 0.7), n)).toBeGreaterThan(0.9)
+      expect(cutAt(toward(new Vector3(0, 40, 0).addScaledVector(right, HOLE.reach - 6), 0.7), wallNormal)).toBe(1) // inside the margin
+    })
+    test('a roof over their head that covers them is cut, inside the circle: a face that looks down, or up (a roof seen from above), not a wall', () => {
+      const roofRay = toward(new Vector3(0, 100, 0).addScaledVector(right, 30), 0.6) // above the head, off the body's rays
+      const v = toView(cam, roofRay)
+      expect(cutAt(roofRay, UP)).toBe(1)
+      expect(cutAt(roofRay, UP.clone().negate())).toBe(1)
+      expect(cutAt(roofRay, wallNormal)).toBe(0) // a wall up there hides nothing
+      void v
+      // a roof that is far out of the circle stays
+      expect(cutAt(toward(new Vector3(0, 100, 0).addScaledVector(right, HOLE.radius * 1.6), 0.6), UP)).toBe(0)
+      // a low flat face (a floor 30 above their feet, off their rays) is not a roof
+      expect(cutAt(toward(new Vector3(0, 50, 0).addScaledVector(right, 30), 0.97), UP)).toBe(0)
+    })
+    test('the window is smooth: along a pixel row through the body no jump bigger than the edge allows, and the roof circle has no step either', () => {
+      let prev = NaN, worst = 0
+      for (let side = -60; side <= 60; side += 0.05) {
+        const c = cutAt(toward(new Vector3(0, 40, 0).addScaledVector(right, side), 0.6), wallNormal)
+        if (!Number.isNaN(prev)) worst = Math.max(worst, Math.abs(c - prev))
+        prev = c
+      }
+      expect(worst).toBeLessThan(0.1) // the edge is `band` of the reach wide: 1 unit, 0.05 a step
+      let worstUp = 0; prev = NaN
+      for (let h = 20; h <= 120; h += 0.1) { // the roof's height: from a floor to a roof, a ramp, no step
+        const c = cutAt(toward(new Vector3(0, 100, 0).addScaledVector(right, 30), 0.6).setY(h), UP)
+        if (!Number.isNaN(prev)) worstUp = Math.max(worstUp, Math.abs(c - prev))
+        prev = c
+      }
+      expect(worstUp).toBeLessThan(0.05)
+    })
+    test('the constants: the margin is a few units over the body, the roof starts above the shoulders and ends over the head', () => {
+      expect(HOLE.reach).toBeGreaterThanOrEqual(16); expect(HOLE.reach).toBeLessThanOrEqual(30)
+      expect(HOLE.roofFrom).toBeGreaterThan(HOLE.chest); expect(HOLE.roofTo).toBeLessThanOrEqual(HOLE.head + 8); expect(HOLE.roofTo).toBeGreaterThan(HOLE.roofFrom)
+      expect(HOLE.head).toBe(72)
+    })
+  })
   describe('the acceptance rule (RFC 34, 9.4): whatever a pixel ray passes below the ankles at the player\'s depth is not cut at any pixel of the hole', () => {
     const feet = new Vector3(40, 10, -25)
     /** The rule at `n` points of the player's camera for yaws, distances and pixel rays: the points are given as the pixel ray (a view-space offset at the chest's depth) and how much nearer than the player they are. Calls `visit(height of the ray at the player's depth relative to the chest, depth fraction, holeAt value)`. */
@@ -199,7 +254,7 @@ describe('the rule (holeAt, in plain code)', () => {
       const g = v.ground
       for (const k of [0.5, 0.9]) for (const n of [new Vector3(0, 0, 1), UP.clone().negate()]) {
         let prev = NaN, worst = 0
-        for (let qy = -140; qy <= 60; qy += 0.25) {
+        for (let qy = -140; qy <= 40; qy += 0.25) { // up to the top of the body: above it the window ends with its (hard) edge
           const Q: [number, number, number] = [v.ctr[0], v.ctr[1] + qy, v.ctr[2]]
           const P: [number, number, number] = [Q[0] * k, Q[1] * k, Q[2] * k]
           const c = holeAt(P, normalToView(cam, n, P), v)
@@ -223,38 +278,30 @@ describe('the rule (holeAt, in plain code)', () => {
       } finally { HOLE.lowFrom = keep.lowFrom; HOLE.lowTo = keep.lowTo }
     })
   })
+  /** A roof point: `t` of the way from the camera to a point 100 above the floor (30 above the head... 28 over it), `side` to the right of the player on the screen; a face that looks down (or up). */
+  const roofAt = (c: ReturnType<typeof followCamera>, side: number, t = 0.6) => {
+    const right = new Vector3().setFromMatrixColumn(c.matrixWorld, 0)
+    return c.position.clone().lerp(new Vector3(0, 100, 0).addScaledVector(right, side), t)
+  }
   test('the circle shrinks with the distance: the same distance to the side is outside of it from further away', () => {
     const feet2 = new Vector3(0, 0, 0)
     const sideCut = (back: number, side: number) => {
       const c = followCamera(feet2, 0, back), v = viewOf(c, feet2).view
-      const chest = new Vector3(0, HOLE.chest, 0)
-      const p = c.position.clone().lerp(chest, 0.6).addScaledVector(new Vector3().setFromMatrixColumn(c.matrixWorld, 0), side * 0.6)
-      const pv = toView(c, p)
-      return holeAt(pv, normalToView(c, new Vector3(0, 0, 1), pv), v)
+      const pv = toView(c, roofAt(c, side))
+      return holeAt(pv, normalToView(c, UP.clone().negate(), pv), v)
     }
-    // the circle's radius in world units at the player's distance is HOLE.radius: a point 0.8 radii out is inside at any distance...
-    expect(sideCut(300, HOLE.radius * 0.8)).toBe(1)
-    expect(sideCut(900, HOLE.radius * 0.8)).toBe(1)
-    // ...and the same pixel offset from the middle of the screen is a different number of world units: a point 0.8 radii out at 300 is 2.4 radii out at 900 seen from a camera that is three times as far, in the other camera's own units
+    // a roof over them 0.5 radii off the middle of the circle is inside at any distance...
+    expect(sideCut(300, HOLE.radius * 0.5)).toBe(1)
+    expect(sideCut(900, HOLE.radius * 0.5)).toBe(1)
+    // ...and the circle's screen radius is HOLE.radius at the player's depth, so it shrinks with it
     const near = viewOf(followCamera(feet2, 0, 300), feet2).view, far = viewOf(followCamera(feet2, 0, 900), feet2).view
     const screenRadius = (v: HoleView) => v.rad / -v.ctr[2]
     expect(screenRadius(far) / screenRadius(near)).toBeCloseTo(-near.ctr[2] / -far.ctr[2], 6)
     expect(screenRadius(far)).toBeLessThan(screenRadius(near) * 0.5)
   })
-  test('the same spot on the screen is cut from near and not from far', () => {
-    // 0.15 tangent units from the player on the screen: inside the circle at 300 back (radius 0.17 of the player's depth), outside at 700 (0.07)
-    const at = (back: number) => {
-      const c = followCamera(feet, 0, back), v = viewOf(c, feet).view
-      const depth = -v.ctr[2] * 0.6
-      return holeAt([(v.ctr[0] / -v.ctr[2] + 0.15) * depth, (v.ctr[1] / -v.ctr[2]) * depth, -depth], [0, 0, 1], v)
-    }
-    expect(at(300)).toBe(1)
-    expect(at(700)).toBe(0)
-  })
-
   describe('no discontinuity: nothing changes much between one pixel and the next (the straight-edged wedges of RFC 12 were steps on planes)', () => {
     const PX = (2 * Math.tan((40 * Math.PI) / 360)) / (580 * 1.5) // one device pixel in tangent units, at the phone size
-    test('across the circle: at most a quarter of the value per pixel, and a pixel row has both its edges', () => {
+    test('across the window: at most half the value per pixel (its edge is `band` wide, 2 to 3 pixels, no wedge), and a pixel row has both its edges', () => {
       const v = view, depth = -v.ctr[2] * 0.6
       const cx = v.ctr[0] / -v.ctr[2], cy = v.ctr[1] / -v.ctr[2]
       let worst = 0, prev = NaN, cutPixels = 0
@@ -265,7 +312,7 @@ describe('the rule (holeAt, in plain code)', () => {
         if (c > 0.5) cutPixels++
         prev = c
       }
-      expect(worst).toBeLessThan(0.25)
+      expect(worst).toBeLessThan(0.5) // a hard edge by design: 1 unit wide, 2 to 3 pixels
       expect(cutPixels).toBeGreaterThan(100) // the edge is crossed twice and there is a window in between
     })
     test('along the way to the camera: the ramp behind the player, one unit at a time', () => {

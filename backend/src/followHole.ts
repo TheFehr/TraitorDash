@@ -8,7 +8,7 @@ import { GreaterDepth, KeepStencilOp, MeshBasicMaterial, NotEqualStencilFunc, Re
 
 /** The numbers of the rule. Lengths are in the map's world units (the player is 72 tall and 32 across). */
 export const HOLE = {
-  /** The circle's radius at the player's distance. */
+  /** The radius of the circle on the screen, at the player's distance, inside which a roof or a ceiling is opened (see `roofFrom`). */
   radius: 80,
   /** How far above their feet the circle is centred (the chest). */
   chest: 40,
@@ -26,6 +26,14 @@ export const HOLE = {
   ankle: 12,
   lowFrom: -28,
   lowTo: -8,
+  /** What is cut (RFC 34, 9.5): a surface is cut only when cutting it helps to see the player, and the hollow shell of the map shows interiors where it does not.
+   *  1. The window: the surface lies on a pixel ray that passes within `reach` of the player's body axis (from `ankle` above the soles to `head`), so it can hide the body.
+   *  2. The roof: a face that faces up or down (the ramp `upFrom`/`upTo`) and lies above the head (the ramp `roofFrom` to `roofTo` above the soles), inside the circle of `radius`.
+   *  Everything else inside the circle stays. `reach` is the body (about 16) plus a margin, tuned on the recorded moments. */
+  head: 72,
+  reach: 24,
+  roofFrom: 56,
+  roofTo: 76,
   /** Only a face that really lies between the camera and the player is cut (RFC 34, 4.3): the face's plane is in front of their centre by `sideFrom` to `sideTo` units. */
   sideTest: false,
   sideFrom: 0,
@@ -41,6 +49,13 @@ export const holeGlsl = () => `
 uniform vec3 uCtr;
 uniform vec4 uGround;
 uniform float uRad;
+float rayCapDist(vec3 d, vec3 A, vec3 B) {
+  vec3 e = B - A;
+  float b = dot(d, e), c = dot(e, e), dA = dot(d, A), eA = dot(e, A);
+  float qa = c - b * b, qb = eA - dA * b, qc = dot(A, A) - dA * dA;
+  float s = qa > 1e-6 ? clamp(-qb / qa, 0.0, 1.0) : 0.0;
+  return sqrt(max(qa * s * s + 2.0 * qb * s + qc, 0.0));
+}
 float holeAt(vec3 P) {
   if (uRad <= 0.0) return 0.0;
   vec3 nf = normalize(cross(dFdx(P), dFdy(P)));
@@ -53,7 +68,12 @@ float holeAt(vec3 P) {
   vec3 Q = P * (uCtr.z / P.z);
   float below = 1.0 - smoothstep(${f(HOLE.lowFrom)}, ${f(HOLE.lowTo)}, dot(uGround.xyz, Q - uCtr));
   keep = max(keep, below);
-  float c = near * (1.0 - keep) * (1.0 - smoothstep(R * (1.0 - ${f(HOLE.band)}), R, length(d)));
+  vec3 A = uCtr + uGround.xyz * ${f(HOLE.ankle - HOLE.chest)};
+  vec3 B = uCtr + uGround.xyz * ${f(HOLE.head - HOLE.chest)};
+  float win = 1.0 - smoothstep(${f(HOLE.reach)} * (1.0 - ${f(HOLE.band)}), ${f(HOLE.reach)}, rayCapDist(P / length(P), A, B));
+  float flatF = smoothstep(${f(HOLE.upFrom)}, ${f(HOLE.upTo)}, abs(dot(nf, uGround.xyz)));
+  float roof = flatF * smoothstep(${f(HOLE.roofFrom)}, ${f(HOLE.roofTo)}, h) * (1.0 - smoothstep(R * (1.0 - ${f(HOLE.band)}), R, length(d)));
+  float c = near * (1.0 - keep) * max(win, roof);
 ${HOLE.sideTest ? `  c *= smoothstep(${f(HOLE.sideFrom)}, ${f(HOLE.sideTo)}, dot(nf, P - uCtr));\n` : ''}  return c;
 }`
 
@@ -97,6 +117,15 @@ export interface HoleView { ctr: [number, number, number], ground: [number, numb
 const smooth = (a: number, b: number, x: number) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t) }
 const dot3 = (a: ArrayLike<number>, b: ArrayLike<number>) => a[0]! * b[0]! + a[1]! * b[1]! + a[2]! * b[2]!
 
+/** The distance of the line from the camera (the origin) along the unit direction `d` to the segment `A`-`B` (the player's body axis), in world units. Smooth in `d`, whatever the depth of the surface. */
+export function rayCapDist(d: [number, number, number], A: [number, number, number], B: [number, number, number]): number {
+  const e = [B[0] - A[0], B[1] - A[1], B[2] - A[2]] as [number, number, number]
+  const b = dot3(d, e), c = dot3(e, e), dA = dot3(d, A), eA = dot3(e, A)
+  const qa = c - b * b, qb = eA - dA * b, qc = dot3(A, A) - dA * dA
+  const s = qa > 1e-6 ? Math.min(1, Math.max(0, -qb / qa)) : 0
+  return Math.sqrt(Math.max(qa * s * s + 2 * qb * s + qc, 0))
+}
+
 /**
  * The rule of holeGlsl in plain code: 1 where the pixel at view-space position `P` (the camera at the origin looking down -z) is cut, 0 where it is kept, with
  * the edge as narrow as `HOLE.band`. `nf` is the unit normal of the face the pixel is on, turned to the camera (the shader takes it from the derivatives).
@@ -113,7 +142,13 @@ export function holeAt(P: [number, number, number], nf: [number, number, number]
   const Q: [number, number, number] = [P[0] * k, P[1] * k, P[2] * k]
   const below = 1 - smooth(HOLE.lowFrom, HOLE.lowTo, dot3(u.ground, [Q[0] - u.ctr[0], Q[1] - u.ctr[1], Q[2] - u.ctr[2]]))
   keep = Math.max(keep, below)
-  let c = near * (1 - keep) * (1 - smooth(R * (1 - HOLE.band), R, Math.hypot(dx, dy)))
+  const A: [number, number, number] = [0, 1, 2].map(i => u.ctr[i]! + u.ground[i]! * (HOLE.ankle - HOLE.chest)) as [number, number, number]
+  const B: [number, number, number] = [0, 1, 2].map(i => u.ctr[i]! + u.ground[i]! * (HOLE.head - HOLE.chest)) as [number, number, number]
+  const len = Math.hypot(P[0], P[1], P[2])
+  const win = 1 - smooth(HOLE.reach * (1 - HOLE.band), HOLE.reach, rayCapDist(len === 0 ? [0, 0, -1] : [P[0] / len, P[1] / len, P[2] / len], A, B))
+  const flatF = smooth(HOLE.upFrom, HOLE.upTo, Math.abs(dot3(nf, u.ground)))
+  const roof = flatF * smooth(HOLE.roofFrom, HOLE.roofTo, h) * (1 - smooth(R * (1 - HOLE.band), R, Math.hypot(dx, dy)))
+  let c = near * (1 - keep) * Math.max(win, roof)
   if (sideTest) c *= smooth(HOLE.sideFrom, HOLE.sideTo, dot3(nf, [P[0] - u.ctr[0], P[1] - u.ctr[1], P[2] - u.ctr[2]]))
   return c
 }
