@@ -1,4 +1,4 @@
-import { DECORATION_CLASSES, FIXTURE_CLASSES, MOVABLE_CLASSES, SURFACE_FLAGS, WATER_CLASSES, type BspHeader, type ByteSource, type EntityCensus, type FaceTally } from './bsp'
+import { DECORATION_CLASSES, FIXTURE_CLASSES, MOVABLE_CLASSES, SURFACE_FLAGS, WATER_CLASSES, type BspHeader, type ByteSource, type EntityCensus, type FaceTally, type StartStates } from './bsp'
 
 // RFC 32: what the map pipeline does with each thing a Source map can hold. The registry below is the catalogue (docs/MAP_COVERAGE.md has the
 // same table in prose, and a test fails when they differ); the record (`buildCoverage`) counts, for one map, what it holds per entry.
@@ -76,6 +76,7 @@ const FEATURES: [string, RegistryStatus, string][] = [
   ['displacements', 'drawn', 'Terrain (lump 26 and 33): turned into a grid of triangles (RFC 18, 4.3).'],
   ['static props', 'drawn', 'Props placed by the compiler (the `sprp` game lump) and the props of the entity lump, as the models the map carries or the game has (RFC 18, 4.4).'],
   ['textures from the pak', 'drawn', 'The map\'s own materials and textures, read from the pak file at the end of the map (RFC 18, 5).'],
+  ['door start states', 'drawn', 'Doors, rotating doors and linear movers are drawn where they stand when the round starts: at the open end when the map starts them open (`spawnpos`, `startposition`), not drawn when that cannot be placed with confidence (RFC 35).'],
   ['lighting', 'not read', 'The lightmaps (lump 8, HDR lump 53): drawing them needs the lightmap atlas and every face\'s coordinates in it.'],
   ['overlays', 'not read', 'Decals the mapper put on surfaces (lump 45, `info_overlay`): drawing them needs a quad on the surface for each.'],
   ['cubemaps', 'not read', 'Environment cube maps for reflections (lump 42): only matter with reflective materials, which are not modelled.'],
@@ -148,6 +149,8 @@ export interface CoverageRecord {
   pointFeatures: Record<string, number>
   /** The sizes in bytes of the lumps the pipeline does not read. */
   lumps: { lighting: number, overlays: number, cubemaps: number, gameLump: number, visibility: number, pakfile: number }
+  /** Where the doors, rotating doors and linear movers that are drawn start (RFC 35, 5). A record made before RFC 35 has none. */
+  startStates?: StartStates
 }
 
 const LUMP_MODELS = 14
@@ -211,8 +214,23 @@ export async function buildCoverage(src: ByteSource, header: BspHeader, tally: F
     points: top.map(([name, count]) => ({ class: name, count })),
     ...(beyondEntities > 0 ? { pointsOther: { classes: beyond.length, entities: beyondEntities } } : {}),
     pointFeatures,
+    ...(census.startStates ? { startStates: { ...census.startStates, byClass: Object.fromEntries(Object.entries(census.startStates.byClass).map(([k, v]) => [cleanName(k), { ...v }])) } } : {}),
     lumps: { lighting: size(LUMP_OF.lighting) + size(LUMP_OF.lightingHdr), overlays: size(LUMP_OF.overlays), cubemaps: size(LUMP_OF.cubemaps), gameLump: size(LUMP_OF.gameLump), visibility: size(LUMP_OF.visibility), pakfile: size(LUMP_OF.pakfile) },
   }
+}
+
+/** The start states of a stored record, checked (RFC 35): counts that are whole numbers, or nothing (an older record has none; `undefined` is not stored as a key). */
+function startStatesOf(x: unknown): StartStates | undefined {
+  if (!x || typeof x !== 'object') return undefined
+  const r = x as Record<string, any>
+  const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0
+  if (!num(r.closed) || !num(r.openPlaced) || !num(r.openLeftOut) || !num(r.startPositioned) || !r.byClass || typeof r.byClass !== 'object') return undefined
+  const byClass: StartStates['byClass'] = {}
+  for (const [k, v] of Object.entries(r.byClass as Record<string, any>)) {
+    if (!v || !num(v.closed) || !num(v.openPlaced) || !num(v.openLeftOut)) return undefined
+    byClass[cleanName(k)] = { closed: v.closed, openPlaced: v.openPlaced, openLeftOut: v.openLeftOut }
+  }
+  return { closed: r.closed, openPlaced: r.openPlaced, openLeftOut: r.openLeftOut, startPositioned: r.startPositioned, byClass }
 }
 
 /**
@@ -227,5 +245,7 @@ export function asRecord(x: unknown): CoverageRecord | null {
   if (!Object.values(r.flags).every(num) || !Object.values(r.outcome).every(num) || !Object.values(r.lumps).every(num)) return null
   if (!r.brush.every((b: any) => b && typeof b.class === 'string' && num(b.entities) && num(b.faces) && (b.parentedFaces === undefined || num(b.parentedFaces)) && typeof b.status === 'string' && (STATUSES as readonly string[]).includes(b.status))) return null
   if (!r.points.every((p: any) => p && typeof p.class === 'string' && num(p.count))) return null
-  return { ...r, material: { sky: num(r.material?.sky) ? r.material.sky : 0, 'tools/*': num(r.material?.['tools/*']) ? r.material['tools/*'] : 0 }, pointFeatures: r.pointFeatures && typeof r.pointFeatures === 'object' && Object.values(r.pointFeatures).every(num) ? r.pointFeatures : {} } as CoverageRecord
+  const { startStates: stored, ...rest } = r
+  const startStates = startStatesOf(stored)
+  return { ...rest, ...(startStates ? { startStates } : {}), material: { sky: num(r.material?.sky) ? r.material.sky : 0, 'tools/*': num(r.material?.['tools/*']) ? r.material['tools/*'] : 0 }, pointFeatures: r.pointFeatures && typeof r.pointFeatures === 'object' && Object.values(r.pointFeatures).every(num) ? r.pointFeatures : {} } as CoverageRecord
 }

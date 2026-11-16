@@ -18,8 +18,20 @@ export interface MapRow {
   /** The faces and entities of what is a `gap` here, and how many different things are `unknown`. */
   gapFaces: number, gapEntities: number, unknown: number
 }
+/** One map's row of the start-state card (RFC 35, 5): the doors, rotating doors and linear movers that start closed, that start open and were placed at the open end, and that start open and were left out. */
+export interface StartRow { map: string, closed: number, openPlaced: number, openLeftOut: number, startPositioned: number }
+export interface StartReport {
+  /** The maps with a record that has start states (a record from before RFC 35 has none). */
+  withData: number
+  totals: { closed: number, openPlaced: number, openLeftOut: number, startPositioned: number }
+  /** By class, over the same maps. */
+  byClass: Record<string, { closed: number, openPlaced: number, openLeftOut: number }>
+  /** The maps with start states, those with the most parts that moved or were left out first. */
+  rows: StartRow[]
+}
 export interface CoverageReport {
   maps: number, withRecord: number, without: string[]
+  starts: StartReport
   totals: Record<Status, StatusTotals>
   gaps: GapRow[]
   rows: MapRow[]
@@ -96,9 +108,23 @@ export function summarise(inputs: CoverageInput[], statusOf: StatusOf = (kind, k
     for (const [key, n] of Object.entries(r.material)) if (n > 0) note(input.map, 'material', key, n, 0, row)
   }
 
+  const starts: StartReport = { withData: 0, totals: { closed: 0, openPlaced: 0, openLeftOut: 0, startPositioned: 0 }, byClass: {}, rows: [] }
+  for (const input of inputs) {
+    const st = input.record?.startStates
+    if (!st) continue
+    starts.withData++
+    starts.totals.closed += st.closed; starts.totals.openPlaced += st.openPlaced; starts.totals.openLeftOut += st.openLeftOut; starts.totals.startPositioned += st.startPositioned
+    for (const [cls, c] of Object.entries(st.byClass)) {
+      const t = starts.byClass[cls] ??= { closed: 0, openPlaced: 0, openLeftOut: 0 }
+      t.closed += c.closed; t.openPlaced += c.openPlaced; t.openLeftOut += c.openLeftOut
+    }
+    starts.rows.push({ map: input.map, closed: st.closed, openPlaced: st.openPlaced, openLeftOut: st.openLeftOut, startPositioned: st.startPositioned })
+  }
+  starts.rows.sort((a, b) => (b.openPlaced + b.openLeftOut) - (a.openPlaced + a.openLeftOut) || b.openLeftOut - a.openLeftOut || (a.map < b.map ? -1 : a.map > b.map ? 1 : 0))
+
   const ranked = [...gaps.values()].sort((a, b) => b.faces - a.faces || b.entities - a.entities || b.maps - a.maps || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
   rows.sort((a, b) => (a.record ? 0 : 1) - (b.record ? 0 : 1) || b.gapFaces - a.gapFaces || b.unknown - a.unknown || (a.map < b.map ? -1 : a.map > b.map ? 1 : 0))
-  return { maps: inputs.length, withRecord, without, totals, gaps: ranked, rows, lumps, pointFeatures }
+  return { maps: inputs.length, withRecord, without, starts, totals, gaps: ranked, rows, lumps, pointFeatures }
 }
 
 /** The size of a lump in the unit that reads best: bytes, KB or MB (thousands, as the file sizes of the pages are). */
