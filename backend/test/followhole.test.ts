@@ -112,8 +112,9 @@ describe('the rule (holeAt, in plain code)', () => {
     expect(toView(cam, under)[2]!).toBeGreaterThan(view.ctr[2]) // nearer than the chest
     expect(cutAt(under, UP)).toBe(0) // a face that looks up: the floor they stand on
     expect(cutAt(onFeet(0.97), UP)).toBe(0)
-    expect(cutAt(under, wallNormal)).toBeGreaterThan(0.5) // the same place, a wall face: its base is cut (discarded: over 0.5; the ray to the feet is inside the ramp of the below-the-feet rule)
-    expect(cutAt(onFeet(0.85), UP)).toBe(1) // 25 units over the floor, a ledge that hides their legs: cut
+    expect(cutAt(under, wallNormal)).toBe(0) // the same place, a wall face: its base is kept too (the ray to the soles passes below the ankles)
+    const toHips = (t: number) => cam.position.clone().lerp(new Vector3(0, HOLE.chest + HOLE.lowTo, 0), t)
+    expect(cutAt(toHips(0.85), UP)).toBe(1) // 25 units over the floor on the ray to their hips, a ledge that hides their body: cut
   })
   describe('what cannot hide the player stays (RFC 34, 9.4): a surface whose pixel ray passes below their feet', () => {
     /** The point `t` of the way from the camera to the world point `target`: a surface there is hit by the pixel ray that goes on to `target`. */
@@ -129,25 +130,25 @@ describe('the rule (holeAt, in plain code)', () => {
       expect(cutAt(toward(new Vector3(0, HOLE.chest + 30, 0).addScaledVector(toTheCamera, 10)), wallNormal)).toBe(1)
     })
     test('the same pixel ray a little higher, through their body, is cut: it is the rule, not the circle, that keeps the step', () => {
-      for (const dy of [HOLE.chest, 20, 0]) expect(cutAt(toward(new Vector3(0, dy, 0)), wallNormal)).toBeGreaterThan(0.5)
+      for (const dy of [HOLE.chest, 36, HOLE.chest + HOLE.lowTo]) expect(cutAt(toward(new Vector3(0, dy, 0)), wallNormal)).toBeGreaterThan(0.5)
     })
     test('a floor face above the line of sight (a ceiling or roof over them, seen from the camera) is cut; so is a wall there', () => {
       const roof = toward(new Vector3(0, HOLE.chest + 50, 0))
       expect(cutAt(roof, UP.clone().negate())).toBe(1)
       expect(cutAt(roof, wallNormal)).toBe(1)
     })
-    test('a floor that hides their legs (a ledge on the ray to their feet) is cut', () => {
-      expect(cutAt(toward(new Vector3(0, 0, 0), 0.85), UP)).toBe(1)
-      expect(cutAt(toward(new Vector3(0, 0, 0), 0.85), wallNormal)).toBeGreaterThan(0.5)
+    test('a floor that hides their legs (a ledge on the ray to their hips) is cut', () => {
+      const hips = new Vector3(0, HOLE.chest + HOLE.lowTo, 0) // where the ramp ends: from here up everything is cut
+      expect(cutAt(toward(hips, 0.85), UP)).toBe(1)
+      expect(cutAt(toward(hips, 0.85), wallNormal)).toBeGreaterThan(0.5)
     })
-    test('the ground ring: a roof or ceiling over the ground around their feet is cut (flat faces only), a block side there is not', () => {
-      const front = toward(new Vector3(0, 0, 0).addScaledVector(toTheCamera, 30)) // the ray lands on the floor 30 units in front of their feet
-      expect(cutAt(front, UP.clone().negate())).toBe(1)
-      expect(cutAt(front, wallNormal)).toBeLessThan(0.5)
-      const farFront = toward(new Vector3(0, 0, 0).addScaledVector(toTheCamera, 90)) // beyond the ring: kept for any kind
-      expect(cutAt(farFront, UP.clone().negate())).toBe(0)
+    test('no ground ring: a floor or ceiling in front of the feet whose ray passes below the ankles stays, the ring is drawn through it instead', () => {
+      const front = toward(new Vector3(0, 0, 0).addScaledVector(toTheCamera, 30)) // the ray lands on the floor 30 units in front of their feet, below the soles on the screen
+      expect(cutAt(front, UP.clone().negate())).toBe(0)
+      expect(cutAt(front, UP)).toBe(0)
+      expect(cutAt(front, wallNormal)).toBe(0)
     })
-    test('the ramps: from the sight line down to the feet and below, then along the ground away from the feet, one unit at a time: monotone and no step', () => {
+    test('the ramp: from the sight line down to below the ankles, half a unit at a time: monotone and no step', () => {
       let worst = 0, prev = NaN, first = 0, last = 0, rising = 0
       for (let dq = 0; dq >= -75; dq -= 0.5) { // the height at which the pixel ray passes the player's depth, below the chest
         const c = cutAt(toward(new Vector3(0, HOLE.chest + dq, 0)), wallNormal)
@@ -155,21 +156,71 @@ describe('the rule (holeAt, in plain code)', () => {
         prev = c; last = c
       }
       expect(first).toBe(1); expect(last).toBe(0); expect(rising).toBe(0)
-      expect(worst).toBeLessThan(0.1) // a ramp of 22 units: 1.5 / 22 = 0.07 per unit at the steepest
-      worst = 0; prev = NaN; first = 0; last = 0
-      for (let d = 0; d <= 110; d += 0.5) { // a roof's pixel rays landing further and further from their feet along the ground
-        const c = cutAt(toward(new Vector3(0, 0, 0).addScaledVector(toTheCamera, d)), UP.clone().negate())
-        if (d === 0) first = c; else worst = Math.max(worst, Math.abs(c - prev) / 0.5)
-        prev = c; last = c
-      }
-      expect(first).toBe(1); expect(last).toBe(0)
-      expect(worst).toBeLessThan(0.1)
+      expect(worst).toBeLessThan(0.1) // a ramp of 20 units: 1.5 / 20 = 0.075 per unit at the steepest
     })
-    test('the constants: the keep ramp ends below the feet and starts lower, the ground ring is wider than the ring of the selection (32)', () => {
+    test('the constants: the ramp lies above the ankles and inside the body, so it cannot straddle the soles', () => {
       expect(HOLE.lowFrom).toBeLessThan(HOLE.lowTo)
-      expect(HOLE.lowTo).toBeLessThan(0) // below the sight line
-      expect(HOLE.lowTo).toBeGreaterThan(-HOLE.chest - 10); expect(HOLE.lowFrom).toBeLessThan(-HOLE.chest) // the feet (-chest) are inside the ramp or at its upper end: the soles are never cut away from below by a ray that misses them
-      expect(HOLE.gFrom).toBeLessThan(HOLE.gTo); expect(HOLE.gFrom).toBeGreaterThanOrEqual(32)
+      expect(HOLE.lowFrom).toBe(-HOLE.chest + HOLE.ankle) // the soles are at -chest: nothing is cut below `ankle` above them
+      expect(HOLE.ankle).toBeGreaterThanOrEqual(8) // a margin of a few pixels at least, at the follow camera's distance
+      expect(HOLE.lowTo).toBeLessThan(0) // the ramp ends below the sight line: inside the body, between the ankles and the chest
+      expect(HOLE.lowTo).toBeGreaterThan(HOLE.lowFrom)
+    })
+  })
+  describe('the acceptance rule (RFC 34, 9.4): whatever a pixel ray passes below the ankles at the player\'s depth is not cut at any pixel of the hole', () => {
+    const feet = new Vector3(40, 10, -25)
+    /** The rule at `n` points of the player's camera for yaws, distances and pixel rays: the points are given as the pixel ray (a view-space offset at the chest's depth) and how much nearer than the player they are. Calls `visit(height of the ray at the player's depth relative to the chest, depth fraction, holeAt value)`. */
+    function grid(visit: (h: number, k: number, c: number, kind: string) => void) {
+      for (const yaw of [0, 0.7, 2.1, 4.0]) for (const back of [200, 300, 450]) {
+        const cam = followCamera(feet, yaw, back), v = viewOf(cam, feet).view
+        const D = -v.ctr[2], g = v.ground
+        const normals: Record<string, Vector3> = { up: UP, down: UP.clone().negate(), wall: new Vector3(Math.cos(yaw + 3.1), 0, -Math.sin(yaw + 3.1)), slant: new Vector3(0.6, 0.3, 0.74).normalize() }
+        for (let qx = -120; qx <= 120; qx += 10) for (let qy = -140; qy <= 100; qy += 4) { // the pixel ray's point at the chest's depth, relative to the chest, in view space
+          const Q: [number, number, number] = [v.ctr[0] + qx, v.ctr[1] + qy, v.ctr[2]]
+          const h = g[0] * (Q[0] - v.ctr[0]) + g[1] * (Q[1] - v.ctr[1]) + g[2] * (Q[2] - v.ctr[2])
+          for (const k of [0.3, 0.5, 0.7, 0.85, 0.95, 0.99]) { // nearer than the player: the same pixel, a point k of the way to the camera
+            const P: [number, number, number] = [Q[0] * k, Q[1] * k, Q[2] * k]
+            for (const [kind, n] of Object.entries(normals)) {
+              const nv = normalToView(cam, n, P)
+              visit(h, k, holeAt(P, nv, v), kind)
+            }
+          }
+        }
+        void D
+      }
+    }
+    test('every point whose pixel ray passes at or below the ankles is kept, exactly, for any surface, depth, camera and pixel', () => {
+      let seen = 0, cutAbove = 0
+      grid((h, _k, c) => { if (h <= -HOLE.chest + HOLE.ankle) { seen++; expect(c).toBe(0) } else if (h >= HOLE.lowTo && c === 1) cutAbove++ })
+      expect(seen).toBeGreaterThan(1000) // the grid has points below the ankles...
+      expect(cutAbove).toBeGreaterThan(1000) // ...and the hole is cut open above the ramp
+    })
+    test('above the ankle line the cut grows smoothly: along every pixel column no jump bigger than the ramp allows', () => {
+      const cam = followCamera(feet, 0.7), v = viewOf(cam, feet).view
+      const g = v.ground
+      for (const k of [0.5, 0.9]) for (const n of [new Vector3(0, 0, 1), UP.clone().negate()]) {
+        let prev = NaN, worst = 0
+        for (let qy = -140; qy <= 60; qy += 0.25) {
+          const Q: [number, number, number] = [v.ctr[0], v.ctr[1] + qy, v.ctr[2]]
+          const P: [number, number, number] = [Q[0] * k, Q[1] * k, Q[2] * k]
+          const c = holeAt(P, normalToView(cam, n, P), v)
+          if (!Number.isNaN(prev)) worst = Math.max(worst, Math.abs(c - prev))
+          prev = c
+          void g
+        }
+        expect(worst).toBeLessThan(0.06) // a ramp 20 units tall, 0.25 of a unit per step: 0.0375 at most
+      }
+    })
+    test('the check has teeth: the ramp of the first fix across the soles, or a ramp with no margin, is caught by the same grid', () => {
+      const keep = { lowFrom: HOLE.lowFrom, lowTo: HOLE.lowTo }
+      const wrong = () => { let bad = 0; grid((h, _k, c) => { if (h <= -HOLE.chest + HOLE.ankle && c !== 0) bad++ }); return bad } // the ankle line is fixed by the soles, not by the ramp under test
+      try {
+        HOLE.lowFrom = -52; HOLE.lowTo = -30 // straddles the soles (-40)
+        expect(wrong()).toBeGreaterThan(0)
+        HOLE.lowFrom = -HOLE.chest; HOLE.lowTo = -HOLE.chest + 20 // no margin: starts at the soles
+        expect(wrong()).toBeGreaterThan(0)
+        HOLE.lowFrom = keep.lowFrom; HOLE.lowTo = keep.lowTo
+        expect(wrong()).toBe(0)
+      } finally { HOLE.lowFrom = keep.lowFrom; HOLE.lowTo = keep.lowTo }
     })
   })
   test('the circle shrinks with the distance: the same distance to the side is outside of it from further away', () => {
@@ -229,19 +280,19 @@ describe('the rule (holeAt, in plain code)', () => {
       }
       expect(worst).toBeLessThan(0.1)
     })
-    test('down a slope through the height of the floor under their feet, along the line of sight to their feet', () => {
-      // a ramp of 30 degrees: "floor" near their feet and a cut face higher up; the keep ramps over 8 units of height, so one unit changes the value by 0.2 at most
+    test('down a slope along the line of sight to the knees (inside the ramp of the below-the-ankles rule and over the floor under them)', () => {
+      // a ramp of 30 degrees; the ray to the knees runs through the ramp of the below-the-ankles rule (20 units: 0.075 per unit at most)
       const slope = new Vector3(-Math.sin(Math.PI / 6), Math.cos(Math.PI / 6), 0)
       let worst = 0, prev = NaN, first = 0, last = 0
       for (let i = 0; i <= 400; i++) {
-        const p = cam.position.clone().lerp(feet, 0.85 + 0.15 * (i / 400)) // the point on the way to the feet: its height falls from 25 to 0
+        const p = cam.position.clone().lerp(new Vector3(0, 20, 0), 0.85 + 0.15 * (i / 400)) // the point on the way to the knees
         const pv = toView(cam, p)
         const c = holeAt(pv, normalToView(cam, slope, pv), view)
         if (i === 0) first = c
         if (i > 0) worst = Math.max(worst, Math.abs(c - prev))
         prev = c; last = c
       }
-      expect(first).toBe(1); expect(last).toBe(0) // the test does cross from cut to kept
+      expect(first).toBeGreaterThan(0.2); expect(first).toBeLessThan(0.9); expect(last).toBeCloseTo(first, 6) // a ray inside the ramp: neither cut nor kept
       expect(worst).toBeLessThan(0.05)
     })
   })
@@ -286,12 +337,13 @@ describe('the material patch', () => {
     expect(m.customProgramCacheKey()).toContain('followhole')
   })
   test('the shader is built from the constants the plain-code rule uses, and takes the derivatives out of the branches', () => {
-    for (const n of [HOLE.nearFrom, HOLE.nearTo, HOLE.floorFrom, HOLE.floorTo, HOLE.upFrom, HOLE.upTo, HOLE.band, HOLE.lowFrom, HOLE.lowTo, HOLE.gFrom, HOLE.gTo, HOLE.chest]) expect(holeGlsl()).toContain(Number.isInteger(n) ? n.toFixed(1) : String(n))
+    for (const n of [HOLE.nearFrom, HOLE.nearTo, HOLE.floorFrom, HOLE.floorTo, HOLE.upFrom, HOLE.upTo, HOLE.band, HOLE.lowFrom, HOLE.lowTo]) expect(holeGlsl()).toContain(Number.isInteger(n) ? n.toFixed(1) : String(n))
     expect(holeGlsl().slice(holeGlsl().indexOf('dFdx(P)')).match(/return/g)?.length).toBe(1) // (the derivatives are taken in uniform control flow: no return between them and the end but the last)
     expect(holeGlsl()).toContain('P.xy / -P.z') // a circle on the screen, not in the world
     expect(holeGlsl()).toContain('uRad / -uCtr.z') // the radius shrinks with the distance
     expect(holeGlsl()).toContain('P * (uCtr.z / P.z)') // the pixel ray at the player's depth: what the below-the-feet rule measures
-    expect(holeGlsl()).toContain('keep = max(keep, below * (1.0 - near_ground * flatness))') // one rule for every kind, the ground ring for flat faces only
+    expect(holeGlsl()).toContain('keep = max(keep, below);') // one rule for every kind, no ground ring
+    expect(holeGlsl()).not.toMatch(/near_ground|flatness/)
     expect(holeGlsl()).not.toMatch(/fract|noise|screenDoor|gl_FragCoord/) // no pattern: a hard edge
   })
 })
@@ -374,5 +426,6 @@ describe('the page (replay.ts)', () => {
   test('the player is not made unseen by the ghost in the other things drawn: the pins and names stay on top, the ring keeps its place', () => {
     expect(replay).toContain('renderOrder = 10') // the sprites
     expect(replay).toContain('group.add(ring, pin, label)')
+    expect(replay).toContain('(m.ring.material as MeshBasicMaterial).depthTest = !ghostShown(camMode, selected, id, m.group.visible)') // the ring is seen through what covers it in the follow camera: the hole does not open what is below the feet
   })
 })

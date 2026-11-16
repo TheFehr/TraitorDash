@@ -698,7 +698,7 @@ async function start(root: HTMLElement) {
     const group = new Group()
     const body = figure(colour, false)
     group.add(body)
-    const ring = new Mesh(ringGeo, new MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, side: DoubleSide })); ring.position.z = 1.5; ring.visible = false
+    const ring = new Mesh(ringGeo, new MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, side: DoubleSide })); ring.position.z = 1.5; ring.renderOrder = 6; ring.visible = false
     const looks = new Map<number, Look>()
     const look = lookOf({ looks }, id, colour)
     const pin = screenSprite(look.plain, PIN, PIN); pin.position.z = real ? real.height + 12 : 86
@@ -887,6 +887,7 @@ async function start(root: HTMLElement) {
       m.deadPin.scale.set(PIN * unit, PIN * unit, 1)
       const isSel = id === selected
       m.ring.visible = isSel // the selected player is marked on the ground, not by a bigger body
+      ;(m.ring.material as MeshBasicMaterial).depthTest = !ghostShown(camMode, selected, id, m.group.visible) // in the follow camera the ring is seen through what covers it, like the ghost: the hole leaves what is below the feet alone (RFC 34, 9.4)
       const death = currentDeath(data.deaths, data.events, id, ms) // a revived player is not dead any more
       const body = death ? bodyAt(data.bodies.get(id), death, ms) : null // where the body lies now, which is not always where the player died (RFC 24)
       const deathLevel = body && levels.length > 0 && bg.kind !== 'none' ? levelOf(levels, body.at[2]) : 0

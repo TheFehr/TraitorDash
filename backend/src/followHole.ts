@@ -22,12 +22,10 @@ export const HOLE = {
   upTo: 0.7,
   floorFrom: 10,
   floorTo: 18,
-  /** A surface whose pixel ray passes BELOW the player's feet cannot hide them, so it stays (wall, floor and prop alike). Measured at the player's depth, as the height of the ray below the chest: kept below `lowFrom`, cut above `lowTo` (the feet are 40 below the chest), a ramp between. Terrain in front of and below the player used to be cut, which opened the hollow shell (RFC 34, 9.4). */
-  lowFrom: -52,
-  lowTo: -30,
-  /** ...unless the ray lands on the ground plane near their feet (the ring and what they stand on stay in the window): within `gFrom` of the feet it is cut as before, beyond `gTo` the rule above holds. */
-  gFrom: 40,
-  gTo: 60,
+  /** What a pixel ray passes BELOW the player's ankles cannot hide them, so it is never cut (wall, floor and prop alike). Measured at the player's depth, as the height of the ray relative to the chest (the soles are at -chest): kept (exactly, no cut at any pixel) below `lowFrom`, which is `ankle` above the soles, cut above `lowTo`, a ramp between that lies inside the body, so the ramp cannot straddle the soles. Terrain in front of and below the player used to be cut, which opened the hollow shell under it (RFC 34, 9.4). */
+  ankle: 12,
+  lowFrom: -28,
+  lowTo: -8,
   /** Only a face that really lies between the camera and the player is cut (RFC 34, 4.3): the face's plane is in front of their centre by `sideFrom` to `sideTo` units. */
   sideTest: false,
   sideFrom: 0,
@@ -54,10 +52,7 @@ float holeAt(vec3 P) {
   float R = uRad / -uCtr.z;
   vec3 Q = P * (uCtr.z / P.z);
   float below = 1.0 - smoothstep(${f(HOLE.lowFrom)}, ${f(HOLE.lowTo)}, dot(uGround.xyz, Q - uCtr));
-  vec3 G = P * (-uGround.w / dot(uGround.xyz, P));
-  float near_ground = 1.0 - smoothstep(${f(HOLE.gFrom)}, ${f(HOLE.gTo)}, length(G - (uCtr - uGround.xyz * ${f(HOLE.chest)})));
-  float flatness = smoothstep(${f(HOLE.upFrom)}, ${f(HOLE.upTo)}, abs(dot(nf, uGround.xyz)));
-  keep = max(keep, below * (1.0 - near_ground * flatness));
+  keep = max(keep, below);
   float c = near * (1.0 - keep) * (1.0 - smoothstep(R * (1.0 - ${f(HOLE.band)}), R, length(d)));
 ${HOLE.sideTest ? `  c *= smoothstep(${f(HOLE.sideFrom)}, ${f(HOLE.sideTo)}, dot(nf, P - uCtr));\n` : ''}  return c;
 }`
@@ -117,12 +112,7 @@ export function holeAt(P: [number, number, number], nf: [number, number, number]
   const k = P[2] === 0 ? 0 : u.ctr[2] / P[2]
   const Q: [number, number, number] = [P[0] * k, P[1] * k, P[2] * k]
   const below = 1 - smooth(HOLE.lowFrom, HOLE.lowTo, dot3(u.ground, [Q[0] - u.ctr[0], Q[1] - u.ctr[1], Q[2] - u.ctr[2]]))
-  const dn = dot3(u.ground, P)
-  const feet: [number, number, number] = [u.ctr[0] - u.ground[0] * HOLE.chest, u.ctr[1] - u.ground[1] * HOLE.chest, u.ctr[2] - u.ground[2] * HOLE.chest]
-  const gk = dn === 0 ? 0 : -u.ground[3] / dn
-  const nearGround = 1 - smooth(HOLE.gFrom, HOLE.gTo, Math.hypot(P[0] * gk - feet[0], P[1] * gk - feet[1], P[2] * gk - feet[2]))
-  const flatness = smooth(HOLE.upFrom, HOLE.upTo, Math.abs(dot3(nf, u.ground)))
-  keep = Math.max(keep, below * (1 - nearGround * flatness))
+  keep = Math.max(keep, below)
   let c = near * (1 - keep) * (1 - smooth(R * (1 - HOLE.band), R, Math.hypot(dx, dy)))
   if (sideTest) c *= smooth(HOLE.sideFrom, HOLE.sideTo, dot3(nf, [P[0] - u.ctr[0], P[1] - u.ctr[1], P[2] - u.ctr[2]]))
   return c
