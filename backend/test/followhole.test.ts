@@ -112,8 +112,65 @@ describe('the rule (holeAt, in plain code)', () => {
     expect(toView(cam, under)[2]!).toBeGreaterThan(view.ctr[2]) // nearer than the chest
     expect(cutAt(under, UP)).toBe(0) // a face that looks up: the floor they stand on
     expect(cutAt(onFeet(0.97), UP)).toBe(0)
-    expect(cutAt(under, wallNormal)).toBe(1) // the same place, a wall face: its base is cut
+    expect(cutAt(under, wallNormal)).toBeGreaterThan(0.5) // the same place, a wall face: its base is cut (discarded: over 0.5; the ray to the feet is inside the ramp of the below-the-feet rule)
     expect(cutAt(onFeet(0.85), UP)).toBe(1) // 25 units over the floor, a ledge that hides their legs: cut
+  })
+  describe('what cannot hide the player stays (RFC 34, 9.4): a surface whose pixel ray passes below their feet', () => {
+    /** The point `t` of the way from the camera to the world point `target`: a surface there is hit by the pixel ray that goes on to `target`. */
+    const toward = (target: Vector3, t = 0.6) => cam.position.clone().lerp(target, t)
+    const toTheCamera = wallNormal.clone() // horizontal, from the feet towards the camera
+    test('the bug: terrain in front of and below the player, below the sight line, is not cut (a step face and its top)', () => {
+      // the ground ahead of them is a step lower than their feet (the owner's b7_summer 1:19: the block sides below the feet were cut and showed the hollow shell). The points are inside the circle, so it is the rule, not the circle, that keeps them.
+      const stepFace = toward(new Vector3(0, -30, 0).addScaledVector(toTheCamera, 10)), stepTop = toward(new Vector3(0, -10, 0).addScaledVector(toTheCamera, 45))
+      for (const p of [stepFace, stepTop]) { expect(toView(cam, p)[2]!).toBeGreaterThan(view.ctr[2]) /* nearer than the player */; expect(cutAt(p, wallNormal)).toBeLessThan(0.1) } // a side face
+      expect(cutAt(stepTop, UP)).toBeLessThan(0.1) // its top
+      expect(cutAt(stepFace, new Vector3(0.6, 0.3, 0.74).normalize())).toBeLessThan(0.1) // a slanted one
+      // the circle itself would cut them: a ray at the same depth and screen distance, through the body, is
+      expect(cutAt(toward(new Vector3(0, HOLE.chest + 30, 0).addScaledVector(toTheCamera, 10)), wallNormal)).toBe(1)
+    })
+    test('the same pixel ray a little higher, through their body, is cut: it is the rule, not the circle, that keeps the step', () => {
+      for (const dy of [HOLE.chest, 20, 0]) expect(cutAt(toward(new Vector3(0, dy, 0)), wallNormal)).toBeGreaterThan(0.5)
+    })
+    test('a floor face above the line of sight (a ceiling or roof over them, seen from the camera) is cut; so is a wall there', () => {
+      const roof = toward(new Vector3(0, HOLE.chest + 50, 0))
+      expect(cutAt(roof, UP.clone().negate())).toBe(1)
+      expect(cutAt(roof, wallNormal)).toBe(1)
+    })
+    test('a floor that hides their legs (a ledge on the ray to their feet) is cut', () => {
+      expect(cutAt(toward(new Vector3(0, 0, 0), 0.85), UP)).toBe(1)
+      expect(cutAt(toward(new Vector3(0, 0, 0), 0.85), wallNormal)).toBeGreaterThan(0.5)
+    })
+    test('the ground ring: a roof or ceiling over the ground around their feet is cut (flat faces only), a block side there is not', () => {
+      const front = toward(new Vector3(0, 0, 0).addScaledVector(toTheCamera, 30)) // the ray lands on the floor 30 units in front of their feet
+      expect(cutAt(front, UP.clone().negate())).toBe(1)
+      expect(cutAt(front, wallNormal)).toBeLessThan(0.5)
+      const farFront = toward(new Vector3(0, 0, 0).addScaledVector(toTheCamera, 90)) // beyond the ring: kept for any kind
+      expect(cutAt(farFront, UP.clone().negate())).toBe(0)
+    })
+    test('the ramps: from the sight line down to the feet and below, then along the ground away from the feet, one unit at a time: monotone and no step', () => {
+      let worst = 0, prev = NaN, first = 0, last = 0, rising = 0
+      for (let dq = 0; dq >= -75; dq -= 0.5) { // the height at which the pixel ray passes the player's depth, below the chest
+        const c = cutAt(toward(new Vector3(0, HOLE.chest + dq, 0)), wallNormal)
+        if (dq === 0) first = c; else { worst = Math.max(worst, Math.abs(c - prev) / 0.5); if (c > prev + 1e-9) rising++ }
+        prev = c; last = c
+      }
+      expect(first).toBe(1); expect(last).toBe(0); expect(rising).toBe(0)
+      expect(worst).toBeLessThan(0.1) // a ramp of 22 units: 1.5 / 22 = 0.07 per unit at the steepest
+      worst = 0; prev = NaN; first = 0; last = 0
+      for (let d = 0; d <= 110; d += 0.5) { // a roof's pixel rays landing further and further from their feet along the ground
+        const c = cutAt(toward(new Vector3(0, 0, 0).addScaledVector(toTheCamera, d)), UP.clone().negate())
+        if (d === 0) first = c; else worst = Math.max(worst, Math.abs(c - prev) / 0.5)
+        prev = c; last = c
+      }
+      expect(first).toBe(1); expect(last).toBe(0)
+      expect(worst).toBeLessThan(0.1)
+    })
+    test('the constants: the keep ramp ends below the feet and starts lower, the ground ring is wider than the ring of the selection (32)', () => {
+      expect(HOLE.lowFrom).toBeLessThan(HOLE.lowTo)
+      expect(HOLE.lowTo).toBeLessThan(0) // below the sight line
+      expect(HOLE.lowTo).toBeGreaterThan(-HOLE.chest - 10); expect(HOLE.lowFrom).toBeLessThan(-HOLE.chest) // the feet (-chest) are inside the ramp or at its upper end: the soles are never cut away from below by a ray that misses them
+      expect(HOLE.gFrom).toBeLessThan(HOLE.gTo); expect(HOLE.gFrom).toBeGreaterThanOrEqual(32)
+    })
   })
   test('the circle shrinks with the distance: the same distance to the side is outside of it from further away', () => {
     const feet2 = new Vector3(0, 0, 0)
@@ -229,10 +286,12 @@ describe('the material patch', () => {
     expect(m.customProgramCacheKey()).toContain('followhole')
   })
   test('the shader is built from the constants the plain-code rule uses, and takes the derivatives out of the branches', () => {
-    for (const n of [HOLE.nearFrom, HOLE.nearTo, HOLE.floorFrom, HOLE.floorTo, HOLE.upFrom, HOLE.upTo, HOLE.band]) expect(holeGlsl()).toContain(Number.isInteger(n) ? n.toFixed(1) : String(n))
+    for (const n of [HOLE.nearFrom, HOLE.nearTo, HOLE.floorFrom, HOLE.floorTo, HOLE.upFrom, HOLE.upTo, HOLE.band, HOLE.lowFrom, HOLE.lowTo, HOLE.gFrom, HOLE.gTo, HOLE.chest]) expect(holeGlsl()).toContain(Number.isInteger(n) ? n.toFixed(1) : String(n))
     expect(holeGlsl().slice(holeGlsl().indexOf('dFdx(P)')).match(/return/g)?.length).toBe(1) // (the derivatives are taken in uniform control flow: no return between them and the end but the last)
     expect(holeGlsl()).toContain('P.xy / -P.z') // a circle on the screen, not in the world
     expect(holeGlsl()).toContain('uRad / -uCtr.z') // the radius shrinks with the distance
+    expect(holeGlsl()).toContain('P * (uCtr.z / P.z)') // the pixel ray at the player's depth: what the below-the-feet rule measures
+    expect(holeGlsl()).toContain('keep = max(keep, below * (1.0 - near_ground * flatness))') // one rule for every kind, the ground ring for flat faces only
     expect(holeGlsl()).not.toMatch(/fract|noise|screenDoor|gl_FragCoord/) // no pattern: a hard edge
   })
 })
