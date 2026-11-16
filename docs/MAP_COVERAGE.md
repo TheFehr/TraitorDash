@@ -111,6 +111,7 @@ Parts of the map file and what the pipeline does with them.
 | `displacements` | drawn | Terrain (lump 26 and 33): turned into a grid of triangles (RFC 18, 4.3). |
 | `static props` | drawn | Props placed by the compiler (the `sprp` game lump) and the props of the entity lump, as the models the map carries or the game has (RFC 18, 4.4). |
 | `textures from the pak` | drawn | The map's own materials and textures, read from the pak file at the end of the map (RFC 18, 5). |
+| `door start states` | drawn | Doors, rotating doors and linear movers are drawn where they stand when the round starts: at the open end when the map starts them open (`spawnpos`, `startposition`), not drawn when that cannot be placed with confidence (RFC 35). |
 
 ### Features of the file: invisible
 
@@ -128,6 +129,8 @@ Parts of the map file and what the pipeline does with them.
 | `detail props` | not read | Grass and rubble sprites and models of the game lump (`dprp`): drawing them needs the sprite sheet and the placing rules. |
 | `visibility` | not read | The potentially-visible-set data (lump 4): an optimisation of the game's renderer, nothing to see. |
 | `fog and light entities` | not read | Fog, sun and light entities (`env_fog_controller`, `env_sun`, `light*`): the atmosphere; drawing it needs fog and a lit scene. |
+
+The `door start states` feature ([RFC 35](rfcs/RFC-035.md)): the coverage record also counts, per map, the doors, rotating doors and linear movers that start closed, start open and were placed at their open end, and start open and were left out; the coverage page shows them in the card "Where moving parts start".
 
 ## The measurement on a real map
 
