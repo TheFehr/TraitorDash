@@ -1,6 +1,6 @@
 import { expect, test, describe } from 'bun:test'
 import { createHash } from 'node:crypto'
-import { extractSurfaces, extractMapEntities, memorySource, bspFingerprint, startPose, startsOpen, type Point, type ModelBox, type ByteSource } from '../src/maps/bsp'
+import { extractSurfaces, extractMapEntities, memorySource, bspFingerprint, startPose, slidingOpenPose, startsOpen, type Point, type ModelBox, type ByteSource } from '../src/maps/bsp'
 import { asRecord } from '../src/maps/coverage'
 import { buildGeometry } from '../src/services/mapgeometry'
 import { buildBsp, flatQuads, LUMP } from './helpers/bsp_builder'
@@ -14,7 +14,7 @@ const Z: [number, number, number] = [0, 0, 0]
 /** The pool cover's box (x -697 to 505, y 1352 to 2231, z 40 to 66, around its origin -96 1791.5 53) and a box with three different sizes (100, 200, 300). */
 const COVER: ModelBox = { mins: [-697, 1352, 40], maxs: [505, 2231, 66] }
 const BOX: ModelBox = { mins: [0, 0, 0], maxs: [100, 200, 300] }
-const pose = (cls: string, e: Record<string, string>, box: ModelBox | null = BOX, angles: [number, number, number] = Z) => startPose(cls, e, O, angles, box)
+const pose = (cls: string, e: Record<string, string>, angles: [number, number, number] = Z) => startPose(cls, e, O, angles)
 const near = (a: Point, x: number, y: number, z: number) => { expect(a.x).toBeCloseTo(x, 6); expect(a.y).toBeCloseTo(y, 6); expect(a.z).toBeCloseTo(z, 6) }
 const sha = (x: string | Uint8Array) => createHash('sha256').update(x).digest('hex')
 
@@ -46,8 +46,21 @@ describe('startsOpen: spawnpos, and the first spawnflag for maps that have no sp
   })
 })
 
-describe('startPose of a func_door', () => {
-  const door = (extra: Record<string, string>, box: ModelBox | null = BOX) => pose('func_door', { spawnpos: '1', ...extra }, box)
+describe('startPose of a func_door (a sliding door): closed as stored, or left out when it starts open', () => {
+  test('a sliding door that starts open is LEFT OUT, whatever its movedir, lip and box (its open end is inside solid space the mesh does not have)', () => {
+    for (const e of [{ spawnpos: '1', movedir: '0 0 0', lip: '-8' }, { spawnpos: '1', movedir: '90 0 0' }, { spawnpos: '1' }, { spawnflags: '1', movedir: '0 90 0' }, { spawnflags: '2049', movedir: '-90 0 0', lip: '2' }] as Record<string, string>[]) {
+      expect(pose('func_door', e), JSON.stringify(e)).toEqual({ state: 'leftOut', origin: O, angles: Z })
+    }
+  })
+  test('a sliding door that starts closed keeps its pose: spawnpos 0 wins over the flag, 2048 is no open flag', () => {
+    expect(pose('func_door', { spawnflags: '2048', movedir: '0 0 0' }).state).toBe('closed')
+    expect(pose('func_door', { spawnflags: '1', spawnpos: '0', movedir: '0 0 0' }).state).toBe('closed')
+  })
+})
+
+describe('slidingOpenPose: the arithmetic of the open end of a sliding door (kept for a later use; nothing draws it)', () => {
+  const door = (extra: Record<string, string>, box: ModelBox | null = BOX) => slidingOpenPose({ spawnpos: '1', ...extra }, O, Z, box)
+  const startPose = (_c: string, e: Record<string, string>, o: Point, a: [number, number, number], box: ModelBox | null) => slidingOpenPose(e, o, a, box)
 
   test('a door that starts closed (spawnpos 0 or none) keeps the pose the map file stores, whatever its movedir', () => {
     for (const e of [{}, { spawnpos: '0' }, { spawnpos: '0', movedir: '0 0 0', lip: '-8' }, { movedir: '0 0 0' }, { spawnpos: '0', spawnflags: '1', movedir: '0 0 0' }] as Record<string, string>[]) {
@@ -102,13 +115,6 @@ describe('startPose of a func_door', () => {
     near(p.origin, 95, 6, 7); expect(p.angles).toEqual([1, 2, 3])
   })
 
-  test('spawnflags bit 1 starts it open when there is no spawnpos (older maps), and spawnpos 0 wins over it', () => {
-    near(pose('func_door', { spawnflags: '1', movedir: '0 0 0' }).origin, 200, 200, 300)
-    near(pose('func_door', { spawnflags: '2049', movedir: '0 0 0' }).origin, 200, 200, 300)
-    expect(pose('func_door', { spawnflags: '2048', movedir: '0 0 0' }).state).toBe('closed')
-    expect(pose('func_door', { spawnflags: '1', spawnpos: '0', movedir: '0 0 0' }).state).toBe('closed')
-  })
-
   test('a door that starts open and cannot be placed is left out, not drawn closed', () => {
     for (const e of [{}, { movedir: '' }, { movedir: '0 0' }, { movedir: '0 0 0 0' }, { movedir: 'a b c' }, { movedir: '0 NaN 0' }, { movedir: '0 0 Infinity' }, { movedir: 'up' }] as Record<string, string>[]) {
       const p = door(e)
@@ -155,8 +161,8 @@ describe('startPose of a func_movelinear', () => {
     near(pose('func_movelinear', { startposition: '1', movedistance: '50', movedir: '0 90 0' }).origin, 100, 250, 300) // north
     near(pose('func_movelinear', { startposition: '1', movedistance: '50', movedir: '90 0 0' }).origin, 100, 200, 250) // down
   })
-  test('the box is not needed, and a start position with no usable movedir is left out', () => {
-    expect(pose('func_movelinear', { startposition: '1', movedistance: '50', movedir: '0 0 0' }, null).state).toBe('open')
+  test('a start position with no usable movedir is left out', () => {
+    expect(pose('func_movelinear', { startposition: '1', movedistance: '50', movedir: '0 0 0' }).state).toBe('open')
     for (const movedir of [undefined, '', 'a b c', '1 2']) {
       const e: Record<string, string> = { startposition: '1', movedistance: '50' }
       if (movedir !== undefined) e['movedir'] = movedir
@@ -171,7 +177,7 @@ describe('startPose of a func_movelinear', () => {
 })
 
 describe('startPose of a func_door_rotating', () => {
-  const rot = (extra: Record<string, string>, angles: [number, number, number] = Z) => pose('func_door_rotating', { spawnpos: '1', ...extra }, BOX, angles)
+  const rot = (extra: Record<string, string>, angles: [number, number, number] = Z) => pose('func_door_rotating', { spawnpos: '1', ...extra }, angles)
 
   test('it turns by distance degrees (90 by default) about Z, the yaw, and keeps its origin', () => {
     expect(rot({})).toEqual({ state: 'open', origin: O, angles: [0, 90, 0] })
@@ -202,7 +208,7 @@ describe('startPose of a func_door_rotating', () => {
   test('a distance that is not a number, or not a turn, leaves it out; it needs neither movedir nor a box', () => {
     for (const distance of ['abc', 'NaN', 'Infinity', '99999', '-99999']) expect(rot({ distance }).state, distance).toBe('leftOut')
     expect(rot({}).state).toBe('open')
-    expect(pose('func_door_rotating', { spawnpos: '1' }, null).state).toBe('open')
+    expect(pose('func_door_rotating', { spawnpos: '1' }).state).toBe('open')
   })
 })
 
@@ -227,19 +233,16 @@ const read = async (file: Buffer) => {
 }
 const xs = (a: number[]) => a.filter((_, i) => i % 3 === 0)
 
-describe('the extractor: the pool cover pattern, with the keys as Hammer writes them', () => {
+describe('the extractor: a sliding door that starts open (the pool cover pattern, keys as Hammer writes them) is not drawn', () => {
   const cover = door('func_door', 1, '"origin" "-96 1791.5 53" "targetname" "pool cover" "spawnpos" "1" "spawnflags" "0" "movedir" "0 0 0" "lip" "-8" "speed" "120" "forceclosed" "1"')
-  const box: M = { faces: 1, mins: [-697, 1352, 40], maxs: [505, 2231, 66] }
+  const box: M = { faces: 1, mins: [-601, -439.5, -13], maxs: [601, 439.5, 13] }
 
-  test('the part lands 1 210 units east of its origin, and its triangles with it', async () => {
+  test('the pool cover is in no fixture, no movable triangle and no part; its face is counted as another model\'s; the census counts it as left out', async () => {
     const { ents, s } = await read(map([box], [cover]))
-    expect(ents.fixtureModels).toEqual([{ model: 1, x: -96 + 1210, y: 1791.5, z: 53, pitch: 0, yaw: 0, roll: 0, movable: true, class: 'func_door', name: 'pool cover' }])
-    expect(s.movableParts).toHaveLength(1)
-    expect(s.movableParts[0]).toMatchObject({ x: 1114, y: 1791.5, z: 53, name: 'pool cover' })
-    // the quad is at x 100 to 164 around the origin, so placed at 1114 + 100
-    expect(Math.min(...xs(s.movable))).toBe(Math.round(1114 + 100))
-    expect(Math.max(...xs(s.movable))).toBe(Math.round(1114 + 164))
-    expect(ents.census.startStates).toMatchObject({ closed: 0, openPlaced: 1, openLeftOut: 0, startPositioned: 0 })
+    expect(ents.fixtureModels).toEqual([])
+    expect(s.movable).toEqual([]); expect(s.movableParts).toEqual([])
+    expect(s.stats.otherModelFaces).toBe(1)
+    expect(ents.census.startStates).toMatchObject({ closed: 0, openPlaced: 0, openLeftOut: 1, startPositioned: 0, byClass: { func_door: { closed: 0, openPlaced: 0, openLeftOut: 1 } } })
   })
 
   test('the same door with spawnpos 0 is where the map file puts it, as before', async () => {
@@ -249,18 +252,20 @@ describe('the extractor: the pool cover pattern, with the keys as Hammer writes 
     expect(ents.census.startStates).toMatchObject({ closed: 1, openPlaced: 0, openLeftOut: 0 })
   })
 
-  test('keys are read in any case: SpawnPos, MoveDir, Lip, SpawnFlags', async () => {
+  test('keys are read in any case: SpawnPos and SpawnFlags open it, SpawnPos 0 closes it', async () => {
     const odd = door('func_door', 1, '"origin" "0 0 0" "SpawnPos" "1" "MoveDir" "0 90 0" "Lip" "-8" "SpawnFlags" "0"')
-    const { ents } = await read(map([box], [odd]))
-    expect(ents.fixtureModels[0]).toMatchObject({ x: 0, y: 879 + 8, z: 0 }) // north by the y size (2231 - 1352 = 879) and the lip
+    expect((await read(map([box], [odd]))).ents.fixtureModels).toEqual([])
     const flag = door('func_door', 1, '"origin" "0 0 0" "SpawnFlags" "1" "MoveDir" "0 0 0"')
-    expect((await read(map([box], [flag]))).ents.fixtureModels[0]).toMatchObject({ x: 1202 })
+    expect((await read(map([box], [flag]))).ents.fixtureModels).toEqual([])
+    const shut = door('func_door', 1, '"origin" "0 0 0" "SpawnPos" "0" "SpawnFlags" "1"')
+    expect((await read(map([box], [shut]))).ents.fixtureModels).toHaveLength(1)
   })
 
-  test('the pool\'s bathroom doors: movedir 90 0 0 sinks the door by its height', async () => {
-    const d = door('func_door', 1, '"origin" "50 60 200" "spawnpos" "1" "movedir" "90 0 0" "lip" "0" "targetname" "door 1"')
-    const { ents } = await read(map([{ faces: 1, mins: [0, 0, 144], maxs: [8, 96, 272] }], [d]))
-    expect(ents.fixtureModels[0]).toMatchObject({ x: 50, y: 60, z: 200 - 128 })
+  test('the pool\'s bathroom doors (movedir 90 0 0, down) and every other direction are left out too', async () => {
+    for (const movedir of ['90 0 0', '-90 0 0', '0 0 0', '0 180 0', '0 90 0']) {
+      const d = door('func_door', 1, `"origin" "50 60 200" "spawnpos" "1" "movedir" "${movedir}" "lip" "0" "targetname" "door 1"`)
+      expect((await read(map([{ faces: 1, mins: [0, 0, 144], maxs: [8, 96, 272] }], [d]))).ents.fixtureModels, movedir).toEqual([])
+    }
   })
 })
 
@@ -338,15 +343,14 @@ describe('the extractor: rotating doors and linear movers', () => {
   })
 })
 
-describe('the models lump is read only for a map that has a func_door', () => {
+describe('the models lump is not read any more (the open end of a sliding door is not drawn)', () => {
   const counting = (buf: Buffer): ByteSource & { reads: [number, number][] } => { const reads: [number, number][] = []; return { size: buf.length, reads, async read(o, l) { reads.push([o, l]); return buf.subarray(o, o + l) } } }
-  test('without one the reads are the header and the entity lump, as before; with one, the models lump as well', async () => {
-    const without = counting(map([{ faces: 1 }], [door('func_door_rotating', 1, '"spawnpos" "1"')]))
-    await extractMapEntities(without)
-    expect(without.reads).toHaveLength(2)
-    const withDoor = counting(map([{ faces: 1 }], [door('func_door', 1, '"spawnpos" "0"')]))
-    await extractMapEntities(withDoor)
-    expect(withDoor.reads).toHaveLength(3)
+  test('the reads are the header and the entity lump, with or without a func_door', async () => {
+    for (const e of [door('func_door_rotating', 1, '"spawnpos" "1"'), door('func_door', 1, '"spawnpos" "1" "movedir" "0 0 0"')]) {
+      const src = counting(map([{ faces: 1 }], [e]))
+      await extractMapEntities(src)
+      expect(src.reads).toHaveLength(2)
+    }
   })
 })
 
@@ -368,15 +372,17 @@ describe('a map with no part that starts open is the bytes it was', () => {
     expect((await extractMapEntities(memorySource(b))).fixtureModels).toEqual((await extractMapEntities(memorySource(a))).fixtureModels)
   })
 
-  test('an open door is a different mesh from a closed one, and a left-out door has no part at all', async () => {
-    const glb = async (extra: string) => {
-      const f = map([{ faces: 1, maxs: [10, 10, 10] }], [door('func_door', 1, `"origin" "5 5 5" ${extra}`)])
+  test('an open sliding door is no part at all, as a left-out one; a rotating open door is a different mesh from a closed one', async () => {
+    const glb = async (cls: string, extra: string) => {
+      const f = map([{ faces: 1, maxs: [10, 10, 10] }], [door(cls, 1, `"origin" "5 5 5" ${extra}`)])
       const r = await buildGeometry(memorySource(f), 'm', bspFingerprint(f.subarray(0, 1036), f.length)); if (!r.ok) throw new Error(r.error); return r
     }
-    const closed = await glb(''), open = await glb('"spawnpos" "1" "movedir" "0 0 0"'), gone = await glb('"spawnpos" "1"')
-    expect(sha(closed.glb)).not.toBe(sha(open.glb))
-    expect(closed.info.movable).toBe(2); expect(open.info.movable).toBe(2); expect(gone.info.movable).toBe(0)
-    expect(gone.info.coverage!.startStates).toMatchObject({ openLeftOut: 1 })
+    const closed = await glb('func_door', ''), open = await glb('func_door', '"spawnpos" "1" "movedir" "0 0 0"'), gone = await glb('func_door', '"spawnpos" "1"')
+    expect(closed.info.movable).toBe(2); expect(open.info.movable).toBe(0); expect(gone.info.movable).toBe(0)
+    expect(open.info.coverage!.startStates).toMatchObject({ openLeftOut: 1, openPlaced: 0 })
+    const rotClosed = await glb('func_door_rotating', ''), rotOpen = await glb('func_door_rotating', '"spawnpos" "1"')
+    expect(sha(rotClosed.glb)).not.toBe(sha(rotOpen.glb))
+    expect(rotOpen.info.movable).toBe(2)
   })
 })
 
@@ -388,11 +394,11 @@ describe('the record carries the counts, and an old record loads', () => {
     if (!r.ok) throw new Error(r.error)
     return r.info.coverage!
   }
-  test('closed, open placed, open left out, and the linear movers with a start position, by class and in all', async () => {
+  test('closed, open placed (a rotating door, a linear mover), open left out (the sliding doors), and the linear movers with a start position, by class and in all', async () => {
     const r = await rec()
     expect(r.startStates).toEqual({
-      closed: 2, openPlaced: 3, openLeftOut: 1, startPositioned: 1,
-      byClass: { func_door: { closed: 1, openPlaced: 1, openLeftOut: 1 }, func_door_rotating: { closed: 0, openPlaced: 1, openLeftOut: 0 }, func_movelinear: { closed: 1, openPlaced: 1, openLeftOut: 0 } },
+      closed: 2, openPlaced: 2, openLeftOut: 2, startPositioned: 1,
+      byClass: { func_door: { closed: 1, openPlaced: 0, openLeftOut: 2 }, func_door_rotating: { closed: 0, openPlaced: 1, openLeftOut: 0 }, func_movelinear: { closed: 1, openPlaced: 1, openLeftOut: 0 } },
     })
   })
   test('it survives the JSON the store keeps, and a record from before RFC 35 (none) loads without it', async () => {

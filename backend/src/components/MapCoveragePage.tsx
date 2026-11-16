@@ -132,17 +132,17 @@ export const MapCoveragePage = ({ ctx, server, report }: MapCoveragePageProps) =
               <>
                 <div class="scrollx">
                   <table class="log" data-start-totals>
-                    <tr><th>Doors, rotating doors and linear movers</th><th class="r">Start closed</th><th class="r">Start open, placed</th><th class="r">Start open, left out</th></tr>
+                    <tr><th>Doors, rotating doors and linear movers</th><th class="r">Start closed</th><th class="r">Start open, drawn</th><th class="r">Start open, not drawn</th></tr>
                     {Object.entries(report.starts.byClass).sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([cls, c]) => (
                       <tr data-start-class={cls}><td>{cls}</td><td class="r">{n(c.closed)}</td><td class="r">{n(c.openPlaced)}</td><td class="r">{n(c.openLeftOut)}</td></tr>
                     ))}
                     <tr data-start-all><td><b>All</b></td><td class="r">{n(report.starts.totals.closed)}</td><td class="r">{n(report.starts.totals.openPlaced)}</td><td class="r">{n(report.starts.totals.openLeftOut)}</td></tr>
                   </table>
                 </div>
-                <p class="foot dark">Over the {report.starts.withData} {report.starts.withData === 1 ? 'map' : 'maps'} whose record has them (RFC 35). A part that starts open is drawn at its open end; one that cannot be placed with confidence is not drawn. A linear mover counts as open when its start position is above 0 ({n(report.starts.totals.startPositioned)} so far). Hidden and parented parts are not counted.</p>
+                <p class="foot dark">Over the {report.starts.withData} {report.starts.withData === 1 ? 'map' : 'maps'} whose record has them (RFC 35). A rotating door that starts open is drawn at its open angle and a linear mover at its start position; a sliding door that starts open, and a part that cannot be placed with confidence, are not drawn (left out). A linear mover counts as open when its start position is above 0 ({n(report.starts.totals.startPositioned)} so far). Hidden and parented parts are not counted.</p>
                 <div class="scrollx">
                   <table class="log" data-start-rows>
-                    <tr><th>Map</th><th class="r">Closed</th><th class="r">Open, placed</th><th class="r">Open, left out</th></tr>
+                    <tr><th>Map</th><th class="r">Closed</th><th class="r">Open, drawn</th><th class="r">Open, not drawn</th></tr>
                     {report.starts.rows.map(r => (
                       <tr data-start-row={r.map}><td><a href={mapHref(r.map)}>{r.map}</a></td><td class="r">{n(r.closed)}</td><td class="r">{n(r.openPlaced)}</td><td class="r">{n(r.openLeftOut)}</td></tr>
                     ))}

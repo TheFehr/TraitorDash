@@ -76,7 +76,7 @@ const FEATURES: [string, RegistryStatus, string][] = [
   ['displacements', 'drawn', 'Terrain (lump 26 and 33): turned into a grid of triangles (RFC 18, 4.3).'],
   ['static props', 'drawn', 'Props placed by the compiler (the `sprp` game lump) and the props of the entity lump, as the models the map carries or the game has (RFC 18, 4.4).'],
   ['textures from the pak', 'drawn', 'The map\'s own materials and textures, read from the pak file at the end of the map (RFC 18, 5).'],
-  ['door start states', 'drawn', 'Doors, rotating doors and linear movers are drawn where they stand when the round starts: at the open end when the map starts them open (`spawnpos`, `startposition`), not drawn when that cannot be placed with confidence (RFC 35).'],
+  ['door start states', 'drawn', 'Doors, rotating doors and linear movers are drawn where they stand when the round starts: a rotating door that starts open at its open angle, a linear mover at its `startposition`; a sliding door that starts open is not drawn (its open end is inside solid space the mesh does not have), nor is a part that cannot be placed with confidence (RFC 35).'],
   ['lighting', 'not read', 'The lightmaps (lump 8, HDR lump 53): drawing them needs the lightmap atlas and every face\'s coordinates in it.'],
   ['overlays', 'not read', 'Decals the mapper put on surfaces (lump 45, `info_overlay`): drawing them needs a quad on the surface for each.'],
   ['cubemaps', 'not read', 'Environment cube maps for reflections (lump 42): only matter with reflective materials, which are not modelled.'],

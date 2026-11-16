@@ -611,9 +611,9 @@ const MAX_TURN = 3_600
 export interface ModelBox { mins: [number, number, number], maxs: [number, number, number] }
 
 /**
- * What a part's start state came to (RFC 35, 4): `closed` is the pose the map file stores, drawn as before; `open` is the part at its open end (a door
- * that starts open, a linear mover with `startposition` above 0) and is drawn there; `leftOut` is a part that starts open and cannot be placed with confidence,
- * which is not drawn at all. `origin` and `angles` are the pose to draw (the stored ones unless `open`).
+ * What a part's start state came to (RFC 35, 4): `closed` is the pose the map file stores, drawn as before; `open` is the part at its open end (a rotating door
+ * that starts open, a linear mover with `startposition` above 0) and is drawn there; `leftOut` is a part that starts open and is not drawn at all (a sliding door, whose open end is inside solid space the mesh does not have,
+ * or a part that cannot be placed with confidence). `origin` and `angles` are the pose to draw (the stored ones unless `open`).
  */
 export interface StartPose { state: 'closed' | 'open' | 'leftOut', origin: Point, angles: [number, number, number], /** The pose came from `startposition` above 0 (a linear mover). */ linear?: boolean }
 
@@ -650,18 +650,18 @@ export function startsOpen(entity: Record<string, string>): boolean {
 }
 
 /**
- * Where a `func_door`, `func_door_rotating` or `func_movelinear` stands when the round starts (RFC 35, 3 and 4), from its keyvalues (read in lower case), the origin and
- * angles the map file stores it at, and its model's box. Any other class, and a part that starts closed, keeps its stored pose.
- * - `func_door` that starts open: the part is moved as a whole (its faces are stored around its own origin) along `movedir` (angles, turned into a direction through
- *   the angle matrix, as the water brush's) by `|dx * sizeX| + |dy * sizeY| + |dz * sizeZ| - lip`, the size being the model's box: the part travels its own extent
- *   less the lip, which may be negative.
+ * Where a `func_door`, `func_door_rotating` or `func_movelinear` stands when the round starts (RFC 35, 3 and 4), from its keyvalues (read in lower case) and the origin and
+ * angles the map file stores it at. Any other class, and a part that starts closed, keeps its stored pose.
+ * - `func_door` (a sliding door) that starts open is **left out**: its open end lies inside solid space (a wall, a floor, a frame) that the mesh, a shell of faces, does not
+ *   have, so drawn there it floats as a slab in empty space (the pool cover of `ttt_community_pool`, the gates of `ttt_67thway_rework_b1`; RFC 35, 10). `slidingOpenPose`
+ *   has the arithmetic of its open end; nothing draws it.
  * - `func_door_rotating` that starts open: the entity's angles plus `distance` degrees (90 by default) about the axis of the spawnflags, 64 the X axis (roll), 128 the Y axis
- *   (pitch), else Z (yaw), the turn reversed by bit 2: Source adds it to the angles component by component, and the faces are drawn through the same angles.
- * - `func_movelinear`: moved along `movedir` by `startposition` (0 to 1) times `movedistance` (0 to 16384), as the water brush is.
- * A part that starts open and cannot be placed with confidence (no `movedir` or one that is not three numbers, no box, a `lip`, `distance` or travel that is not a sane
- * number) is `leftOut`: the caller does not draw it.
+ *   (pitch), else Z (yaw), the turn reversed by bit 2: Source adds it to the angles component by component, and the faces are drawn through the same angles. A `distance`
+ *   that is not a sane number leaves it out.
+ * - `func_movelinear`: moved along `movedir` by `startposition` (0 to 1) times `movedistance` (0 to 16384), as the water brush is; a start position above 0 with no usable `movedir` leaves it out.
+ * `leftOut` means the caller does not draw the part.
  */
-export function startPose(cls: string, entity: Record<string, string>, origin: Point, angles: [number, number, number], box: ModelBox | null): StartPose {
+export function startPose(cls: string, entity: Record<string, string>, origin: Point, angles: [number, number, number]): StartPose {
   const closed: StartPose = { state: 'closed', origin, angles }
   const leftOut: StartPose = { state: 'leftOut', origin, angles }
   if (cls === 'func_movelinear') {
@@ -673,18 +673,25 @@ export function startPose(cls: string, entity: Record<string, string>, origin: P
   }
   if (cls !== 'func_door' && cls !== 'func_door_rotating') return closed
   if (!startsOpen(entity)) return closed
+  if (cls === 'func_door') return leftOut
 
-  if (cls === 'func_door_rotating') {
-    const raw = entity['distance']
-    const distance = raw === undefined || raw.trim() === '' ? 90 : finiteOf(raw)
-    if (distance === null || Math.abs(distance) > MAX_TURN) return leftOut
-    const flags = wholeOf(entity['spawnflags']) ?? 0
-    const axis = (flags & 64) !== 0 ? 2 : (flags & 128) !== 0 ? 0 : 1 // roll turns about X, pitch about Y, yaw about Z
-    const turned: [number, number, number] = [angles[0], angles[1], angles[2]]
-    turned[axis] += ((flags & 2) !== 0 ? -1 : 1) * distance
-    return { state: 'open', origin, angles: turned }
-  }
+  const raw = entity['distance']
+  const distance = raw === undefined || raw.trim() === '' ? 90 : finiteOf(raw)
+  if (distance === null || Math.abs(distance) > MAX_TURN) return leftOut
+  const flags = wholeOf(entity['spawnflags']) ?? 0
+  const axis = (flags & 64) !== 0 ? 2 : (flags & 128) !== 0 ? 0 : 1 // roll turns about X, pitch about Y, yaw about Z
+  const turned: [number, number, number] = [angles[0], angles[1], angles[2]]
+  turned[axis] += ((flags & 2) !== 0 ? -1 : 1) * distance
+  return { state: 'open', origin, angles: turned }
+}
 
+/**
+ * The open end of a sliding `func_door` (not used by the drawing, see `startPose`): the origin moved along `movedir` (angles, through the angle matrix) by
+ * `|dx * sizeX| + |dy * sizeY| + |dz * sizeZ| - lip`, the size being the model's box (maxs - mins from the models lump). `leftOut` for a `movedir`, `lip`, box or travel
+ * that is not a sane number. Measured on the pool cover: 1 210 units east (the engine, which takes 2 off each size, 1 208).
+ */
+export function slidingOpenPose(entity: Record<string, string>, origin: Point, angles: [number, number, number], box: ModelBox | null): StartPose {
+  const leftOut: StartPose = { state: 'leftOut', origin, angles }
   const dir = vectorOf(entity['movedir'])
   if (!dir || !box) return leftOut
   const lipRaw = entity['lip']
@@ -699,20 +706,6 @@ export function startPose(cls: string, entity: Record<string, string>, origin: P
   // the direction of an axis-aligned movedir has float dust (the cosine of 90 degrees is 6e-17): rounded to a millionth of a unit
   const at = (o: number, k: number) => Math.round((o + d[k]! * travel) * 1e6) / 1e6
   return { state: 'open', origin: { x: at(origin.x, 0), y: at(origin.y, 1), z: at(origin.z, 2) }, angles }
-}
-
-/** The models lump's boxes, a model `*N` at a time, or null if the lump cannot be read (then no part that starts open has a box and such parts are left out). */
-async function readModelBoxes(src: ByteSource, lump: Lump): Promise<((n: number) => ModelBox | null) | null> {
-  if (lump.compressed || lump.length === 0 || lump.length % RECORD.MODELS !== 0 || lump.length > 16 * 1024 * 1024) return null
-  const bytes = await src.read(lump.offset, lump.length)
-  if (bytes.length !== lump.length) return null
-  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  const count = lump.length / RECORD.MODELS
-  return n => {
-    if (!Number.isInteger(n) || n < 0 || n >= count) return null
-    const f = (i: number) => dv.getFloat32(n * RECORD.MODELS + i * 4, true)
-    return { mins: [f(0), f(1), f(2)], maxs: [f(3), f(4), f(5)] }
-  }
 }
 
 /**
@@ -733,8 +726,6 @@ export async function extractMapEntities(src: ByteSource, limits: SpawnLimits = 
   const bytes = await src.read(lump.offset, lump.length)
   if (bytes.length !== lump.length) throw new BspError('short read of the entity lump')
   const text = Buffer.from(bytes).toString('latin1')
-  // The models lump is read only for a map that has a `func_door` (its open end needs the model's size, RFC 35), so a map without one is read as before.
-  const boxOf = text.includes('"func_door"') ? await readModelBoxes(src, header.lumps[L.MODELS]!) : null
 
   let entity: Record<string, string> | null = null
   let key: string | null = null
@@ -763,7 +754,7 @@ export async function extractMapEntities(src: ByteSource, limits: SpawnLimits = 
         // Where a door or a linear mover stands when the round starts (RFC 35); one that starts open and cannot be placed is left out, like a hidden one.
         let drawn = true
         if (START_STATE_CLASSES.test(cls)) {
-          const pose = startPose(cls, entity, o, a, boxOf ? boxOf(Number(entity['model']!.slice(1))) : null)
+          const pose = startPose(cls, entity, o, a)
           const states = census.startStates!, row = (states.byClass[cls] ??= { closed: 0, openPlaced: 0, openLeftOut: 0 })
           if (pose.state === 'closed') { states.closed++; row.closed++ }
           else if (pose.state === 'open') { states.openPlaced++; row.openPlaced++; if (pose.linear) states.startPositioned++ }

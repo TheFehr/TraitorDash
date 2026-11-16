@@ -76,7 +76,7 @@ afterAll(() => { delete process.env.OPEN_SIGNIN; delete process.env.MAP_GEOMETRY
 
 describe('the records of the constructed maps', () => {
   test('each has its counts (the page is made of these)', () => {
-    expect(records['ttt_s35_a']!.startStates).toMatchObject({ closed: 1, openPlaced: 2, openLeftOut: 1 })
+    expect(records['ttt_s35_a']!.startStates).toMatchObject({ closed: 1, openPlaced: 0, openLeftOut: 3 })
     expect(records['ttt_s35_b']!.startStates).toMatchObject({ closed: 1, openPlaced: 2, openLeftOut: 0, startPositioned: 1 })
     expect(records['ttt_s35_c']!.startStates).toMatchObject({ closed: 2, openPlaced: 0, openLeftOut: 0 })
     expect(records['ttt_s35_d']!.startStates).toMatchObject({ closed: 0, openPlaced: 0, openLeftOut: 2 })
@@ -89,14 +89,14 @@ describe('the sums (pure)', () => {
   test('the totals are the sums over the maps that have the counts; a record without them and a map without a record are left out', () => {
     const s = summarise(inputs()).starts
     expect(s.withData).toBe(4)
-    expect(s.totals).toEqual({ closed: 4, openPlaced: 4, openLeftOut: 3, startPositioned: 1 })
+    expect(s.totals).toEqual({ closed: 4, openPlaced: 2, openLeftOut: 5, startPositioned: 1 })
     expect(s.byClass).toEqual({
-      func_door: { closed: 4, openPlaced: 2, openLeftOut: 3 }, func_door_rotating: { closed: 0, openPlaced: 1, openLeftOut: 0 }, func_movelinear: { closed: 0, openPlaced: 1, openLeftOut: 0 },
+      func_door: { closed: 4, openPlaced: 0, openLeftOut: 5 }, func_door_rotating: { closed: 0, openPlaced: 1, openLeftOut: 0 }, func_movelinear: { closed: 0, openPlaced: 1, openLeftOut: 0 },
     })
   })
   test('the maps are ranked by parts that moved or were left out, then by those left out, then by name', () => {
     const s = summarise(inputs()).starts
-    // a: 3 (1 left out); d: 2 (2 left out); b: 2 (0 left out); c: 0
+    // a: 3 (3 left out); d: 2 (2 left out); b: 2 (0 left out); c: 0
     expect(s.rows.map(r => r.map)).toEqual(['ttt_s35_a', 'ttt_s35_d', 'ttt_s35_b', 'ttt_s35_c'])
     expect(summarise(inputs().reverse()).starts.rows.map(r => r.map)).toEqual(['ttt_s35_a', 'ttt_s35_d', 'ttt_s35_b', 'ttt_s35_c'])
   })
@@ -115,8 +115,8 @@ describe('the card', () => {
     const gaps = html.indexOf('data-coverage-gaps'), card = html.indexOf('data-coverage-starts'), maps = html.indexOf('data-coverage-maps')
     expect(gaps).toBeGreaterThan(-1); expect(card).toBeGreaterThan(gaps); expect(maps).toBeGreaterThan(card)
     expect(html).toContain('<h2 class="ft">Where moving parts start</h2>')
-    expect(cells(html, 'data-start-all')).toEqual(['All', '4', '4', '3'])
-    expect(cells(html, 'data-start-class="func_door"')).toEqual(['func_door', '4', '2', '3'])
+    expect(cells(html, 'data-start-all')).toEqual(['All', '4', '2', '5'])
+    expect(cells(html, 'data-start-class="func_door"')).toEqual(['func_door', '4', '0', '5'])
     expect(cells(html, 'data-start-class="func_door_rotating"')).toEqual(['func_door_rotating', '0', '1', '0'])
     expect(cells(html, 'data-start-class="func_movelinear"')).toEqual(['func_movelinear', '0', '1', '0'])
     expect(html).toMatch(/Over the 4 maps whose record has them/)
@@ -125,7 +125,7 @@ describe('the card', () => {
     const html = await page()
     const card = /data-coverage-starts.*?data-coverage-maps/s.exec(html)![0]
     expect([...card.matchAll(/<tr data-start-row="([^"]+)"/g)].map(m => m[1])).toEqual(['ttt_s35_a', 'ttt_s35_d', 'ttt_s35_b', 'ttt_s35_c'])
-    expect(cells(html, 'data-start-row="ttt_s35_a"')).toEqual(['ttt_s35_a', '1', '2', '1'])
+    expect(cells(html, 'data-start-row="ttt_s35_a"')).toEqual(['ttt_s35_a', '1', '0', '3'])
     expect(cells(html, 'data-start-row="ttt_s35_d"')).toEqual(['ttt_s35_d', '0', '0', '2'])
     expect(html).toContain(`<a href="/servers/${serverId}/maps/ttt_s35_a">ttt_s35_a</a>`)
     expect(card).not.toContain('ttt_s35_old')
