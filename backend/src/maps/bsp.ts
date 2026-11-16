@@ -546,7 +546,9 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
  * What the entity lump holds, for the coverage record (RFC 32): the brush entities (the class and the model `*N` it owns) and how many entities there are of each other class.
  * Names are as the file has them, cut to 64 characters, and not safe to show: `coverageRecord` cleans them. At most `MAX_CENSUS_CLASSES` different classes are kept, the rest are counted in `pointsOther`.
  */
-export interface EntityCensus { brush: { class: string, model: number, /** It has a parent entity, which moves it: the extractor does not draw such an entity, whatever its class. */ parented: boolean }[], points: Map<string, number>, pointsOther: number }
+export interface EntityCensus { brush: { class: string, model: number, /** It has a parent entity, which moves it: the extractor does not draw such an entity, whatever its class. */ parented: boolean }[], points: Map<string, number>, pointsOther: number
+  /** Where the doors, rotating doors and linear movers that are drawn start (RFC 35, 5); counted by `extractMapEntities`. */
+  startStates?: StartStates }
 const MAX_CENSUS_CLASSES = 5000
 
 export interface Spawn { class: string, x: number, y: number, z: number }
@@ -598,6 +600,121 @@ export function waterOrigin(entity: Record<string, string>, origin: Point): Poin
   return { x: origin.x + m[0]! * by, y: origin.y + m[3]! * by, z: origin.z + m[6]! * by }
 }
 
+// ---- where a moving part starts (RFC 35) ------------------------------------------------------------
+
+/** The classes whose start state is read (RFC 35, 3): the ones a map builds its traps from. */
+export const START_STATE_CLASSES = /^(func_door|func_door_rotating|func_movelinear)$/
+const MAX_TRAVEL = 16_384
+const MAX_TURN = 3_600
+
+/** A model's box in the models lump (`mins` and `maxs`, the file's own numbers). */
+export interface ModelBox { mins: [number, number, number], maxs: [number, number, number] }
+
+/**
+ * What a part's start state came to (RFC 35, 4): `closed` is the pose the map file stores, drawn as before; `open` is the part at its open end (a door
+ * that starts open, a linear mover with `startposition` above 0) and is drawn there; `leftOut` is a part that starts open and cannot be placed with confidence,
+ * which is not drawn at all. `origin` and `angles` are the pose to draw (the stored ones unless `open`).
+ */
+export interface StartPose { state: 'closed' | 'open' | 'leftOut', origin: Point, angles: [number, number, number], /** The pose came from `startposition` above 0 (a linear mover). */ linear?: boolean }
+
+/** Counts of the start states of the doors, rotating doors and linear movers that are drawn, for the coverage record (RFC 35, 5). Counting only. */
+export interface StartStates {
+  closed: number, openPlaced: number, openLeftOut: number,
+  /** Of the placed ones, those of a `func_movelinear` that came from `startposition` above 0. */
+  startPositioned: number,
+  byClass: Record<string, { closed: number, openPlaced: number, openLeftOut: number }>
+}
+export const emptyStartStates = (): StartStates => ({ closed: 0, openPlaced: 0, openLeftOut: 0, startPositioned: 0, byClass: {} })
+
+/** Three whitespace-separated finite numbers (an angle or a size), or null for anything else, a missing value included. */
+function vectorOf(v: string | undefined): [number, number, number] | null {
+  if (v === undefined) return null
+  const parts = v.trim().split(/\s+/)
+  if (parts.length !== 3) return null
+  const n = parts.map(p => (p === '' ? NaN : Number(p)))
+  return n.every(Number.isFinite) ? n as [number, number, number] : null
+}
+
+/** A whole-number keyvalue (a spawnflags word), or null. */
+const wholeOf = (v: string | undefined): number | null => { const n = finiteOf(v); return n !== null && Number.isInteger(n) ? n : null }
+
+/**
+ * Does a door start open (RFC 35, 3)? `spawnpos` says (0 closed, 1 open) when the map has one; a map without it (older ones) says so with the first bit of
+ * `spawnflags`. Both are read as numbers; a `spawnpos` that is not a number is as good as none. Anything else is closed, the default.
+ */
+export function startsOpen(entity: Record<string, string>): boolean {
+  const pos = finiteOf(entity['spawnpos'])
+  if (pos !== null) return pos === 1
+  const flags = wholeOf(entity['spawnflags'])
+  return flags !== null && flags >= 0 && (flags & 1) === 1
+}
+
+/**
+ * Where a `func_door`, `func_door_rotating` or `func_movelinear` stands when the round starts (RFC 35, 3 and 4), from its keyvalues (read in lower case), the origin and
+ * angles the map file stores it at, and its model's box. Any other class, and a part that starts closed, keeps its stored pose.
+ * - `func_door` that starts open: the part is moved as a whole (its faces are stored around its own origin) along `movedir` (angles, turned into a direction through
+ *   the angle matrix, as the water brush's) by `|dx * sizeX| + |dy * sizeY| + |dz * sizeZ| - lip`, the size being the model's box: the part travels its own extent
+ *   less the lip, which may be negative.
+ * - `func_door_rotating` that starts open: the entity's angles plus `distance` degrees (90 by default) about the axis of the spawnflags, 64 the X axis (roll), 128 the Y axis
+ *   (pitch), else Z (yaw), the turn reversed by bit 2: Source adds it to the angles component by component, and the faces are drawn through the same angles.
+ * - `func_movelinear`: moved along `movedir` by `startposition` (0 to 1) times `movedistance` (0 to 16384), as the water brush is.
+ * A part that starts open and cannot be placed with confidence (no `movedir` or one that is not three numbers, no box, a `lip`, `distance` or travel that is not a sane
+ * number) is `leftOut`: the caller does not draw it.
+ */
+export function startPose(cls: string, entity: Record<string, string>, origin: Point, angles: [number, number, number], box: ModelBox | null): StartPose {
+  const closed: StartPose = { state: 'closed', origin, angles }
+  const leftOut: StartPose = { state: 'leftOut', origin, angles }
+  if (cls === 'func_movelinear') {
+    const start = Math.min(1, Math.max(0, finiteOf(entity['startposition']) ?? 0))
+    if (!(start > 0)) return closed
+    if (!vectorOf(entity['movedir'])) return leftOut
+    const moved = waterOrigin(entity, origin)
+    return { state: 'open', origin: { x: Math.round(moved.x * 1e6) / 1e6, y: Math.round(moved.y * 1e6) / 1e6, z: Math.round(moved.z * 1e6) / 1e6 }, angles, linear: true }
+  }
+  if (cls !== 'func_door' && cls !== 'func_door_rotating') return closed
+  if (!startsOpen(entity)) return closed
+
+  if (cls === 'func_door_rotating') {
+    const raw = entity['distance']
+    const distance = raw === undefined || raw.trim() === '' ? 90 : finiteOf(raw)
+    if (distance === null || Math.abs(distance) > MAX_TURN) return leftOut
+    const flags = wholeOf(entity['spawnflags']) ?? 0
+    const axis = (flags & 64) !== 0 ? 2 : (flags & 128) !== 0 ? 0 : 1 // roll turns about X, pitch about Y, yaw about Z
+    const turned: [number, number, number] = [angles[0], angles[1], angles[2]]
+    turned[axis] += ((flags & 2) !== 0 ? -1 : 1) * distance
+    return { state: 'open', origin, angles: turned }
+  }
+
+  const dir = vectorOf(entity['movedir'])
+  if (!dir || !box) return leftOut
+  const lipRaw = entity['lip']
+  const lip = lipRaw === undefined || lipRaw.trim() === '' ? 0 : finiteOf(lipRaw)
+  if (lip === null || Math.abs(lip) > MAX_TRAVEL) return leftOut
+  const m = angleMatrix(dir[0], dir[1], dir[2])
+  const d = [m[0]!, m[3]!, m[6]!] // the forward vector: where movedir points
+  const size = [0, 1, 2].map(i => box.maxs[i]! - box.mins[i]!)
+  if (!size.every(n => Number.isFinite(n) && n >= 0 && n <= 2 * MAX_COORD)) return leftOut
+  const travel = Math.abs(d[0]! * size[0]!) + Math.abs(d[1]! * size[1]!) + Math.abs(d[2]! * size[2]!) - lip
+  if (!(travel >= 0 && travel <= MAX_TRAVEL)) return leftOut
+  // the direction of an axis-aligned movedir has float dust (the cosine of 90 degrees is 6e-17): rounded to a millionth of a unit
+  const at = (o: number, k: number) => Math.round((o + d[k]! * travel) * 1e6) / 1e6
+  return { state: 'open', origin: { x: at(origin.x, 0), y: at(origin.y, 1), z: at(origin.z, 2) }, angles }
+}
+
+/** The models lump's boxes, a model `*N` at a time, or null if the lump cannot be read (then no part that starts open has a box and such parts are left out). */
+async function readModelBoxes(src: ByteSource, lump: Lump): Promise<((n: number) => ModelBox | null) | null> {
+  if (lump.compressed || lump.length === 0 || lump.length % RECORD.MODELS !== 0 || lump.length > 16 * 1024 * 1024) return null
+  const bytes = await src.read(lump.offset, lump.length)
+  if (bytes.length !== lump.length) return null
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  const count = lump.length / RECORD.MODELS
+  return n => {
+    if (!Number.isInteger(n) || n < 0 || n >= count) return null
+    const f = (i: number) => dv.getFloat32(n * RECORD.MODELS + i * 4, true)
+    return { mins: [f(0), f(1), f(2)], maxs: [f(3), f(4), f(5)] }
+  }
+}
+
 /**
  * Where players start (the `info_player_*` entities) and where the 3D skybox camera is (`sky_camera`,
  * which sits inside the skybox section, far from the map), from the entity lump: a few tens of KB
@@ -611,11 +728,13 @@ export async function extractMapEntities(src: ByteSource, limits: SpawnLimits = 
   if (lump.compressed) throw new BspError('the entity lump is compressed, which is not supported')
   if (lump.length > maxBytes) throw new BspError(`the entity lump is ${lump.length} bytes, over the limit of ${maxBytes}`)
   const spawns: Spawn[] = [], skyCameras: Point[] = [], fixtureModels: Fixture[] = [], entityProps: Placement[] = []
-  const census: EntityCensus = { brush: [], points: new Map(), pointsOther: 0 }
+  const census: EntityCensus = { brush: [], points: new Map(), pointsOther: 0, startStates: emptyStartStates() }
   if (lump.length === 0) return { spawns, skyCameras, fixtureModels, entityProps, census }
   const bytes = await src.read(lump.offset, lump.length)
   if (bytes.length !== lump.length) throw new BspError('short read of the entity lump')
   const text = Buffer.from(bytes).toString('latin1')
+  // The models lump is read only for a map that has a `func_door` (its open end needs the model's size, RFC 35), so a map without one is read as before.
+  const boxOf = text.includes('"func_door"') ? await readModelBoxes(src, header.lumps[L.MODELS]!) : null
 
   let entity: Record<string, string> | null = null
   let key: string | null = null
@@ -639,9 +758,19 @@ export async function extractMapEntities(src: ByteSource, limits: SpawnLimits = 
       const water = !!cls && WATER_CLASSES.test(cls), decoration = !!cls && DECORATION_CLASSES.test(cls)
       if (entity && cls && (FIXTURE_CLASSES.test(cls) || MOVABLE_CLASSES.test(cls) || water || decoration) && /^\*\d{1,5}$/.test(entity['model'] ?? '') && !entity['parentname'] && !hiddenAtStart(entity)) {
         const o = originOf(entity!) ?? { x: 0, y: 0, z: 0 }
-        const a = anglesOf(entity!)
-        const at = water ? waterOrigin(entity!, o) : o
-        fixtureModels.push({ model: Number(entity['model']!.slice(1)), ...at, pitch: a[0], yaw: a[1], roll: a[2], ...(MOVABLE_CLASSES.test(cls) ? { movable: true, class: cls, ...(entity['targetname'] ? { name: entity['targetname'].slice(0, 80) } : {}) } : {}), ...(water ? { water: true } : {}), ...(decoration ? { decoration: true } : {}) })
+        let a = anglesOf(entity!)
+        let at = water ? waterOrigin(entity!, o) : o
+        // Where a door or a linear mover stands when the round starts (RFC 35); one that starts open and cannot be placed is left out, like a hidden one.
+        let drawn = true
+        if (START_STATE_CLASSES.test(cls)) {
+          const pose = startPose(cls, entity, o, a, boxOf ? boxOf(Number(entity['model']!.slice(1))) : null)
+          const states = census.startStates!, row = (states.byClass[cls] ??= { closed: 0, openPlaced: 0, openLeftOut: 0 })
+          if (pose.state === 'closed') { states.closed++; row.closed++ }
+          else if (pose.state === 'open') { states.openPlaced++; row.openPlaced++; if (pose.linear) states.startPositioned++ }
+          else { states.openLeftOut++; row.openLeftOut++; drawn = false }
+          at = pose.origin; a = pose.angles
+        }
+        if (drawn) fixtureModels.push({ model: Number(entity['model']!.slice(1)), ...at, pitch: a[0], yaw: a[1], roll: a[2], ...(MOVABLE_CLASSES.test(cls) ? { movable: true, class: cls, ...(entity['targetname'] ? { name: entity['targetname'].slice(0, 80) } : {}) } : {}), ...(water ? { water: true } : {}), ...(decoration ? { decoration: true } : {}) })
       }
       const at = entity && cls ? originOf(entity) : null
       if (cls && at) {

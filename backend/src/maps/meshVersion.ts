@@ -14,10 +14,11 @@
  * 13 (14 with the game's own models): the map's coverage record is stored with the mesh (RFC 32): what the map holds that the pipeline draws, ignores on purpose or misses. The mesh itself is unchanged; the number goes up so that every stored mesh is rebuilt once and gets a record.
  * 14 (15 with the game's own models): the missing map elements of RFC 33: buttons, tank trains, breakable and reflective glass, screens and belts are drawn, the water brush is water, `func_illusionary` is a decoration group of its own, and a brush entity that is hidden at the start (`startdisabled`, `rendermode 10`) is not drawn.
  * 15 (16 with the game's own models): entity keys are read in lower case, so a brush entity that the map hides at the start (`StartDisabled 1`, `RenderMode 10`) is no longer drawn (RFC 33, 9a): the lava trap of `ttt_minecraft_b7_summer` was drawn over its floor.
+ * 16 (17 with the game's own models): doors and lifts at their round-start position (RFC 35): a `func_door` or `func_door_rotating` that starts open (`spawnpos 1`, or the first spawnflag) and a `func_movelinear` with a `startposition` above 0 are drawn at their open end, and one that starts open and cannot be placed is not drawn; the pool cover of `ttt_community_pool` no longer lies over the water.
  * The part nodes of RFC 20 stage 1 are written by every build from now on, but are not a generation of their own: the generation is raised when the replay needs them (stage 3).
  */
-export const MESH_VERSION = 15
-export const MESH_VERSION_GAME = 16
+export const MESH_VERSION = 16
+export const MESH_VERSION_GAME = 17
 
 /** The generation a backend wants: the one with the game's own models when it has them, else the one without. */
 export const meshVersion = (withGameContent: boolean) => withGameContent ? MESH_VERSION_GAME : MESH_VERSION

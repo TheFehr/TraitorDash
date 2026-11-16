@@ -12,7 +12,7 @@ export const SURF = { SKY: 0x4, SKY2D: 0x2, WARP: 0x8, TRIGGER: 0x40, NODRAW: 0x
 
 export interface Plane { nx: number, ny: number, nz: number, dist: number }
 export interface Face { plane: number, side?: number, firstEdge: number, numEdges: number, texinfo?: number, dispinfo?: number }
-export interface Model { firstFace: number, numFaces: number }
+export interface Model { firstFace: number, numFaces: number, /** The box of the model in the models lump (RFC 35: the size of a door); zero where not given. */ mins?: [number, number, number], maxs?: [number, number, number] }
 
 export interface BspSpec {
   version?: number
@@ -74,7 +74,7 @@ const dispvert = (v: { vec: [number, number, number], dist: number, alpha?: numb
   v.vec.forEach((n, i) => b.writeFloatLE(n, i * 4)); b.writeFloatLE(v.dist, 12); b.writeFloatLE(v.alpha ?? 0, 16)
   return b
 }
-const model = (m: Model) => { const b = Buffer.alloc(48); b.writeInt32LE(m.firstFace, 40); b.writeInt32LE(m.numFaces, 44); return b }
+const model = (m: Model) => { const b = Buffer.alloc(48); ;(m.mins ?? [0, 0, 0]).forEach((n, i) => b.writeFloatLE(n, i * 4)); ;(m.maxs ?? [0, 0, 0]).forEach((n, i) => b.writeFloatLE(n, 12 + i * 4)); b.writeInt32LE(m.firstFace, 40); b.writeInt32LE(m.numFaces, 44); return b }
 
 export function buildBsp(spec: BspSpec = {}): Buffer {
   const lumps: Buffer[] = Array.from({ length: 64 }, () => Buffer.alloc(0))

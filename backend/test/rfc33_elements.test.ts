@@ -319,4 +319,6 @@ describe('a mesh with one of each new class (the bytes are pinned)', () => {
 })
 
 // Taken from the first build of this map with RFC 33 (generation 14); a change to what the writer or the extractor makes of these classes changes it on purpose.
-const PINNED = '8e12c033cb7fd8873f9e2132de8341455fcb2a360d7bdaf0cf848768d39352f2'
+// RFC 35 raised the generation to 16, which the file carries in its header: this map has no door, so the bytes are the same but for that number (checked: with the
+// numbers put back to 15 and 16 the code of RFC 35 gave '8e12c033cb7fd8873f9e2132de8341455fcb2a360d7bdaf0cf848768d39352f2' again, the hash at generation 15).
+const PINNED = 'f929825adf92185c6cf0609e7d75c22fc983a65530e6ee1e6a8e5f39a32ddadc'
