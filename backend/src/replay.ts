@@ -12,7 +12,7 @@ import { clone as cloneRig } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { startFlat } from './replayflat'
 import { offerBrowser, levelColour, paintPlain, makeCamera, makeRenderer, makeScene, mapLoader, prepareDecoration, prepareMovable, prepareProps, prepareWater, lyingPlaces, boxWithout, mergeDrawn, type Painted } from './sceneKit'
-import { holeUniforms, patchHole, updateHole, ghostFigure, ghostShown } from './followHole'
+import { holeUniforms, patchHole, updateHole, ghostFigure, ghostShown, createMask, sizeMask, renderMask, maskWanted } from './followHole'
 import {
   decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, shownLevels, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, bodyAt, thingAt, movedProps, killerDiedBefore, reviveSource, revivePose, fitLabel,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
@@ -371,6 +371,9 @@ async function start(root: HTMLElement) {
   // ---- the hole the follow camera makes (RFC 34): what is nearer than the followed player and inside a circle around them on the screen is cut
   // away, by one rule for walls, floors and props (followHole.ts); the player is drawn once more as a ghost where something still covers them
   const hole = holeUniforms()
+  // the body window is the player's silhouette (RFC 34, 9.7): an off-screen mask drawn before each picture; null when it cannot be made (then the capsule of 9.5 is the window)
+  const mask = createMask(renderer, hole)
+  let followDrawn = false // the followed player is drawn this frame (set by apply): only then is there a silhouette
   const patchHoles = (...materials: Material[]) => { for (const m of new Set(materials)) patchHole(m, hole) }
 
   // ---- the background
@@ -767,7 +770,11 @@ async function start(root: HTMLElement) {
 
   // ---- drawing
   let queued = false
-  const draw = () => { queued = false; renderer.render(scene, camera) }
+  const draw = () => {
+    queued = false
+    if (mask) renderMask(renderer, scene, camera, mask, hole, maskWanted(camera === persp ? hole.uRad.value : 0, followDrawn)) // before the picture, with its camera and this frame's poses
+    renderer.render(scene, camera)
+  }
   const render = () => { if (!queued) { queued = true; requestAnimationFrame(draw) } }
   orbit.addEventListener('change', render)
   topControls.addEventListener('change', render)
@@ -776,6 +783,7 @@ async function start(root: HTMLElement) {
     const w = canvas.clientWidth, h = canvas.clientHeight
     if (w === 0 || h === 0) return
     renderer.setSize(w, h, false)
+    if (mask) sizeMask(renderer, mask, hole)
     persp.aspect = w / h; persp.updateProjectionMatrix()
     fitOrtho()
     render()
@@ -839,6 +847,7 @@ async function start(root: HTMLElement) {
   })
   const apply = () => {
     const unit = spriteUnit(), top = camera === ortho
+    followDrawn = false
     for (const [id, m] of markers) {
       const st = stateOf(id, ms)
       const colour = playerColour(payload.colours ?? {}, st.role, st.team)
@@ -864,7 +873,9 @@ async function start(root: HTMLElement) {
       const dim = typeof upto === 'number' && lv > 0 && lv < upto
       // a dead player is the body where they fell, not also the figure of their last sample (the two are both there at the moment of death)
       m.group.visible = p !== null && !above && currentDeath(data.deaths, data.events, id, ms) === null
-      for (const gm of (m.body.userData.ghost?.meshes ?? []) as Mesh[]) gm.visible = ghostShown(camMode, selected, id, m.group.visible) // the followed player's, in the follow camera only
+      const ghostOn = ghostShown(camMode, selected, id, m.group.visible) // the followed player's, in the follow camera only
+      if (ghostOn && m.body.userData.ghost) followDrawn = true
+      for (const gm of (m.body.userData.ghost?.meshes ?? []) as Mesh[]) gm.visible = ghostOn
       ;(m.label.material as SpriteMaterial).opacity = dim ? 0.35 : 1
       ;(m.pin.material as SpriteMaterial).opacity = dim ? 0.35 : 1
       if (p) {

@@ -1,4 +1,4 @@
-import { GreaterDepth, KeepStencilOp, MeshBasicMaterial, NotEqualStencilFunc, ReplaceStencilOp, Vector3, Vector4, type Camera, type Material, type Mesh, type Object3D } from 'three'
+import { Color, DoubleSide, GreaterDepth, KeepStencilOp, LinearFilter, MeshBasicMaterial, NotEqualStencilFunc, ReplaceStencilOp, RGBAFormat, UnsignedByteType, Vector2, Vector3, Vector4, WebGLRenderTarget, type Camera, type Material, type Mesh, type Object3D, type Scene, type Texture, type WebGLRenderer } from 'three'
 
 // The hole the follow camera makes (RFC 34). Everything that is nearer to the camera than the followed player and lies inside a circle on the
 // screen around them is cut away, with a hard edge and no noise: one rule for walls, floors and props, from the view-space position of the
@@ -52,6 +52,11 @@ export const HOLE = {
   wideTo: -25,
   /** The ghost: opacity of the flat colour drawn where something covers the player. */
   ghostOpacity: 0.5,
+  /** The body window by the player's silhouette (RFC 34, 9.7): the player is drawn in flat white into an off-screen mask with the same camera, at `maskScale` of the drawing buffer (bilinear), and a pixel is inside the body window where the mask says the player is. `maskDilate` device pixels of dilation (8 taps on a circle of that radius, the largest wins) against a one pixel rim of the occluder round the body (chosen on pictures: 1 and 2 draw a thin outline of what lies behind the cut, so it is half a pixel; the mask is full resolution because at half resolution the staircase of its edge cost 53 pixels of the body at one moment); the coverage is `maskLo` to `maskHi` of the bilinear value through a smoothstep, no hard threshold (the cut itself is the 0.5 contour). The capsule of 9.5 (`reach`, `reachFlat`) is only the fallback when the mask target cannot be made. */
+  maskScale: 1,
+  maskDilate: 0.5,
+  maskLo: 0.25,
+  maskHi: 0.75,
 }
 
 const f = (n: number) => (Number.isInteger(n) ? n.toFixed(1) : String(n))
@@ -61,6 +66,24 @@ export const holeGlsl = () => `
 uniform vec3 uCtr;
 uniform vec4 uGround;
 uniform float uRad;
+uniform sampler2D uMask;
+uniform vec2 uMaskInv;
+uniform float uMaskOn;
+float maskCover() {
+  vec2 uv = gl_FragCoord.xy * uMaskInv;
+  vec2 o = uMaskInv * ${f(HOLE.maskDilate)};
+  vec2 q = o * 0.7071;
+  float m = textureLod(uMask, uv, 0.0).r;
+  m = max(m, textureLod(uMask, uv + vec2(o.x, 0.0), 0.0).r);
+  m = max(m, textureLod(uMask, uv - vec2(o.x, 0.0), 0.0).r);
+  m = max(m, textureLod(uMask, uv + vec2(0.0, o.y), 0.0).r);
+  m = max(m, textureLod(uMask, uv - vec2(0.0, o.y), 0.0).r);
+  m = max(m, textureLod(uMask, uv + q, 0.0).r);
+  m = max(m, textureLod(uMask, uv - q, 0.0).r);
+  m = max(m, textureLod(uMask, uv + vec2(q.x, -q.y), 0.0).r);
+  m = max(m, textureLod(uMask, uv + vec2(-q.x, q.y), 0.0).r);
+  return smoothstep(${f(HOLE.maskLo)}, ${f(HOLE.maskHi)}, m);
+}
 float rayCapDist(vec3 d, vec3 A, vec3 B) {
   vec3 e = B - A;
   float b = dot(d, e), c = dot(e, e), dA = dot(d, A), eA = dot(e, A);
@@ -84,7 +107,8 @@ float holeAt(vec3 P) {
   vec3 B = uCtr + uGround.xyz * ${f(HOLE.head - HOLE.chest)};
   float flatF = smoothstep(${f(HOLE.upFrom)}, ${f(HOLE.upTo)}, abs(dot(nf, uGround.xyz)));
   float reachE = mix(${f(HOLE.reach)}, ${f(HOLE.reachFlat)}, flatF);
-  float win = 1.0 - smoothstep(reachE * (1.0 - ${f(HOLE.band)}), reachE, rayCapDist(P / length(P), A, B));
+  float win = 0.0;
+  if ((1.0 - keep) * near > 0.0) win = uMaskOn > 0.5 ? maskCover() : 1.0 - smoothstep(reachE * (1.0 - ${f(HOLE.band)}), reachE, rayCapDist(P / length(P), A, B));
   float roof = flatF * smoothstep(${f(HOLE.roofFrom)}, ${f(HOLE.roofTo)}, h) * (1.0 - smoothstep(R * (1.0 - ${f(HOLE.band)}), R, length(d)));
   float rim = 1.0 - smoothstep(R * (1.0 - ${f(HOLE.band)}), R, length(d));
   float wide = ${f(HOLE.wide)} * (1.0 - flatF) * rim${HOLE.wideSide ? ` * smoothstep(${f(HOLE.wideFrom)}, ${f(HOLE.wideTo)}, dot(nf, P - uCtr))` : ''};
@@ -92,19 +116,26 @@ float holeAt(vec3 P) {
 ${HOLE.sideTest ? `  c *= smoothstep(${f(HOLE.sideFrom)}, ${f(HOLE.sideTo)}, dot(nf, P - uCtr));\n` : ''}  return c;
 }`
 
-export interface HoleUniforms { uCtr: { value: Vector3 }, uGround: { value: Vector4 }, uRad: { value: number } }
-export const holeUniforms = (): HoleUniforms => ({ uCtr: { value: new Vector3() }, uGround: { value: new Vector4(0, 1, 0, 0) }, uRad: { value: 0 } })
+export interface HoleUniforms {
+  uCtr: { value: Vector3 }, uGround: { value: Vector4 }, uRad: { value: number },
+  /** The player's silhouette (the mask target's texture), one over the drawing buffer's size, and 1 when the mask is used (0: the capsule fallback). */
+  uMask: { value: Texture | null }, uMaskInv: { value: Vector2 }, uMaskOn: { value: number },
+}
+export const holeUniforms = (): HoleUniforms => ({ uCtr: { value: new Vector3() }, uGround: { value: new Vector4(0, 1, 0, 0) }, uRad: { value: 0 }, uMask: { value: null }, uMaskInv: { value: new Vector2(1, 1) }, uMaskOn: { value: 0 } })
 
 /**
  * Makes a material cut the hole: the rule is in the fragment stage only (nothing per vertex, no world-space cone), after the alpha test.
  * The uniforms are the ones given, so updating them moves the hole of every material that has it.
  */
 export function patchHole(material: Material, u: HoleUniforms) {
-  material.customProgramCacheKey = () => `followhole-${HOLE.sideTest ? 'side' : 'plain'}-${HOLE.wide}${HOLE.wideSide}`
+  material.customProgramCacheKey = () => `followhole-${HOLE.sideTest ? 'side' : 'plain'}-${HOLE.wide}${HOLE.wideSide}-mask${HOLE.maskDilate}`
   material.onBeforeCompile = shader => {
     shader.uniforms.uCtr = u.uCtr
     shader.uniforms.uGround = u.uGround
     shader.uniforms.uRad = u.uRad
+    shader.uniforms.uMask = u.uMask
+    shader.uniforms.uMaskInv = u.uMaskInv
+    shader.uniforms.uMaskOn = u.uMaskOn
     shader.fragmentShader = shader.fragmentShader
       .replace('void main() {', `${holeGlsl()}\nvoid main() {`)
       .replace('#include <alphatest_fragment>', '#include <alphatest_fragment>\nif (holeAt(-vViewPosition) > 0.5) discard;')
@@ -144,8 +175,10 @@ export function rayCapDist(d: [number, number, number], A: [number, number, numb
 /**
  * The rule of holeGlsl in plain code: 1 where the pixel at view-space position `P` (the camera at the origin looking down -z) is cut, 0 where it is kept, with
  * the edge as narrow as `HOLE.band`. `nf` is the unit normal of the face the pixel is on, turned to the camera (the shader takes it from the derivatives).
+ * `mask` is the player's silhouette at this pixel, 0 to 1 (`maskCoverage`): it is the body window (RFC 34, 9.7). Without it (`undefined`) the body window is the
+ * capsule of 9.5, the fallback for a browser that could not make the mask.
  */
-export function holeAt(P: [number, number, number], nf: [number, number, number], u: HoleView, sideTest = HOLE.sideTest): number {
+export function holeAt(P: [number, number, number], nf: [number, number, number], u: HoleView, sideTest = HOLE.sideTest, mask?: number): number {
   if (u.rad <= 0) return 0
   const dz = -u.ctr[2] - -P[2]
   const near = smooth(HOLE.nearFrom, HOLE.nearTo, dz)
@@ -162,7 +195,7 @@ export function holeAt(P: [number, number, number], nf: [number, number, number]
   const len = Math.hypot(P[0], P[1], P[2])
   const flatF = smooth(HOLE.upFrom, HOLE.upTo, Math.abs(dot3(nf, u.ground)))
   const reachE = HOLE.reach + (HOLE.reachFlat - HOLE.reach) * flatF
-  const win = 1 - smooth(reachE * (1 - HOLE.band), reachE, rayCapDist(len === 0 ? [0, 0, -1] : [P[0] / len, P[1] / len, P[2] / len], A, B))
+  const win = mask !== undefined ? mask : 1 - smooth(reachE * (1 - HOLE.band), reachE, rayCapDist(len === 0 ? [0, 0, -1] : [P[0] / len, P[1] / len, P[2] / len], A, B))
   const roof = flatF * smooth(HOLE.roofFrom, HOLE.roofTo, h) * (1 - smooth(R * (1 - HOLE.band), R, Math.hypot(dx, dy)))
   const rim = 1 - smooth(R * (1 - HOLE.band), R, Math.hypot(dx, dy))
   const wide = HOLE.wide * (1 - flatF) * rim * (HOLE.wideSide ? smooth(HOLE.wideFrom, HOLE.wideTo, dot3(nf, [P[0] - u.ctr[0], P[1] - u.ctr[1], P[2] - u.ctr[2]])) : 1)
@@ -170,6 +203,9 @@ export function holeAt(P: [number, number, number], nf: [number, number, number]
   if (sideTest) c *= smooth(HOLE.sideFrom, HOLE.sideTo, dot3(nf, [P[0] - u.ctr[0], P[1] - u.ctr[1], P[2] - u.ctr[2]]))
   return c
 }
+
+/** The coverage the shader makes from the taps it reads of the mask (the centre and the eight on the circle of the dilation, each a bilinear value 0 to 1): the largest, through the smoothstep. */
+export const maskCoverage = (taps: ArrayLike<number>): number => { let m = 0; for (let i = 0; i < taps.length; i++) m = Math.max(m, taps[i]!); return smooth(HOLE.maskLo, HOLE.maskHi, m) }
 
 /** The uniforms as numbers (what the shader gets), for the plain-code rule. */
 export const holeView = (u: HoleUniforms): HoleView => ({ ctr: u.uCtr.value.toArray() as [number, number, number], ground: u.uGround.value.toArray() as [number, number, number, number], rad: u.uRad.value })
@@ -200,6 +236,7 @@ export function addGhost(root: Object3D, material: Material): Mesh[] {
     g.material = material
     g.renderOrder = 5
     g.visible = false
+    g.layers.enable(MASK_LAYER) // the mask pass draws this layer only
     m.parent?.add(g)
     made.push(g)
   }
@@ -214,4 +251,84 @@ export function ghostFigure(root: Object3D, colour: number) {
   root.traverse(o => { if ((o as Mesh).isMesh) markSolid((o as Mesh).material as Material) })
   const material = ghostMaterial(colour)
   return { material, meshes: addGhost(root, material) }
+}
+
+// ---- the mask: the followed player's silhouette (RFC 34, 9.7)
+
+/** The layer the ghost's meshes are also on: the mask pass draws this layer only (the camera's layers are swapped for it), so nothing but the followed player is in the mask. */
+export const MASK_LAYER = 1
+
+export interface HoleMask {
+  target: WebGLRenderTarget
+  /** The flat white every mesh of the mask pass is drawn with (the scene's override material), both sides, no depth test: the silhouette alone. */
+  material: MeshBasicMaterial
+  /** The target may hold a silhouette (it is cleared when the player is not drawn, so a stale one is never read). */
+  dirty: boolean
+  /** The mask could not be drawn: the capsule is used from then on. */
+  failed: boolean
+}
+
+/**
+ * The mask target for a renderer (WebGL2: three's only), and the uniforms switched to it; `null`, and the capsule fallback, when the target cannot be made
+ * (an old context, an exception). The size is set by `sizeMask`.
+ */
+export function createMask(renderer: WebGLRenderer, u: HoleUniforms): HoleMask | null {
+  try {
+    const gl = renderer.getContext()
+    if (typeof WebGL2RenderingContext === 'undefined' || !(gl instanceof WebGL2RenderingContext)) throw new Error('no WebGL2')
+    const target = new WebGLRenderTarget(2, 2, { format: RGBAFormat, type: UnsignedByteType, minFilter: LinearFilter, magFilter: LinearFilter, depthBuffer: false, stencilBuffer: false, generateMipmaps: false })
+    const material = new MeshBasicMaterial({ color: 0xffffff, side: DoubleSide, depthTest: false, depthWrite: false, toneMapped: false, fog: false })
+    const mask: HoleMask = { target, material, dirty: true, failed: false }
+    u.uMask.value = target.texture
+    u.uMaskOn.value = 1
+    sizeMask(renderer, mask, u)
+    return mask
+  } catch {
+    u.uMask.value = null
+    u.uMaskOn.value = 0
+    return null
+  }
+}
+
+/** The mask follows the drawing buffer (call after every `setSize`): `maskScale` of it, and the shader's one-over-size for `gl_FragCoord`. */
+export function sizeMask(renderer: WebGLRenderer, mask: HoleMask, u: HoleUniforms) {
+  const s = renderer.getDrawingBufferSize(new Vector2())
+  mask.target.setSize(Math.max(1, Math.round(s.x * HOLE.maskScale)), Math.max(1, Math.round(s.y * HOLE.maskScale)))
+  u.uMaskInv.value.set(1 / Math.max(1, s.x), 1 / Math.max(1, s.y))
+  mask.dirty = true
+}
+
+/** Whether the mask is drawn this frame: the hole is on (radius above 0: the follow camera) and the followed player is drawn. Nothing else costs anything. */
+export const maskWanted = (radius: number, playerDrawn: boolean): boolean => radius > 0 && playerDrawn
+
+/**
+ * The mask pass, BEFORE the picture of the frame and with the picture's own camera and the poses of this frame: the ghost's meshes (the followed player's, drawn ones
+ * only; a skinned one shares its skeleton) in flat white into the target, no background, nothing else. When it is not wanted and the target still holds a silhouette
+ * it is cleared once; otherwise it does nothing. An exception switches the capsule fallback on.
+ */
+export function renderMask(renderer: WebGLRenderer, scene: Scene, camera: Camera, mask: HoleMask, u: HoleUniforms, wanted: boolean) {
+  if (mask.failed) return
+  if (!wanted && !mask.dirty) return
+  const layers = camera.layers.mask, background = scene.background, override = scene.overrideMaterial, target = renderer.getRenderTarget()
+  const colour = renderer.getClearColor(new Color()), alpha = renderer.getClearAlpha()
+  try {
+    renderer.setRenderTarget(mask.target)
+    renderer.setClearColor(0x000000, 0)
+    if (wanted) {
+      camera.layers.set(MASK_LAYER)
+      scene.background = null
+      scene.overrideMaterial = mask.material
+      renderer.render(scene, camera)
+    } else renderer.clear()
+    mask.dirty = wanted
+  } catch {
+    mask.failed = true
+    u.uMaskOn.value = 0
+  } finally {
+    camera.layers.mask = layers
+    scene.background = background
+    scene.overrideMaterial = override
+    renderer.setRenderTarget(target)
+    renderer.setClearColor(colour, alpha)
+  }
 }

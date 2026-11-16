@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
-import { NotEqualStencilFunc, ReplaceStencilOp, Bone, BufferGeometry, Float32BufferAttribute, GreaterDepth, Group, Matrix4, Mesh, MeshStandardMaterial, PerspectiveCamera, Skeleton, SkinnedMesh, Vector3 } from 'three'
-import { HOLE, holeGlsl, addGhost, ghostFigure, ghostMaterial, markSolid, ghostShown, holeAt, holeUniforms, holeView, patchHole, updateHole, type HoleView } from '../src/followHole'
+import { NotEqualStencilFunc, ReplaceStencilOp, Bone, Color, LinearFilter, MeshBasicMaterial, Scene, BufferGeometry, Float32BufferAttribute, GreaterDepth, Group, Matrix4, Mesh, MeshStandardMaterial, PerspectiveCamera, Skeleton, SkinnedMesh, Vector3 } from 'three'
+import { HOLE, MASK_LAYER, createMask, sizeMask, renderMask, maskWanted, maskCoverage, holeGlsl, addGhost, ghostFigure, ghostMaterial, markSolid, ghostShown, holeAt, holeUniforms, holeView, patchHole, updateHole, type HoleView } from '../src/followHole'
 
 // RFC 34: the hole the follow camera makes, and the ghost of the followed player
 const text = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8')
@@ -459,7 +459,7 @@ describe('the material patch', () => {
     expect(holeGlsl()).toContain('P * (uCtr.z / P.z)') // the pixel ray at the player's depth: what the below-the-feet rule measures
     expect(holeGlsl()).toContain('keep = max(keep, below);') // one rule for every kind, no ground ring
     expect(holeGlsl()).not.toMatch(/near_ground|flatness/)
-    expect(holeGlsl()).not.toMatch(/fract|noise|screenDoor|gl_FragCoord/) // no pattern: a hard edge
+    expect(holeGlsl()).not.toMatch(/fract|noise|screenDoor/) // no pattern: a hard edge (gl_FragCoord is the mask's lookup only, 9.7)
   })
 })
 
@@ -535,12 +535,248 @@ describe('the page (replay.ts)', () => {
   })
   test('the ghost: made for the figure of a player (not for the body that lies), shown by ghostShown, recoloured with the team', () => {
     expect((replay.match(/if \(!dim\) ghostOf\(g, colour\)/g) ?? []).length).toBe(3) // the skeleton, the model's shape, the boxes
-    expect(replay).toContain('gm.visible = ghostShown(camMode, selected, id, m.group.visible)')
+    expect(replay).toContain('const ghostOn = ghostShown(camMode, selected, id, m.group.visible)')
+    expect(replay).toContain('gm.visible = ghostOn')
     expect(replay).toContain('m.body.userData.ghost?.material.color.setHex(colour)')
   })
   test('the player is not made unseen by the ghost in the other things drawn: the pins and names stay on top, the ring keeps its place', () => {
     expect(replay).toContain('renderOrder = 10') // the sprites
     expect(replay).toContain('group.add(ring, pin, label)')
     expect(replay).toContain('(m.ring.material as MeshBasicMaterial).depthTest = !ghostShown(camMode, selected, id, m.group.visible)') // the ring is seen through what covers it in the follow camera: the hole does not open what is below the feet
+  })
+})
+
+// ---- RFC 34, 9.7: the body window is the player's silhouette (a mask), the capsule is the fallback
+
+describe('the body window by the mask (holeAt with a coverage, plain code)', () => {
+  const feet = new Vector3(0, 0, 0)
+  const cam = followCamera(feet)
+  const { view } = viewOf(cam, feet)
+  const onSight = (t: number, side = 0, to = new Vector3(0, HOLE.chest, 0)) => {
+    const p = cam.position.clone().lerp(to, t)
+    return p.addScaledVector(new Vector3().setFromMatrixColumn(cam.matrixWorld, 0), side * t)
+  }
+  const cutAt = (p: Vector3, n: Vector3, mask?: number) => { const v = toView(cam, p); return holeAt(v, normalToView(cam, n, v), view, false, mask) }
+  const aim = new Vector3(0, 36, 0) // a ray that ends high on the body: a face on it is above the ankle line, below the roof ramp, nearer than the player
+  const flatBeside = onSight(0.93, 40, aim) // a floor-like face 40 units beside the body axis: no capsule window (reach 17), a ribbon if it were cut
+  const flatOnBody = onSight(0.93, 0, aim)
+
+  test('coverage 1: cut where the other conditions hold, even on a ray the capsule would call a miss', () => {
+    expect(cutAt(flatBeside, UP)).toBeLessThan(0.05) // the capsule fallback: not cut (the tail is the foot of the roof ramp)
+    expect(cutAt(flatBeside, UP, 1)).toBe(1) // the mask says the player is on this pixel
+    expect(cutAt(flatOnBody, UP, 1)).toBe(1)
+  })
+  test('coverage 0: not cut, even on a ray through the body (the pixel is not the player: no ribbon, no margin)', () => {
+    expect(cutAt(flatOnBody, UP)).toBe(1) // the capsule would cut this
+    expect(cutAt(flatOnBody, UP, 0)).toBeLessThan(0.05)
+    expect(cutAt(onSight(0.5, 8), new Vector3(0.6, 0.3, 0.74).normalize(), 0)).toBe(1) // a wall: the wide window is not the mask's business, it stays
+  })
+  test('a partial coverage gives a partial, rising value (smooth edge, no step)', () => {
+    let last = -1
+    for (let m = 0; m <= 1.0001; m += 0.1) { const c = cutAt(flatBeside, UP, Math.min(1, m)); expect(c).toBeGreaterThanOrEqual(last - 1e-9); last = c }
+    const half = cutAt(flatBeside, UP, 0.5)
+    expect(half).toBeGreaterThan(0.2); expect(half).toBeLessThan(0.8)
+  })
+  test('what the mask cannot change: nothing behind the player, nothing whose pixel ray passes below the ankles, nothing outside the near ramp', () => {
+    expect(cutAt(onSight(1.4), UP, 1)).toBe(0) // behind them
+    const toSoles = onSight(0.97, 0, feet) // the ray to their soles
+    expect(cutAt(toSoles, UP, 1)).toBe(0)
+    expect(cutAt(toSoles, new Vector3(0, 0, 1), 1)).toBe(0)
+    const lowerLeg = onSight(0.9, 0, new Vector3(0, 4, 0)) // a ray just under the ankle line: still kept exactly
+    expect(cutAt(lowerLeg, UP, 1)).toBe(0)
+  })
+  test('the roof rule and the wide wall cut are the same with and without the mask', () => {
+    const roof = onSight(0.5, 0, new Vector3(0, 100, 0))
+    expect(cutAt(roof, UP, 0)).toBeGreaterThan(0)
+    const wall = new Vector3(0.6, 0.3, 0.74).normalize(), p = onSight(0.5, HOLE.radius * 0.7)
+    expect(cutAt(p, wall, 0)).toBe(cutAt(p, wall))
+  })
+  test('the coverage the shader makes from its taps: the largest tap through the smoothstep', () => {
+    expect(maskCoverage([0, 0, 0, 0, 0, 0, 0, 0, 0])).toBe(0)
+    expect(maskCoverage([0, 0, 0, 0, 0, 0, 0, 0, 1])).toBe(1) // one tap on the body: the dilation reaches it
+    expect(maskCoverage([1, 1, 1, 1, 1, 1, 1, 1, 1])).toBe(1)
+    const mid = maskCoverage([0, 0, 0.5, 0])
+    expect(mid).toBeGreaterThan(0.3); expect(mid).toBeLessThan(0.7)
+    expect(maskCoverage([HOLE.maskLo - 0.01])).toBe(0) // below the ramp: nothing (no faint haze around the body)
+    expect(maskCoverage([HOLE.maskHi + 0.01])).toBe(1)
+  })
+})
+
+describe('the shader: the mask window and the fallback in one function', () => {
+  const g = holeGlsl()
+  test('the mask is sampled at the pixel of the picture, with the taps of the dilation, and the coverage is a smoothstep (no threshold)', () => {
+    expect(g).toContain('uniform sampler2D uMask;')
+    expect(g).toContain('gl_FragCoord.xy * uMaskInv') // the pixel in the picture's own buffer: the same camera
+    expect((g.match(/textureLod\(uMask/g) ?? []).length).toBe(9) // the centre and the eight on the circle
+    expect(g).toContain(`uMaskInv * ${Number.isInteger(HOLE.maskDilate) ? HOLE.maskDilate.toFixed(1) : HOLE.maskDilate}`)
+    expect(g).toContain(`smoothstep(${HOLE.maskLo}, ${HOLE.maskHi}, m)`)
+  })
+  test('the dilation is a pixel or two, not none and not a ring: the numbers that were chosen on the pictures (9.7)', () => {
+    expect(HOLE.maskDilate).toBeGreaterThanOrEqual(0.5) // none: nothing guards the one pixel rim of the occluder round the body
+    expect(HOLE.maskDilate).toBeLessThanOrEqual(1) // 1 and more draw a thin outline of what lies behind the cut (gold at b7 0:29, dark gravel at 67th Way 0:44)
+    expect(HOLE.maskScale).toBeGreaterThanOrEqual(0.5); expect(HOLE.maskScale).toBeLessThanOrEqual(1)
+    expect(HOLE.maskLo).toBeLessThan(HOLE.maskHi); expect(HOLE.maskLo).toBeGreaterThan(0); expect(HOLE.maskHi).toBeLessThan(1)
+  })
+  test('the fetch is skipped where the surface could not be cut anyway; the capsule is the fallback branch', () => {
+    expect(g).toContain('if ((1.0 - keep) * near > 0.0) win = uMaskOn > 0.5 ? maskCover() :')
+    expect(g).toContain('rayCapDist(P / length(P), A, B)') // the fallback is still the 9.6 capsule
+    expect(g.indexOf('maskCover() :')).toBeGreaterThan(g.indexOf('dFdx(P)')) // after the derivatives (taken in uniform control flow)
+  })
+  test('the patch hands the mask uniforms to every material, and the program key knows the dilation', () => {
+    const u = holeUniforms(), m = new MeshStandardMaterial()
+    patchHole(m, u)
+    const s = { uniforms: {} as Record<string, unknown>, vertexShader: '', fragmentShader: 'void main() {\n#include <alphatest_fragment>\n}' }
+    m.onBeforeCompile(s as any, null as any)
+    expect(s.uniforms.uMask).toBe(u.uMask); expect(s.uniforms.uMaskInv).toBe(u.uMaskInv); expect(s.uniforms.uMaskOn).toBe(u.uMaskOn)
+    expect(m.customProgramCacheKey()).toContain('mask')
+  })
+})
+
+describe('the mask pass (followHole.ts)', () => {
+  ;(globalThis as any).WebGL2RenderingContext ??= class {}
+  type Log = string[]
+  const fakeRenderer = (opts: { gl2?: boolean, throwOnRender?: boolean } = {}) => {
+    const log: Log = []
+    const gl = opts.gl2 === false ? {} : new (globalThis as any).WebGL2RenderingContext()
+    let target: unknown = null
+    const r: any = {
+      log,
+      getContext: () => gl,
+      getDrawingBufferSize: (v: any) => v.set(540, 870),
+      getRenderTarget: () => target,
+      setRenderTarget: (t: unknown) => { target = t; log.push(t ? 'target:mask' : 'target:screen') },
+      getClearColor: (c: any) => c,
+      getClearAlpha: () => 1,
+      setClearColor: () => { log.push('clearColour') },
+      clear: () => { log.push('clear') },
+      render: (scene: Scene, cam: PerspectiveCamera) => {
+        if (opts.throwOnRender) throw new Error('lost')
+        log.push(`render layers=${cam.layers.mask} override=${scene.overrideMaterial ? 'flat' : 'none'} background=${scene.background === null ? 'none' : 'set'} into=${target ? 'mask' : 'screen'}`)
+      },
+    }
+    return r
+  }
+  const world = () => {
+    const scene = new Scene(); scene.background = new Color(0x123456)
+    const cam = new PerspectiveCamera(40, 360 / 580, 1, 1000)
+    return { scene, cam }
+  }
+
+  test('the target is made at a fraction of the drawing buffer and the uniforms switch to it; resizing follows the canvas', () => {
+    const u = holeUniforms(), r = fakeRenderer()
+    const mask = createMask(r, u)!
+    expect(mask).not.toBeNull()
+    expect(u.uMaskOn.value).toBe(1)
+    expect(u.uMask.value).toBe(mask.target.texture)
+    expect(mask.target.width).toBe(Math.round(540 * HOLE.maskScale)); expect(mask.target.height).toBe(Math.round(870 * HOLE.maskScale))
+    expect(u.uMaskInv.value.x).toBeCloseTo(1 / 540, 8); expect(u.uMaskInv.value.y).toBeCloseTo(1 / 870, 8)
+    r.getDrawingBufferSize = (v: any) => v.set(1000, 600) // the canvas was resized
+    sizeMask(r, mask, u)
+    expect(mask.target.width).toBe(Math.round(1000 * HOLE.maskScale)); expect(mask.target.height).toBe(Math.round(600 * HOLE.maskScale))
+    expect(u.uMaskInv.value.x).toBeCloseTo(1 / 1000, 8); expect(u.uMaskInv.value.y).toBeCloseTo(1 / 600, 8)
+    expect(mask.target.depthBuffer).toBe(false) // a silhouette: no depth test against the world
+    expect(mask.target.texture.minFilter).toBe(LinearFilter) // bilinear: the smooth edge
+  })
+  test('the fallback: no WebGL2 context or a failing target gives no mask and the capsule (uMaskOn 0)', () => {
+    const u = holeUniforms()
+    u.uMaskOn.value = 1
+    expect(createMask(fakeRenderer({ gl2: false }), u)).toBeNull()
+    expect(u.uMaskOn.value).toBe(0); expect(u.uMask.value).toBeNull()
+    const u2 = holeUniforms(), r = fakeRenderer()
+    u2.uMaskOn.value = 1
+    r.getDrawingBufferSize = () => { throw new Error('lost') }
+    expect(createMask(r, u2)).toBeNull()
+    expect(u2.uMaskOn.value).toBe(0)
+  })
+  test('a pass that throws switches the fallback on for good and puts everything back', () => {
+    const u = holeUniforms(), r = fakeRenderer({ throwOnRender: true }), { scene, cam } = world()
+    const mask = createMask(r, u)!
+    expect(u.uMaskOn.value).toBe(1)
+    renderMask(r, scene, cam, mask, u, true)
+    expect(mask.failed).toBe(true); expect(u.uMaskOn.value).toBe(0)
+    expect(scene.background).not.toBeNull(); expect(scene.overrideMaterial).toBeNull(); expect(cam.layers.mask).toBe(1)
+    const before = r.log.length
+    renderMask(r, scene, cam, mask, u, true)
+    expect(r.log.length).toBe(before) // it does not try again
+  })
+  test('the pass draws the ghost layer only, flat, without the background, into the target, with the picture\'s camera, and restores everything', () => {
+    const u = holeUniforms(), r = fakeRenderer(), { scene, cam } = world()
+    const mask = createMask(r, u)!
+    const bg = scene.background
+    renderMask(r, scene, cam, mask, u, true)
+    expect(r.log).toContain(`render layers=${1 << MASK_LAYER} override=flat background=none into=mask`)
+    expect(cam.layers.mask).toBe(1); expect(scene.background).toBe(bg); expect(scene.overrideMaterial).toBeNull() // the picture draws layer 0 with the background
+    expect(r.log[r.log.length - 1]).toBe('clearColour')
+    expect(r.log.filter((l: string) => l.startsWith('target:')).slice(-1)[0]).toBe('target:screen') // the screen is current again
+    expect(mask.material.depthTest).toBe(false); expect(mask.material.transparent).toBe(false)
+  })
+  test('nothing is drawn, and nothing costs, when it is not wanted: hole radius 0 (other cameras), or the player not drawn', () => {
+    const u = holeUniforms(), r = fakeRenderer(), { scene, cam } = world()
+    const mask = createMask(r, u)!
+    expect(maskWanted(0, true)).toBe(false) // another camera
+    expect(maskWanted(HOLE.radius, false)).toBe(false) // hidden, dead, above the shown level
+    expect(maskWanted(HOLE.radius, true)).toBe(true)
+    mask.dirty = false
+    renderMask(r, scene, cam, mask, u, false)
+    expect(r.log.length).toBe(0) // not one call to the renderer
+  })
+  test('a silhouette that is left behind is cleared once when the player is no longer drawn (no stale cut), then it is free again', () => {
+    const u = holeUniforms(), r = fakeRenderer(), { scene, cam } = world()
+    const mask = createMask(r, u)!
+    renderMask(r, scene, cam, mask, u, true)
+    expect(mask.dirty).toBe(true)
+    r.log.length = 0
+    renderMask(r, scene, cam, mask, u, false)
+    expect(r.log).toContain('clear'); expect(r.log.some((l: string) => l.startsWith('render'))).toBe(false)
+    expect(mask.dirty).toBe(false)
+    r.log.length = 0
+    renderMask(r, scene, cam, mask, u, false)
+    expect(r.log.length).toBe(0)
+  })
+  test('what is in the mask: the ghost\'s meshes only, on the mask layer as well as the picture\'s; the body and the world are not on it', () => {
+    const body = new Group(), part = new Mesh(new BufferGeometry(), new MeshStandardMaterial())
+    body.add(part)
+    const { meshes } = ghostFigure(body, 0xff0000)
+    expect(part.layers.isEnabled(MASK_LAYER)).toBe(false) // the solid body stays out of it (the ghost copy is the same shape)
+    for (const g of meshes) { expect(g.layers.isEnabled(MASK_LAYER)).toBe(true); expect(g.layers.isEnabled(0)).toBe(true); expect(g.visible).toBe(false) } // hidden = not in the mask: the player not followed or not drawn
+    expect(meshes[0]!.material).toBeInstanceOf(MeshBasicMaterial) // (drawn with the flat override in the mask pass, never with the half transparent ghost colour)
+  })
+  test('a skinned mesh in the mask pass is the drawn pose: the copy shares the skeleton the picture poses', () => {
+    const bone = new Bone(), geo = new BufferGeometry()
+    geo.setAttribute('position', new Float32BufferAttribute([0, 0, 0, 1, 0, 0, 0, 1, 0], 3))
+    geo.setAttribute('skinIndex', new Float32BufferAttribute([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 4))
+    geo.setAttribute('skinWeight', new Float32BufferAttribute([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0], 4))
+    const sk = new SkinnedMesh(geo, new MeshStandardMaterial()); sk.add(bone); sk.bind(new Skeleton([bone]))
+    const root = new Group(); root.add(sk)
+    const { meshes } = ghostFigure(root, 0xff0000)
+    expect((meshes[0] as SkinnedMesh).skeleton).toBe(sk.skeleton)
+    expect(meshes[0]!.layers.isEnabled(MASK_LAYER)).toBe(true)
+  })
+})
+
+describe('the page and the mask (replay.ts)', () => {
+  const draw = replay.slice(replay.indexOf('const draw = () => {'), replay.indexOf('const render = () =>'))
+  test('the mask is made once, from the renderer and the shared uniforms, null when it cannot be (then the capsule)', () => {
+    expect(replay).toContain('const mask = createMask(renderer, hole)')
+    expect((replay.match(/createMask\(/g) ?? []).length).toBe(1)
+    expect(replay.indexOf('createMask(renderer, hole)')).toBeGreaterThan(replay.indexOf('makeRenderer(canvas)'))
+  })
+  test('the mask pass runs in draw, before the picture, with the picture\'s own camera, and only when the hole is on and the player is drawn', () => {
+    expect(draw).toContain('renderMask(renderer, scene, camera, mask, hole, maskWanted(camera === persp ? hole.uRad.value : 0, followDrawn))')
+    expect(draw.indexOf('renderMask(')).toBeGreaterThan(-1)
+    expect(draw.indexOf('renderMask(')).toBeLessThan(draw.indexOf('renderer.render(scene, camera)'))
+    expect(draw).toContain('if (mask)') // no mask: nothing at all
+    expect(replay).not.toMatch(/renderMask\([^)]*(ortho|orbit)/) // no other camera
+  })
+  test('the mask is resized with the canvas, right after the drawing buffer', () => {
+    const resize = replay.slice(replay.indexOf('const resize = () => {'))
+    expect(resize.indexOf('sizeMask(renderer, mask, hole)')).toBeGreaterThan(resize.indexOf('renderer.setSize(w, h, false)'))
+    expect(resize.indexOf('sizeMask(renderer, mask, hole)')).toBeLessThan(resize.indexOf('render()'))
+  })
+  test('followDrawn is the ghost\'s shown state: the followed player, in the follow camera, only while drawn, set again every frame', () => {
+    const apply = replay.slice(replay.indexOf('const apply = () => {'))
+    expect(apply.indexOf('followDrawn = false')).toBeLessThan(apply.indexOf('for (const [id, m] of markers)') + 400)
+    expect(apply).toContain('const ghostOn = ghostShown(camMode, selected, id, m.group.visible)')
+    expect(apply).toContain('if (ghostOn && m.body.userData.ghost) followDrawn = true')
   })
 })
