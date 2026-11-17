@@ -19,7 +19,7 @@ export interface GeometryInfo {
   /** Triangles of the decoration group (RFC 33, 4.4), only when there are some. */
   decoration?: number
   /** False for a hill or terrain (no storeys); the triangles in detached parts; spawn points in the file. */
-  storeys?: boolean, detached?: number, movable?: number, spawns?: number
+  storeys?: boolean, detached?: number, movable?: number, /** Template sources kept as hidden parts (RFC 37, 11). */ templatedParts?: number, spawns?: number
   /** The materials the faces of the map name, and what became of the largest: textures, plain colours, and how many textures are the game's own (RFC 18, 5). */
   surface?: SurfaceReport
   /** What the map holds, counted per entry of the coverage registry (RFC 32). A mesh made before the record existed has none. */
@@ -78,7 +78,7 @@ export async function buildGeometry(src: ByteSource, map: string, fingerprint: s
     // The cost of the surface textures (RFC 36, 4): counted here because the size of the GLB is only known now. It only counts.
     if (coverage && surfaceReport) coverage = { ...coverage, textures: { materials: surfaceReport.materials, textured: surfaceReport.textured, notFound: surfaceReport.notFound, notDecodable: surfaceReport.notDecodable, ceiling: surfaceReport.ceiling, pngBytes: surfaceReport.pngBytes, glbBytes: out.glb.length } }
     return { ok: true, glb: out.glb, note: report.stockError ? `The game's own models could not all be fetched: ${report.stockError}` : undefined, info: {
-      vertices: out.info.vertices, triangles: out.info.triangles, levels: out.info.levels.length, water: out.info.waterTriangles, storeys: out.info.storeys, detached: out.info.detached.triangles, movable: out.info.movable, ...(out.info.decoration ? { decoration: out.info.decoration } : {}), spawns: out.info.spawns,
+      vertices: out.info.vertices, triangles: out.info.triangles, levels: out.info.levels.length, water: out.info.waterTriangles, storeys: out.info.storeys, detached: out.info.detached.triangles, movable: out.info.movable, ...(out.info.templated.parts ? { templatedParts: out.info.templated.parts } : {}), ...(out.info.decoration ? { decoration: out.info.decoration } : {}), spawns: out.info.spawns,
       ...(surfaceReport ? { surface: surfaceReport } : {}),
       ...(coverage ? { coverage } : {}),
       props: { placed: report.drawnPlacements, models: report.drawnModels, foliage: report.foliageModels, leafTextures: report.leafTextures, leafTexturesFromGame: report.leafTexturesFromGame, cards: report.cards, fromGame: report.fromGame, unavailable: report.unavailable, unreadable: report.unreadable + report.tooBig, dropped: report.dropped },

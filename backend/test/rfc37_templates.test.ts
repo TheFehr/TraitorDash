@@ -19,8 +19,10 @@ function map(entities: string[], models = 8): Buffer {
 }
 const read = async (entities: string[]) => {
   const src = memorySource(map(entities))
-  const ents = await extractMapEntities(src)
-  return { ents, s: await extractSurfaces(src, {}, ents.fixtureModels) }
+  const all = await extractMapEntities(src)
+  // `ents.fixtureModels` is what is DRAWN; the templated parts kept hidden for RFC 37, 11 are in `kept`.
+  const ents = { ...all, fixtureModels: all.fixtureModels.filter(f => !f.templated) }
+  return { ents, kept: all.fixtureModels.filter(f => f.templated), s: await extractSurfaces(src, {}, all.fixtureModels) }
 }
 const names = (r: { ents: { fixtureModels: { name?: string }[] } }) => r.ents.fixtureModels.map(f => f.name)
 
@@ -67,8 +69,11 @@ describe('the extractor: an entity a template names is not in the world', () => 
     const { ents, s } = await read([physbox(1, 'DiaBlock'), physbox(2, 'Other'), tpl('Furnace_Template', ['DiaBlock'])])
     expect(names({ ents })).toEqual(['Other'])
     expect(ents.fixtureModels.map(f => f.model)).toEqual([2])
-    expect(s.movableParts.map(p => p.model)).toEqual([2])
-    expect(s.movable.length).toBeGreaterThan(0) // the one that is drawn has its triangles
+    expect(s.movableParts.filter(p => !p.templated).map(p => p.model)).toEqual([2])
+    const alone = await read([physbox(2, 'Other')])
+    expect(s.movable.length).toBeGreaterThan(0)
+    expect(s.movable).toEqual(alone.s.movable) // the world-space soup has only the one that is drawn: the template source is not in the world
+    expect(s.movableParts.filter(p => p.templated).map(p => p.model)).toEqual([1]) // its geometry is kept, hidden (RFC 37, 11)
   })
   test('the same entity with a template of spawnflags 1, or with no template at all, is drawn', async () => {
     expect(names(await read([physbox(1, 'DiaBlock'), tpl('t', ['DiaBlock'], '"spawnflags" "1"')]))).toEqual(['DiaBlock'])
@@ -180,7 +185,7 @@ describe('the census: counted, apart from the classes', () => {
   })
   test('a map without a template counts nothing and its output is what it was', async () => {
     const { ents } = await read([physbox(1, 'a'), physbox(2, 'b')])
-    expect(ents.census.templated).toEqual({ templates: 0, entities: 0, byClass: new Map(), spawnedAtStart: 0 })
+    expect(ents.census.templated).toEqual({ templates: 0, entities: 0, byClass: new Map(), keptAsParts: 0, spawnedAtStart: 0 })
     expect(ents.fixtureModels.length).toBe(2)
   })
 })
@@ -191,11 +196,11 @@ describe('the record', () => {
 
   test('templated has the templates read, the entities left out and the classes, largest first', async () => {
     const r = await build()
-    expect(r.info.coverage!.templated).toEqual({ templates: 2, entities: 4, byClass: [{ class: 'func_physbox', count: 2 }, { class: 'func_brush', count: 1 }, { class: 'prop_dynamic', count: 1 }] })
+    expect(r.info.coverage!.templated).toEqual({ templates: 2, entities: 4, byClass: [{ class: 'func_physbox', count: 2 }, { class: 'func_brush', count: 1 }, { class: 'prop_dynamic', count: 1 }], keptAsParts: 2 })
   })
   test('the drawn mesh has no part of the templated entities: no movable part, and the model of the one that is free is the wall', async () => {
     const { ents, s } = await read([physbox(1, 'a'), brush('func_wall', 2, 'free'), tpl('t1', ['a'])])
-    expect(s.movableParts).toEqual([]); expect(ents.fixtureModels.map(f => f.model)).toEqual([2])
+    expect(s.movableParts.filter(p => !p.templated)).toEqual([]); expect(ents.fixtureModels.map(f => f.model)).toEqual([2])
   })
   test('a template the map spawns itself is counted in the record, apart from the entities left out', async () => {
     const m = map([physbox(1, 'a'), '{ "classname" "ttt_map_settings" "RoundPreparation" "Keep,ForceSpawn,,0,-1" }', tpl('Keep', ['a'])])
@@ -224,7 +229,7 @@ describe('the record', () => {
   test('templatedRecord: at most 30 classes, ranked by count then name, the rest counted together; names that become one are one', () => {
     const byClass = new Map<string, number>(Array.from({ length: 35 }, (_, i) => [`c${String(i).padStart(2, '0')}`, i === 34 ? 9 : 1]))
     byClass.set('Dup', 1); byClass.set('dup', 1)
-    const r = templatedRecord({ templates: 3, entities: 46, byClass, spawnedAtStart: 0 })
+    const r = templatedRecord({ templates: 3, entities: 46, byClass, keptAsParts: 0, spawnedAtStart: 0 })
     expect(r.byClass.length).toBe(30)
     expect(r.byClass[0]).toEqual({ class: 'c34', count: 9 })
     expect(r.byClass[1]).toEqual({ class: 'dup', count: 2 })

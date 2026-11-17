@@ -44,7 +44,7 @@ export interface TemplatedReport {
   /** The maps with a record that has the templated census (a record from before RFC 37 has none). */
   withData: number
   /** `maps`: of those, the ones with at least one entity left out. `otherEntities`: entities of classes beyond the 30 a record keeps. */
-  totals: { templates: number, entities: number, maps: number, otherEntities: number, spawnedAtStart: number }
+  totals: { templates: number, entities: number, maps: number, otherEntities: number, spawnedAtStart: number, keptAsParts: number }
   /** The classes summed over the maps, the largest first. */
   byClass: { class: string, count: number }[]
   /** The maps with the census, those with the most entities left out first. */
@@ -145,7 +145,7 @@ export function summarise(inputs: CoverageInput[], statusOf: StatusOf = (kind, k
   }
   starts.rows.sort((a, b) => (b.openPlaced + b.openLeftOut) - (a.openPlaced + a.openLeftOut) || b.openLeftOut - a.openLeftOut || (a.map < b.map ? -1 : a.map > b.map ? 1 : 0))
 
-  const templated: TemplatedReport = { withData: 0, totals: { templates: 0, entities: 0, maps: 0, otherEntities: 0, spawnedAtStart: 0 }, byClass: [], rows: [] }
+  const templated: TemplatedReport = { withData: 0, totals: { templates: 0, entities: 0, maps: 0, otherEntities: 0, spawnedAtStart: 0, keptAsParts: 0 }, byClass: [], rows: [] }
   const perClass = new Map<string, number>()
   for (const input of inputs) {
     const t = input.record?.templated
@@ -155,6 +155,7 @@ export function summarise(inputs: CoverageInput[], statusOf: StatusOf = (kind, k
     if (t.entities > 0) templated.totals.maps++
     templated.totals.otherEntities += t.other?.entities ?? 0
     templated.totals.spawnedAtStart += t.spawnedAtStart ?? 0
+    templated.totals.keptAsParts += t.keptAsParts ?? 0
     for (const c of t.byClass) perClass.set(c.class, (perClass.get(c.class) ?? 0) + c.count)
     templated.rows.push({ map: input.map, templates: t.templates, entities: t.entities, top: [...t.byClass].sort((a, b) => b.count - a.count || (a.class < b.class ? -1 : 1)).slice(0, 3) })
   }

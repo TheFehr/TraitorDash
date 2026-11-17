@@ -173,7 +173,9 @@ export const MAX_TEMPLATED_CLASSES = 30
 /** `templates`: the `point_template` entities read (those that remove their entities, and those that do not); `entities`: how many entities the names of the removing ones match; `byClass`: the 30 largest classes, the rest in `other`. */
 export interface TemplatedRecord { templates: number, entities: number, byClass: { class: string, count: number }[], other?: { classes: number, entities: number },
   /** Templates the map spawns itself when the round starts: their entities are drawn (RFC 37, 4a). Only given when there are some. */
-  spawnedAtStart?: number }
+  spawnedAtStart?: number,
+  /** Templated entities of a class the bridge records as parts, kept in the mesh as hidden nodes for the copies (RFC 37, 11). Only given when there are some. */
+  keptAsParts?: number }
 
 /** The record's `templated` from what the extractor counted (RFC 37): class names cleaned (two names that become one are one class), ranked by count then name, at most 30 kept. */
 export function templatedRecord(t: TemplatedCensus): TemplatedRecord {
@@ -181,7 +183,7 @@ export function templatedRecord(t: TemplatedCensus): TemplatedRecord {
   for (const [raw, count] of t.byClass) { const name = cleanName(raw); byName.set(name, (byName.get(name) ?? 0) + count) }
   const ranked = [...byName].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
   const top = ranked.slice(0, MAX_TEMPLATED_CLASSES), beyond = ranked.slice(MAX_TEMPLATED_CLASSES)
-  return { templates: t.templates, entities: t.entities, byClass: top.map(([name, count]) => ({ class: name, count })), ...(t.spawnedAtStart > 0 ? { spawnedAtStart: t.spawnedAtStart } : {}), ...(beyond.length ? { other: { classes: beyond.length, entities: beyond.reduce((n, [, c]) => n + c, 0) } } : {}) }
+  return { templates: t.templates, entities: t.entities, byClass: top.map(([name, count]) => ({ class: name, count })), ...(t.spawnedAtStart > 0 ? { spawnedAtStart: t.spawnedAtStart } : {}), ...(t.keptAsParts > 0 ? { keptAsParts: t.keptAsParts } : {}), ...(beyond.length ? { other: { classes: beyond.length, entities: beyond.reduce((n, [, c]) => n + c, 0) } } : {}) }
 }
 
 /** The templated census of a stored record, checked (RFC 37): whole non-negative numbers throughout, or nothing (an older record has none). */
@@ -197,7 +199,7 @@ function templatedOf(x: unknown): TemplatedRecord | undefined {
     byName.set(name, (byName.get(name) ?? 0) + Math.floor(c.count))
   }
   const other = r.other && num(r.other.classes) && num(r.other.entities) ? { classes: Math.floor(r.other.classes), entities: Math.floor(r.other.entities) } : undefined
-  return { templates: Math.floor(r.templates), entities: Math.floor(r.entities), byClass: [...byName].map(([c, count]) => ({ class: c, count })), ...(num(r.spawnedAtStart) && r.spawnedAtStart > 0 ? { spawnedAtStart: Math.floor(r.spawnedAtStart) } : {}), ...(other ? { other } : {}) }
+  return { templates: Math.floor(r.templates), entities: Math.floor(r.entities), byClass: [...byName].map(([c, count]) => ({ class: c, count })), ...(num(r.spawnedAtStart) && r.spawnedAtStart > 0 ? { spawnedAtStart: Math.floor(r.spawnedAtStart) } : {}), ...(num(r.keptAsParts) && r.keptAsParts > 0 ? { keptAsParts: Math.floor(r.keptAsParts) } : {}), ...(other ? { other } : {}) }
 }
 
 const LUMP_MODELS = 14

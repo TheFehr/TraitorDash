@@ -128,7 +128,9 @@ export const isNotSurfaceMaterial = (material: string): boolean =>
  * `water`: a water brush (RFC 33, 4.2): only its upward liquid faces are kept, as water, and x, y, z already include the move by `startposition`.
  * `decoration`: a brush a player sees and walks through (RFC 33, 4.4): its faces go to a group of their own and are no floors or walls.
  */
-export interface Fixture { model: number, x: number, y: number, z: number, pitch: number, yaw: number, roll: number, movable?: boolean, water?: boolean, decoration?: boolean, class?: string, name?: string }
+export interface Fixture { model: number, x: number, y: number, z: number, pitch: number, yaw: number, roll: number, movable?: boolean, water?: boolean, decoration?: boolean, class?: string, name?: string
+  /** A template source (RFC 37) of a class the bridge records as parts (`PART_CLASSES`): not in the world at round start, so never drawn at this place; its geometry is kept as a hidden node so a copy can be drawn from the recorded track (RFC 37, 11). */
+  templated?: boolean }
 
 /**
  * A part that can move, as the mesh holds it (RFC 20, 4.2): its triangles are local to the entity's origin (as the map file stores
@@ -136,7 +138,9 @@ export interface Fixture { model: number, x: number, y: number, z: number, pitch
  */
 export interface MovablePart { model: number, class: string, name?: string, x: number, y: number, z: number, pitch: number, yaw: number, roll: number, triangles: number[]
   /** The face each triangle came from (an index into `faces`, as the floors have): its mapping is the texture's own, for coordinates local to the part. */
-  faces?: number[] }
+  faces?: number[]
+  /** A template source kept for the copies the bridge records (RFC 37, 11): the node is written hidden and is never drawn at this pose. */
+  templated?: boolean }
 
 /** Source's angles (pitch, yaw, roll, degrees) as a 3 by 3 matrix: a turn by roll about X, then pitch about Y, then yaw about Z (the same as `angleQuaternion` in the mesh writer). */
 export function angleMatrix(pitch: number, yaw: number, roll: number): number[] {
@@ -150,6 +154,9 @@ export function angleMatrix(pitch: number, yaw: number, roll: number): number[] 
 
 export const FIXTURE_CLASSES = /^func_(brush|wall|breakable|lod|wall_toggle|breakable_surf|monitor|conveyor|reflective_glass)$/
 /** Brush entities that can move: doors, lifts and sliding buildings, turning parts, trains, buttons and levers, pushable crates. Their model sits where the mapper put it (a door shut, a button out). */
+/** The classes the bridge records as parts (`PART_CLASSES` in addon/lua/traitordash/track.lua; a test keeps the two lists equal). */
+export const PART_CLASS_LIST = ['func_door', 'func_door_rotating', 'func_movelinear', 'func_rotating', 'func_tracktrain', 'func_physbox', 'func_physbox_multiplayer'] as const
+const PART_CLASSES = new RegExp(`^(${PART_CLASS_LIST.join('|')})$`)
 export const MOVABLE_CLASSES = /^(func_door|func_door_rotating|func_movelinear|func_rotating|func_tracktrain|func_tanktrain|func_button|func_rot_button|momentary_rot_button|func_physbox|func_physbox_multiplayer)$/
 /** The water brush (RFC 33, 4.2): a pool that a map raises or lowers. */
 export const WATER_CLASSES = /^func_water_analog$/
@@ -399,17 +406,17 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
     if (fixture?.movable) {
       // A part that can move is drawn whole, whatever its slope, and takes no part in floors, storeys or parts.
       if (dispinfo >= 0 || (flags & SURF_WARP) !== 0) continue
-      stats.movableFaces++
+      if (!fixture.templated) stats.movableFaces++
       let part = parts.get(fixture.model)
       if (!part) {
-        part = { model: fixture.model, class: fixture.class ?? 'func_door', ...(fixture.name ? { name: fixture.name } : {}), x: fixture.x, y: fixture.y, z: fixture.z, pitch: fixture.pitch, yaw: fixture.yaw, roll: fixture.roll, triangles: [], faces: [] }
+        part = { model: fixture.model, class: fixture.class ?? 'func_door', ...(fixture.name ? { name: fixture.name } : {}), ...(fixture.templated ? { templated: true } : {}), x: fixture.x, y: fixture.y, z: fixture.z, pitch: fixture.pitch, yaw: fixture.yaw, roll: fixture.roll, triangles: [], faces: [] }
         parts.set(fixture.model, part)
       }
       faceRecords.push({ mapping: mappingFor(texinfo, null, null) })
       for (let k = 1; k + 1 < corner.length; k++) {
         part.faces!.push(faceRecords.length - 1)
         for (const v of [corner[0]!, corner[k]!, corner[k + 1]!]) {
-          movable.push(...place(v))
+          if (!fixture.templated) movable.push(...place(v)) // a template source is not in the world: not in the world-space soup
           // local to the origin, in sixty-fourths of a unit (exact in a float32; whole units where the map has them)
           part.triangles.push(Math.round(xyz[v * 3]! * 64) / 64, Math.round(xyz[v * 3 + 1]! * 64) / 64, Math.round(xyz[v * 3 + 2]! * 64) / 64)
         }
@@ -553,6 +560,8 @@ export interface EntityCensus { brush: { class: string, model: number, /** It ha
   templated?: TemplatedCensus }
 /** What the templates of a map left out (RFC 37, 4): how many `point_template` entities were read, how many entities they name (any class), and how many of each class. */
 export interface TemplatedCensus { templates: number, entities: number, byClass: Map<string, number>,
+  /** Templated entities of a class the bridge records as parts, kept as hidden nodes (RFC 37, 11). They are counted in `entities` too. */
+  keptAsParts: number,
   /** Templates that would remove their entities but are spawned (`ForceSpawn`) by the map itself when the round starts, so their entities are in the world and drawn (RFC 37, 4a). */
   spawnedAtStart: number }
 const MAX_CENSUS_CLASSES = 5000
@@ -799,7 +808,7 @@ export async function extractMapEntities(src: ByteSource, limits: SpawnLimits = 
   // RFC 37: the entities a point_template names are not in the world when the round starts. The names are read from every template first, so a template that comes
   // later in the lump than the entity it names still counts; only then is each entity decided.
   const templatedNames = templatedNamesOf(entities, spawnedAtStart)
-  const templated: TemplatedCensus = { templates: entities.filter(e => e['classname'] === 'point_template').length, entities: 0, byClass: new Map(), spawnedAtStart: entities.filter(e => e['classname'] === 'point_template' && templateRemoves(e) && templateSpawnedAtStart(e, spawnedAtStart)).length }
+  const templated: TemplatedCensus = { templates: entities.filter(e => e['classname'] === 'point_template').length, entities: 0, byClass: new Map(), keptAsParts: 0, spawnedAtStart: entities.filter(e => e['classname'] === 'point_template' && templateRemoves(e) && templateSpawnedAtStart(e, spawnedAtStart)).length }
   census.templated = templated
   for (const entity of entities) {
     const cls = entity['classname']
@@ -819,15 +828,18 @@ export async function extractMapEntities(src: ByteSource, limits: SpawnLimits = 
       const name = cls!.slice(0, 64)
       if (templated.byClass.has(name) || templated.byClass.size < MAX_CENSUS_CLASSES) templated.byClass.set(name, (templated.byClass.get(name) ?? 0) + 1)
     }
-    // A brush entity that stands still names its model `*N` and has no parent that could move it, and is not hidden at the start (RFC 33, 3), nor templated (RFC 37).
+    // A templated entity of a class the bridge records as parts (RFC 37, 11) keeps its geometry as a hidden part: the copies the map spawns share its model number, and a viewer that draws them needs it.
+    const keptAsPart = isTemplated && PART_CLASSES.test(cls!) && /^\*\d{1,5}$/.test(entity['model'] ?? '') && !entity['parentname'] && !hiddenAtStart(entity)
+    if (keptAsPart) templated.keptAsParts++
+    // A brush entity that stands still names its model `*N` and has no parent that could move it, and is not hidden at the start (RFC 33, 3), nor templated (RFC 37; except the parts just above).
     const water = !!cls && WATER_CLASSES.test(cls), decoration = !!cls && DECORATION_CLASSES.test(cls)
-    if (cls && !isTemplated && (FIXTURE_CLASSES.test(cls) || MOVABLE_CLASSES.test(cls) || water || decoration) && /^\*\d{1,5}$/.test(entity['model'] ?? '') && !entity['parentname'] && !hiddenAtStart(entity)) {
+    if (cls && (!isTemplated || keptAsPart) && (FIXTURE_CLASSES.test(cls) || MOVABLE_CLASSES.test(cls) || water || decoration) && /^\*\d{1,5}$/.test(entity['model'] ?? '') && !entity['parentname'] && !hiddenAtStart(entity)) {
       const o = originOf(entity) ?? { x: 0, y: 0, z: 0 }
       let a = anglesOf(entity)
       let at = water ? waterOrigin(entity, o) : o
       // Where a door or a linear mover stands when the round starts (RFC 35); one that starts open and cannot be placed is left out, like a hidden one.
       let drawn = true
-      if (START_STATE_CLASSES.test(cls)) {
+      if (!keptAsPart && START_STATE_CLASSES.test(cls)) {
         const pose = startPose(cls, entity, o, a)
         const states = census.startStates!, row = (states.byClass[cls] ??= { closed: 0, openPlaced: 0, openLeftOut: 0 })
         if (pose.state === 'closed') { states.closed++; row.closed++ }
@@ -835,7 +847,7 @@ export async function extractMapEntities(src: ByteSource, limits: SpawnLimits = 
         else { states.openLeftOut++; row.openLeftOut++; drawn = false }
         at = pose.origin; a = pose.angles
       }
-      if (drawn) fixtureModels.push({ model: Number(entity['model']!.slice(1)), ...at, pitch: a[0], yaw: a[1], roll: a[2], ...(MOVABLE_CLASSES.test(cls) ? { movable: true, class: cls, ...(entity['targetname'] ? { name: entity['targetname'].slice(0, 80) } : {}) } : {}), ...(water ? { water: true } : {}), ...(decoration ? { decoration: true } : {}) })
+      if (drawn) fixtureModels.push({ model: Number(entity['model']!.slice(1)), ...at, pitch: a[0], yaw: a[1], roll: a[2], ...(MOVABLE_CLASSES.test(cls) ? { movable: true, class: cls, ...(entity['targetname'] ? { name: entity['targetname'].slice(0, 80) } : {}), ...(keptAsPart ? { templated: true } : {}) } : {}), ...(water ? { water: true } : {}), ...(decoration ? { decoration: true } : {}) })
     }
     const at = cls && !isTemplated ? originOf(entity) : null
     if (cls && at) {

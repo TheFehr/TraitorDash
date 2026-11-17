@@ -78,7 +78,7 @@ afterAll(() => { delete process.env.OPEN_SIGNIN; delete process.env.MAP_GEOMETRY
 
 describe('the records of the constructed maps', () => {
   test('each has its counts (the page is made of these)', () => {
-    expect(records['ttt_s37_a']!.templated).toEqual({ templates: 2, entities: 6, byClass: [{ class: 'func_physbox', count: 4 }, { class: 'func_brush', count: 1 }, { class: 'prop_dynamic', count: 1 }] })
+    expect(records['ttt_s37_a']!.templated).toEqual({ templates: 2, entities: 6, byClass: [{ class: 'func_physbox', count: 4 }, { class: 'func_brush', count: 1 }, { class: 'prop_dynamic', count: 1 }], keptAsParts: 4 })
     expect(records['ttt_s37_b']!.templated).toEqual({ templates: 1, entities: 1, byClass: [{ class: 'prop_dynamic', count: 1 }] })
     expect(records['ttt_s37_c']!.templated).toEqual({ templates: 1, entities: 0, byClass: [] })
     expect(records['ttt_s37_d']!.templated).toEqual({ templates: 0, entities: 0, byClass: [] })
@@ -91,7 +91,7 @@ describe('the sums (pure)', () => {
   test('the totals are the sums over the maps that have the counts; a record without them and a map without a record are left out', () => {
     const t = summarise(inputs()).templated
     expect(t.withData).toBe(4)
-    expect(t.totals).toEqual({ templates: 4, entities: 7, maps: 2, otherEntities: 0, spawnedAtStart: 0 })
+    expect(t.totals).toEqual({ templates: 4, entities: 7, maps: 2, otherEntities: 0, spawnedAtStart: 0, keptAsParts: 4 })
     expect(t.byClass).toEqual([{ class: 'func_physbox', count: 4 }, { class: 'func_brush', count: 1 }, { class: 'prop_dynamic', count: 2 }].sort((a, b) => b.count - a.count || (a.class < b.class ? -1 : 1)))
   })
   test('the classes are ranked by count, then name, and the maps by entities left out, then templates, then name', () => {
@@ -107,7 +107,7 @@ describe('the sums (pure)', () => {
     expect(t.totals.otherEntities).toBe(12); expect(t.totals.entities).toBe(20)
   })
   test('nothing counted: zeros and no rows', () => {
-    expect(summarise([]).templated).toEqual({ withData: 0, totals: { templates: 0, entities: 0, maps: 0, otherEntities: 0, spawnedAtStart: 0 }, byClass: [], rows: [] })
+    expect(summarise([]).templated).toEqual({ withData: 0, totals: { templates: 0, entities: 0, maps: 0, otherEntities: 0, spawnedAtStart: 0, keptAsParts: 0 }, byClass: [], rows: [] })
   })
 })
 
@@ -135,6 +135,10 @@ describe('the card', () => {
     expect(html).toContain(`<a href="/servers/${serverId}/maps/ttt_s37_a">ttt_s37_a</a>`)
     expect(card).not.toContain('ttt_s37_old')
     expect(html).toContain('data-map-row="ttt_s37_old"')
+  })
+  test('the card says how many of the entities left out stay in the mesh as hidden parts (RFC 37, 11), and says nothing when there are none', async () => {
+    const card = /data-coverage-templated.*?data-coverage-textures/s.exec(await page())![0]
+    expect(card).toContain('4 of the entities left out are doors, lifts or physics boxes that the bridge records the copies of: their geometry stays in the mesh as a hidden part')
   })
   test('a server whose records have no counts yet says so, with no table', async () => {
     const html = await page(emptyId)

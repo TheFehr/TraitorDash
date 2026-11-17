@@ -129,6 +129,8 @@ export interface GlbInfo {
   detached: { triangles: number, parts: number }
   /** Triangles of the parts that can move (doors, lifts, a collapsing building): a group of their own, in a colour of their own. */
   movable: number
+  /** Template sources kept as hidden `movable-<model>` nodes for the copies the bridge records (RFC 37, 11): not drawn, not in `movable`. */
+  templated: { parts: number, triangles: number }
   /** Triangles of the decoration group (`func_illusionary`, RFC 33, 4.4): not floors, walls, water or parts, and not counted in `triangles`. */
   decoration: number
   /** Spawn points written into the file. */
@@ -433,7 +435,7 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
       k++
     }
   }
-  const info: GlbInfo = { vertices: 0, triangles: 0, droppedDegenerate: dropped, levels: [], storeys, detached: { triangles: 0, parts: 0 }, movable: 0, decoration: 0, spawns: 0, waterTriangles: 0, props: { placements: 0, models: 0, triangles: 0 }, cropped }
+  const info: GlbInfo = { vertices: 0, triangles: 0, droppedDegenerate: dropped, levels: [], storeys, detached: { triangles: 0, parts: 0 }, movable: 0, templated: { parts: 0, triangles: 0 }, decoration: 0, spawns: 0, waterTriangles: 0, props: { placements: 0, models: 0, triangles: 0 }, cropped }
   byLevel.forEach((lv) => {
     if (lv.floors.length === 0 && lv.walls.length === 0) return
     const index = info.levels.length + 1
@@ -466,7 +468,7 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
   const movableGroup = (triangles: number) => ({ group: 'movable', triangles })
   if (s.movableParts && s.movableParts.length > 0) {
     const group = doc.createNode('movable')
-    let triangles = 0, count = 0
+    let triangles = 0, count = 0, hiddenTriangles = 0, hiddenCount = 0
     for (const p of s.movableParts) {
       // The crop keeps a triangle whose centre, once placed, is inside it.
       let soup = p.triangles
@@ -497,13 +499,14 @@ export async function surfacesToGlb(s: MeshInput, opts: MeshOptions): Promise<{ 
           .setIndices(doc.createAccessor(`${name}-indices`).setType('SCALAR').setArray(indices).setBuffer(buffer)))
       }
       const n = soup.length / 9
-      triangles += n; count++
+      if (p.templated) { hiddenTriangles += n; hiddenCount++ } else { triangles += n; count++ }
       group.addChild(doc.createNode(name).setMesh(mesh).setTranslation([p.x, p.y, p.z]).setRotation(angleQuaternion(p.pitch, p.yaw, p.roll))
-        .setExtras({ model: p.model, class: p.class, ...(p.name ? { name: p.name } : {}), origin: [p.x, p.y, p.z], angles: [p.pitch, p.yaw, p.roll], triangles: n }))
+        .setExtras({ model: p.model, class: p.class, ...(p.name ? { name: p.name } : {}), origin: [p.x, p.y, p.z], angles: [p.pitch, p.yaw, p.roll], triangles: n, ...(p.templated ? { templated: true } : {}) }))
     }
-    if (count > 0) {
+    if (count > 0 || hiddenCount > 0) {
       info.movable = triangles
-      root.addChild(group.setExtras({ ...movableGroup(triangles), parts: count }))
+      info.templated = { parts: hiddenCount, triangles: hiddenTriangles }
+      root.addChild(group.setExtras({ ...movableGroup(triangles), parts: count, ...(hiddenCount > 0 ? { templatedParts: hiddenCount } : {}) }))
     }
   } else {
     const movableSoup = withoutDegenerate(opts.crop ? cropTriangles(s.movable ?? [], opts.crop) : s.movable ?? []).kept

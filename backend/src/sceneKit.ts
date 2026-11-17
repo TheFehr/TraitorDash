@@ -121,7 +121,21 @@ export function prepareMovable(model: Object3D, cut: Plane): Object3D | null {
     mesh.material.metalness = 0
     mesh.material.roughness = 1
   })
+  // A template source that the bridge records copies of (RFC 37, 11) is in the file only for later animation: it stays hidden, whatever the group's checkbox says
+  // (a hidden child is not drawn when its group is shown).
+  node?.children.forEach(c => { if (isTemplatedPart(c)) c.visible = false })
   return node
+}
+
+/** Is this node a template source kept hidden (RFC 37, 11)? The mesh marks it with `extras.templated`, which the loader puts in `userData`. */
+export const isTemplatedPart = (o: Object3D): boolean => o.userData?.templated === true
+
+/**
+ * The node of the part with this model number (`movable-<model>`, RFC 18, 4.4), whatever it is. RFC 20, stage 3 finds the template source of a recorded copy
+ * with it: the copy shares the model number `*N` of its source, so the node is shown (`visible = true`) from the copy's first recorded keyframe and placed by the keyframes.
+ */
+export function movablePart(model: Object3D, modelNumber: number): Object3D | null {
+  return model.getObjectByName(`movable-${modelNumber}`) ?? null
 }
 
 /**
@@ -205,7 +219,7 @@ export function prepareDetached(model: Object3D, cut: Plane): { node: Object3D, 
 export function boxWithout(model: Object3D, names: string[]): Box3 {
   model.updateWorldMatrix(true, true)
   const box = new Box3()
-  const walk = (o: Object3D) => { if (names.includes(o.name)) return; if ((o as Mesh).isMesh) box.expandByObject(o, true); else o.children.forEach(walk) }
+  const walk = (o: Object3D) => { if (names.includes(o.name) || isTemplatedPart(o)) return; if ((o as Mesh).isMesh) box.expandByObject(o, true); else o.children.forEach(walk) }
   walk(model)
   return box.isEmpty() ? new Box3().setFromObject(model) : box
 }
