@@ -66,4 +66,10 @@ describe('docs/MAP_COVERAGE.md and the registry say the same', () => {
     expect(doc).toContain('card "Textures"')
     expect(doc).toContain('24 MB of PNG, 2 000 materials')
   })
+
+  test('the document names the point templates of RFC 37, the card and the feature row', () => {
+    expect(doc).toContain('[RFC 37](rfcs/RFC-037.md)')
+    expect(doc).toContain('card "Entities not in the world at round start"')
+    expect(doc).toContain('| `point templates` | invisible |')
+  })
 })

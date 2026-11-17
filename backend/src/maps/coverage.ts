@@ -1,4 +1,4 @@
-import { DECORATION_CLASSES, FIXTURE_CLASSES, MOVABLE_CLASSES, SURFACE_FLAGS, WATER_CLASSES, type BspHeader, type ByteSource, type EntityCensus, type FaceTally, type StartStates } from './bsp'
+import { DECORATION_CLASSES, FIXTURE_CLASSES, MOVABLE_CLASSES, SURFACE_FLAGS, WATER_CLASSES, type BspHeader, type ByteSource, type EntityCensus, type FaceTally, type StartStates, type TemplatedCensus } from './bsp'
 
 // RFC 32: what the map pipeline does with each thing a Source map can hold. The registry below is the catalogue (docs/MAP_COVERAGE.md has the
 // same table in prose, and a test fails when they differ); the record (`buildCoverage`) counts, for one map, what it holds per entry.
@@ -77,6 +77,7 @@ const FEATURES: [string, RegistryStatus, string][] = [
   ['static props', 'drawn', 'Props placed by the compiler (the `sprp` game lump) and the props of the entity lump, as the models the map carries or the game has (RFC 18, 4.4).'],
   ['textures from the pak', 'drawn', 'The map\'s own materials and textures, read from the pak file at the end of the map (RFC 18, 5).'],
   ['door start states', 'drawn', 'Doors, rotating doors and linear movers are drawn where they stand when the round starts: a rotating door that starts open at its open angle, a linear mover at its `startposition`; a sliding door that starts open is not drawn (its open end is inside solid space the mesh does not have), nor is a part that cannot be placed with confidence (RFC 35).'],
+  ['point templates', 'invisible', 'Entities that a `point_template` names (`Template01` to `Template16`) are not in the world when the round starts, the game keeps them only as models for copies: left out of the picture, whatever they are (a brush entity, a prop, a spawn point), unless the template has the flag "don\'t remove template entities" or the map spawns the template itself when the round starts (an output such as `RoundPreparation` with `ForceSpawn`); RFC 37.'],
   ['lighting', 'not read', 'The lightmaps (lump 8, HDR lump 53): drawing them needs the lightmap atlas and every face\'s coordinates in it.'],
   ['overlays', 'not read', 'Decals the mapper put on surfaces (lump 45, `info_overlay`): drawing them needs a quad on the surface for each.'],
   ['cubemaps', 'not read', 'Environment cube maps for reflections (lump 42): only matter with reflective materials, which are not modelled.'],
@@ -164,6 +165,39 @@ export interface CoverageRecord {
   startStates?: StartStates
   /** The cost and fallbacks of the surface textures (RFC 36, 4). A record made before RFC 36 has none. */
   textures?: TextureCensus
+  /** The entities a `point_template` names, left out of the picture because they are not in the world at round start (RFC 37, 4). A record made before RFC 37 has none. */
+  templated?: TemplatedRecord
+}
+
+export const MAX_TEMPLATED_CLASSES = 30
+/** `templates`: the `point_template` entities read (those that remove their entities, and those that do not); `entities`: how many entities the names of the removing ones match; `byClass`: the 30 largest classes, the rest in `other`. */
+export interface TemplatedRecord { templates: number, entities: number, byClass: { class: string, count: number }[], other?: { classes: number, entities: number },
+  /** Templates the map spawns itself when the round starts: their entities are drawn (RFC 37, 4a). Only given when there are some. */
+  spawnedAtStart?: number }
+
+/** The record's `templated` from what the extractor counted (RFC 37): class names cleaned (two names that become one are one class), ranked by count then name, at most 30 kept. */
+export function templatedRecord(t: TemplatedCensus): TemplatedRecord {
+  const byName = new Map<string, number>()
+  for (const [raw, count] of t.byClass) { const name = cleanName(raw); byName.set(name, (byName.get(name) ?? 0) + count) }
+  const ranked = [...byName].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+  const top = ranked.slice(0, MAX_TEMPLATED_CLASSES), beyond = ranked.slice(MAX_TEMPLATED_CLASSES)
+  return { templates: t.templates, entities: t.entities, byClass: top.map(([name, count]) => ({ class: name, count })), ...(t.spawnedAtStart > 0 ? { spawnedAtStart: t.spawnedAtStart } : {}), ...(beyond.length ? { other: { classes: beyond.length, entities: beyond.reduce((n, [, c]) => n + c, 0) } } : {}) }
+}
+
+/** The templated census of a stored record, checked (RFC 37): whole non-negative numbers throughout, or nothing (an older record has none). */
+function templatedOf(x: unknown): TemplatedRecord | undefined {
+  if (!x || typeof x !== 'object') return undefined
+  const r = x as Record<string, any>
+  const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0
+  if (!num(r.templates) || !num(r.entities) || !Array.isArray(r.byClass)) return undefined
+  const byName = new Map<string, number>()
+  for (const c of r.byClass) {
+    if (!c || typeof c.class !== 'string' || !num(c.count)) return undefined
+    const name = cleanName(c.class)
+    byName.set(name, (byName.get(name) ?? 0) + Math.floor(c.count))
+  }
+  const other = r.other && num(r.other.classes) && num(r.other.entities) ? { classes: Math.floor(r.other.classes), entities: Math.floor(r.other.entities) } : undefined
+  return { templates: Math.floor(r.templates), entities: Math.floor(r.entities), byClass: [...byName].map(([c, count]) => ({ class: c, count })), ...(num(r.spawnedAtStart) && r.spawnedAtStart > 0 ? { spawnedAtStart: Math.floor(r.spawnedAtStart) } : {}), ...(other ? { other } : {}) }
 }
 
 const LUMP_MODELS = 14
@@ -227,6 +261,7 @@ export async function buildCoverage(src: ByteSource, header: BspHeader, tally: F
     points: top.map(([name, count]) => ({ class: name, count })),
     ...(beyondEntities > 0 ? { pointsOther: { classes: beyond.length, entities: beyondEntities } } : {}),
     pointFeatures,
+    ...(census.templated ? { templated: templatedRecord(census.templated) } : {}),
     ...(census.startStates ? { startStates: { ...census.startStates, byClass: Object.fromEntries(Object.entries(census.startStates.byClass).map(([k, v]) => [cleanName(k), { ...v }])) } } : {}),
     lumps: { lighting: size(LUMP_OF.lighting) + size(LUMP_OF.lightingHdr), overlays: size(LUMP_OF.overlays), cubemaps: size(LUMP_OF.cubemaps), gameLump: size(LUMP_OF.gameLump), visibility: size(LUMP_OF.visibility), pakfile: size(LUMP_OF.pakfile) },
   }
@@ -271,8 +306,9 @@ export function asRecord(x: unknown): CoverageRecord | null {
   if (!Object.values(r.flags).every(num) || !Object.values(r.outcome).every(num) || !Object.values(r.lumps).every(num)) return null
   if (!r.brush.every((b: any) => b && typeof b.class === 'string' && num(b.entities) && num(b.faces) && (b.parentedFaces === undefined || num(b.parentedFaces)) && typeof b.status === 'string' && (STATUSES as readonly string[]).includes(b.status))) return null
   if (!r.points.every((p: any) => p && typeof p.class === 'string' && num(p.count))) return null
-  const { startStates: stored, textures: storedTextures, ...rest } = r
+  const { startStates: stored, textures: storedTextures, templated: storedTemplated, ...rest } = r
+  const templated = templatedOf(storedTemplated)
   const startStates = startStatesOf(stored)
   const textures = texturesOf(storedTextures)
-  return { ...rest, ...(startStates ? { startStates } : {}), ...(textures ? { textures } : {}), material: { sky: num(r.material?.sky) ? r.material.sky : 0, 'tools/*': num(r.material?.['tools/*']) ? r.material['tools/*'] : 0 }, pointFeatures: r.pointFeatures && typeof r.pointFeatures === 'object' && Object.values(r.pointFeatures).every(num) ? r.pointFeatures : {} } as CoverageRecord
+  return { ...rest, ...(startStates ? { startStates } : {}), ...(textures ? { textures } : {}), ...(templated ? { templated } : {}), material: { sky: num(r.material?.sky) ? r.material.sky : 0, 'tools/*': num(r.material?.['tools/*']) ? r.material['tools/*'] : 0 }, pointFeatures: r.pointFeatures && typeof r.pointFeatures === 'object' && Object.values(r.pointFeatures).every(num) ? r.pointFeatures : {} } as CoverageRecord
 }

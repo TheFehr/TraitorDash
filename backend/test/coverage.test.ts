@@ -292,7 +292,9 @@ describe('the record only counts: the mesh is what it was', () => {
   // checked: with the numbers put back to 15 and 16 the code of RFC 35 gave 'e4311210737322bef02ac43e3639d5cb081586abf6e09c49f2b5df646af12f90' again). The hash below is the one at 16.
   // RFC 36 raised it to 17 (this map has no texture: no byte of the mesh changes; checked: with the numbers put back to 16 and 17 the code of RFC 36 gave
   // '2a5abb5f1c3533a5b88327c2f5084fcbf0323743bc4b55c70c99c2c7fc8842c5' again). The hash below is the one at 17.
-  const GLB = '670f50ad10b8f856a831dfe05447302050ed9a42e103f937d62d38e51036220e'
+  // RFC 37 raised it to 18 (this map has no point_template: no byte of the mesh changes; checked: with the numbers put back to 17 and 18 the code of RFC 37 gave
+  // '670f50ad10b8f856a831dfe05447302050ed9a42e103f937d62d38e51036220e' again). The hash below is the one at 18.
+  const GLB = '48e7cee148c1a1698cc631251ad8f1808c84afc9a9400f11d0be3136634b673f'
   const sha = (x: string | Uint8Array) => createHash('sha256').update(x).digest('hex')
 
   test('the surfaces of the constructed map are the same triangles, faces, mappings and statistics', async () => {
@@ -321,12 +323,12 @@ describe('the record only counts: the mesh is what it was', () => {
 })
 
 describe('the mesh generations', () => {
-  test('both went up by one (17 and 18) and still differ, and a backend asks for the one that fits it', () => {
-    expect(MESH_VERSION).toBe(17)
-    expect(MESH_VERSION_GAME).toBe(18)
+  test('both went up by one (18 and 19) and still differ, and a backend asks for the one that fits it', () => {
+    expect(MESH_VERSION).toBe(18)
+    expect(MESH_VERSION_GAME).toBe(19)
     expect(MESH_VERSION_GAME).not.toBe(MESH_VERSION)
-    expect(meshVersion(false)).toBe(17)
-    expect(meshVersion(true)).toBe(18)
+    expect(meshVersion(false)).toBe(18)
+    expect(meshVersion(true)).toBe(19)
   })
 
   test('the history in meshVersion.ts names this generation and RFC 33 (and the one before it, RFC 32)', () => {
@@ -335,5 +337,6 @@ describe('the mesh generations', () => {
     expect(text).toMatch(/14 \(15 with the game's own models\).*RFC 33/)
     expect(text).toMatch(/16 \(17 with the game's own models\).*RFC 35/)
     expect(text).toMatch(/17 \(18 with the game's own models\).*RFC 36/)
+    expect(text).toMatch(/18 \(19 with the game's own models\).*RFC 37/)
   })
 })

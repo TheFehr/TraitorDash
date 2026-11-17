@@ -548,7 +548,13 @@ export async function extractSurfaces(src: ByteSource, limits: SurfaceLimits = {
  */
 export interface EntityCensus { brush: { class: string, model: number, /** It has a parent entity, which moves it: the extractor does not draw such an entity, whatever its class. */ parented: boolean }[], points: Map<string, number>, pointsOther: number
   /** Where the doors, rotating doors and linear movers that are drawn start (RFC 35, 5); counted by `extractMapEntities`. */
-  startStates?: StartStates }
+  startStates?: StartStates
+  /** The entities a `point_template` names, which are not in the world at round start (RFC 37); they are still in `brush` and `points` above, since they are in the file. */
+  templated?: TemplatedCensus }
+/** What the templates of a map left out (RFC 37, 4): how many `point_template` entities were read, how many entities they name (any class), and how many of each class. */
+export interface TemplatedCensus { templates: number, entities: number, byClass: Map<string, number>,
+  /** Templates that would remove their entities but are spawned (`ForceSpawn`) by the map itself when the round starts, so their entities are in the world and drawn (RFC 37, 4a). */
+  spawnedAtStart: number }
 const MAX_CENSUS_CLASSES = 5000
 
 export interface Spawn { class: string, x: number, y: number, z: number }
@@ -709,6 +715,67 @@ export function slidingOpenPose(entity: Record<string, string>, origin: Point, a
 }
 
 /**
+ * The entity lump as a list of entities, keys lower-cased (Hammer writes `StartDisabled` and `WaveHeight` with capitals and `origin` without, and every lookup is lower case; RFC 33, 9a:
+ * the hidden-at-start rule never fired on real maps while keys kept their case). The whole lump is read before anything is decided about an entity, because a rule such as the
+ * templates of RFC 37 depends on entities that may come later in the lump.
+ */
+export function parseEntities(text: string, maxEntities = 100_000, spawnedAtStart?: Set<string>): Record<string, string>[] {
+  const out: Record<string, string>[] = []
+  let entity: Record<string, string> | null = null
+  let key: string | null = null
+  for (const m of text.matchAll(/"([^"\r\n]*)"|([{}])/g)) {
+    const brace = m[2]
+    if (brace === '{') {
+      if (out.length >= maxEntities) throw new BspError(`too many entities (the limit is ${maxEntities})`)
+      entity = {}; key = null
+    } else if (brace === '}') {
+      if (entity) out.push(entity)
+      entity = null; key = null
+    } else if (entity) {
+      if (key === null) key = m[1]!.toLowerCase()
+      else {
+        // An output that fires when the round begins and force-spawns a template (RFC 37, 4a). Outputs repeat a key, so they are read here, before a later one overwrites an earlier one.
+        if (spawnedAtStart && ROUND_START_OUTPUTS.has(key)) {
+          const [target, input] = m[1]!.split(/[,\x1b]/)
+          if (target !== undefined && input?.trim().toLowerCase() === 'forcespawn' && target.trim()) spawnedAtStart.add(target.trim().toLowerCase())
+        }
+        entity[key] = m[1]!; key = null
+      }
+    }
+  }
+  return out
+}
+
+/** The outputs (lower case) that fire when the round starts or is prepared: `ttt_map_settings` (`RoundPreparation`, `RoundStart`) and `logic_auto`. */
+export const ROUND_START_OUTPUTS: ReadonlySet<string> = new Set(['roundpreparation', 'roundstart', 'onmapspawn', 'onnewgame', 'onmultinewround'])
+
+/** Does a `point_template` take its entities out of the world? Not when `spawnflags` bit 1 ("don't remove template entities") is set. */
+export const templateRemoves = (t: Record<string, string>): boolean => { const flags = wholeOf(t['spawnflags']); return !(flags !== null && flags >= 0 && (flags & 1) === 1) }
+/** Does the map itself spawn this template when the round starts (an output of `ROUND_START_OUTPUTS` with `ForceSpawn` on its name)? Then its entities are in the world at round start (RFC 37, 4a). */
+export const templateSpawnedAtStart = (t: Record<string, string>, spawnedAtStart: ReadonlySet<string>): boolean => { const n = t['targetname']?.trim().toLowerCase(); return !!n && spawnedAtStart.has(n) }
+
+const TEMPLATE_KEY = /^template(0[1-9]|1[0-6])$/
+
+/**
+ * The names a map's `point_template` entities name (RFC 37, 3): the values of `Template01` to `Template16` (lower-cased keys), trimmed, lower-cased, not empty, of every template
+ * whose `spawnflags` bit 1 ("don't remove template entities") is clear and which the map does not spawn itself when the round starts (`spawnedAtStart`, the lower-cased template names; RFC 37, 4a).
+ * Source compares names without regard to case. Order independent: it reads the whole list.
+ */
+export function templatedNamesOf(entities: readonly Record<string, string>[], spawnedAtStart: ReadonlySet<string> = new Set()): Set<string> {
+  const names = new Set<string>()
+  for (const e of entities) {
+    if (e['classname'] !== 'point_template') continue
+    if (!templateRemoves(e) || templateSpawnedAtStart(e, spawnedAtStart)) continue
+    for (const [k, v] of Object.entries(e)) {
+      if (!TEMPLATE_KEY.test(k)) continue
+      const name = v.trim().toLowerCase()
+      if (name) names.add(name)
+    }
+  }
+  return names
+}
+
+/**
  * Where players start (the `info_player_*` entities) and where the 3D skybox camera is (`sky_camera`,
  * which sits inside the skybox section, far from the map), from the entity lump: a few tens of KB
  * of text, blocks of "key" "value" lines in braces. Only the header and that one lump are read.
@@ -727,56 +794,57 @@ export async function extractMapEntities(src: ByteSource, limits: SpawnLimits = 
   if (bytes.length !== lump.length) throw new BspError('short read of the entity lump')
   const text = Buffer.from(bytes).toString('latin1')
 
-  let entity: Record<string, string> | null = null
-  let key: string | null = null
-  let count = 0
-  for (const m of text.matchAll(/"([^"\r\n]*)"|([{}])/g)) {
-    const brace = m[2]
-    if (brace === '{') {
-      if (++count > maxEntities) throw new BspError(`too many entities (the limit is ${maxEntities})`)
-      entity = {}; key = null
-    } else if (brace === '}') {
-      const cls = entity?.['classname']
-      // Only counted, for the coverage record (RFC 32): a class that owns a model `*N` is a brush entity, any other is a point entity.
-      if (entity && cls && cls !== 'worldspawn') {
-        const owned = /^\*(\d{1,5})$/.exec(entity['model'] ?? '')
-        const name = cls.slice(0, 64)
-        if (owned && Number(owned[1]) > 0) census.brush.push({ class: name, model: Number(owned[1]), parented: !!entity['parentname'] })
-        else if (census.points.has(name) || census.points.size < MAX_CENSUS_CLASSES) census.points.set(name, (census.points.get(name) ?? 0) + 1)
-        else census.pointsOther++
+  const spawnedAtStart = new Set<string>()
+  const entities = parseEntities(text, maxEntities, spawnedAtStart)
+  // RFC 37: the entities a point_template names are not in the world when the round starts. The names are read from every template first, so a template that comes
+  // later in the lump than the entity it names still counts; only then is each entity decided.
+  const templatedNames = templatedNamesOf(entities, spawnedAtStart)
+  const templated: TemplatedCensus = { templates: entities.filter(e => e['classname'] === 'point_template').length, entities: 0, byClass: new Map(), spawnedAtStart: entities.filter(e => e['classname'] === 'point_template' && templateRemoves(e) && templateSpawnedAtStart(e, spawnedAtStart)).length }
+  census.templated = templated
+  for (const entity of entities) {
+    const cls = entity['classname']
+    // Only counted, for the coverage record (RFC 32): a class that owns a model `*N` is a brush entity, any other is a point entity.
+    if (cls && cls !== 'worldspawn') {
+      const owned = /^\*(\d{1,5})$/.exec(entity['model'] ?? '')
+      const name = cls.slice(0, 64)
+      if (owned && Number(owned[1]) > 0) census.brush.push({ class: name, model: Number(owned[1]), parented: !!entity['parentname'] })
+      else if (census.points.has(name) || census.points.size < MAX_CENSUS_CLASSES) census.points.set(name, (census.points.get(name) ?? 0) + 1)
+      else census.pointsOther++
+    }
+    // Named by a template: not in the world at the start, so not drawn, not placed, not a spawn, whatever it is (RFC 37). An entity with no name is never templated.
+    const tname = entity['targetname']?.trim().toLowerCase()
+    const isTemplated = !!cls && cls !== 'worldspawn' && !!tname && templatedNames.has(tname)
+    if (isTemplated) {
+      templated.entities++
+      const name = cls!.slice(0, 64)
+      if (templated.byClass.has(name) || templated.byClass.size < MAX_CENSUS_CLASSES) templated.byClass.set(name, (templated.byClass.get(name) ?? 0) + 1)
+    }
+    // A brush entity that stands still names its model `*N` and has no parent that could move it, and is not hidden at the start (RFC 33, 3), nor templated (RFC 37).
+    const water = !!cls && WATER_CLASSES.test(cls), decoration = !!cls && DECORATION_CLASSES.test(cls)
+    if (cls && !isTemplated && (FIXTURE_CLASSES.test(cls) || MOVABLE_CLASSES.test(cls) || water || decoration) && /^\*\d{1,5}$/.test(entity['model'] ?? '') && !entity['parentname'] && !hiddenAtStart(entity)) {
+      const o = originOf(entity) ?? { x: 0, y: 0, z: 0 }
+      let a = anglesOf(entity)
+      let at = water ? waterOrigin(entity, o) : o
+      // Where a door or a linear mover stands when the round starts (RFC 35); one that starts open and cannot be placed is left out, like a hidden one.
+      let drawn = true
+      if (START_STATE_CLASSES.test(cls)) {
+        const pose = startPose(cls, entity, o, a)
+        const states = census.startStates!, row = (states.byClass[cls] ??= { closed: 0, openPlaced: 0, openLeftOut: 0 })
+        if (pose.state === 'closed') { states.closed++; row.closed++ }
+        else if (pose.state === 'open') { states.openPlaced++; row.openPlaced++; if (pose.linear) states.startPositioned++ }
+        else { states.openLeftOut++; row.openLeftOut++; drawn = false }
+        at = pose.origin; a = pose.angles
       }
-      // A brush entity that stands still names its model `*N` and has no parent that could move it, and is not hidden at the start (RFC 33, 3).
-      const water = !!cls && WATER_CLASSES.test(cls), decoration = !!cls && DECORATION_CLASSES.test(cls)
-      if (entity && cls && (FIXTURE_CLASSES.test(cls) || MOVABLE_CLASSES.test(cls) || water || decoration) && /^\*\d{1,5}$/.test(entity['model'] ?? '') && !entity['parentname'] && !hiddenAtStart(entity)) {
-        const o = originOf(entity!) ?? { x: 0, y: 0, z: 0 }
-        let a = anglesOf(entity!)
-        let at = water ? waterOrigin(entity!, o) : o
-        // Where a door or a linear mover stands when the round starts (RFC 35); one that starts open and cannot be placed is left out, like a hidden one.
-        let drawn = true
-        if (START_STATE_CLASSES.test(cls)) {
-          const pose = startPose(cls, entity, o, a)
-          const states = census.startStates!, row = (states.byClass[cls] ??= { closed: 0, openPlaced: 0, openLeftOut: 0 })
-          if (pose.state === 'closed') { states.closed++; row.closed++ }
-          else if (pose.state === 'open') { states.openPlaced++; row.openPlaced++; if (pose.linear) states.startPositioned++ }
-          else { states.openLeftOut++; row.openLeftOut++; drawn = false }
-          at = pose.origin; a = pose.angles
-        }
-        if (drawn) fixtureModels.push({ model: Number(entity['model']!.slice(1)), ...at, pitch: a[0], yaw: a[1], roll: a[2], ...(MOVABLE_CLASSES.test(cls) ? { movable: true, class: cls, ...(entity['targetname'] ? { name: entity['targetname'].slice(0, 80) } : {}) } : {}), ...(water ? { water: true } : {}), ...(decoration ? { decoration: true } : {}) })
+      if (drawn) fixtureModels.push({ model: Number(entity['model']!.slice(1)), ...at, pitch: a[0], yaw: a[1], roll: a[2], ...(MOVABLE_CLASSES.test(cls) ? { movable: true, class: cls, ...(entity['targetname'] ? { name: entity['targetname'].slice(0, 80) } : {}) } : {}), ...(water ? { water: true } : {}), ...(decoration ? { decoration: true } : {}) })
+    }
+    const at = cls && !isTemplated ? originOf(entity) : null
+    if (cls && at) {
+      if (SPAWN_CLASS.test(cls)) spawns.push({ class: cls, ...at })
+      else if (PROP_CLASS.test(cls) && /^models\/[^\0]{1,200}\.mdl$/i.test(entity['model'] ?? '')) {
+        const [pitch, yaw, roll] = anglesOf(entity)
+        if (entityProps.length < 20_000) entityProps.push({ model: entity['model']!.toLowerCase(), ...at, pitch, yaw, roll })
       }
-      const at = entity && cls ? originOf(entity) : null
-      if (cls && at) {
-        if (SPAWN_CLASS.test(cls)) spawns.push({ class: cls, ...at })
-        else if (PROP_CLASS.test(cls) && /^models\/[^\0]{1,200}\.mdl$/i.test(entity?.['model'] ?? '')) {
-          const [pitch, yaw, roll] = anglesOf(entity!)
-          if (entityProps.length < 20_000) entityProps.push({ model: entity!['model']!.toLowerCase(), ...at, pitch, yaw, roll })
-        }
-        else if (cls === 'sky_camera') skyCameras.push(at)
-      }
-      entity = null; key = null
-    } else if (entity) {
-      // Keys are read in lower case: Hammer writes `StartDisabled` and `WaveHeight` with capitals and `origin` without, and the lookups above are all lower case (RFC 33: the hidden-at-start rule never fired on real maps while keys kept their case).
-      if (key === null) key = m[1]!.toLowerCase()
-      else { entity[key] = m[1]!; key = null }
+      else if (cls === 'sky_camera') skyCameras.push(at)
     }
   }
   return { spawns, skyCameras, fixtureModels, entityProps, census }

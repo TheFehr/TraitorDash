@@ -118,6 +118,7 @@ Parts of the map file and what the pipeline does with them.
 | Key | Status | What the pipeline does |
 |---|---|---|
 | `3D skybox` | invisible | The small copy of the world around `sky_camera`: removed on purpose, it is not part of the map (RFC 11, RFC 18, 4.4). |
+| `point templates` | invisible | Entities that a `point_template` names (`Template01` to `Template16`) are not in the world when the round starts, the game keeps them only as models for copies: left out of the picture, whatever they are (a brush entity, a prop, a spawn point), unless the template has the flag "don't remove template entities" or the map spawns the template itself when the round starts (an output such as `RoundPreparation` with `ForceSpawn`); RFC 37. |
 
 ### Features of the file: not read
 
@@ -131,6 +132,8 @@ Parts of the map file and what the pipeline does with them.
 | `fog and light entities` | not read | Fog, sun and light entities (`env_fog_controller`, `env_sun`, `light*`): the atmosphere; drawing it needs fog and a lit scene. |
 
 The `door start states` feature ([RFC 35](rfcs/RFC-035.md)): the coverage record also counts, per map, the doors, rotating doors and linear movers that start closed, start open and were placed at their open end, and start open and were left out; the coverage page shows them in the card "Where moving parts start".
+
+The entities left out for being templates ([RFC 37](rfcs/RFC-037.md)): the coverage record also counts, per map, the `point_template` entities read, the entities their names match (they are still counted with their class above, since they are in the file), the largest classes among them, and the templates the map spawns itself when the round starts (their entities are drawn: on `ttt_minecraft_b7_summer` the stone plug of the traitor room); the coverage page shows them in the card "Entities not in the world at round start", the maps ranked by the entities left out.
 
 The cost of the textures ([RFC 36](rfcs/RFC-036.md)): every material a map names gets its own texture (no cap on their number; translucent and cut-out ones with their alpha), so the coverage record also counts, per map, the materials, the textured ones, the ones left to a fallback by reason (texture not found, not decodable, a safety ceiling reached), the PNG bytes of the surface textures and the size of the GLB; the coverage page shows them in the card "Textures", the maps ranked by the size of their mesh. The safety ceilings (24 MB of PNG, 2 000 materials looked at) only guard against hostile files and are counted when they bite.
 

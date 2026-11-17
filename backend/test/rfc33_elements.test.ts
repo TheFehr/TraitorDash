@@ -323,4 +323,6 @@ describe('a mesh with one of each new class (the bytes are pinned)', () => {
 // numbers put back to 15 and 16 the code of RFC 35 gave '8e12c033cb7fd8873f9e2132de8341455fcb2a360d7bdaf0cf848768d39352f2' again, the hash at generation 15).
 // RFC 36 raised it to 17: the surface textures change for maps with more than 40 materials (or translucent ones in the tail), this map has none, so again only that number differs
 // (checked: with the numbers put back to 16 and 17 the code of RFC 36 gave 'f929825adf92185c6cf0609e7d75c22fc983a65530e6ee1e6a8e5f39a32ddadc' again, the hash at 16).
-const PINNED = '35440b19908a1895631936188725aac60e8908ce502be374f8e7a7b3b36f5f6d'
+// RFC 37 raised it to 18: this map has no point_template, so again only that number differs (checked: with the numbers put back to 17 and 18 the code of RFC 37 gave
+// '35440b19908a1895631936188725aac60e8908ce502be374f8e7a7b3b36f5f6d' again, the hash at 17).
+const PINNED = '1de800ca685b70ab50028e7b285dc67d2289d1be086e669a79d55c4c3e1c8577'

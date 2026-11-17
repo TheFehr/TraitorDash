@@ -16,10 +16,11 @@
  * 15 (16 with the game's own models): entity keys are read in lower case, so a brush entity that the map hides at the start (`StartDisabled 1`, `RenderMode 10`) is no longer drawn (RFC 33, 9a): the lava trap of `ttt_minecraft_b7_summer` was drawn over its floor.
  * 16 (17 with the game's own models): doors and lifts at their round-start position (RFC 35): a `func_door` or `func_door_rotating` that starts open (`spawnpos 1`, or the first spawnflag) and a `func_movelinear` with a `startposition` above 0 are drawn at their open end, and one that starts open and cannot be placed is not drawn; the pool cover of `ttt_community_pool` no longer lies over the water.
  * 17 (18 with the game's own models): every material the map names gets its texture, translucent and cut-out ones with their alpha, and there is no cap on the number of textured materials (RFC 36; it was 40, and the furnace, the diamond block and the sign of `ttt_minecraft_b7_summer` were flat colours); the textures only meet safety ceilings. The record also counts the cost of the textures.
+ * 18 (19 with the game's own models): the entities a `point_template` names are not in the world at round start and are no longer drawn, placed or counted as spawns (RFC 37), unless the map force-spawns the template itself when the round starts (the stone plug of the traitor room of that map stays): the diamond and gold blocks of `ttt_minecraft_b7_summer` hovered in front of the furnace. The record counts them.
  * The part nodes of RFC 20 stage 1 are written by every build from now on, but are not a generation of their own: the generation is raised when the replay needs them (stage 3).
  */
-export const MESH_VERSION = 17
-export const MESH_VERSION_GAME = 18
+export const MESH_VERSION = 18
+export const MESH_VERSION_GAME = 19
 
 /** The generation a backend wants: the one with the game's own models when it has them, else the one without. */
 export const meshVersion = (withGameContent: boolean) => withGameContent ? MESH_VERSION_GAME : MESH_VERSION
