@@ -38,9 +38,22 @@ export interface TextureReport {
   /** The maps with the census, the largest GLB first. */
   rows: TextureRow[]
 }
+/** One map's row of the templated card (RFC 37, 5): the templates it has, the entities they name, and its three largest classes. */
+export interface TemplatedRow { map: string, templates: number, entities: number, top: { class: string, count: number }[] }
+export interface TemplatedReport {
+  /** The maps with a record that has the templated census (a record from before RFC 37 has none). */
+  withData: number
+  /** `maps`: of those, the ones with at least one entity left out. `otherEntities`: entities of classes beyond the 30 a record keeps. */
+  totals: { templates: number, entities: number, maps: number, otherEntities: number, spawnedAtStart: number }
+  /** The classes summed over the maps, the largest first. */
+  byClass: { class: string, count: number }[]
+  /** The maps with the census, those with the most entities left out first. */
+  rows: TemplatedRow[]
+}
 export interface CoverageReport {
   maps: number, withRecord: number, without: string[]
   starts: StartReport
+  templated: TemplatedReport
   textures: TextureReport
   totals: Record<Status, StatusTotals>
   gaps: GapRow[]
@@ -132,6 +145,22 @@ export function summarise(inputs: CoverageInput[], statusOf: StatusOf = (kind, k
   }
   starts.rows.sort((a, b) => (b.openPlaced + b.openLeftOut) - (a.openPlaced + a.openLeftOut) || b.openLeftOut - a.openLeftOut || (a.map < b.map ? -1 : a.map > b.map ? 1 : 0))
 
+  const templated: TemplatedReport = { withData: 0, totals: { templates: 0, entities: 0, maps: 0, otherEntities: 0, spawnedAtStart: 0 }, byClass: [], rows: [] }
+  const perClass = new Map<string, number>()
+  for (const input of inputs) {
+    const t = input.record?.templated
+    if (!t) continue
+    templated.withData++
+    templated.totals.templates += t.templates; templated.totals.entities += t.entities
+    if (t.entities > 0) templated.totals.maps++
+    templated.totals.otherEntities += t.other?.entities ?? 0
+    templated.totals.spawnedAtStart += t.spawnedAtStart ?? 0
+    for (const c of t.byClass) perClass.set(c.class, (perClass.get(c.class) ?? 0) + c.count)
+    templated.rows.push({ map: input.map, templates: t.templates, entities: t.entities, top: [...t.byClass].sort((a, b) => b.count - a.count || (a.class < b.class ? -1 : 1)).slice(0, 3) })
+  }
+  templated.byClass = [...perClass].map(([c, count]) => ({ class: c, count })).sort((a, b) => b.count - a.count || (a.class < b.class ? -1 : a.class > b.class ? 1 : 0))
+  templated.rows.sort((a, b) => b.entities - a.entities || b.templates - a.templates || (a.map < b.map ? -1 : a.map > b.map ? 1 : 0))
+
   const textures: TextureReport = { withData: 0, totals: { materials: 0, textured: 0, notFound: 0, notDecodable: 0, ceiling: 0, pngBytes: 0, glbBytes: 0, fallback: 0 }, rows: [] }
   for (const input of inputs) {
     const t = input.record?.textures
@@ -146,7 +175,7 @@ export function summarise(inputs: CoverageInput[], statusOf: StatusOf = (kind, k
 
   const ranked = [...gaps.values()].sort((a, b) => b.faces - a.faces || b.entities - a.entities || b.maps - a.maps || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
   rows.sort((a, b) => (a.record ? 0 : 1) - (b.record ? 0 : 1) || b.gapFaces - a.gapFaces || b.unknown - a.unknown || (a.map < b.map ? -1 : a.map > b.map ? 1 : 0))
-  return { maps: inputs.length, withRecord, without, starts, textures, totals, gaps: ranked, rows, lumps, pointFeatures }
+  return { maps: inputs.length, withRecord, without, starts, templated, textures, totals, gaps: ranked, rows, lumps, pointFeatures }
 }
 
 /** The size of a lump in the unit that reads best: bytes, KB or MB (thousands, as the file sizes of the pages are). */

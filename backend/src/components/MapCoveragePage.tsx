@@ -152,6 +152,35 @@ export const MapCoveragePage = ({ ctx, server, report }: MapCoveragePageProps) =
             )}
         </div>
 
+        <div class="f c-mint" data-coverage-templated>
+          <h2 class="ft">Entities not in the world at round start</h2>
+          {report.templated.withData === 0
+            ? <p class="none" data-no-templated>{anyRecord ? 'No record has the template counts yet: they are counted when a map\'s 3D mesh is built again.' : 'Nothing to count yet.'}</p>
+            : (
+              <>
+                <div class="scrollx">
+                  <table class="log" data-templated-totals>
+                    <tr><th>Named by a point_template</th><th class="r">Entities</th></tr>
+                    {report.templated.byClass.map(c => (
+                      <tr data-templated-class={c.class}><td>{c.class}</td><td class="r">{n(c.count)}</td></tr>
+                    ))}
+                    {report.templated.totals.otherEntities > 0 && <tr data-templated-other><td>other classes</td><td class="r">{n(report.templated.totals.otherEntities)}</td></tr>}
+                    <tr data-templated-all><td><b>All</b></td><td class="r">{n(report.templated.totals.entities)}</td></tr>
+                  </table>
+                </div>
+                <p class="foot dark">Over the {report.templated.withData} {report.templated.withData === 1 ? 'map' : 'maps'} whose record has them (RFC 37): {report.templated.totals.maps} of them {report.templated.totals.maps === 1 ? 'has' : 'have'} entities that a point_template names, {n(report.templated.totals.templates)} templates in all. {report.templated.totals.spawnedAtStart > 0 ? `${n(report.templated.totals.spawnedAtStart)} of those the map spawns itself when the round starts: their entities are in the world and are drawn. ` : ''}The game removes such an entity when the map starts and keeps it only as a model for copies, so the 3D view leaves it out (it is not drawn, not a prop, not a spawn). The maps are ranked by the entities left out.</p>
+                <div class="scrollx">
+                  <table class="log" data-templated-rows>
+                    <tr><th>Map</th><th class="r">Templates</th><th class="r">Entities left out</th><th>Largest classes</th></tr>
+                    {report.templated.rows.map(r => (
+                      <tr data-templated-row={r.map}><td><a href={mapHref(r.map)}>{r.map}</a></td><td class="r">{n(r.templates)}</td><td class="r">{n(r.entities)}</td><td>{r.top.length ? r.top.map(c => `${c.class} ${n(c.count)}`).join(', ') : '–'}</td></tr>
+                    ))}
+                  </table>
+                </div>
+              </>
+            )}
+        </div>
+
         <div class="f c-blue" data-coverage-textures>
           <h2 class="ft">Textures</h2>
           {report.textures.withData === 0
