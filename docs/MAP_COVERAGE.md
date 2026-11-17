@@ -132,6 +132,8 @@ Parts of the map file and what the pipeline does with them.
 
 The `door start states` feature ([RFC 35](rfcs/RFC-035.md)): the coverage record also counts, per map, the doors, rotating doors and linear movers that start closed, start open and were placed at their open end, and start open and were left out; the coverage page shows them in the card "Where moving parts start".
 
+The cost of the textures ([RFC 36](rfcs/RFC-036.md)): every material a map names gets its own texture (no cap on their number; translucent and cut-out ones with their alpha), so the coverage record also counts, per map, the materials, the textured ones, the ones left to a fallback by reason (texture not found, not decodable, a safety ceiling reached), the PNG bytes of the surface textures and the size of the GLB; the coverage page shows them in the card "Textures", the maps ranked by the size of their mesh. The safety ceilings (24 MB of PNG, 2 000 materials looked at) only guard against hostile files and are counted when they bite.
+
 ## The measurement on a real map
 
 Measured on 2026-11-15 on `ttt_67thway_rework_b1` (Workshop item 577197148, 11 571 faces in the world model), by the coverage record of the pipeline itself (the numbers are what `buildCoverage` gives, not an estimate). The record is 3 056 bytes of JSON.

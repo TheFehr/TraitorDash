@@ -185,6 +185,13 @@ describe('the safety ceilings', () => {
     expect(SURFACE_LIMITS.side).toBe(128)
     expect('textured' in SURFACE_LIMITS).toBe(false)
   })
+  test('with the real ceilings a map of 2 000 materials is textured in full, and the 2 001st is left out and counted (not silently)', async () => {
+    const mats = Array.from({ length: 2001 }, (_, i): Mat => ({ name: `big/m${i}`, vtf: solid(i % 200 + 1, 4) }))
+    const r = await run(mats)
+    expect(r.report).toMatchObject({ materials: 2001, textured: 2000, ceiling: 1, notFound: 0 })
+    expect(matOf(r, 'big/m0')).toBeNull() // the smallest ground (the first has area 1) is the one left out
+    expect(matOf(r, 'big/m1')!.texture).not.toBeNull()
+  })
   test('the PNG ceiling: the largest are textured, the next ones that no longer fit are plain colours and counted as "ceiling" (not hidden)', async () => {
     const mats = Array.from({ length: 6 }, (_, i): Mat => ({ name: `tex/p${i}`, vtf: solid(i + 1, 16) }))
     const probe = await run(mats)
