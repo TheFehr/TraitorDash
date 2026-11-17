@@ -253,3 +253,21 @@ Read from the admin page `/servers/:serverId/map-coverage` of the maintainer's s
 | `momentary_rot_button` | unknown | 1 | 0 | 1 | `ttt_airbus_b3` (0) |
 
 The maps with the most gap faces: `ttt_minecraft_b7_summer` 678, `ttt_pwp_v4` 675, `ttt_mc_skyislands` 342, `ttt_cquestt` 244, `ttt_alps` 243. Four maps have no gap faces (`ttt_community_bowling_re_v1b`, `ttt_forest_final` (one gap entity, no faces), `ttt_sandcrawler_v1`, `ttt_theship_v1`). **This is the snapshot that [RFC 33](rfcs/RFC-033.md) starts from.**
+
+## Second snapshot (2026-11-17, after RFC 33 and RFC 35 were deployed and the maps rebuilt)
+
+Read from the admin page `/servers/:serverId/map-coverage` (a screenshot; transcribed by hand): **27 of 28 maps have a record** (`ttt_community_bowling_v5a` still has no 3D mesh). The ranked list of gaps and unknowns is empty: *"Nothing is a gap or unknown in the maps with a record."* RFC 33's success measure was met: gap faces 3 269 to 0, unknown faces 670 to 0.
+
+| Status | World faces | Brush entities | Brush faces |
+|---|---|---|---|
+| drawn | 249 087 | 3 124 | 31 829 |
+| invisible | 10 147 | 1 034 | 8 296 |
+| gap | 0 | 0 | 0 |
+| not read | 0 | 0 | 0 |
+| unknown | 0 | 0 | 0 |
+
+(First snapshot above for comparison: drawn 28 392 brush faces in 2 143 entities, 906 gap entities with 3 269 faces, 173 unknown entities with 670 faces; the brush entities that moved to "drawn" are the classes RFC 33 added, the water brush, buttons, glass, decoration and the small classes.)
+
+### Where moving parts start (RFC 35)
+
+Totals over the 27 maps: **508 parts start closed, 13 start open and are drawn, 49 start open and are not drawn.** By class: `func_door` 241 closed, 0 drawn open, **49 left out**; `func_door_rotating` 206 closed, **10 drawn open**; `func_movelinear` 61 closed, **3 drawn at a start position**, 0 left out. Maps with parts that start open (closed / open drawn / open not drawn): `ttt_mc_skyislands` 40 / 0 / **32**, `ttt_community_pool` 32 / 1 / 4, `ttt_whitehouse_v9` 56 / 0 / 4, `ttt_airbus_b3` 122 / 4 / 0, `ttt_pwp_v4` 20 / 4 / 0, `ttt_67thway_rework_b1` 13 / 0 / 3, `ttt_terrortrain_2020_b5` 68 / 0 / 2, `ttt_volcano` 9 / 0 / 2, `ttt_aircraft_v1b` 1 / 2 / 0, `ttt_cape_town_revamped` 18 / 2 / 0, `ttt_diescraper` 15 / 0 / 1, `ttt_island_2024` 1 / 0 / 1; every other map with a record has all parts closed. **`ttt_mc_skyislands` stands out: 32 sliding doors start open and are left out**; whether that map's picture is right without them has not been looked at.
