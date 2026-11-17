@@ -290,7 +290,9 @@ describe('the record only counts: the mesh is what it was', () => {
   // (checked: with the number put back to 13 the build of the same map gives that hash again, so RFC 33 changes no byte of a map with none of its classes). This is the hash at 14; RFC 33, 9a raised the generation to 15, and the hash below is the one at 15 (only that number in the header differs).
   // RFC 35 raised it to 16 (a closed `func_door` is among this map's entities, so its models lump is read for the start state: no byte of the mesh changes;
   // checked: with the numbers put back to 15 and 16 the code of RFC 35 gave 'e4311210737322bef02ac43e3639d5cb081586abf6e09c49f2b5df646af12f90' again). The hash below is the one at 16.
-  const GLB = '2a5abb5f1c3533a5b88327c2f5084fcbf0323743bc4b55c70c99c2c7fc8842c5'
+  // RFC 36 raised it to 17 (this map has no texture: no byte of the mesh changes; checked: with the numbers put back to 16 and 17 the code of RFC 36 gave
+  // '2a5abb5f1c3533a5b88327c2f5084fcbf0323743bc4b55c70c99c2c7fc8842c5' again). The hash below is the one at 17.
+  const GLB = '670f50ad10b8f856a831dfe05447302050ed9a42e103f937d62d38e51036220e'
   const sha = (x: string | Uint8Array) => createHash('sha256').update(x).digest('hex')
 
   test('the surfaces of the constructed map are the same triangles, faces, mappings and statistics', async () => {
@@ -319,12 +321,12 @@ describe('the record only counts: the mesh is what it was', () => {
 })
 
 describe('the mesh generations', () => {
-  test('both went up by one (16 and 17) and still differ, and a backend asks for the one that fits it', () => {
-    expect(MESH_VERSION).toBe(16)
-    expect(MESH_VERSION_GAME).toBe(17)
+  test('both went up by one (17 and 18) and still differ, and a backend asks for the one that fits it', () => {
+    expect(MESH_VERSION).toBe(17)
+    expect(MESH_VERSION_GAME).toBe(18)
     expect(MESH_VERSION_GAME).not.toBe(MESH_VERSION)
-    expect(meshVersion(false)).toBe(16)
-    expect(meshVersion(true)).toBe(17)
+    expect(meshVersion(false)).toBe(17)
+    expect(meshVersion(true)).toBe(18)
   })
 
   test('the history in meshVersion.ts names this generation and RFC 33 (and the one before it, RFC 32)', () => {
@@ -332,5 +334,6 @@ describe('the mesh generations', () => {
     expect(text).toMatch(/13 \(14 with the game's own models\).*RFC 32/)
     expect(text).toMatch(/14 \(15 with the game's own models\).*RFC 33/)
     expect(text).toMatch(/16 \(17 with the game's own models\).*RFC 35/)
+    expect(text).toMatch(/17 \(18 with the game's own models\).*RFC 36/)
   })
 })

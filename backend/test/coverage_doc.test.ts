@@ -60,4 +60,10 @@ describe('docs/MAP_COVERAGE.md and the registry say the same', () => {
     expect(doc).toContain('`func_illusionary` | gap | 10 | 2 076 | 327')
     expect(doc).toMatch(/11 571 faces in the world model/)
   })
+
+  test('the document names the texture census of RFC 36 and its card, with the ceilings', () => {
+    expect(doc).toContain('[RFC 36](rfcs/RFC-036.md)')
+    expect(doc).toContain('card "Textures"')
+    expect(doc).toContain('24 MB of PNG, 2 000 materials')
+  })
 })

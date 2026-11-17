@@ -131,6 +131,17 @@ export const cleanName = (raw: string): string => raw.toLowerCase().replace(/[^a
 /** `parentedFaces`: of the faces, those of entities that have a parent entity; the extractor does not draw those even when the class is drawn (only given when there are some). */
 export interface BrushClassCount { class: string, entities: number, faces: number, status: Status, parentedFaces?: number }
 
+/**
+ * What the textures of a map's surfaces cost and where they fell back (RFC 36, 4). Counting only; set by the build once the GLB is written (the record is made before).
+ * A materials count is the number of materials the faces name; `textured` have a texture of their own; the rest are left to a fallback for one of three reasons.
+ */
+export interface TextureCensus {
+  materials: number, textured: number, notFound: number, notDecodable: number, ceiling: number,
+  /** The PNG bytes of the surface textures, and the size of the whole GLB. */
+  pngBytes: number, glbBytes: number
+}
+export const TEXTURE_KEYS = ['materials', 'textured', 'notFound', 'notDecodable', 'ceiling', 'pngBytes', 'glbBytes'] as const
+
 /** What one map holds, counted per registry entry (RFC 32, 4). Stored as `coverage` in the mesh's `GeometryInfo`. */
 export interface CoverageRecord {
   /** The faces of the world model, by flag set (`SKY|NOLIGHT`, `-` for none), and by what became of them. */
@@ -151,6 +162,8 @@ export interface CoverageRecord {
   lumps: { lighting: number, overlays: number, cubemaps: number, gameLump: number, visibility: number, pakfile: number }
   /** Where the doors, rotating doors and linear movers that are drawn start (RFC 35, 5). A record made before RFC 35 has none. */
   startStates?: StartStates
+  /** The cost and fallbacks of the surface textures (RFC 36, 4). A record made before RFC 36 has none. */
+  textures?: TextureCensus
 }
 
 const LUMP_MODELS = 14
@@ -233,6 +246,19 @@ function startStatesOf(x: unknown): StartStates | undefined {
   return { closed: r.closed, openPlaced: r.openPlaced, openLeftOut: r.openLeftOut, startPositioned: r.startPositioned, byClass }
 }
 
+/** The texture census of a stored record, checked (RFC 36): whole non-negative numbers for every key, or nothing (an older record has none). */
+function texturesOf(x: unknown): TextureCensus | undefined {
+  if (!x || typeof x !== 'object') return undefined
+  const r = x as Record<string, unknown>
+  const out: Record<string, number> = {}
+  for (const k of TEXTURE_KEYS) {
+    const v = r[k]
+    if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) return undefined
+    out[k] = Math.floor(v)
+  }
+  return out as unknown as TextureCensus
+}
+
 /**
  * A stored record, checked: a mesh made before the record existed has none, and what is stored is JSON that was written by an older or newer build, so the page
  * takes nothing on trust. Returns null for anything that is not a record.
@@ -245,7 +271,8 @@ export function asRecord(x: unknown): CoverageRecord | null {
   if (!Object.values(r.flags).every(num) || !Object.values(r.outcome).every(num) || !Object.values(r.lumps).every(num)) return null
   if (!r.brush.every((b: any) => b && typeof b.class === 'string' && num(b.entities) && num(b.faces) && (b.parentedFaces === undefined || num(b.parentedFaces)) && typeof b.status === 'string' && (STATUSES as readonly string[]).includes(b.status))) return null
   if (!r.points.every((p: any) => p && typeof p.class === 'string' && num(p.count))) return null
-  const { startStates: stored, ...rest } = r
+  const { startStates: stored, textures: storedTextures, ...rest } = r
   const startStates = startStatesOf(stored)
-  return { ...rest, ...(startStates ? { startStates } : {}), material: { sky: num(r.material?.sky) ? r.material.sky : 0, 'tools/*': num(r.material?.['tools/*']) ? r.material['tools/*'] : 0 }, pointFeatures: r.pointFeatures && typeof r.pointFeatures === 'object' && Object.values(r.pointFeatures).every(num) ? r.pointFeatures : {} } as CoverageRecord
+  const textures = texturesOf(storedTextures)
+  return { ...rest, ...(startStates ? { startStates } : {}), ...(textures ? { textures } : {}), material: { sky: num(r.material?.sky) ? r.material.sky : 0, 'tools/*': num(r.material?.['tools/*']) ? r.material['tools/*'] : 0 }, pointFeatures: r.pointFeatures && typeof r.pointFeatures === 'object' && Object.values(r.pointFeatures).every(num) ? r.pointFeatures : {} } as CoverageRecord
 }

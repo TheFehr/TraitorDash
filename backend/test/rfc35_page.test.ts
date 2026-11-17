@@ -123,7 +123,7 @@ describe('the card', () => {
   })
   test('the maps are listed by what moved or was left out, linked to their page; a map from before RFC 35 is not in the card', async () => {
     const html = await page()
-    const card = /data-coverage-starts.*?data-coverage-maps/s.exec(html)![0]
+    const card = /data-coverage-starts.*?data-coverage-textures/s.exec(html)![0]
     expect([...card.matchAll(/<tr data-start-row="([^"]+)"/g)].map(m => m[1])).toEqual(['ttt_s35_a', 'ttt_s35_d', 'ttt_s35_b', 'ttt_s35_c'])
     expect(cells(html, 'data-start-row="ttt_s35_a"')).toEqual(['ttt_s35_a', '1', '0', '3'])
     expect(cells(html, 'data-start-row="ttt_s35_d"')).toEqual(['ttt_s35_d', '0', '0', '2'])
@@ -140,7 +140,7 @@ describe('the card', () => {
   })
   test('no inline style, no script, every table of the card in a box that scrolls, the card in the page\'s own column (it cannot make the page jump)', async () => {
     const html = await page()
-    const card = /<div class="f c-violet" data-coverage-starts[^>]*>.*?<div class="f c-green" data-coverage-maps/s.exec(html)![0]
+    const card = /<div class="f c-violet" data-coverage-starts[^>]*>.*?<div class="f c-blue" data-coverage-textures/s.exec(html)![0]
     expect(card).not.toMatch(/ style="/); expect(card).not.toContain('<script')
     for (const m of card.matchAll(/<table/g)) expect(card.slice(Math.max(0, m.index! - 40), m.index!)).toMatch(/class="scrollx">$/)
     expect(html).toContain('class="stack"')

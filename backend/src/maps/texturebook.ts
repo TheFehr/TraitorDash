@@ -1,7 +1,7 @@
 // RFC 18, 4.6 and 5: the textures of one map's mesh. A texture is read from the map's pack, or from the game's own files (`stock`, put there
-// by the caller), decoded to a small size and kept as a PNG; each is read once for the whole map, and the whole book is held to limits (how
-// many, how many bytes of PNG, the size of one file) so that no map can make a mesh of any size. Reading a texture that is not there, or
-// is over a limit, gives null: whatever needed it is drawn without.
+// by the caller), decoded to a small size and kept as a PNG; each is read once for the whole map. The book is held to safety ceilings only (how
+// many bytes of PNG, the size of one file), far above any real map, so that no hostile file can make a mesh of any size (RFC 36: no quality
+// budget). Reading a texture that is not there, cannot be decoded or is over a ceiling gives null, and says why (`whyNot`): whatever needed it is drawn without.
 
 import type { ByteSource } from './bsp'
 import { encodePng } from './png'
@@ -9,8 +9,8 @@ import { readPakMember, type Pak } from './pak'
 import { readVtf, type Pixels } from './vtf'
 
 export interface TextureLimits {
-  /** Textures in the book. */
-  textures: number
+  /** Textures in the book. Left out for the surfaces of a map (RFC 36: no quality budget); the leaves of the plants keep theirs. */
+  textures?: number
   /** The longer side of a texture, in pixels, unless a call asks for another. */
   side: number
   /** All the PNG in the book. */
@@ -18,6 +18,9 @@ export interface TextureLimits {
   /** One file read, unpacked. */
   memberBytes: number
 }
+
+/** Why a texture is not in the book: its file is not there, its file cannot be decoded (or is over the size of one file), or the ceiling on the PNG bytes was reached (RFC 36). */
+export type Missing = 'not found' | 'not decodable' | 'ceiling'
 
 export interface BookTexture { name: string, width: number, height: number, png: Uint8Array }
 
@@ -31,6 +34,18 @@ export class TextureBook {
   private alpha = new Map<number, boolean>()
   private averages = new Map<string, [number, number, number] | null>()
   private bytes = 0
+  private lastFail: Missing = 'not found'
+  private reasons = new Map<string, Missing>()
+
+  private room(): boolean {
+    return this.limits.textures === undefined || this.textures.length < this.limits.textures
+  }
+
+  /** The PNG bytes in the book. */
+  get pngBytes(): number { return this.bytes }
+
+  /** Why the texture of a name could not be had (after `texture` or `mixed` gave null for it); 'not found' if nothing is known. */
+  whyNot(name: string): Missing { return this.reasons.get(name) ?? 'not found' }
 
   constructor(private src: ByteSource, private pak: Pak, private limits: TextureLimits) {}
 
@@ -44,9 +59,10 @@ export class TextureBook {
   async pixels(name: string, side: number): Promise<{ pixels: Pixels, inPack: boolean } | null> {
     const path = `materials/${name}.vtf`
     const inPack = this.pak.entries.has(path)
-    if (!inPack && !this.stock.has(path)) return null
+    if (!inPack && !this.stock.has(path)) { this.lastFail = 'not found'; return null }
     const file = inPack ? await readPakMember(this.src, this.pak, path, { maxMemberBytes: this.limits.memberBytes }) : this.stock.get(path)!
     const pixels = file && file.length <= this.limits.memberBytes ? readVtf(file, side) : null
+    if (!pixels) this.lastFail = 'not decodable'
     return pixels ? { pixels, inPack } : null
   }
 
@@ -59,8 +75,9 @@ export class TextureBook {
     const known = this.index.get(key)
     if (known !== undefined) return known === null ? null : { index: known, hasAlpha: this.alpha.get(known)! }
     let index: number | null = null
-    if (this.textures.length < this.limits.textures) {
+    if (this.room()) {
       const got = await this.pixels(name, side)
+      if (!got) this.reasons.set(name, this.lastFail)
       if (got) {
         const { pixels } = got
         let clear = false
@@ -73,9 +90,10 @@ export class TextureBook {
           index = this.textures.length
           this.alpha.set(index, clear)
           this.textures.push({ name: key, width: pixels.width, height: pixels.height, png })
-        }
+        } else this.reasons.set(name, 'ceiling')
       }
     }
+    else this.reasons.set(name, 'ceiling')
     this.index.set(key, index)
     return index === null ? null : { index, hasAlpha: this.alpha.get(index)! }
   }
@@ -91,7 +109,7 @@ export class TextureBook {
     const known = this.index.get(key)
     if (known !== undefined) return known === null ? null : { index: known, hasAlpha: false }
     let index: number | null = null
-    if (this.textures.length < this.limits.textures) {
+    if (this.room()) {
       const a = await this.pixels(first, side), b = await this.pixels(second, side)
       if (a && b) {
         const w = a.pixels.width, h = a.pixels.height, t = step / 4
@@ -108,7 +126,7 @@ export class TextureBook {
           index = this.textures.length
           this.alpha.set(index, false)
           this.textures.push({ name: key, width: w, height: h, png })
-        }
+        } else this.reasons.set(first, 'ceiling')
       }
     }
     this.index.set(key, index)

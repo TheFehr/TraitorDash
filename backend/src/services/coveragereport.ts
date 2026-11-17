@@ -1,4 +1,4 @@
-import { COVERAGE, lookup, type CoverageRecord, type Kind, type Status } from '../maps/coverage'
+import { COVERAGE, lookup, type CoverageRecord, type Kind, type Status, type TextureCensus } from '../maps/coverage'
 
 // RFC 32, 5: what the admin page shows, made from the coverage records of the maps of a server. Pure: the records go in, the numbers come out.
 // Statuses are looked up now, in the registry as it is, not read from the record: a status changed in the registry shows at once, without a rebuild.
@@ -29,9 +29,19 @@ export interface StartReport {
   /** The maps with start states, those with the most parts that moved or were left out first. */
   rows: StartRow[]
 }
+/** One map's row of the texture card (RFC 36, 4): its census and the number of materials left to a fallback. */
+export interface TextureRow extends TextureCensus { map: string, fallback: number }
+export interface TextureReport {
+  /** The maps with a record that has the texture census (a record from before RFC 36 has none). */
+  withData: number
+  totals: TextureCensus & { fallback: number }
+  /** The maps with the census, the largest GLB first. */
+  rows: TextureRow[]
+}
 export interface CoverageReport {
   maps: number, withRecord: number, without: string[]
   starts: StartReport
+  textures: TextureReport
   totals: Record<Status, StatusTotals>
   gaps: GapRow[]
   rows: MapRow[]
@@ -122,9 +132,21 @@ export function summarise(inputs: CoverageInput[], statusOf: StatusOf = (kind, k
   }
   starts.rows.sort((a, b) => (b.openPlaced + b.openLeftOut) - (a.openPlaced + a.openLeftOut) || b.openLeftOut - a.openLeftOut || (a.map < b.map ? -1 : a.map > b.map ? 1 : 0))
 
+  const textures: TextureReport = { withData: 0, totals: { materials: 0, textured: 0, notFound: 0, notDecodable: 0, ceiling: 0, pngBytes: 0, glbBytes: 0, fallback: 0 }, rows: [] }
+  for (const input of inputs) {
+    const t = input.record?.textures
+    if (!t) continue
+    textures.withData++
+    const fallback = t.notFound + t.notDecodable + t.ceiling
+    for (const k of ['materials', 'textured', 'notFound', 'notDecodable', 'ceiling', 'pngBytes', 'glbBytes'] as const) textures.totals[k] += t[k]
+    textures.totals.fallback += fallback
+    textures.rows.push({ map: input.map, ...t, fallback })
+  }
+  textures.rows.sort((a, b) => b.glbBytes - a.glbBytes || (a.map < b.map ? -1 : a.map > b.map ? 1 : 0))
+
   const ranked = [...gaps.values()].sort((a, b) => b.faces - a.faces || b.entities - a.entities || b.maps - a.maps || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
   rows.sort((a, b) => (a.record ? 0 : 1) - (b.record ? 0 : 1) || b.gapFaces - a.gapFaces || b.unknown - a.unknown || (a.map < b.map ? -1 : a.map > b.map ? 1 : 0))
-  return { maps: inputs.length, withRecord, without, starts, totals, gaps: ranked, rows, lumps, pointFeatures }
+  return { maps: inputs.length, withRecord, without, starts, textures, totals, gaps: ranked, rows, lumps, pointFeatures }
 }
 
 /** The size of a lump in the unit that reads best: bytes, KB or MB (thousands, as the file sizes of the pages are). */

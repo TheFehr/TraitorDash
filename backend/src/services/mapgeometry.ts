@@ -75,6 +75,8 @@ export async function buildGeometry(src: ByteSource, map: string, fingerprint: s
     try { coverage = await buildCoverage(src, header, surfaces.tally, census) } catch (e) { console.warn(`[Geometry] The coverage record of ${map} could not be made: ${e instanceof Error ? e.message : e}`) }
     const out = await surfacesToGlb({ ...surfaces, ...cleaned, surface, water, movable: surfaces.movable, movableParts: surfaces.movableParts, decoration: decoration.soup, decorationFaces: decoration.faces, detached, spawns, props: set }, { map })
     if (!out) return { ok: false, error: 'The map has no surfaces to draw.' }
+    // The cost of the surface textures (RFC 36, 4): counted here because the size of the GLB is only known now. It only counts.
+    if (coverage && surfaceReport) coverage = { ...coverage, textures: { materials: surfaceReport.materials, textured: surfaceReport.textured, notFound: surfaceReport.notFound, notDecodable: surfaceReport.notDecodable, ceiling: surfaceReport.ceiling, pngBytes: surfaceReport.pngBytes, glbBytes: out.glb.length } }
     return { ok: true, glb: out.glb, note: report.stockError ? `The game's own models could not all be fetched: ${report.stockError}` : undefined, info: {
       vertices: out.info.vertices, triangles: out.info.triangles, levels: out.info.levels.length, water: out.info.waterTriangles, storeys: out.info.storeys, detached: out.info.detached.triangles, movable: out.info.movable, ...(out.info.decoration ? { decoration: out.info.decoration } : {}), spawns: out.info.spawns,
       ...(surfaceReport ? { surface: surfaceReport } : {}),

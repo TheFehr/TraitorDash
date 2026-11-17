@@ -152,6 +152,31 @@ export const MapCoveragePage = ({ ctx, server, report }: MapCoveragePageProps) =
             )}
         </div>
 
+        <div class="f c-blue" data-coverage-textures>
+          <h2 class="ft">Textures</h2>
+          {report.textures.withData === 0
+            ? <p class="none" data-no-textures>{anyRecord ? 'No record has the texture counts yet: they are counted when a map\'s 3D mesh is built again.' : 'Nothing to count yet.'}</p>
+            : (
+              <>
+                <div class="scrollx">
+                  <table class="log" data-texture-totals>
+                    <tr><th>Over the maps with a record</th><th class="r">Materials</th><th class="r">Textured</th><th class="r">Fallback</th><th class="r">PNG</th><th class="r">GLB</th></tr>
+                    <tr data-texture-all><td><b>All</b></td><td class="r">{n(report.textures.totals.materials)}</td><td class="r">{n(report.textures.totals.textured)}</td><td class="r">{n(report.textures.totals.fallback)}</td><td class="r">{sizeText(report.textures.totals.pngBytes)}</td><td class="r">{sizeText(report.textures.totals.glbBytes)}</td></tr>
+                  </table>
+                </div>
+                <p class="foot dark">Over the {report.textures.withData} {report.textures.withData === 1 ? 'map' : 'maps'} whose record has them (RFC 36). Every material the map names gets its own texture; a fallback is a material whose texture could not be had: {n(report.textures.totals.notFound)} not found, {n(report.textures.totals.notDecodable)} not decodable, {n(report.textures.totals.ceiling)} left out because a safety ceiling was reached (a ceiling that bites is a reason to load textures gradually, not a quality setting). The maps are ranked by the size of their mesh.</p>
+                <div class="scrollx">
+                  <table class="log" data-texture-rows>
+                    <tr><th>Map</th><th class="r">Materials</th><th class="r">Textured</th><th class="r">Fallback</th><th class="r">PNG</th><th class="r">GLB</th></tr>
+                    {report.textures.rows.map(r => (
+                      <tr data-texture-row={r.map}><td><a href={mapHref(r.map)}>{r.map}</a></td><td class="r">{n(r.materials)}</td><td class="r">{n(r.textured)}</td><td class="r" title={`${r.notFound} not found, ${r.notDecodable} not decodable, ${r.ceiling} ceiling`}>{n(r.fallback)}</td><td class="r">{sizeText(r.pngBytes)}</td><td class="r">{sizeText(r.glbBytes)}</td></tr>
+                    ))}
+                  </table>
+                </div>
+              </>
+            )}
+        </div>
+
         <div class="f c-green" data-coverage-maps>
           <h2 class="ft">Maps</h2>
           {report.rows.length === 0 ? <p class="none">No map has had its 3D view asked for.</p> : (
