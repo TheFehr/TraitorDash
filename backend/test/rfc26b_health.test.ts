@@ -1,7 +1,7 @@
 import { expect, test, describe } from 'bun:test'
 import fs from 'fs'
 import path from 'path'
-import { decodeTrack, healthAt, healthBar, healthColour, hurtText, hurtOwnText, HEALTH_COLOURS, type RawTrack, type TrackEvent } from '../src/replaylogic'
+import { decodeTrack, healthAt, healthBar, healthColour, hurtText, hurtOwnText, healText, healOwnText, damageTotals, totalsText, HEALTH_COLOURS, type RawTrack, type TrackEvent } from '../src/replaylogic'
 import { weaponName } from '../src/weaponName'
 import { PUBLIC_CSS } from '../src/components/styles'
 
@@ -131,15 +131,15 @@ const ratio = (a: string, b: string) => { const [hi, lo] = [lum(a), lum(b)].sort
 
 describe('the page', () => {
   test('the feed is named for what is in it, damage included, and the selected player has a health line', () => {
-    expect(page).toContain('Chat, shop, bodies and damage')
+    expect(page).toContain('Chat, shop, bodies, damage and healing')
     expect(page).not.toContain('Chat, shop and bodies')
     expect(page).toContain('data-selected-health')
   })
 
   test('the feed has the damage lines as links that seek, and the selected player\'s list has the damage they took and dealt', () => {
-    expect(replay).toContain("e.k === 'hurt')\n")
+    expect(replay).toContain("e.k === 'hurt' || e.k === 'heal')\n")
     expect(replay).toMatch(/b\.addEventListener\('click', \(\) => \{ selected = e\.p; seek\(e\.t - 2000\) \}\)/)
-    expect(replay).toContain("(e.k === 'hurt' && e.a === selected)")
+    expect(replay).toContain("(e.k === 'hurt' || e.k === 'heal') && e.a === selected)")
   })
 
   test('the health in the list has a box of its own width with figures of one width, so the row does not move when it changes; the health line keeps its height', () => {
@@ -172,5 +172,62 @@ describe('the page', () => {
     expect(replay).toContain('const hb = p ? healthNow(id) : null') // no pose, no bar
     expect(flat).toContain('healthBar(healthAt(player(d.id)')
     expect(flat).toContain('healthColour(hb.fraction)')
+  })
+})
+
+// ---- RFC 26, stage B (4b): heal events in the replay
+
+describe('the feed lines of heals', () => {
+  const nick = (id: string) => ({ A: 'TheFehr', B: 'Tonda' }[id] ?? id)
+  const heal = (p: string, h: number, extra: Partial<TrackEvent> = {}): TrackEvent => ({ t: 1, p, k: 'heal', w: 'ttt_health_station', d: 25, h, ...extra })
+
+  test('who was healed, by how much, by what, and what they have now; the source is left out when the bridge did not know it', () => {
+    expect(healText(heal('B', 77), nick)).toBe('Tonda healed +25 by Health station, 77 left')
+    expect(healText(heal('B', 77, { w: 'other' }), nick)).toBe('Tonda healed +25, 77 left')
+    expect(healText(heal('B', 77, { w: 'regen' }), nick)).toBe('Tonda healed +25 by Regeneration, 77 left')
+    expect(healText(heal('B', 77, { a: 'A', w: 'ttt_surgeryknife' }), nick)).toBe('Tonda healed +25 by TheFehr (Surgeryknife), 77 left')
+    expect(healText(heal('B', 77, { a: 'A', w: 'other' }), nick)).toBe('Tonda healed +25 by TheFehr, 77 left')
+    expect(healText(heal('B', 100, { a: 'B', w: 'ttt_surgeryknife' }), nick)).toBe('Tonda healed themselves +25 (Surgeryknife), 100 left')
+  })
+
+  test('in a player\'s own list it reads from their side: the healed, the healer and oneself', () => {
+    const e = heal('B', 77, { a: 'A', w: 'ttt_surgeryknife' })
+    expect(healOwnText(e, nick, 'B')).toBe('healed +25 by TheFehr (Surgeryknife), 77 left')
+    expect(healOwnText(e, nick, 'A')).toBe('healed Tonda +25 (Surgeryknife), 77 left')
+    expect(healOwnText(heal('B', 77), nick, 'B')).toBe('healed +25 by Health station, 77 left')
+    expect(healOwnText(heal('B', 77, { w: 'other' }), nick, 'B')).toBe('healed +25, 77 left')
+    expect(healOwnText(heal('B', 100, { a: 'B', w: 'ttt_surgeryknife' }), nick, 'B')).toBe('healed themselves +25 (Surgeryknife), 100 left')
+  })
+
+  test('the sums of the selected player: damage taken, dealt and health gained, each only from the right events; a track without any gives nothing', () => {
+    const events: TrackEvent[] = [
+      hurt(1, 'B', 78, { a: 'A', d: 22 }), hurt(2, 'B', 60, { d: 18 }), hurt(3, 'A', 50, { a: 'B', d: 7 }),
+      heal('B', 70, { d: 10 }), heal('B', 80, { d: 10, a: 'A' }), heal('A', 90, { d: 5 }),
+      { t: 5, p: 'B', k: 'buy', item: 'x' },
+    ]
+    expect(damageTotals(events, 'B')).toEqual({ took: 40, dealt: 7, healed: 20 })
+    expect(damageTotals(events, 'A')).toEqual({ took: 7, dealt: 22, healed: 5 })
+    expect(damageTotals(events, 'Z')).toEqual({ took: 0, dealt: 0, healed: 0 })
+    expect(damageTotals([], 'B')).toEqual({ took: 0, dealt: 0, healed: 0 })
+    expect(totalsText({ took: 40, dealt: 7, healed: 20 })).toBe('Took 40, dealt 7, healed 20')
+    expect(totalsText({ took: 0, dealt: 0, healed: 20 })).toBe('Healed 20')
+    expect(totalsText({ took: 0, dealt: 0, healed: 0 })).toBe('')
+  })
+
+  test('heal events are decoded with the others (the preparation off their times) and do not change the health between samples; a track without heals decodes as before', () => {
+    const e: TrackEvent = { t: 700, p: 'A', k: 'heal', w: 'other', d: 5, h: 75 }
+    const d = decodeTrack(raw({ begin: 100, events: [e, hurt(500, 'A', 70)] }))
+    expect(d.events.map(x => [x.k, x.t])).toEqual([['hurt', 400], ['heal', 600]])
+    expect(d.hurts.get('A')!.map(x => x.k)).toEqual(['hurt'])
+    expect(decodeTrack(raw()).events).toEqual([])
+  })
+
+  test('the sources of a heal that are no class have names, and the page lists heals in the feed and in the lists of the healed and the healer', () => {
+    expect(['regen', 'revive', 'other', 'ttt_health_station'].map(weaponName)).toEqual(['Regeneration', 'Revival', 'Other', 'Health station'])
+    const replaySrc = fs.readFileSync(path.join(import.meta.dir, '../src/replay.ts'), 'utf8')
+    expect(replaySrc).toContain("e.k === 'hurt' || e.k === 'heal')\n")
+    expect(replaySrc).toContain('healText(e, nick)')
+    expect(replaySrc).toContain('healOwnText(e, nick, selected!)')
+    expect(fs.readFileSync(path.join(import.meta.dir, '../src/components/ReplayPage.tsx'), 'utf8')).toContain('data-selected-totals')
   })
 })

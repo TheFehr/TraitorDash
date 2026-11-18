@@ -24,10 +24,10 @@ export interface RawThing { e: number, c: string, mdl: string, b: number[], id?:
 /** A thing that moved, decoded: keyframes at real times, positions in units and angles in degrees; `from` is when it first shows, `until` when it is gone (Infinity when it stayed). */
 export interface Thing { e: number, c: string, model: string, bounds: number[], mapId: number | null, from: number, until: number, t: number[], x: number[], y: number[], z: number[], pitch: number[], yaw: number[], roll: number[] }
 export interface TrackEvent {
-  t: number, p: string, k: 'revive' | 'role' | 'say' | 'buy' | 'found' | 'pickup' | 'drop' | 'hurt', role?: string, team?: string, by?: string, how?: string, why?: string
+  t: number, p: string, k: 'revive' | 'role' | 'say' | 'buy' | 'found' | 'pickup' | 'drop' | 'hurt' | 'heal', role?: string, team?: string, by?: string, how?: string, why?: string
   /** say: the line and who could read it; buy: the class and whether it is a passive item; found, pickup, drop: whose body (RFC 26, RFC 24) */
   text?: string, ch?: 'all' | 'team' | 'dead', item?: string, it?: boolean, of?: string
-  /** hurt (`p` is the victim): the attacker when a player of the round did it, the cause (a weapon or entity class, or a damage type), the damage and the victim's health after (RFC 26, 4a) */
+  /** hurt (`p` is the victim): the attacker when a player of the round did it, the cause (a weapon or entity class, or a damage type), the damage and the victim's health after (RFC 26, 4a); heal (`p` is the healed player): the healer when a player of the round, the source (a class, or regen, revive, other), the health gained and the health after (RFC 26, 4b) */
   a?: string, w?: string, d?: number, h?: number
 }
 
@@ -654,6 +654,44 @@ type Nick = (id: string) => string
 export function hurtText(e: TrackEvent, nick: Nick): string {
   const how = `${e.d} (${weaponName(e.w)}), ${e.h} left`
   return e.a ? `${nick(e.a)} hurt ${nick(e.p)}: ${how}` : `${nick(e.p)} took ${how}`
+}
+/** The source of a heal as a name for a person: null when the bridge did not know it ("other"), else the display name of the class ("Health station") or word. */
+export function healSource(w: string | undefined): string | null {
+  return !w || w === 'other' ? null : weaponName(w)
+}
+/** A heal line with the names: "Tonda healed +25 by Health station, 77 left"; by a player "Tonda healed +25 by Scip.MLP (Surgeryknife), 77 left"; by oneself "Tonda healed themselves +25 (Surgeryknife), 77 left". The source is left out when unknown. */
+export function healText(e: TrackEvent, nick: Nick): string {
+  const src = healSource(e.w)
+  const tail = `${e.h} left`
+  if (e.a === e.p) return `${nick(e.p)} healed themselves +${e.d}${src ? ` (${src})` : ''}, ${tail}`
+  if (e.a) return `${nick(e.p)} healed +${e.d} by ${nick(e.a)}${src ? ` (${src})` : ''}, ${tail}`
+  return `${nick(e.p)} healed +${e.d}${src ? ` by ${src}` : ''}, ${tail}`
+}
+/** The same for the list of one player, who is the healed ("healed +25 by Health station, 77 left") or the healer ("healed Tonda +25 (Surgeryknife), 77 left"). */
+export function healOwnText(e: TrackEvent, nick: Nick, who: string): string {
+  const src = healSource(e.w)
+  const tail = `${e.h} left`
+  if (e.a === e.p) return `healed themselves +${e.d}${src ? ` (${src})` : ''}, ${tail}`
+  if (e.a === who) return `healed ${nick(e.p)} +${e.d}${src ? ` (${src})` : ''}, ${tail}`
+  return `healed +${e.d}${e.a ? ` by ${nick(e.a)}${src ? ` (${src})` : ''}` : src ? ` by ${src}` : ''}, ${tail}`
+}
+/** What a player took, dealt and was healed over the round, as sums of the `hurt` and `heal` events ("healed" is health they gained, from anybody). */
+export function damageTotals(events: TrackEvent[], who: string): { took: number, dealt: number, healed: number } {
+  let took = 0, dealt = 0, healed = 0
+  for (const e of events) {
+    if (typeof e.d !== 'number') continue
+    if (e.k === 'hurt') { if (e.p === who) took += e.d; if (e.a === who) dealt += e.d }
+    else if (e.k === 'heal' && e.p === who) healed += e.d
+  }
+  return { took, dealt, healed }
+}
+/** The line under the selected player's health: "Took 48, dealt 22, healed 40", or nothing when the track has no damage or heals for them. */
+export function totalsText(t: { took: number, dealt: number, healed: number }): string {
+  const parts: string[] = []
+  if (t.took > 0) parts.push(`took ${t.took}`)
+  if (t.dealt > 0) parts.push(`dealt ${t.dealt}`)
+  if (t.healed > 0) parts.push(`healed ${t.healed}`)
+  return parts.length ? parts.join(', ').replace(/^./, c => c.toUpperCase()) : ''
 }
 /** The same for the list of one player, who is the victim (`who` is `e.p`: "took 22 from Tonda (MAC10), 78 left") or the attacker ("hurt Tonda: 22 (MAC10), 78 left"). */
 export function hurtOwnText(e: TrackEvent, nick: Nick, who: string): string {

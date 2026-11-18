@@ -13,7 +13,8 @@ const KNOWN: Record<string, string> = {
   ttt_fraggrenade_proj: 'Frag grenade', weapon_ttt_sawedoff: 'Sawed-off', weapon_ttt_homebat: 'Home-run bat', weapon_ttt_melonmine: 'Melon mine',
   func_physbox: 'A thrown prop',
   // the damage types the track names when no weapon or entity did it (RFC 26, 4a)
-  fall: 'Falling', drown: 'Drowning', fire: 'Fire', explosion: 'Explosion', world: 'The world', crush: 'Crushing', poison: 'Poison', radiation: 'Radiation', shock: 'Electric shock', acid: 'Acid', weapon_ttt_m4a1_s: 'M4A1-S', weapon_ttth_zombpistol: 'Zombie pistol',
+  fall: 'Falling', drown: 'Drowning', fire: 'Fire', explosion: 'Explosion', world: 'The world', crush: 'Crushing', poison: 'Poison', radiation: 'Radiation', shock: 'Electric shock', acid: 'Acid', regen: 'Regeneration', revive: 'Revival', other: 'Other', // the sources of a heal that are no class (RFC 26, 4b)
+   weapon_ttt_m4a1_s: 'M4A1-S', weapon_ttth_zombpistol: 'Zombie pistol',
 }
 
 // the packs of weapons have a tag of two letters (weapon_sp_striker, weapon_rp_railgun), and some are `swep_` or `nc_ttt_`

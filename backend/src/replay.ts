@@ -14,7 +14,7 @@ import { startFlat } from './replayflat'
 import { offerBrowser, levelColour, paintPlain, makeCamera, makeRenderer, makeScene, mapLoader, prepareDecoration, prepareMovable, prepareProps, prepareWater, lyingPlaces, boxWithout, mergeDrawn, type Painted } from './sceneKit'
 import { holeUniforms, patchHole, updateHole, ghostFigure, ghostShown, createMask, sizeMask, renderMask, maskWanted } from './followHole'
 import {
-  decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, shownLevels, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, bodyAt, thingAt, movedProps, killerDiedBefore, reviveSource, revivePose, fitLabel, healthAt, healthBar, healthColour, hurtText, hurtOwnText,
+  decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, shownLevels, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, bodyAt, thingAt, movedProps, killerDiedBefore, reviveSource, revivePose, fitLabel, healthAt, healthBar, healthColour, hurtText, hurtOwnText, healText, healOwnText, damageTotals, totalsText,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
 } from './replaylogic'
 
@@ -113,6 +113,7 @@ async function start(root: HTMLElement) {
       case 'pickup': return `picked up ${e.of ? 'the body of ' + nick(e.of) : 'a body'}`
       case 'drop': return `dropped ${e.of ? 'the body of ' + nick(e.of) : 'a body'}`
       case 'hurt': return hurtOwnText(e, nick, e.p)
+      case 'heal': return healOwnText(e, nick, e.p)
       default: return `revived${e.by ? ' by ' + nick(e.by) : ''} (${reviveSource(e.how)})`
     }
   }
@@ -122,6 +123,7 @@ async function start(root: HTMLElement) {
     if (e.k === 'say') return `${nick(e.p)}${e.ch === 'team' ? ' (team)' : e.ch === 'dead' ? ' (dead)' : ''}: ${e.text}`
     if (e.k === 'buy' || e.k === 'found' || e.k === 'pickup' || e.k === 'drop') return `${nick(e.p)} ${ownText(e)}`
     if (e.k === 'hurt') return hurtText(e, nick)
+    if (e.k === 'heal') return healText(e, nick)
     return `${nick(e.p)} was revived${e.by ? ' by ' + nick(e.by) : ''} (${reviveSource(e.how)})`
   }
   /** The fact "came back N s after their killer died", when the recorded events show it. */
@@ -132,6 +134,7 @@ async function start(root: HTMLElement) {
 
   /** The health of a player now, as a bar's numbers: null when the track has none for them at this time, or they are dead. */
   const healthNow = (id: string) => healthBar(healthAt(data.players.get(id) ?? [], data.hurts.get(id), ms), data.maxHealth.get(id))
+  const totalsText_ = new Map<string, string>()
   /** The health in the player list and in the selected player's panel. */
   const showHealth = () => {
     for (const id of ids) {
@@ -144,6 +147,11 @@ async function start(root: HTMLElement) {
       const hb = selected ? healthNow(selected) : null
       setText(line, hb ? `Health ${hb.hp} / ${hb.max}` : '')
     }
+    const totals = el(root, '[data-selected-totals]') // what the selected player took, dealt and was healed over the whole round; it changes with the selection only
+    if (totals) {
+      if (!totalsText_.has(selected ?? '')) totalsText_.set(selected ?? '', selected ? totalsText(damageTotals(data.events, selected)) : '')
+      setText(totals, totalsText_.get(selected ?? '') ?? '')
+    }
   }
 
   // Every revival of the round: from the track when it has them (with the time to the millisecond),
@@ -155,14 +163,14 @@ async function start(root: HTMLElement) {
   const feedEl = el(root, '[data-feed]')
   const feedWrap = el(root, '[data-feed-wrap]')
   if (feedEl && feedWrap) {
-    const feed = data.events.filter(e => e.k === 'say' || e.k === 'buy' || e.k === 'found' || e.k === 'pickup' || e.k === 'drop' || e.k === 'hurt')
+    const feed = data.events.filter(e => e.k === 'say' || e.k === 'buy' || e.k === 'found' || e.k === 'pickup' || e.k === 'drop' || e.k === 'hurt' || e.k === 'heal')
     for (const e of feed) {
       const li = document.createElement('li')
       const b = document.createElement('button')
       b.type = 'button'
       b.className = 'lnk'
       b.textContent = `${stamp(e.t)}  ${eventText(e)}`
-      if (e.k === 'hurt' && e.w) b.title = e.w // the weapon's class, as the game knows it
+      if ((e.k === 'hurt' || e.k === 'heal') && e.w) b.title = e.w // the weapon's or the source's class, as the game knows it
       b.addEventListener('click', () => { selected = e.p; seek(e.t - 2000) })
       li.append(b)
       feedEl.append(li)
@@ -192,12 +200,12 @@ async function start(root: HTMLElement) {
     if (!eventsEl || listedFor === selected) return
     listedFor = selected
     eventsEl.replaceChildren()
-    const mine = data.events.filter(e => e.p === selected || (e.k === 'hurt' && e.a === selected)) // the damage the player dealt is theirs too
+    const mine = data.events.filter(e => e.p === selected || ((e.k === 'hurt' || e.k === 'heal') && e.a === selected)) // the damage the player dealt and the health they gave is theirs too
     for (const e of mine) {
       const li = document.createElement('li')
       const b = document.createElement('button')
       b.type = 'button'; b.className = 'lnk'
-      b.textContent = `${stamp(e.t)}  ${e.k === 'hurt' ? hurtOwnText(e, nick, selected!) : ownText(e)}`
+      b.textContent = `${stamp(e.t)}  ${e.k === 'hurt' ? hurtOwnText(e, nick, selected!) : e.k === 'heal' ? healOwnText(e, nick, selected!) : ownText(e)}`
       b.addEventListener('click', () => seek(e.t - 1000))
       li.append(b)
       eventsEl.append(li)
