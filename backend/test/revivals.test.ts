@@ -56,7 +56,7 @@ describe('track events', () => {
   })
 
   test('refuses an unknown kind and a non-object', () => {
-    refused([{ t: 1, p: A, k: 'heal' }], /unknown kind/)
+    refused([{ t: 1, p: A, k: 'mend' }], /unknown kind/)
     refused([{ t: 1, p: A }], /unknown kind/)
     refused(['revive'], /object/)
     refused({ t: 1 }, /at most/)

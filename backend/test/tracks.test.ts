@@ -79,8 +79,8 @@ describe('validateTrack', () => {
     refused(body([{ t: 1, p: A, k: 'kick' }]), /unknown kind/)
     expect(validateTrack(body([{ t: 1, p: A, k: 'pickup', of: B }, { t: 2, p: A, k: 'drop' }]), round).ok).toBe(true) // RFC 24
     refused(body([{ t: 1, p: A, k: 'pickup', of: 'stranger' }]), /pickup event names a body/)
-    refused(body(Array.from({ length: 6401 }, (_, i) => ({ t: i, p: A, k: 'found' }))), /at most 6400/)
-    expect(validateTrack(body(Array.from({ length: 6400 }, (_, i) => ({ t: i, p: A, k: 'found' }))), round).ok).toBe(true) // the sum of the bridge's caps of every kind (RFC 26, 4a)
+    refused(body(Array.from({ length: 6913 }, (_, i) => ({ t: i, p: A, k: 'found' }))), /at most 6912/)
+    expect(validateTrack(body(Array.from({ length: 6912 }, (_, i) => ({ t: i, p: A, k: 'found' }))), round).ok).toBe(true) // the sum of the bridge's caps of every kind (RFC 26, 4a and 4b)
   })
 
   test('health of each sample (hp, delta coded) and the most health of a player (mh) are kept when they are there; a track without them is fine (RFC 26, 4a)', () => {
@@ -139,14 +139,50 @@ describe('validateTrack', () => {
     refused(body([{ t: 5, p: B, k: 'hurt', w: 'fall', d: 1, h: 1 }, { t: 4, p: B, k: 'hurt', w: 'fall', d: 1, h: 1 }]), /time order/)
   })
 
-  test('the events of all kinds together may be as many as the bridge\'s caps add up to: 1024 revive, 1024 role, 1024 say, 512 buy, 256 each of found, pickup and drop, 2048 hurt', () => {
+  test('heals (heal) are kept with every field checked: the healed and the healer are players of the round, the source a short word, the health gained and the health after whole and in range; oneself as the healer only for a weapon or an entity (RFC 26, 4b)', () => {
+    const body = (events: unknown[]) => ({ ...good(), events })
+    const ok = validateTrack(body([
+      { t: 100, p: B, k: 'heal', w: 'ttt_health_station', d: 12, h: 90, extra: 1 },
+      { t: 200, p: B, k: 'heal', a: A, w: 'ttt_surgeryknife', d: 25, h: 100 },
+      { t: 300, p: A, k: 'heal', a: A, w: 'ttt_surgeryknife', d: 25, h: 100 },
+      { t: 400, p: A, k: 'heal', a: A, w: 'regen', d: 1, h: 100 }, // oneself as the healer of a regeneration makes no sense: the healer is dropped, the heal stays
+      { t: 500, p: A, k: 'heal', w: 'other', d: 10000, h: 1000 },
+    ]), round)
+    expect(ok.ok).toBe(true)
+    if (ok.ok) expect(ok.track.events).toEqual([
+      { t: 100, p: B, k: 'heal', w: 'ttt_health_station', d: 12, h: 90 }, // what is not known is dropped, as with the other kinds
+      { t: 200, p: B, k: 'heal', a: A, w: 'ttt_surgeryknife', d: 25, h: 100 },
+      { t: 300, p: A, k: 'heal', a: A, w: 'ttt_surgeryknife', d: 25, h: 100 },
+      { t: 400, p: A, k: 'heal', w: 'regen', d: 1, h: 100 },
+      { t: 500, p: A, k: 'heal', w: 'other', d: 10000, h: 1000 },
+    ])
+    for (const w of ['revive', 'other']) {
+      const r = validateTrack(body([{ t: 1, p: A, k: 'heal', a: A, w, d: 5, h: 50 }]), round)
+      expect(r.ok).toBe(true)
+      if (r.ok) expect(r.track.events![0]).not.toHaveProperty('a')
+    }
+    const heal = (over: Record<string, unknown>) => body([{ t: 1, p: B, k: 'heal', a: A, w: 'ttt_surgeryknife', d: 5, h: 50, ...over }])
+    expect(validateTrack(heal({}), round).ok).toBe(true)
+    refused(heal({ p: 'stranger' }), /not in the round/)
+    refused(heal({ a: 'stranger' }), /healer who was not in the round/)
+    refused(heal({ a: 5 }), /healer/)
+    for (const w of [undefined, '', 'bad name;', 'w'.repeat(41), 7, null]) refused(heal({ w }), /needs a source/)
+    expect(validateTrack(heal({ w: 'w'.repeat(40) }), round).ok).toBe(true)
+    for (const d of [0, -1, 10001, 2.5, '5', null, undefined]) refused(heal({ d }), /health gained from 1 to 10000/)
+    for (const h of [0, -1, 1001, 2.5, '5', null, undefined]) refused(heal({ h }), /health after it, from 1 to 1000/)
+    expect(validateTrack(heal({ h: 1 }), round).ok).toBe(true)
+    expect(validateTrack(heal({ h: 1000 }), round).ok).toBe(true)
+    refused(body([{ t: 5, p: B, k: 'heal', w: 'other', d: 1, h: 1 }, { t: 4, p: B, k: 'heal', w: 'other', d: 1, h: 1 }]), /time order/)
+  })
+
+  test('the events of all kinds together may be as many as the bridge\'s caps add up to: 1024 revive, 1024 role, 1024 say, 512 buy, 256 each of found, pickup and drop, 2048 hurt, 512 heal', () => {
     const kinds: [string, number, Record<string, unknown>][] = [
       ['revive', 1024, {}], ['role', 1024, { role: 'traitor', team: 'traitors' }], ['say', 1024, { text: 'hi', ch: 'all' }], ['buy', 512, { item: 'weapon_x' }],
-      ['found', 256, {}], ['pickup', 256, {}], ['drop', 256, {}], ['hurt', 2048, { w: 'fall', d: 1, h: 1 }],
+      ['found', 256, {}], ['pickup', 256, {}], ['drop', 256, {}], ['hurt', 2048, { w: 'fall', d: 1, h: 1 }], ['heal', 512, { w: 'ttt_health_station', d: 1, h: 1 }],
     ]
     let t = 0
     const events = kinds.flatMap(([k, n, f]) => Array.from({ length: n }, () => ({ t: t++, p: A, k, ...f })))
-    expect(events).toHaveLength(6400)
+    expect(events).toHaveLength(6912)
     expect(validateTrack({ ...good(), events }, round).ok).toBe(true)
   })
 

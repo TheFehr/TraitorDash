@@ -11,15 +11,17 @@ export const MAX_TRACK_PLAYERS = 128
 export const MAX_TRACK_DEATHS = 512
 export const MAX_SEGMENTS_PER_PLAYER = 64
 /**
- * The sum of the bridge's caps of each kind: revive 1024, role 1024, say 1024, buy 512, found 256, pickup 256, drop 256 (4352) and hurt 2048 (RFC 26, 4a).
+ * The sum of the bridge's caps of each kind: revive 1024, role 1024, say 1024, buy 512, found 256, pickup 256, drop 256 (4352), hurt 2048 (RFC 26, 4a) and heal 512 (RFC 26, 4b).
  * A safety limit of the backend, kept equal to what the bridge can send.
  */
-export const MAX_TRACK_EVENTS = 6400
+export const MAX_TRACK_EVENTS = 6912
 /** Health in a track: a sample, the most of a player, an event's `h`; TTT2 roles can have more than 100 (RFC 26, 4a). */
 export const MAX_HP = 1000
 /** The most damage one `hurt` event holds (a merged event of many hits). */
 export const MAX_HURT_DAMAGE = 10_000
 const HURT_CAUSE = /^[A-Za-z0-9_.-]{1,40}$/
+/** The words a `heal` event's source `w` may be besides the class of a weapon or entity: no player is the healer in them, so a heal with one of them cannot name the healed as the healer (RFC 26, 4b). */
+export const HEAL_CAUSE_WORDS: ReadonlySet<string> = new Set(['regen', 'revive', 'other'])
 /** Where a body lay and which way it was turned, the points of it (RFC 24). */
 export const MAX_TRACK_BODIES = 4096
 export const MAX_SAY_CHARS = 200
@@ -68,7 +70,7 @@ export interface TrackEvent {
   t: number
   /** The player it happened to. */
   p: string
-  k: 'revive' | 'role' | 'say' | 'buy' | 'found' | 'pickup' | 'drop' | 'hurt'
+  k: 'revive' | 'role' | 'say' | 'buy' | 'found' | 'pickup' | 'drop' | 'hurt' | 'heal'
   /** `role` events: the settled role and team. */
   role?: string
   team?: string
@@ -84,7 +86,7 @@ export interface TrackEvent {
   it?: boolean
   /** `found`, `pickup` and `drop` events: whose body it was, when that player was in the round. */
   of?: string
-  /** `hurt` events (`p` is the victim): the attacker when a player of the round did it, the cause (a weapon or entity class, or a damage type), the damage taken and the victim's health after. */
+  /** `hurt` events (`p` is the victim): the attacker when a player of the round did it, the cause (a weapon or entity class, or a damage type), the damage taken and the victim's health after. `heal` events (`p` is the healed player) use the same fields: `a` the healer, `w` the source (a weapon or entity class, or regen, revive, other), `d` the health gained and `h` the health after. */
   a?: string
   w?: string
   d?: number
@@ -275,6 +277,13 @@ export function validateTrack(body: unknown, round: { roundId: string, map: stri
         if (!isInt(e.d) || e.d < 1 || e.d > MAX_HURT_DAMAGE) return no(`a hurt event needs damage from 1 to ${MAX_HURT_DAMAGE}`)
         if (!isInt(e.h) || e.h < 0 || e.h > MAX_HP) return no(`a hurt event needs the health after it, from 0 to ${MAX_HP}`)
         events.push({ t: e.t, p: e.p, k: 'hurt', ...(e.a !== undefined ? { a: e.a as string } : {}), w: e.w, d: e.d, h: e.h })
+      } else if (e.k === 'heal') {
+        if (typeof e.w !== 'string' || !HURT_CAUSE.test(e.w)) return no('a heal event needs a source: letters, digits, _ . and -, at most 40')
+        if (e.a !== undefined && (typeof e.a !== 'string' || !round.players.has(e.a))) return no('a heal event names a healer who was not in the round')
+        const healer = e.a !== undefined && !(e.a === e.p && HEAL_CAUSE_WORDS.has(e.w)) ? (e.a as string) : undefined // oneself as the healer only for a weapon or an entity; for regen, revive and other the healer is dropped
+        if (!isInt(e.d) || e.d < 1 || e.d > MAX_HURT_DAMAGE) return no(`a heal event needs the health gained from 1 to ${MAX_HURT_DAMAGE}`)
+        if (!isInt(e.h) || e.h < 1 || e.h > MAX_HP) return no(`a heal event needs the health after it, from 1 to ${MAX_HP}`)
+        events.push({ t: e.t, p: e.p, k: 'heal', ...(healer !== undefined ? { a: healer } : {}), w: e.w, d: e.d, h: e.h })
       } else return no('an event has an unknown kind')
     }
   }
