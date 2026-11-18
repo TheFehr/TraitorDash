@@ -2,7 +2,7 @@
 import { Color, type BufferGeometry, type Mesh, type MeshStandardMaterial, type Object3D } from 'three'
 import { hex } from './teamColours'
 import { mapLoader, levelColour, paintPlain, type Painted } from './sceneKit'
-import { bodyAt, currentDeath, lastPoseAt, levelOf, poseAt, revivePose, trailBetween, type Decoded, type LevelRange, type TrackEvent } from './replaylogic'
+import { bodyAt, currentDeath, healthAt, healthBar, healthColour, lastPoseAt, levelOf, poseAt, revivePose, trailBetween, type Decoded, type LevelRange, type TrackEvent } from './replaylogic'
 
 // RFC 19, 3.1: the replay drawn from above on a plain 2D canvas, for a browser without WebGL (the game's window). The map's
 // floors are filled shapes, its walls lines, drawn level by level from the lowest; the picture of the map is made once and
@@ -349,6 +349,13 @@ export async function startFlat(host: FlatHost): Promise<void> {
       const label = name.length > 18 ? name.slice(0, 17) + '…' : name
       g.lineWidth = 4 * px; g.strokeStyle = 'rgba(0,0,0,0.85)'; g.strokeText(label, d.x, d.y - 11 * px)
       g.fillStyle = colour; g.fillText(label, d.x, d.y - 11 * px)
+      const hb = healthBar(healthAt(player(d.id), data.hurts.get(d.id), ms), data.maxHealth.get(d.id)) // the health bar over the name (RFC 26, 4a)
+      if (hb) {
+        const w = 30 * px, h = 5 * px, bx = d.x - w / 2, by = d.y - 31 * px
+        g.fillStyle = 'rgba(0,0,0,0.92)'; g.fillRect(bx - px, by - px, w + 2 * px, h + 2 * px)
+        g.fillStyle = '#4b5563'; g.fillRect(bx, by, w, h)
+        g.fillStyle = healthColour(hb.fraction); g.fillRect(bx, by, w * hb.fraction, h)
+      }
       g.globalAlpha = 1
     }
     host.lists()

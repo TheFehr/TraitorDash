@@ -3,13 +3,15 @@
 // first. Plain code, no browser and no three.js, so it can be tested; the viewer (replay.ts) and the
 // tests import it.
 
+import { weaponName } from './weaponName'
+
 /** What the backend stores: tick times as differences, per player segments with first-value-then-differences. */
-export interface RawSegment { from: number, x: number[], y: number[], z: number[], a: number[], /** How the player moves, for each sample, as bits: 1 crouching, 2 in the air, 4 in water; absent in older tracks. */ s?: number[] }
+export interface RawSegment { from: number, x: number[], y: number[], z: number[], a: number[], /** How the player moves, for each sample, as bits: 1 crouching, 2 in the air, 4 in water; absent in older tracks. */ s?: number[], /** Health of each sample, delta coded (RFC 26, 4a); absent in tracks from before it. */ hp?: number[] }
 export interface RawTrack {
   /** ms from the first sample to the round's start: the preparation recorded before it (RFC 12, 3.7); absent when there is none. */
   begin?: number
   t: number[]
-  players: { id: string, segments: RawSegment[] }[]
+  players: { id: string, /** The most health the player had; absent in older tracks. */ mh?: number, segments: RawSegment[] }[]
   deaths: { victim: string, attacker: string | null, t: number, vx: number, vy: number, vz: number, ax: number | null, ay: number | null, az: number | null, weapon: string | null }[]
   /** Revivals and role changes (RFC 14); absent in tracks stored before it. */
   events?: TrackEvent[]
@@ -22,13 +24,15 @@ export interface RawThing { e: number, c: string, mdl: string, b: number[], id?:
 /** A thing that moved, decoded: keyframes at real times, positions in units and angles in degrees; `from` is when it first shows, `until` when it is gone (Infinity when it stayed). */
 export interface Thing { e: number, c: string, model: string, bounds: number[], mapId: number | null, from: number, until: number, t: number[], x: number[], y: number[], z: number[], pitch: number[], yaw: number[], roll: number[] }
 export interface TrackEvent {
-  t: number, p: string, k: 'revive' | 'role' | 'say' | 'buy' | 'found' | 'pickup' | 'drop', role?: string, team?: string, by?: string, how?: string, why?: string
+  t: number, p: string, k: 'revive' | 'role' | 'say' | 'buy' | 'found' | 'pickup' | 'drop' | 'hurt', role?: string, team?: string, by?: string, how?: string, why?: string
   /** say: the line and who could read it; buy: the class and whether it is a passive item; found, pickup, drop: whose body (RFC 26, RFC 24) */
   text?: string, ch?: 'all' | 'team' | 'dead', item?: string, it?: boolean, of?: string
+  /** hurt (`p` is the victim): the attacker when a player of the round did it, the cause (a weapon or entity class, or a damage type), the damage and the victim's health after (RFC 26, 4a) */
+  a?: string, w?: string, d?: number, h?: number
 }
 
 /** One run of consecutive samples of one player, in Source units and degrees-in-256ths, at real times. */
-export interface Segment { t: number[], x: number[], y: number[], z: number[], a: number[], /** As `RawSegment.s`; zeros for a track without it. */ s: number[] }
+export interface Segment { t: number[], x: number[], y: number[], z: number[], a: number[], /** As `RawSegment.s`; zeros for a track without it. */ s: number[], /** The health at each sample, absolute; absent for a track without it. */ hp?: number[] }
 export interface Decoded {
   /** Times in ms since the round began, for every tick. */
   times: number[]
@@ -44,6 +48,10 @@ export interface Decoded {
   bodies: Map<string, BodyPoint[]>
   /** Things that moved (RFC 20, 4.8); empty for a track without any. */
   things: Thing[]
+  /** The most health each player had, where the track says (RFC 26, 4a). */
+  maxHealth: Map<string, number>
+  /** The `hurt` events of each victim, in time order: what the health between two samples was. */
+  hurts: Map<string, TrackEvent[]>
 }
 /** One point of a body's path: ms, position in units, and the turn in degrees. */
 export interface BodyPoint { t: number, at: [number, number, number], pitch: number, yaw: number, roll: number }
@@ -86,6 +94,7 @@ export function decodeTrack(raw: RawTrack): Decoded {
   const begin = raw.begin ?? 0
   const times = cumulative(raw.t).map(v => v - begin) // the round's start is 0; the preparation before it is negative
   const players = new Map<string, Segment[]>()
+  const maxHealth = new Map<string, number>()
   for (const p of raw.players) {
     const segs: Segment[] = []
     for (const s of p.segments) {
@@ -95,9 +104,11 @@ export function decodeTrack(raw: RawTrack): Decoded {
         x: cumulative(s.x).map(v => v * UNITS), y: cumulative(s.y).map(v => v * UNITS), z: cumulative(s.z).map(v => v * UNITS),
         a: cumulative(s.a),
         s: s.s ?? s.x.map(() => 0),
+        ...(s.hp && s.hp.length === n ? { hp: cumulative(s.hp) } : {}),
       })
     }
     players.set(p.id, segs)
+    if (typeof p.mh === 'number' && p.mh >= 1) maxHealth.set(p.id, p.mh)
   }
   const deaths: Death[] = raw.deaths.map(d => ({
     victim: d.victim, attacker: d.attacker, t: d.t - begin,
@@ -108,6 +119,8 @@ export function decodeTrack(raw: RawTrack): Decoded {
   deaths.sort((a, b) => a.t - b.t)
   for (const d of deaths) correctDeathHeight(players.get(d.victim) ?? [], d)
   const events = (raw.events ?? []).map(e => ({ ...e, t: e.t - begin })).sort((a, b) => a.t - b.t)
+  const hurts = new Map<string, TrackEvent[]>()
+  for (const e of events) if (e.k === 'hurt') { const l = hurts.get(e.p) ?? []; l.push(e); hurts.set(e.p, l) }
   const bodies = new Map<string, BodyPoint[]>()
   for (const b of [...(raw.bodies ?? [])].sort((a, c) => a.t - c.t)) {
     const list = bodies.get(b.p) ?? []
@@ -122,7 +135,41 @@ export function decodeTrack(raw: RawTrack): Decoded {
       t, x: cumulative(q.x), y: cumulative(q.y), z: cumulative(q.z), pitch: cumulative(q.p).map(a => a / 4), yaw: cumulative(q.w).map(a => a / 4), roll: cumulative(q.r).map(a => a / 4),
     }
   })
-  return { times, length: times.length ? times[times.length - 1]! : 0, start: times.length ? times[0]! : 0, players, deaths, events, bodies, things }
+  return { times, length: times.length ? times[times.length - 1]! : 0, start: times.length ? times[0]! : 0, players, deaths, events, bodies, things, maxHealth, hurts }
+}
+
+/** Health that makes a bar: from 0 (nothing) up to what the player can have. Colours of the three steps of the bar: green, amber, red. */
+export const HEALTH_COLOURS = { good: '#22c55e', hurt: '#f59e0b', low: '#ef4444' }
+/** The colour of a health bar by the fraction of the most health: green from 60 %, amber from 30 %, red below. */
+export function healthColour(fraction: number): string {
+  return fraction >= 0.6 ? HEALTH_COLOURS.good : fraction >= 0.3 ? HEALTH_COLOURS.hurt : HEALTH_COLOURS.low
+}
+
+/**
+ * A player's health at time `ms` (RFC 26, 4a): the value of the last sample at or before it, and a `hurt` event of the player after that sample
+ * says what it was since (the sample comes up to a second after the blow). null when the player has no sample there (before, after, in a gap, a
+ * dead player) or the track has no health for the segment.
+ */
+export function healthAt(segments: Segment[], hurts: TrackEvent[] | undefined, ms: number): number | null {
+  let lo = 0, hi = segments.length - 1, seg: Segment | null = null
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    const s = segments[mid]!
+    if (ms < s.t[0]!) hi = mid - 1
+    else if (ms > s.t[s.t.length - 1]!) lo = mid + 1
+    else { seg = s; break }
+  }
+  if (!seg || !seg.hp) return null
+  let a = 0, b = seg.t.length - 1
+  while (a < b) { const m = (a + b + 1) >> 1; if (seg.t[m]! <= ms) a = m; else b = m - 1 }
+  let v = seg.hp[a]!
+  if (hurts && hurts.length > 0) {
+    let i = 0, j = hurts.length - 1 // the last hurt event at or before ms
+    while (i < j) { const m = (i + j + 1) >> 1; if (hurts[m]!.t <= ms) i = m; else j = m - 1 }
+    const e = hurts[i]!
+    if (e.t <= ms && e.t > seg.t[a]! && typeof e.h === 'number') v = e.h
+  }
+  return v
 }
 
 export interface Pose { x: number, y: number, z: number, /** Heading in 256ths of a turn, 0-255. */ yaw: number }
@@ -594,3 +641,22 @@ export const lerpAngle = (a: number, b: number, f: number) => {
 export const damp = (current: number, target: number, dtMs: number, tauMs: number) => current + (target - current) * (1 - Math.exp(-Math.max(0, dtMs) / tauMs))
 /** The same for an angle in radians, the short way round. */
 export const dampAngle = (current: number, target: number, dtMs: number, tauMs: number) => lerpAngle(current, target, 1 - Math.exp(-Math.max(0, dtMs) / tauMs))
+
+/** What a health bar shows: the health, the most it is measured against and the fraction of the bar. null when there is nothing to draw (no data, or a player with no health left). */
+export function healthBar(hp: number | null, max: number | undefined): { hp: number, max: number, fraction: number } | null {
+  if (hp === null || !(hp > 0)) return null
+  const top = max !== undefined && max >= 1 ? Math.max(max, hp) : Math.max(100, hp) // a track without the most health is measured against 100; more health than that is a full bar
+  return { hp, max: top, fraction: Math.min(1, hp / top) }
+}
+
+type Nick = (id: string) => string
+/** A damage line with the names: "TheFehr hurt Tonda: 22 (MAC10), 78 left"; damage with no player behind it (a fall, fire) is "Tonda took 15 (Falling), 61 left". */
+export function hurtText(e: TrackEvent, nick: Nick): string {
+  const how = `${e.d} (${weaponName(e.w)}), ${e.h} left`
+  return e.a ? `${nick(e.a)} hurt ${nick(e.p)}: ${how}` : `${nick(e.p)} took ${how}`
+}
+/** The same for the list of one player, who is the victim (`who` is `e.p`: "took 22 from Tonda (MAC10), 78 left") or the attacker ("hurt Tonda: 22 (MAC10), 78 left"). */
+export function hurtOwnText(e: TrackEvent, nick: Nick, who: string): string {
+  if (e.a === who) return `hurt ${nick(e.p)}: ${e.d} (${weaponName(e.w)}), ${e.h} left`
+  return `took ${e.d}${e.a ? ' from ' + nick(e.a) : ''} (${weaponName(e.w)}), ${e.h} left`
+}

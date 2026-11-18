@@ -541,7 +541,7 @@ describe('the page (replay.ts)', () => {
   })
   test('the player is not made unseen by the ghost in the other things drawn: the pins and names stay on top, the ring keeps its place', () => {
     expect(replay).toContain('renderOrder = 10') // the sprites
-    expect(replay).toContain('group.add(ring, pin, label)')
+    expect(replay).toContain('group.add(ring, pin, label, bar)')
     expect(replay).toContain('(m.ring.material as MeshBasicMaterial).depthTest = !ghostShown(camMode, selected, id, m.group.visible)') // the ring is seen through what covers it in the follow camera: the hole does not open what is below the feet
   })
 })

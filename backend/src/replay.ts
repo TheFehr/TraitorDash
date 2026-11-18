@@ -14,7 +14,7 @@ import { startFlat } from './replayflat'
 import { offerBrowser, levelColour, paintPlain, makeCamera, makeRenderer, makeScene, mapLoader, prepareDecoration, prepareMovable, prepareProps, prepareWater, lyingPlaces, boxWithout, mergeDrawn, type Painted } from './sceneKit'
 import { holeUniforms, patchHole, updateHole, ghostFigure, ghostShown, createMask, sizeMask, renderMask, maskWanted } from './followHole'
 import {
-  decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, shownLevels, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, bodyAt, thingAt, movedProps, killerDiedBefore, reviveSource, revivePose, fitLabel,
+  decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, shownLevels, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, bodyAt, thingAt, movedProps, killerDiedBefore, reviveSource, revivePose, fitLabel, healthAt, healthBar, healthColour, hurtText, hurtOwnText,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
 } from './replaylogic'
 
@@ -112,6 +112,7 @@ async function start(root: HTMLElement) {
       case 'found': return `found ${e.of ? 'the body of ' + nick(e.of) : 'a body'}`
       case 'pickup': return `picked up ${e.of ? 'the body of ' + nick(e.of) : 'a body'}`
       case 'drop': return `dropped ${e.of ? 'the body of ' + nick(e.of) : 'a body'}`
+      case 'hurt': return hurtOwnText(e, nick, e.p)
       default: return `revived${e.by ? ' by ' + nick(e.by) : ''} (${reviveSource(e.how)})`
     }
   }
@@ -120,6 +121,7 @@ async function start(root: HTMLElement) {
     if (e.k === 'role') return `${nick(e.p)} became ${e.role} (${e.team})`
     if (e.k === 'say') return `${nick(e.p)}${e.ch === 'team' ? ' (team)' : e.ch === 'dead' ? ' (dead)' : ''}: ${e.text}`
     if (e.k === 'buy' || e.k === 'found' || e.k === 'pickup' || e.k === 'drop') return `${nick(e.p)} ${ownText(e)}`
+    if (e.k === 'hurt') return hurtText(e, nick)
     return `${nick(e.p)} was revived${e.by ? ' by ' + nick(e.by) : ''} (${reviveSource(e.how)})`
   }
   /** The fact "came back N s after their killer died", when the recorded events show it. */
@@ -128,22 +130,39 @@ async function start(root: HTMLElement) {
     return k ? `came back ${k.seconds} s after their killer, ${nick(k.killer)}, died` : null
   }
 
+  /** The health of a player now, as a bar's numbers: null when the track has none for them at this time, or they are dead. */
+  const healthNow = (id: string) => healthBar(healthAt(data.players.get(id) ?? [], data.hurts.get(id), ms), data.maxHealth.get(id))
+  /** The health in the player list and in the selected player's panel. */
+  const showHealth = () => {
+    for (const id of ids) {
+      const hb = healthNow(id)
+      const chip = chips.get(id)
+      if (chip) setText(chip.hp, hb ? String(hb.hp) : '')
+    }
+    const line = el(root, '[data-selected-health]')
+    if (line) {
+      const hb = selected ? healthNow(selected) : null
+      setText(line, hb ? `Health ${hb.hp} / ${hb.max}` : '')
+    }
+  }
+
   // Every revival of the round: from the track when it has them (with the time to the millisecond),
   // else from the round report (to the second).
   const trackRevives = data.events.filter(e => e.k === 'revive')
   const revivals: TrackEvent[] = trackRevives.length > 0 ? trackRevives
     : (payload.revives ?? []).filter(v => v.at !== null).map(v => ({ t: (v.at as number) * 1000, p: v.victim, k: 'revive' as const, by: v.reviver ?? undefined, how: v.how ?? undefined, why: v.why ?? undefined }))
-  // Everything said, bought and found in the round, in order (RFC 26).
+  // Everything said, bought, found and hurt in the round, in order (RFC 26).
   const feedEl = el(root, '[data-feed]')
   const feedWrap = el(root, '[data-feed-wrap]')
   if (feedEl && feedWrap) {
-    const feed = data.events.filter(e => e.k === 'say' || e.k === 'buy' || e.k === 'found' || e.k === 'pickup' || e.k === 'drop')
+    const feed = data.events.filter(e => e.k === 'say' || e.k === 'buy' || e.k === 'found' || e.k === 'pickup' || e.k === 'drop' || e.k === 'hurt')
     for (const e of feed) {
       const li = document.createElement('li')
       const b = document.createElement('button')
       b.type = 'button'
       b.className = 'lnk'
       b.textContent = `${stamp(e.t)}  ${eventText(e)}`
+      if (e.k === 'hurt' && e.w) b.title = e.w // the weapon's class, as the game knows it
       b.addEventListener('click', () => { selected = e.p; seek(e.t - 2000) })
       li.append(b)
       feedEl.append(li)
@@ -173,12 +192,12 @@ async function start(root: HTMLElement) {
     if (!eventsEl || listedFor === selected) return
     listedFor = selected
     eventsEl.replaceChildren()
-    const mine = data.events.filter(e => e.p === selected)
+    const mine = data.events.filter(e => e.p === selected || (e.k === 'hurt' && e.a === selected)) // the damage the player dealt is theirs too
     for (const e of mine) {
       const li = document.createElement('li')
       const b = document.createElement('button')
       b.type = 'button'; b.className = 'lnk'
-      b.textContent = `${stamp(e.t)}  ${ownText(e)}`
+      b.textContent = `${stamp(e.t)}  ${e.k === 'hurt' ? hurtOwnText(e, nick, selected!) : ownText(e)}`
       b.addEventListener('click', () => seek(e.t - 1000))
       li.append(b)
       eventsEl.append(li)
@@ -203,7 +222,7 @@ async function start(root: HTMLElement) {
 
   const listEl = el(root, '[data-players]')
   const rows = new Map<string, HTMLElement>()
-  const chips = new Map<string, { dot: HTMLElement, role: HTMLElement }>()
+  const chips = new Map<string, { dot: HTMLElement, role: HTMLElement, hp: HTMLElement }>()
   for (const id of ids) {
     if (!listEl) break
     const b = document.createElement('button')
@@ -212,11 +231,13 @@ async function start(root: HTMLElement) {
     const dot = text('', 'span', 'pdot')
     dot.style.background = hex(colourOf(id))
     const roleEl = text(meta.get(id)?.role ?? '', 'span', 'prole')
-    b.append(dot, text(nick(id), 'span', 'pname'), roleEl)
+    const hpEl = text('', 'span', 'phealth') // the health now, in a box of its own width so the row does not move when it changes (RFC 26, 4a)
+    hpEl.title = 'Health'
+    b.append(dot, text(nick(id), 'span', 'pname'), roleEl, hpEl)
     b.addEventListener('click', () => { selected = id; changed() })
     listEl.append(b)
     rows.set(id, b)
-    chips.set(id, { dot, role: roleEl })
+    chips.set(id, { dot, role: roleEl, hp: hpEl })
   }
   const scrub = el<HTMLInputElement>(root, '[data-scrub]')!
   scrub.min = String(data.start); scrub.max = String(data.length); scrub.value = String(data.start)
@@ -332,6 +353,7 @@ async function start(root: HTMLElement) {
           row?.classList.toggle('dead', !!currentDeath(data.deaths, data.events, id, ms))
         }
         listEvents()
+        showHealth()
         const panel = el(root, '[data-selected-role]')
         if (panel) {
           const st = selected ? stateOf(selected, ms) : null
@@ -683,13 +705,16 @@ async function start(root: HTMLElement) {
 
   interface Look { plain: CanvasTexture, pointer: CanvasTexture, cross: CanvasTexture, label: CanvasTexture }
   interface Marker {
-    group: Group, pin: Sprite, label: Sprite, ring: Mesh, trail: Line, corpse: Group, deadPin: Sprite, segs: Segment[]
+    group: Group, pin: Sprite, label: Sprite, bar: Sprite, barGfx: CanvasRenderingContext2D, barTexture: CanvasTexture, barKey: string, ring: Mesh, trail: Line, corpse: Group, deadPin: Sprite, segs: Segment[]
     body: Group, lying: Group, path: Path, colour: number, looks: Map<number, Look>
     /** When the skeleton was last posed, in ms of the round (it is done thirty times a second, the rate of the animations). */
     posedAt: number
   }
   const markers = new Map<string, Marker>()
   const PIN = 0.03, LABEL_H = 0.036
+  // The health bar (RFC 26, 4a) sits over the name: dark outline, grey ground, the colour of the health by the fraction of the most. Its texture is drawn again
+  // only when the number of filled pixels changes.
+  const BAR_PX = 92, BAR_W = LABEL_H * 2.6, BAR_H = LABEL_H * 0.5
   /** The textures of a player in one team colour; made once per colour, a team change swaps them. */
   const lookOf = (m: { looks: Map<number, Look> }, id: string, colour: number): Look => {
     let l = m.looks.get(colour)
@@ -706,7 +731,14 @@ async function start(root: HTMLElement) {
     const look = lookOf({ looks }, id, colour)
     const pin = screenSprite(look.plain, PIN, PIN); pin.position.z = real ? real.height + 12 : 86
     const label = screenSprite(look.label, LABEL_H * 4, LABEL_H); label.position.z = real ? real.height + 12 : 86; label.center.set(0.5, -0.55)
-    group.add(ring, pin, label)
+    const barCanvas = document.createElement('canvas')
+    barCanvas.width = BAR_PX + 4; barCanvas.height = 16
+    const barTexture = new CanvasTexture(barCanvas)
+    const bar = screenSprite(barTexture, BAR_W, BAR_H)
+    bar.position.z = real ? real.height + 12 : 86
+    bar.center.set(0.5, -(1.62 * LABEL_H) / BAR_H) // over the name, which starts at 0.55 of its height above the player and is one height tall
+    bar.visible = false
+    group.add(ring, pin, label, bar)
 
     const trailGeo = new BufferGeometry()
     trailGeo.setAttribute('position', new BufferAttribute(new Float32Array(TRAIL_POINTS * 3), 3))
@@ -727,7 +759,7 @@ async function start(root: HTMLElement) {
     corpse.visible = false
 
     world.add(group, trail, corpse)
-    markers.set(id, { group, pin, label, ring, trail, corpse, deadPin, segs: data.players.get(id) ?? [], body, lying, path: pathOf(data.players.get(id) ?? [], moving?.strides ?? null), colour, looks, posedAt: -1e9 })
+    markers.set(id, { group, pin, label, bar, barGfx: barCanvas.getContext('2d')!, barTexture, barKey: '', ring, trail, corpse, deadPin, segs: data.players.get(id) ?? [], body, lying, path: pathOf(data.players.get(id) ?? [], moving?.strides ?? null), colour, looks, posedAt: -1e9 })
   }
   // The shot: a line of the width of a few pixels (a `Line` is one pixel wide in WebGL, which is too faint to see), as a thin
   // bright beam with a wider faint one around it, drawn over the map so a wall does not hide where the shot came from.
@@ -878,6 +910,23 @@ async function start(root: HTMLElement) {
       for (const gm of (m.body.userData.ghost?.meshes ?? []) as Mesh[]) gm.visible = ghostOn
       ;(m.label.material as SpriteMaterial).opacity = dim ? 0.35 : 1
       ;(m.pin.material as SpriteMaterial).opacity = dim ? 0.35 : 1
+      const hb = p ? healthNow(id) : null
+      m.bar.visible = !!hb
+      if (hb) {
+        const fill = Math.round(BAR_PX * hb.fraction), colour = healthColour(hb.fraction)
+        const key = `${fill}${colour}`
+        if (key !== m.barKey) { // drawn again only when the bar changes
+          m.barKey = key
+          const g = m.barGfx
+          g.clearRect(0, 0, BAR_PX + 4, 16)
+          g.fillStyle = 'rgba(0,0,0,0.92)'; g.fillRect(0, 0, BAR_PX + 4, 16)
+          g.fillStyle = '#4b5563'; g.fillRect(2, 2, BAR_PX, 12)
+          g.fillStyle = colour; g.fillRect(2, 2, fill, 12)
+          m.barTexture.needsUpdate = true
+        }
+        ;(m.bar.material as SpriteMaterial).opacity = dim ? 0.35 : 1
+        m.bar.scale.set(BAR_W * unit, BAR_H * unit, 1)
+      }
       if (p) {
         m.group.position.set(p.x, p.y, p.z)
         const look = (p.yaw / 256) * Math.PI * 2
@@ -940,6 +989,7 @@ async function start(root: HTMLElement) {
       }
     }
     listEvents()
+    showHealth()
     const panel = el(root, '[data-selected-role]')
     if (panel) {
       const st = selected ? stateOf(selected, ms) : null

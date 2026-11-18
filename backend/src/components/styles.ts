@@ -188,6 +188,9 @@ html.theater{overflow:hidden}
 .pdot{display:inline-block;width:.7rem;height:.7rem;border-radius:50%;flex:none}
 .pname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .prole{margin-left:auto;font-size:.8rem;color:var(--dim)}
+.phealth{flex:none;min-width:2.4em;text-align:right;font-size:.8rem;font-variant-numeric:tabular-nums;color:var(--dim)}
+.prow.sel .phealth{color:var(--soft)}
+.phealth-line{margin:var(--space-1) 0 0;min-height:1.5em;font-size:.85rem;font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--dim)}
 .warn{margin:var(--space-1) 0 0;font-size:.85rem;color:var(--amber)}
 .actions{display:flex;flex-wrap:wrap;gap:var(--space-2);margin-top:var(--space-3)}
 .actions form{margin:0}

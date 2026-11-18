@@ -88,6 +88,7 @@ export const ReplayPage = ({ ctx, server, round, hasTrack, src, pinned, here, pi
             <section class="f c-green"><h2 class="ft">Players</h2><div data-players class="list" style={counts ? `--n:${counts.players}` : undefined}></div></section>
             <section class="f c-violet">
               <h2 class="ft">Selected player</h2>
+              <p data-selected-health class="phealth-line"></p>
               <p data-selected-role style="margin:var(--space-1) 0"></p>
               <ol data-player-events class="list"></ol>
             </section>
@@ -113,8 +114,8 @@ export const ReplayPage = ({ ctx, server, round, hasTrack, src, pinned, here, pi
                 </div>
               </section>
             )}
-            {/* last: they appear only when the track has chat, shop or revivals, and where they were they pushed Deaths and the admin panel down by 125 to 172 px */}
-            <section data-feed-wrap hidden class="f c-violet"><h2 class="ft">Chat, shop and bodies</h2><ol data-feed class="list" style="max-height:22rem;overflow:auto"></ol></section>
+            {/* last: they appear only when the track has chat, shop, damage or revivals, and where they were they pushed Deaths and the admin panel down by 125 to 172 px */}
+            <section data-feed-wrap hidden class="f c-violet"><h2 class="ft">Chat, shop, bodies and damage</h2><ol data-feed class="list" style="max-height:22rem;overflow:auto"></ol></section>
             <section data-revives-wrap hidden class="f c-mint"><h2 class="ft">Revivals</h2><ol data-revives class="list"></ol></section>
           </aside>
         </div>
