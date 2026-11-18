@@ -46,10 +46,12 @@ local MAX_TICKS_FLOOR, MAX_TICKS_CEILING = 1000, 100000 -- what traitordash_trac
 local MAX_SEGMENTS = 64          -- per player
 local MAX_DEATHS = 512
 -- What happened to players besides moving (RFC 14, 4.3 and RFC 26): each kind has a cap of its own, so a chatty round does not use up the room of the others.
-local EVENT_CAP = { revive = 1024, role = 1024, say = 1024, buy = 512, found = 256, pickup = 256, drop = 256, hurt = 2048 }
+local EVENT_CAP = { revive = 1024, role = 1024, say = 1024, buy = 512, found = 256, pickup = 256, drop = 256, hurt = 2048, heal = 512 }
 local HP_MAX = 1000             -- the most health a sample or an event holds (TTT2 roles can have more than 100); more is cut, less than 0 is 0 (RFC 26, 4a)
 local HURT_MERGE_MS = 50        -- damage to the same victim, from the same attacker with the same cause, within this is one event (pellets, a blast)
 local HURT_W_LEN = 40
+local HEAL_MERGE_MS = 1000          -- health gained by the same player from the same source (and healer) within this of the last of it is one event (a health station gives 1 hp every 0.2 s)
+local HEAL_GRACE_MS = 1000          -- after a player spawned or was revived, and after the round began, a rise of health is the game setting it up, not a heal (RFC 26, 4b)
 local SAY_LEN = 200             -- characters of a chat line that are kept
 local MAX_BODIES = 4096         -- points of bodies' paths (RFC 24)
 local BODY_MOVE = 16                -- units a body must move from its last point to be recorded again
@@ -119,10 +121,76 @@ local function State(ply)
     return s
 end
 
+-- ---- The heal detour (RFC 26, 4b)
+-- The game has no hook for a rise of health. TTT2's health station fires TTTPlayerUsedHealthStation, but BEFORE it sets the health (and a hook may
+-- cancel it), while the TTT base fires it after; and a medic's knife or a role's regeneration sets the health with no hook at all. So while a round
+-- is recorded, `SetHealth` of the Player metatable is replaced by a wrapper that calls the original with every argument and returns what it
+-- returns, and only looks at what changed (Track.HealBefore and Track.Healed, under pcall). It is put back when the recording ends. The state
+-- lives in TraitorDash so that a reload of this file finds the wrapper it left and neither wraps twice nor leaves a second one recording.
+local HEAL_KEY = "TrackSetHealth"
+
+local function MakeSetHealth(st)
+    local orig = st.orig
+    -- runs after the original: records under pcall and hands on what the original returned
+    local function finish(T, ply, before, caller, ...)
+        pcall(T.Healed, ply, before, caller)
+        return ...
+    end
+    return function(self, ...)
+        if not st.on then return orig(self, ...) end
+        local T = TraitorDash.Track
+        local ok, before = pcall(T.HealBefore, self, (...))
+        if not ok or not before then return orig(self, ...) end
+        -- Who is calling (levels count from this function, so this is not in a helper and not under pcall): the file, and the object the method is
+        -- called on (`self` of a weapon's PrimaryAttack or of the health station's GiveHealth). Both are only read; getinfo and getlocal with a level
+        -- that exists cannot raise an error, and a level that does not exist gives nil.
+        local src, ent
+        local dbg = debug
+        if type(dbg) == "table" and dbg.getinfo then
+            local info = dbg.getinfo(2, "S")
+            if info then
+                src = info.short_src
+                if dbg.getlocal then
+                    local name, value = dbg.getlocal(2, 1)
+                    if name == "self" then ent = value end
+                end
+            end
+        end
+        return finish(T, self, before, { src = src, ent = ent }, orig(self, ...))
+    end
+end
+
+local function RemoveHeal()
+    local st = TraitorDash[HEAL_KEY]
+    if not st then return end
+    st.on = false
+    if st.meta.SetHealth == st.wrapper then
+        st.meta.SetHealth = st.had -- nil when the Player metatable only inherited it: the inheritance is back
+        TraitorDash[HEAL_KEY] = nil
+    end
+    -- else somebody else wrapped SetHealth after us: our wrapper stays in their chain, switched off, and passes everything through
+end
+
+local function InstallHeal()
+    if not FindMetaTable then return end
+    local ok, meta = pcall(FindMetaTable, "Player")
+    if not ok or type(meta) ~= "table" then return end
+    local st = TraitorDash[HEAL_KEY]
+    if st and st.meta == meta and meta.SetHealth == st.wrapper then st.on = true return end -- already in place (a reload of this file)
+    if st then st.on = false end
+    local cur = meta.SetHealth
+    if type(cur) ~= "function" then return end
+    st = { meta = meta, orig = cur, had = rawget(meta, "SetHealth"), on = true }
+    st.wrapper = MakeSetHealth(st)
+    meta.SetHealth = st.wrapper
+    TraitorDash[HEAL_KEY] = st
+end
+
 local HOOK_ID = "TraitorDash_TrackParts"
 
 -- The timer and, with it, the two hooks of the parts (RFC 20, 4.4): both go when a recording ends for any reason.
 local function RemoveTimer()
+    RemoveHeal()
     if timer.Exists and timer.Exists(TIMER) then timer.Remove(TIMER) end
     if hook.Remove then
         hook.Remove("AcceptInput", HOOK_ID)
@@ -588,6 +656,7 @@ local function SampleAll(r, now, also)
             -- fires none. The time is this tick's; the source is unknown (RFC 14, 4.1).
             if alive and p.awaiting and p.sawDead then
                 p.awaiting, p.sawDead = false, false
+                p.spawnAt = RoundMs(r, now)
                 AddEvent(r, now, { p = sid, k = "revive" })
             end
             local x, y, z, a = Pos(ply, sid == also and r.deathAt or nil)
@@ -757,6 +826,7 @@ function Track.Begin(roundId, players)
         end
         if cv_parts:GetBool() then StartParts(r) end
         if cv_props:GetBool() then StartThings(r) end
+        InstallHeal() -- from here on a rise of health is looked at (not in the preparation)
         if RoundMs(r, CurTime()) > r.lastMs then
             SampleAll(r, CurTime()) -- where everybody stands at the start
         else -- a tick just took them: only the parts and props that were started now are looked at, in that tick
@@ -778,6 +848,7 @@ function Track.Begin(roundId, players)
     rec = r
     if cv_parts:GetBool() then StartParts(r) end
     if cv_props:GetBool() then StartThings(r) end
+    InstallHeal()
     SampleAll(r, r.t0) -- where everybody stands at the start
     timer.Create(TIMER, r.interval, 0, SafeTick)
     Dbg(string.format("recording round %s: %d players, interval %.2f-%.2f s", roundId, #r.order, mn, select(2, Settings())))
@@ -830,6 +901,7 @@ function Track.Revive(sid, info)
     local p = r.players[sid]
     if not p then return end
     p.awaiting, p.sawDead = false, false
+    p.spawnAt = RoundMs(r, CurTime())
     p.rag, p.lastBody = nil, nil -- a revival removes the body
     local e = { p = sid, k = "revive" }
     if info then e.by, e.how, e.why = info.by, info.how, info.why end
@@ -971,6 +1043,109 @@ function Track.Hurt(ent, info, took)
     if ev then byW[w] = { ev = ev, at = now } end
 end
 
+-- ---- Health gained (RFC 26, 4b)
+
+-- A short word for where a file is from, from the path of the function that called SetHealth (debug.getinfo's short_src): the weapon's or the
+-- entity's folder or file, a role's folder, an addon's folder, else the file's own name. Letters, digits, _ . and -, at most HURT_W_LEN, or nil.
+local function SourceOfPath(path)
+    if type(path) ~= "string" then return nil end
+    local p = string.gsub(path, "\\", "/")
+    if string.sub(p, 1, 1) == "[" then return nil end -- "[C]" or [string "..."]: not a file
+    local name = string.match(p, "/weapons/([^/]+)") or string.match(p, "/entities/entities/([^/]+)")
+    if not name then
+        local e = string.match(p, "/entities/([^/]+)")
+        if e and e ~= "roles" and e ~= "weapons" and e ~= "effects" then name = e end
+    end
+    if not name then
+        local role = string.match(p, "/roles/([^/]+)")
+        if role then name = "role_" .. role end
+    end
+    name = name or string.match(p, "^addons/([^/]+)/") or string.match(p, "([^/]+)$")
+    if not name then return nil end
+    name = string.gsub(name, "%.lua$", "")
+    name = string.sub(string.gsub(name, "[^%w_.%-]", ""), 1, HURT_W_LEN)
+    if name == "" or name == "shared" or name == "init" then return nil end
+    return name
+end
+Track.SourceOfPath = SourceOfPath
+
+-- What gave the health, and who (a player of the round) gave it. In order: the object the calling method belongs to when it is an entity that is
+-- not a player (the health station's GiveHealth, a weapon's PrimaryAttack): its class, and for a weapon its owner as the healer; else the calling
+-- file; else "other". A file or class with "regen" in its name is "regen".
+local function HealSource(r, ply, caller)
+    local w, healer = nil, nil
+    local ent = caller and caller.ent
+    if ent ~= nil and ent ~= ply and IsValid(ent) and ent.GetClass and not (ent.IsPlayer and ent:IsPlayer()) then
+        local okc, class = pcall(ent.GetClass, ent)
+        if okc and type(class) == "string" then
+            w = string.sub(string.gsub(class, "[^%w_.%-]", ""), 1, HURT_W_LEN)
+            if w == "" then w = nil end
+        end
+        if w and ent.IsWeapon and ent.GetOwner then
+            local oko, owner = pcall(function() return ent:IsWeapon() and ent:GetOwner() or nil end)
+            if oko and owner ~= nil and IsValid(owner) and owner.IsPlayer and owner:IsPlayer() then
+                local sid = SidOf(r, owner)
+                if sid and (not r.members or r.members[sid]) then healer = sid end
+            end
+        end
+    end
+    if not w and caller then w = SourceOfPath(caller.src) end
+    if w and string.find(string.lower(w), "regen", 1, true) then w = "regen" end
+    return w or "other", healer
+end
+
+-- The first half, before the game's own SetHealth runs: is this a rise of a living round player's health that is worth looking at? Returns the health
+-- before, or nil. It must be cheap (every SetHealth of the game comes through it while a round is recorded) and never raises (the caller has pcall).
+function Track.HealBefore(ply, new)
+    local r = rec
+    if not r or r.stopped or r.prep or type(new) ~= "number" then return nil end
+    if not IsValid(ply) or not ply.IsPlayer or not ply:IsPlayer() then return nil end
+    local before = ReadHealth(ply)
+    if not before or before < 1 or new <= before then return nil end -- a decrease, no change, or a dead player (a revival sets the health of a dead one)
+    if not ply:IsTerror() then return nil end
+    if not SidOf(r, ply) then return nil end
+    return before
+end
+
+-- The second half, after SetHealth ran: the health gained is what the game says now minus what it said before. Merged within HEAL_MERGE_MS.
+function Track.Healed(ply, before, caller)
+    local r = rec
+    if not r or r.stopped or r.prep or type(before) ~= "number" then return end
+    local sid = SidOf(r, ply)
+    if not sid then return end
+    if r.members and not r.members[sid] then return end
+    local after = ReadHealth(ply)
+    if not after or after <= before then return end
+    local p = r.players[sid]
+    local now = RoundMs(r, CurTime())
+    p.hpPrev = after
+    if now - r.begin < HEAL_GRACE_MS or (p.spawnAt and now - p.spawnAt < HEAL_GRACE_MS) then return end -- the round setting itself up, or a spawn or a revival
+    local w, healer = HealSource(r, ply, caller)
+    local d = after - before
+    local slot = healer or "-"
+    local byA = p.healLast
+    if not byA then byA = {} p.healLast = byA end
+    local byW = byA[slot]
+    if not byW then byW = {} byA[slot] = byW end
+    local last = byW[w]
+    if last and now - last.at <= HEAL_MERGE_MS then
+        last.ev.d = math.min(last.ev.d + d, 10000)
+        last.ev.h = after
+        last.at = now
+        return
+    end
+    local ev = AddEvent(r, CurTime(), { p = sid, k = "heal", a = healer, w = w, d = d, h = after })
+    if ev then byW[w] = { ev = ev, at = now } end
+end
+
+-- A player of the round spawned (PlayerSpawn: a respawn, a revival): what the game does to their health in the next moment is not a heal.
+function Track.Spawned(ply)
+    local r = rec
+    if not r or r.stopped then return end
+    local sid = SidOf(r, ply)
+    if sid then r.players[sid].spawnAt = RoundMs(r, CurTime()) end
+end
+
 -- ---- Bodies (RFC 24)
 
 -- TTT2 made a ragdoll for a tracked player's death: it is followed from the next tick on (SampleBodies).
@@ -1008,6 +1183,7 @@ hook.Add("TTTOnCorpseCreated", "TraitorDash_TrackCorpse", function(rag, ply) pca
 hook.Add("OnPlayerPhysicsPickup", "TraitorDash_TrackPickup", function(ply, ent) pcall(Track.Pickup, ply, ent) end)
 hook.Add("OnPlayerPhysicsDrop", "TraitorDash_TrackDrop", function(ply, ent) pcall(Track.Drop, ply, ent) end)
 hook.Add("PostEntityTakeDamage", "TraitorDash_TrackHurt", function(ent, info, took) pcall(Track.Hurt, ent, info, took) end)
+hook.Add("PlayerSpawn", "TraitorDash_TrackSpawn", function(ply) pcall(Track.Spawned, ply) end)
 hook.Add("TTTBodyFound", "TraitorDash_TrackFound", function(finder, dead) pcall(Track.Found, finder, dead) end)
 
 -- The round is over: stops the timer, prints the one line, and returns the track to upload (or nil

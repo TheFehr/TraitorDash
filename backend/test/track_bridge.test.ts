@@ -1420,3 +1420,309 @@ describe('track.lua: health and damage (RFC 26, stage B)', () => {
     expect(on.out.n).toBe(0)
   })
 })
+
+// RFC 26, 4b: health gained, from a detour of the Player metatable's SetHealth that is in place only while a round is recorded.
+const HEAL = HEALTH + `
+  SETCALLS = 0; FMT = 0; CLAMP = nil
+  ENTITY_BASE = {}
+  -- the original: what the game's SetHealth does (it sets the health; it returns two values so the detour has something to hand on)
+  function ENTITY_BASE.SetHealth(self, h, ...)
+    SETCALLS = SETCALLS + 1
+    SETARGS = { n = select("#", ...), ... }
+    if type(h) == "number" and CLAMP then h = math.min(h, CLAMP) end
+    self.hp = h
+    return "ok", 42
+  end
+  PLAYER = setmetatable({}, { __index = ENTITY_BASE })
+  function FindMetaTable(n) FMT = FMT + 1 if n == "Player" then return PLAYER end end
+  for _, p in ipairs({ A, B, C, SPEC }) do setmetatable(p, { __index = PLAYER }) end
+  function Wep(class, owner) local e = Ent(class) function e:IsWeapon() return true end function e:GetOwner() return owner end return e end
+  -- a function as if it came from a file: the chunk's name is what debug.getinfo says as short_src; its first parameter is called "self" unless said
+  function From(chunk, body, first)
+    return load("local function f(" .. (first or "self") .. ", ply, h) " .. body .. " end return f", "@" .. chunk)()
+  end
+  STATION = From("gamemodes/terrortown/entities/entities/ttt_health_station.lua", "ply:SetHealth(h) return true")
+  KNIFE = From("addons/medic/lua/weapons/ttt_surgeryknife/shared.lua", "ply:SetHealth(h) return true")
+  function Start() Begin() NOW = NOW + 1.2 end -- the round is recorded and the first second, in which a rise of health is the game setting things up, is over
+  function Ends() Fire("TTTEndRound", WIN_TRAITOR); Accept(1) end
+`
+const heals = (r: Run) => (trackOf(r).events as any[] | undefined)?.filter(e => e.k === 'heal') ?? []
+const shortHeals = (r: Run) => heals(r).map(e => [e.p, e.a, e.w, e.d, e.h])
+const luaLong = (s: string) => '[==[' + s + ']==]'
+
+describe('track.lua: health gained (RFC 26, 4b)', () => {
+  test('a rise of a living round player\'s health is a heal with the health gained and the health after as the game says it; the source is "other" when the caller is not known; the backend takes it', () => {
+    const r = play(HEAL + `
+      Start()
+      B.hp = 50; B:SetHealth(80)
+      A.hp = 90; A:SetHealth(100)
+      CLAMP = 100; C.hp = 50; C:SetHealth(200) -- the game cuts it at the most health: what was gained is 50, not 150
+      Ends()
+    `)
+    expect(heals(r)).toEqual([
+      { p: B, k: 'heal', w: 'other', d: 30, h: 80, t: 1200 },
+      { p: A, k: 'heal', w: 'other', d: 10, h: 100, t: 1200 },
+      { p: C, k: 'heal', w: 'other', d: 50, h: 100, t: 1200 },
+    ])
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('a fall, no change, a value that is not a number: no heal, and the original SetHealth still runs every time', () => {
+    const r = play(HEAL + `
+      Start()
+      B.hp = 50; B:SetHealth(30); B:SetHealth(30); B:SetHealth("x"); B:SetHealth(nil)
+      OUT = { calls = SETCALLS }
+      Ends()
+    `)
+    expect(heals(r)).toEqual([])
+    expect(r.out.calls).toBe(4)
+  })
+
+  test('a dead player, one at 0 health (the revival sets the health of a dead player) and a player that was just spawned have no heal', () => {
+    const r = play(HEAL + `
+      Start()
+      B.hp = 0; B.alive = false; B:SetHealth(100)          -- TTT2's Revive: SetHealth(100) while still dead
+      B.hp = 20; B:SetHealth(60)                           -- not a living player (IsTerror is false)
+      B.alive = true; Fire("PlayerSpawn", B)               -- the engine spawns them; then an addon sets the health it likes
+      B.hp = 60; NOW = NOW + 0.5; B:SetHealth(75)          -- within a second of the spawn
+      NOW = NOW + 0.6; B.hp = 60; B:SetHealth(75)          -- later it is a heal
+      Ends()
+    `)
+    expect(shortHeals(r)).toEqual([[B, undefined, 'other', 15, 75]])
+  })
+
+  test('a revival that the recorder only sees in its samples (no PlayerSpawn) also has a second without heals', () => {
+    const r = play(HEAL + `
+      Start()
+      B.alive = false; Fire("TTT2PostPlayerDeath", B, nil, A); Run(2)
+      B.alive = true; Run(1)
+      B.hp = 50; B:SetHealth(80)
+      NOW = NOW + 1.1; B.hp = 50; B:SetHealth(70)
+      Ends()
+    `)
+    expect((trackOf(r).events as any[]).filter(e => e.k === 'revive')).toHaveLength(1)
+    expect(shortHeals(r)).toEqual([[B, undefined, 'other', 20, 70]])
+  })
+
+  test('the first second of the round is the game setting it up (roles, loadout): no heals then', () => {
+    const r = play(HEAL + `
+      Begin()
+      NOW = NOW + 0.5; B.hp = 100; B:SetHealth(150)
+      NOW = NOW + 0.6; B.hp = 100; B:SetHealth(120)
+      Ends()
+    `)
+    expect(shortHeals(r)).toEqual([[B, undefined, 'other', 20, 120]])
+  })
+
+  test('only while a round is being recorded: the preparation is not looked at (the detour is not even in place), the round is, and after the round the original is back', () => {
+    const r = play(HEAL + `
+      Fire("TTTPrepareRound")
+      local before = rawget(PLAYER, "SetHealth")
+      B.hp = 50; B:SetHealth(90)
+      Fire("TTTBeginRound")
+      local during = rawget(PLAYER, "SetHealth")
+      NOW = NOW + 1.2; B.hp = 50; B:SetHealth(70)
+      Ends()
+      local after = rawget(PLAYER, "SetHealth")
+      B.hp = 50; B:SetHealth(95)
+      OUT = { before = before == nil, during = during ~= nil, after = after == nil, calls = SETCALLS }
+    `)
+    expect(r.out).toEqual({ before: true, during: true, after: true, calls: 3 })
+    expect(shortHeals(r)).toEqual([[B, undefined, 'other', 20, 70]])
+  })
+
+  test('a player who was not in the round (a spectator who is alive again, or anybody else) has no heal', () => {
+    const r = play(HEAL + `
+      Start()
+      SPEC.alive = true; SPEC.hp = 40; SPEC:SetHealth(90)
+      local stranger = setmetatable({ hp = 10, IsPlayer = function() return true end, IsTerror = function() return true end, Health = function(s) return s.hp end }, { __index = PLAYER })
+      stranger:SetHealth(60)
+      Ends()
+    `)
+    expect(heals(r)).toEqual([])
+  })
+
+  test('the source is the entity or weapon the calling method belongs to (the health station\'s GiveHealth, a medic\'s knife) with the weapon\'s owner as the healer, else the calling file, else other; "regen" in a name is regen', () => {
+    const r = play(HEAL + `
+      Start()
+      B.hp = 50; STATION(Ent("ttt_health_station"), B, 51)
+      C.hp = 40; KNIFE(Wep("ttt_surgeryknife", A), C, 65)                       -- a healer who is in the round
+      A.hp = 40; KNIFE(Wep("ttt_surgeryknife", A), A, 65)                       -- healing oneself
+      B.hp = 50; KNIFE(Wep("ttt_surgeryknife", SPEC), B, 75)                   -- a healer who was not in the round: no healer
+      local role = From("addons/ttt2-medic/lua/terrortown/entities/roles/medic/shared.lua", "ply:SetHealth(h) return true", "x")
+      C.hp = 10; role(nil, C, 20)                                              -- no object: the file says it
+      local regen = From("addons/ttt2-regen/lua/autorun/server/sv_regen.lua", "ply:SetHealth(h) return true", "x")
+      A.hp = 10; regen(nil, A, 11)
+      NOW = NOW + 2
+      B.hp = 10; STATION(B, B, 30)                                             -- self is the player: not a source, the file says it
+      B.hp = 10; STATION(Ent("player_thing" .. string.rep("x", 60)), B, 50)    -- a class name is cut at 40 characters
+      Ends()
+    `)
+    expect(shortHeals(r)).toEqual([
+      [B, undefined, 'ttt_health_station', 1, 51],
+      [C, A, 'ttt_surgeryknife', 25, 65],
+      [A, A, 'ttt_surgeryknife', 25, 65],
+      [B, undefined, 'ttt_surgeryknife', 25, 75],
+      [C, undefined, 'role_medic', 10, 20],
+      [A, undefined, 'regen', 1, 11],
+      [B, undefined, 'ttt_health_station', 20, 30],
+      [B, undefined, 'player_thing' + 'x'.repeat(28), 40, 50],
+    ])
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('the file that called SetHealth becomes a short safe word: the weapon, entity, role or addon folder, else the file\'s name; nothing for a string chunk', () => {
+    const r = play(HEAL + `
+      local S = function(p) return tostring(TraitorDash.Track.SourceOfPath(p)) end
+      OUT = {
+        S("gamemodes/terrortown/entities/weapons/ttt_surgeryknife/shared.lua"), S("addons/x/lua/weapons/weapon_ttt_medkit.lua"),
+        S("gamemodes/terrortown/entities/entities/ttt_health_station.lua"), S("addons/y/lua/entities/ttt_hp_pad/init.lua"),
+        S("addons/z/lua/terrortown/entities/roles/medic/shared.lua"), S("addons/regen-pack/lua/autorun/server/hp.lua"),
+        S("gamemodes/terrortown/gamemode/server/sv_player_ext.lua"), S("lua/autorun/some file;x.lua"), S("[C]"), S('[string "x"]'), S(nil), S(42), S("lua/shared.lua"),
+        S("addons/" .. string.rep("a", 80) .. "/lua/autorun/x.lua"),
+      }
+    `, false)
+    expect(r.out).toEqual([
+      'ttt_surgeryknife', 'weapon_ttt_medkit', 'ttt_health_station', 'ttt_hp_pad', 'role_medic', 'regen-pack', 'sv_player_ext', 'somefilex',
+      'nil', 'nil', 'nil', 'nil', 'nil', 'a'.repeat(40),
+    ])
+  })
+
+  test('small heals from the same source to the same player within a second of the last are one event (the health station gives 1 every 0.2 s): the health gained is added, the health after is the last; 1000 ms is still one, 1001 are two; another source, healer or player is another event', () => {
+    const r = play(HEAL + `
+      Start()
+      B.hp = 50
+      local st = Ent("ttt_health_station")
+      for i = 1, 15 do STATION(st, B, B.hp + 1); NOW = NOW + 0.2 end
+      NOW = NOW - 0.2 + 1.0; STATION(st, B, B.hp + 1)             -- exactly 1000 ms after the last: still one
+      NOW = NOW + 1.001; STATION(st, B, B.hp + 1)                  -- 1001 ms: a new one
+      C.hp = 50; STATION(st, C, 60)                                -- another player
+      KNIFE(Wep("ttt_surgeryknife", A), B, B.hp + 3)               -- another source and a healer
+      STATION(st, B, B.hp + 1)                                     -- the first source again: it joins the second event, the knife in between does not break it
+      Ends()
+    `)
+    const h = heals(r)
+    expect(h.map(e => [e.p, e.a, e.w, e.d, e.h])).toEqual([
+      [B, undefined, 'ttt_health_station', 16, 66],
+      [B, undefined, 'ttt_health_station', 2, 71],
+      [C, undefined, 'ttt_health_station', 10, 60],
+      [B, A, 'ttt_surgeryknife', 3, 70],
+    ])
+    expect(h[0].t).toBe(1200) // the time of the first of them
+  })
+
+  test('512 heal events at most: the track is marked truncated, the other kinds keep their room, and the backend takes it', () => {
+    const r = play(HEAL + `
+      Start()
+      for i = 1, 600 do NOW = NOW + 1.1; B.hp = 50; STATION(Ent("ttt_health_station"), B, 51) end
+      Fire("TTT2OrderedEquipment", A, "weapon_ttt_c4", false)
+      Ends()
+    `)
+    expect(heals(r)).toHaveLength(512)
+    expect((trackOf(r).events as any[]).filter(e => e.k === 'buy')).toHaveLength(1)
+    expect(trackOf(r).truncated).toBe(true)
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('the detour hands every argument to the original and returns what it returned, also when the recorder raises an error before or after', () => {
+    const r = play(HEAL + `
+      Start()
+      B.hp = 50
+      local a, b, c = B:SetHealth(60, "extra1", "extra2")
+      OUT = { a = a, b = b, extra = SETARGS.n, e1 = SETARGS[1], e2 = SETARGS[2], hp = B.hp, count = select("#", B:SetHealth(61)) }
+      local T = TraitorDash.Track
+      local realBefore, realHealed = T.HealBefore, T.Healed
+      T.HealBefore = function() error("boom") end
+      local a2, b2 = B:SetHealth(70, "z")
+      OUT.after1 = { a2, b2, B.hp, SETARGS[1] }
+      T.HealBefore = realBefore
+      T.Healed = function() error("boom") end
+      local a3, b3 = B:SetHealth(80, "y")
+      OUT.after2 = { a3, b3, B.hp, SETARGS[1] }
+      T.Healed = realHealed
+      OUT.calls = SETCALLS
+    `)
+    expect(r.out.a).toBe('ok'); expect(r.out.b).toBe(42); expect(r.out.count).toBe(2)
+    expect([r.out.extra, r.out.e1, r.out.e2, r.out.hp]).toEqual([2, 'extra1', 'extra2', 60])
+    expect(r.out.after1).toEqual(['ok', 42, 70, 'z'])
+    expect(r.out.after2).toEqual(['ok', 42, 80, 'y'])
+    expect(r.out.calls).toBe(4)
+  })
+
+  test('the original method is put back when the round ends and when the recording is dropped (traitordash_track 0); a game without debug still records, with the source other', () => {
+    const own = play(HEAL + `
+      PLAYER.SetHealth = ENTITY_BASE.SetHealth; ORIG = PLAYER.SetHealth
+      Start()
+      local during = rawget(PLAYER, "SetHealth") ~= ORIG
+      Ends()
+      OUT = { during = during, back = rawget(PLAYER, "SetHealth") == ORIG }
+    `)
+    expect(own.out).toEqual({ during: true, back: true })
+    const killed = play(HEAL + `
+      Start()
+      SetCv("traitordash_track", "0"); Run(1)
+      OUT = { back = rawget(PLAYER, "SetHealth") == nil, timers = Count() }
+    `)
+    expect(killed.out).toEqual({ back: true, timers: 0 })
+    const nodebug = play(HEAL + `
+      debug = nil
+      Start()
+      B.hp = 50; local a = B:SetHealth(90)
+      OUT = { a = a }
+      Ends()
+    `)
+    expect(nodebug.out.a).toBe('ok')
+    expect(shortHeals(nodebug)).toEqual([[B, undefined, 'other', 40, 90]])
+  })
+
+  test('somebody else who wrapped SetHealth after us is not undone at the end of the round: our wrapper stays in their chain, switched off, and passes everything on', () => {
+    const r = play(HEAL + `
+      Start()
+      local ours = PLAYER.SetHealth
+      local theirs = function(self, ...) THEIRS = (THEIRS or 0) + 1 return ours(self, ...) end
+      PLAYER.SetHealth = theirs
+      Ends()
+      OUT = { kept = PLAYER.SetHealth == theirs }
+      B.hp = 50; local a = B:SetHealth(90)
+      OUT.a, OUT.theirs, OUT.calls, OUT.hp = a, THEIRS, SETCALLS, B.hp
+    `)
+    expect(r.out).toEqual({ kept: true, a: 'ok', theirs: 1, calls: 1, hp: 90 })
+    expect(heals(r)).toEqual([])
+  })
+
+  test('a reload of the file while the detour is in place leaves no wrapper behind that nobody can take off: the next round (of the new file) takes it off, and records one heal, not two', () => {
+    const r = play(HEAL + `
+      Start()
+      local wrapper = PLAYER.SetHealth
+      assert(load(${luaLong(read('track.lua'))}, "@track.lua"))()
+      SetCv("traitordash_track", "1") -- the fake CreateConVar resets the value when the file runs again
+      local kept = PLAYER.SetHealth == wrapper
+      Fire("TTTPrepareRound")
+      local gone = rawget(PLAYER, "SetHealth") == nil
+      Fire("TTTBeginRound"); NOW = NOW + 1.2
+      SETCALLS = 0; B.hp = 50; B:SetHealth(70)
+      OUT = { kept = kept, gone = gone, calls = SETCALLS }
+      Ends()
+      OUT.back = rawget(PLAYER, "SetHealth") == nil
+    `)
+    expect(r.out).toEqual({ kept: true, gone: true, calls: 1, back: true })
+    expect(shortHeals(r)).toEqual([[B, undefined, 'other', 20, 70]])
+  })
+
+  test('with tracking off nothing is touched: the metatable is not even asked for, and PlayerSpawn returns nothing', () => {
+    const r = play(HEAL + `
+      Begin(); NOW = NOW + 1.2
+      B.hp = 50; B:SetHealth(90)
+      OUT = { fmt = FMT, own = rawget(PLAYER, "SetHealth") == nil, calls = SETCALLS, spawn = FireValues("PlayerSpawn", B) }
+    `, false)
+    expect(r.out).toEqual({ fmt: 0, own: true, calls: 1, spawn: 0 })
+  })
+
+  test('a game with no FindMetaTable (or one without a Player table) records the round as before, without heals', () => {
+    const none = play(HEAL + `FindMetaTable = nil Start() Run(1) B.hp = 50; B:SetHealth(90) Ends()`)
+    expect(heals(none)).toEqual([])
+    expect(trackOf(none).t.length).toBeGreaterThan(1)
+    const nothing = play(HEAL + `FindMetaTable = function() return nil end Start() Run(1) Ends()`)
+    expect(trackOf(nothing).t.length).toBeGreaterThan(1)
+  })
+})
