@@ -1248,3 +1248,175 @@ describe('track.lua: the preparation before the round (RFC 12, 3.7)', () => {
     expect(r.out.timers).toBe(0)
   })
 })
+
+// RFC 26, stage B (4a): health with each position sample and the damage events.
+const HEALTH = `
+  function Ent(class) local e = { class = class } function e:GetClass() return self.class end function e:IsPlayer() return false end return e end
+  HCALLS = 0
+  for _, p in ipairs({ A, B, C, SPEC }) do
+    p.hp = 100
+    function p:Health() HCALLS = HCALLS + 1 return self.hp end
+    function p:GetMaxHealth() return 100 end
+    function p:GetActiveWeapon() return self.weapon end
+  end
+  A.weapon = Ent("weapon_ttt_m16"); B.weapon = Ent("weapon_zm_shotgun"); C.weapon = Ent("weapon_zm_mac10"); SPEC.weapon = Ent("weapon_zm_rifle")
+  WORLD = Ent("worldspawn"); PROP = Ent("prop_physics"); PROP.hp = 100
+  DMG_FALL, DMG_BURN, DMG_BLAST = 32, 8, 64
+  bit = { band = function(a, b) return load("return " .. math.floor(a) .. " & " .. math.floor(b))() end }
+  CALLS = 0
+  -- the game applies the damage, then fires the hook with the victim's health already down
+  function Hit(victim, attacker, amount, inflictor, took, dtype)
+    victim.hp = math.max(victim.hp - amount, 0)
+    local info = {
+      GetAttacker = function() return attacker end, GetInflictor = function() return inflictor end,
+      GetDamage = function() CALLS = CALLS + 1 return amount end, GetDamageType = function() return dtype or 2 end,
+    }
+    Fire("PostEntityTakeDamage", victim, info, took ~= false)
+  end
+`
+const hurts = (r: Run) => (trackOf(r).events as any[] | undefined)?.filter(e => e.k === 'hurt') ?? []
+const okTrack = (t: any) => validateTrack(t, { roundId: t.round_id, map: t.map, players: new Set([A, B, C]) }).ok
+
+describe('track.lua: health and damage (RFC 26, stage B)', () => {
+  test('a hit is one event with the victim, the attacker, the weapon of the attacker, the damage and the health after; the backend takes it', () => {
+    const r = play(HEALTH + `Begin() Run(2) Hit(B, A, 22, A) Fire("TTTEndRound", WIN_TRAITOR); Accept(1)`)
+    expect(hurts(r)).toEqual([{ p: B, a: A, k: 'hurt', w: 'weapon_ttt_m16', d: 22, h: 78, t: 400 }])
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('the pellets of one shot are one event with the damage summed and the last health; 50 ms is still one, 51 ms are two; another attacker, cause or victim is another event', () => {
+    const r = play(HEALTH + `
+      Begin()
+      for i = 1, 8 do Hit(B, A, 9, A) end
+      NOW = NOW + 0.05; Hit(B, A, 1, A)
+      NOW = NOW + 0.051; Hit(B, A, 2, A)
+      Hit(B, A, 3, PROP)
+      Hit(B, C, 4, C)
+      Hit(C, A, 5, A)
+      Fire("TTTEndRound", WIN_TRAITOR); Accept(1)
+    `)
+    expect(hurts(r).map(e => [e.p, e.a, e.w, e.d, e.h])).toEqual([
+      [B, A, 'weapon_ttt_m16', 73, 100 - 73], // 8 x 9 and 1, 50 ms after the last
+      [B, A, 'weapon_ttt_m16', 2, 100 - 75], // 51 ms later
+      [B, A, 'prop_physics', 3, 100 - 78],
+      [B, C, 'weapon_zm_mac10', 4, 100 - 82],
+      [C, A, 'weapon_ttt_m16', 5, 95],
+    ])
+  })
+
+  test('damage with no player behind it is named by its type; a prop or an explosive by its class; a hit on oneself or by someone who was not in the round has no attacker', () => {
+    const r = play(HEALTH + `
+      Begin()
+      Hit(B, WORLD, 12, WORLD, true, DMG_FALL)
+      Hit(C, nil, 4, nil, true, DMG_BURN)
+      Hit(B, nil, 3, nil, true, 1)
+      Hit(B, A, 5, PROP)
+      Hit(A, A, 6, A)
+      Hit(C, SPEC, 7, SPEC)
+      Hit(C, WORLD, 8, Ent(string.rep("w", 100) .. "!;"))
+      Fire("TTTEndRound", WIN_TRAITOR); Accept(1)
+    `)
+    expect(hurts(r).map(e => [e.p, e.a, e.w])).toEqual([
+      [B, undefined, 'fall'], [C, undefined, 'fire'], [B, undefined, 'world'], [B, A, 'prop_physics'],
+      [A, undefined, 'weapon_ttt_m16'], [C, undefined, 'weapon_zm_rifle'], [C, undefined, 'w'.repeat(40)],
+    ])
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('only players of the round are the victims; damage that was not taken, under half a point, to a prop, or with a broken info is not an event, and nothing breaks', () => {
+    const r = play(HEALTH + `
+      Begin()
+      Hit(SPEC, A, 10, A)
+      Hit(PROP, A, 10, A)
+      Hit(B, A, 10, A, false)
+      Hit(B, A, 0.4, A)
+      Fire("PostEntityTakeDamage", nil, nil, true)
+      Fire("PostEntityTakeDamage", B, nil, true)
+      Fire("PostEntityTakeDamage", B, {}, true)
+      Fire("TTTEndRound", WIN_TRAITOR); Accept(1)
+    `)
+    expect(hurts(r)).toEqual([])
+  })
+
+  test('the blow that kills counts no more than the health that was left; a hit before the round began is not recorded', () => {
+    const r = play(HEALTH + `
+      Fire("TTTPrepareRound") Hit(B, A, 10, A) Fire("TTTBeginRound")
+      B.hp = 100
+      Run(1)
+      Hit(B, A, 30, A)
+      NOW = NOW + 0.2
+      Hit(B, A, 500, A)
+      Fire("TTTEndRound", WIN_TRAITOR); Accept(1)
+    `)
+    expect(hurts(r).map(e => [e.d, e.h])).toEqual([[30, 70], [70, 0]])
+  })
+
+  test('the cap of 2048 hurt events marks the track truncated and leaves the room of the other kinds', () => {
+    const r = play(HEALTH + `
+      Begin()
+      for i = 1, 2100 do NOW = NOW + 0.1; B.hp = 100; Hit(B, A, 1, A) end
+      Fire("TTT2OrderedEquipment", A, "weapon_ttt_c4", false)
+      Fire("TTTEndRound", WIN_TRAITOR); Accept(1)
+    `)
+    expect(hurts(r)).toHaveLength(2048)
+    expect((trackOf(r).events as any[]).filter(e => e.k === 'buy')).toHaveLength(1)
+    expect(trackOf(r).truncated).toBe(true)
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('each sample carries the health, the first absolute and then differences (mostly zeros); the most health of each player is sent once', () => {
+    const r = play(HEALTH + `
+      Begin()
+      B.hp = 70; Run(1)
+      Run(1)
+      B.hp = 130; Run(1)
+      B.hp = 90; Run(1)
+      Fire("TTTEndRound", WIN_TRAITOR); Accept(1)
+    `)
+    const t = trackOf(r)
+    expect(segOf(t, B).hp).toEqual([100, -30, 0, 60, -40])
+    expect(rebuild(segOf(t, B).hp)).toEqual([100, 70, 70, 130, 90])
+    expect(segOf(t, A).hp).toEqual([100, 0, 0, 0, 0])
+    expect(segOf(t, B).hp).toHaveLength(segOf(t, B).x.length)
+    expect(t.players.map((p: any) => p.mh)).toEqual([100, 100, 100])
+    expect(okTrack(t)).toBe(true)
+  })
+
+  test('health is whole, from 0 to 1000: below 0 is 0, above is cut; a value that is not a number, or a call that fails, leaves the segment without health but keeps the positions', () => {
+    const r = play(HEALTH + `
+      A.hp = -5; B.hp = 99999; C.hp = "abc"
+      B.GetMaxHealth = function() return 5000 end
+      A.GetMaxHealth = function() return 0 end
+      Begin()
+      A.hp = 50.6; Run(1)
+      Fire("TTTEndRound", WIN_TRAITOR); Accept(1)
+    `)
+    const t = trackOf(r)
+    expect(rebuild(segOf(t, A).hp)).toEqual([0, 51])
+    expect(rebuild(segOf(t, B).hp)).toEqual([1000, 1000])
+    expect(segOf(t, C).hp).toBeUndefined()
+    expect(segOf(t, C).x).toHaveLength(2)
+    expect(t.players.find((p: any) => p.id === A).mh).toBeUndefined()
+    expect(t.players.find((p: any) => p.id === B).mh).toBe(1000)
+    const err = play(HEALTH + `C.Health = function() error("no") end Begin() Run(1) Fire("TTTEndRound", WIN_TRAITOR); Accept(1)`)
+    expect(segOf(trackOf(err), C).hp).toBeUndefined()
+    expect(segOf(trackOf(err), A).hp).toEqual([100, 0])
+  })
+
+  test('a game that cannot say a player\'s health sends a track as before: no hp, no mh', () => {
+    const r = play(`Begin() Run(2) Fire("TTTEndRound", WIN_TRAITOR); Accept(1)`)
+    const t = trackOf(r)
+    expect(segOf(t, A).hp).toBeUndefined()
+    expect(t.players[0].mh).toBeUndefined()
+    expect(JSON.stringify(t)).not.toContain('"hp"')
+  })
+
+  test('with tracking off, or when no round is being recorded, the hook does not even ask for the health; it returns nothing, so it cannot change the damage', () => {
+    const off = play(HEALTH + `Begin() Hit(B, A, 10, A) OUT = { calls = HCALLS }`, false)
+    expect(off.out.calls).toBe(0)
+    const after = play(HEALTH + `Begin() Fire("TTTEndRound", WIN_TRAITOR); Accept(1) HCALLS = 0 Hit(B, A, 10, A) OUT = { calls = HCALLS }`)
+    expect(after.out.calls).toBe(0)
+    const on = play(HEALTH + `Begin() local info = { GetAttacker = function() return A end, GetInflictor = function() return A end, GetDamage = function() return 5 end } OUT = { n = FireValues("PostEntityTakeDamage", B, info, true) }`)
+    expect(on.out.n).toBe(0)
+  })
+})

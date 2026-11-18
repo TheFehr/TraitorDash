@@ -16,6 +16,9 @@
 -- Besides the position and the view yaw, each sample says how the player moves, as a number of bits `s`: 1 crouching, 2 in the air,
 -- 4 in water (the replay animates a player from it). A player the game cannot ask (a call that is not there) counts as 0.
 --
+-- Health (RFC 26, stage B): each sample also holds the player's health `hp` (delta coded like the position; read from `ply:Health()`, no hook), and
+-- each player the most health they had, `mh`. Damage to a player of the round is an event `hurt` (PostEntityTakeDamage; see Track.Hurt below).
+--
 -- Parts that move (RFC 20, 4.3): with traitordash_track_parts on, the doors, lifts and other brush entities that can move are recorded
 -- as keyframes on the same tick list, and the inputs that reach them (also a player pressing use) as a list; see the Parts section below.
 --
@@ -43,7 +46,10 @@ local MAX_TICKS_FLOOR, MAX_TICKS_CEILING = 1000, 100000 -- what traitordash_trac
 local MAX_SEGMENTS = 64          -- per player
 local MAX_DEATHS = 512
 -- What happened to players besides moving (RFC 14, 4.3 and RFC 26): each kind has a cap of its own, so a chatty round does not use up the room of the others.
-local EVENT_CAP = { revive = 1024, role = 1024, say = 1024, buy = 512, found = 256, pickup = 256, drop = 256 }
+local EVENT_CAP = { revive = 1024, role = 1024, say = 1024, buy = 512, found = 256, pickup = 256, drop = 256, hurt = 2048 }
+local HP_MAX = 1000             -- the most health a sample or an event holds (TTT2 roles can have more than 100); more is cut, less than 0 is 0 (RFC 26, 4a)
+local HURT_MERGE_MS = 50        -- damage to the same victim, from the same attacker with the same cause, within this is one event (pellets, a blast)
+local HURT_W_LEN = 40
 local SAY_LEN = 200             -- characters of a chat line that are kept
 local MAX_BODIES = 4096         -- points of bodies' paths (RFC 24)
 local BODY_MOVE = 16                -- units a body must move from its last point to be recorded again
@@ -141,17 +147,37 @@ local function AddTick(r, now)
     return #r.t
 end
 
-local function Push(r, p, idx, x, y, z, a, st)
+-- A player's health as a whole number from 0 to HP_MAX, or nil when the game cannot say.
+local function ReadHealth(ply)
+    local ok, v = pcall(ply.Health, ply)
+    if not ok or type(v) ~= "number" or v ~= v then return nil end
+    return math.min(math.max(Floor(v), 0), HP_MAX)
+end
+
+-- A player's most health (the scale of the bar), once for each player of a round: 1 to HP_MAX, or false.
+local function ReadMaxHealth(ply)
+    local ok, v = pcall(ply.GetMaxHealth, ply)
+    if not ok or type(v) ~= "number" or v ~= v or v < 1 then return false end
+    return math.min(Floor(v), HP_MAX)
+end
+
+local function Push(r, p, idx, x, y, z, a, st, hp)
     local c = p.cur
     if not c then
         if #p.segs >= MAX_SEGMENTS then return end
-        c = { from = idx - 1, x = {}, y = {}, z = {}, a = {}, s = {}, lx = 0, ly = 0, lz = 0, la = 0 }
+        c = { from = idx - 1, x = {}, y = {}, z = {}, a = {}, s = {}, hp = {}, lx = 0, ly = 0, lz = 0, la = 0, lh = 0 }
         p.cur = c
         p.segs[#p.segs + 1] = c
     end
     local n = #c.x + 1
     c.x[n], c.y[n], c.z[n], c.a[n] = x - c.lx, y - c.ly, z - c.lz, a - c.la
     c.s[n] = st or 0
+    if hp then -- health, delta coded like the position (RFC 26, 4a); a sample whose health could not be read leaves the whole segment without it
+        c.hp[n] = hp - c.lh
+        c.lh = hp
+    else
+        c.hpBad = true
+    end
     c.lx, c.ly, c.lz, c.la = x, y, z, a
     r.samples = r.samples + 1
 end
@@ -163,13 +189,14 @@ local function RoundMs(r, now)
     return math.min(math.max(Floor((now - r.t0) * 1000), 0), 6 * 3600 * 1000)
 end
 
--- Adds an event (RFC 14, 4.3, RFC 26); beyond the cap of its kind the track is marked truncated instead.
+-- Adds an event (RFC 14, 4.3, RFC 26); beyond the cap of its kind the track is marked truncated instead. Returns the event, or nil at the cap.
 local function AddEvent(r, now, e)
     local n = (r.kinds[e.k] or 0) + 1
-    if n > (EVENT_CAP[e.k] or 0) then r.truncated = true return end
+    if n > (EVENT_CAP[e.k] or 0) then r.truncated = true return nil end
     r.kinds[e.k] = n
     e.t = RoundMs(r, now)
     r.events[#r.events + 1] = e
+    return e
 end
 
 -- ---- Parts that move (RFC 20, 4.3 and 4.4)
@@ -564,7 +591,10 @@ local function SampleAll(r, now, also)
                 AddEvent(r, now, { p = sid, k = "revive" })
             end
             local x, y, z, a = Pos(ply, sid == also and r.deathAt or nil)
-            Push(r, p, idx, x, y, z, a, State(ply))
+            local hp = ReadHealth(ply)
+            if p.mh == nil then p.mh = ReadMaxHealth(ply) end
+            if hp and hp > 0 then p.hpPrev = hp end
+            Push(r, p, idx, x, y, z, a, State(ply), hp)
         else
             p.cur = nil -- not alive now: the segment ends here (a revived player starts a new one)
             if p.awaiting then p.sawDead = true end
@@ -867,6 +897,80 @@ function Track.Found(finder, dead)
     AddEvent(r, CurTime(), { p = sid, k = "found", of = SidOf(r, dead) })
 end
 
+-- ---- Damage (RFC 26, 4a)
+
+-- The damage types that are named when no weapon or entity did it (falling, drowning, fire, ...), in the order they are tried.
+local DMG_NAMES = {
+    { "DMG_FALL", "fall" }, { "DMG_DROWN", "drown" }, { "DMG_BURN", "fire" }, { "DMG_BLAST", "explosion" }, { "DMG_CRUSH", "crush" },
+    { "DMG_POISON", "poison" }, { "DMG_RADIATION", "radiation" }, { "DMG_SHOCK", "shock" }, { "DMG_ACID", "acid" },
+}
+
+local function CauseOfType(info)
+    if info.GetDamageType and bit and bit.band then
+        local ok, ty = pcall(info.GetDamageType, info)
+        if ok and type(ty) == "number" then
+            for _, e in ipairs(DMG_NAMES) do
+                local flag = _G[e[1]]
+                if flag and bit.band(ty, flag) ~= 0 then return e[2] end
+            end
+        end
+    end
+    return "world"
+end
+
+-- What did the damage: the class of the weapon the attacker holds (the inflictor of a bullet is the player), or of the entity that did it (a prop,
+-- an explosive), or the name of the damage type for falling, drowning, fire and the rest. A short word of letters, digits, _ . and -.
+local function HurtCause(info, attacker)
+    local class = Weapon(info:GetInflictor(), attacker)
+    if class and class ~= "worldspawn" then
+        class = string.sub(class, 1, HURT_W_LEN)
+        if class ~= "" then return class end
+    end
+    return CauseOfType(info)
+end
+
+-- A tracked player took damage (PostEntityTakeDamage: after it was applied, `took` says whether any was). One event for all the damage to the
+-- same victim from the same attacker with the same cause within HURT_MERGE_MS (the pellets of a shotgun, the hits of a blast).
+function Track.Hurt(ent, info, took)
+    local r = rec
+    if not r or r.stopped or r.prep or not took or not info then return end
+    if not IsValid(ent) or not ent.IsPlayer or not ent:IsPlayer() then return end
+    local vsid = SidOf(r, ent)
+    if not vsid then return end
+    if r.members and not r.members[vsid] then return end
+    local dmg = info:GetDamage()
+    if type(dmg) ~= "number" or dmg ~= dmg or dmg < 0.5 then return end
+    local h = ReadHealth(ent)
+    if not h then return end
+    local p = r.players[vsid]
+    local d = math.min(math.max(Floor(dmg), 1), 10000)
+    if h == 0 and p.hpPrev and d > p.hpPrev then d = math.max(p.hpPrev, 1) end -- the blow that killed: no more than what was left
+    if h > 0 then p.hpPrev = h end
+
+    local attacker = info:GetAttacker()
+    local asid = nil
+    if IsValid(attacker) and attacker ~= ent and attacker.IsPlayer and attacker:IsPlayer() then
+        asid = SidOf(r, attacker)
+        if asid and r.members and not r.members[asid] then asid = nil end
+    end
+    local w = HurtCause(info, attacker)
+    local now = RoundMs(r, CurTime())
+    local slot = asid or "-"
+    local byA = p.hurtLast
+    if not byA then byA = {} p.hurtLast = byA end
+    local byW = byA[slot]
+    if not byW then byW = {} byA[slot] = byW end
+    local last = byW[w]
+    if last and now - last.at <= HURT_MERGE_MS then
+        last.ev.d = math.min(last.ev.d + d, 10000)
+        last.ev.h = h
+        last.at = now
+        return
+    end
+    local ev = AddEvent(r, CurTime(), { p = vsid, k = "hurt", a = asid, w = w, d = d, h = h })
+    if ev then byW[w] = { ev = ev, at = now } end
+end
+
 -- ---- Bodies (RFC 24)
 
 -- TTT2 made a ragdoll for a tracked player's death: it is followed from the next tick on (SampleBodies).
@@ -903,6 +1007,7 @@ hook.Add("TTTOrderedEquipment", "TraitorDash_TrackBuyClassic", function(ply, ite
 hook.Add("TTTOnCorpseCreated", "TraitorDash_TrackCorpse", function(rag, ply) pcall(Track.Corpse, rag, ply) end)
 hook.Add("OnPlayerPhysicsPickup", "TraitorDash_TrackPickup", function(ply, ent) pcall(Track.Pickup, ply, ent) end)
 hook.Add("OnPlayerPhysicsDrop", "TraitorDash_TrackDrop", function(ply, ent) pcall(Track.Drop, ply, ent) end)
+hook.Add("PostEntityTakeDamage", "TraitorDash_TrackHurt", function(ent, info, took) pcall(Track.Hurt, ent, info, took) end)
 hook.Add("TTTBodyFound", "TraitorDash_TrackFound", function(finder, dead) pcall(Track.Found, finder, dead) end)
 
 -- The round is over: stops the timer, prints the one line, and returns the track to upload (or nil
@@ -928,8 +1033,8 @@ function Track.Finish(roundId)
         local p = r.players[sid]
         if In(sid) and #p.segs > 0 then
             local segs = {}
-            for i, c in ipairs(p.segs) do segs[i] = { from = c.from, x = c.x, y = c.y, z = c.z, a = c.a, s = c.s } end
-            players[#players + 1] = { id = sid, segments = segs }
+            for i, c in ipairs(p.segs) do segs[i] = { from = c.from, x = c.x, y = c.y, z = c.z, a = c.a, s = c.s, hp = (not c.hpBad and #c.hp == #c.x) and c.hp or nil } end
+            players[#players + 1] = { id = sid, mh = p.mh or nil, segments = segs }
         end
     end
     local function Only(list, key, strip)
@@ -946,7 +1051,7 @@ function Track.Finish(roundId)
     for _, d in ipairs(deaths) do
         if d.attacker ~= nil and not In(d.attacker) then d.attacker, d.ax, d.ay, d.az = nil, nil, nil, nil end
     end
-    local events = Only(r.events, "p", { "by", "of" })
+    local events = Only(r.events, "p", { "by", "of", "a" })
     local bodies = Only(r.bodies, "p")
     local inputs = {}
     for _, e in ipairs(r.inputs) do
