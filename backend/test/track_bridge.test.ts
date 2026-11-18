@@ -1483,6 +1483,8 @@ describe('track.lua: health gained (RFC 26, 4b)', () => {
       Start()
       B.hp = 0; B.alive = false; B:SetHealth(100)          -- TTT2's Revive: SetHealth(100) while still dead
       B.hp = 20; B:SetHealth(60)                           -- not a living player (IsTerror is false)
+      B.alive = true; B.hp = 0; B:SetHealth(100)           -- a player the game still counts as alive but with no health left: a revival, not a heal
+      B.alive = false
       B.alive = true; Fire("PlayerSpawn", B)               -- the engine spawns them; then an addon sets the health it likes
       B.hp = 60; NOW = NOW + 0.5; B:SetHealth(75)          -- within a second of the spawn
       NOW = NOW + 0.6; B.hp = 60; B:SetHealth(75)          -- later it is a heal
