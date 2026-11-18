@@ -79,7 +79,75 @@ describe('validateTrack', () => {
     refused(body([{ t: 1, p: A, k: 'kick' }]), /unknown kind/)
     expect(validateTrack(body([{ t: 1, p: A, k: 'pickup', of: B }, { t: 2, p: A, k: 'drop' }]), round).ok).toBe(true) // RFC 24
     refused(body([{ t: 1, p: A, k: 'pickup', of: 'stranger' }]), /pickup event names a body/)
-    refused(body(Array.from({ length: 4353 }, (_, i) => ({ t: i, p: A, k: 'found' }))), /at most 4352/)
+    refused(body(Array.from({ length: 6401 }, (_, i) => ({ t: i, p: A, k: 'found' }))), /at most 6400/)
+    expect(validateTrack(body(Array.from({ length: 6400 }, (_, i) => ({ t: i, p: A, k: 'found' }))), round).ok).toBe(true) // the sum of the bridge's caps of every kind (RFC 26, 4a)
+  })
+
+  test('health of each sample (hp, delta coded) and the most health of a player (mh) are kept when they are there; a track without them is fine (RFC 26, 4a)', () => {
+    const withHp = good(); (withHp.players[0]!.segments[0] as any).hp = [100, -20, 0, 5]; (withHp.players[0] as any).mh = 100
+    const r = validateTrack(withHp, round)
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.track.players[0]!.segments[0]!.hp).toEqual([100, -20, 0, 5])
+      expect(r.track.players[0]!.mh).toBe(100)
+      expect(r.track.players[1]!.mh).toBeUndefined()
+      expect('hp' in r.track.players[1]!.segments[0]!).toBe(false)
+    }
+    const old = validateTrack(good(), round)
+    expect(old.ok).toBe(true)
+    expect(JSON.stringify(old.ok && old.track)).not.toContain('"hp"')
+  })
+
+  test('hp must be whole numbers, one for each position, that add up to a health from 0 to 1000; mh a whole number from 1 to 1000', () => {
+    const hp = (v: unknown) => { const b = good(); (b.players[0]!.segments[0] as any).hp = v; return b }
+    for (const bad of [[100, 0, 0], [100, 0, 0, 0, 0], [100, 0, 0, 0.5], [100, 0, 0, '1'], [-1, 0, 0, 0], [1001, 0, 0, 0], [100, -101, 0, 0], [100, 900, 100, 0], 'x', null, [2000, -1000, 0, 0]]) refused(hp(bad), /hp must be/)
+    expect(validateTrack(hp([1000, 0, 0, -1000]), round).ok).toBe(true)
+    expect(validateTrack(hp([0, 0, 0, 0]), round).ok).toBe(true)
+    const mh = (v: unknown) => { const b = good(); (b.players[0] as any).mh = v; return b }
+    for (const bad of [0, -1, 1001, 99.5, '100', null]) refused(mh(bad), /mh must be/)
+    expect(validateTrack(mh(1000), round).ok).toBe(true)
+    expect(validateTrack(mh(1), round).ok).toBe(true)
+  })
+
+  test('damage (hurt) is kept with every field checked: the victim and the attacker are players of the round, the cause a short word, the damage and the health whole and in range (RFC 26, 4a)', () => {
+    const body = (events: unknown[]) => ({ ...good(), events })
+    const ok = validateTrack(body([
+      { t: 100, p: B, k: 'hurt', a: A, w: 'weapon_ttt_m16', d: 22, h: 78 },
+      { t: 200, p: B, k: 'hurt', w: 'fall', d: 15, h: 63, extra: 1 },
+      { t: 300, p: A, k: 'hurt', a: B, w: 'prop_physics', d: 10000, h: 0 },
+    ]), round)
+    expect(ok.ok).toBe(true)
+    if (ok.ok) expect(ok.track.events).toEqual([
+      { t: 100, p: B, k: 'hurt', a: A, w: 'weapon_ttt_m16', d: 22, h: 78 },
+      { t: 200, p: B, k: 'hurt', w: 'fall', d: 15, h: 63 }, // what is not known is dropped, as with the other kinds
+      { t: 300, p: A, k: 'hurt', a: B, w: 'prop_physics', d: 10000, h: 0 },
+    ])
+    const hurt = (over: Record<string, unknown>) => body([{ t: 1, p: B, k: 'hurt', a: A, w: 'weapon_ttt_m16', d: 5, h: 50, ...over }])
+    refused(hurt({ p: 'stranger' }), /not in the round/)
+    refused(hurt({ a: 'stranger' }), /attacker who was not in the round/)
+    refused(hurt({ a: B }), /attacker who was not in the round, or the victim/) // oneself is no attacker: the bridge leaves `a` out
+    refused(hurt({ a: 5 }), /attacker/)
+    refused(hurt({ w: undefined }), /needs a cause/)
+    refused(hurt({ w: '' }), /needs a cause/)
+    refused(hurt({ w: 'bad name;' }), /needs a cause/)
+    refused(hurt({ w: 'w'.repeat(41) }), /needs a cause/)
+    expect(validateTrack(hurt({ w: 'w'.repeat(40) }), round).ok).toBe(true)
+    for (const d of [0, -1, 10001, 2.5, '5', null, undefined]) refused(hurt({ d }), /damage from 1 to 10000/)
+    for (const h of [-1, 1001, 2.5, '5', null, undefined]) refused(hurt({ h }), /health after it/)
+    expect(validateTrack(hurt({ h: 0 }), round).ok).toBe(true)
+    expect(validateTrack(hurt({ h: 1000 }), round).ok).toBe(true)
+    refused(body([{ t: 5, p: B, k: 'hurt', w: 'fall', d: 1, h: 1 }, { t: 4, p: B, k: 'hurt', w: 'fall', d: 1, h: 1 }]), /time order/)
+  })
+
+  test('the events of all kinds together may be as many as the bridge\'s caps add up to: 1024 revive, 1024 role, 1024 say, 512 buy, 256 each of found, pickup and drop, 2048 hurt', () => {
+    const kinds: [string, number, Record<string, unknown>][] = [
+      ['revive', 1024, {}], ['role', 1024, { role: 'traitor', team: 'traitors' }], ['say', 1024, { text: 'hi', ch: 'all' }], ['buy', 512, { item: 'weapon_x' }],
+      ['found', 256, {}], ['pickup', 256, {}], ['drop', 256, {}], ['hurt', 2048, { w: 'fall', d: 1, h: 1 }],
+    ]
+    let t = 0
+    const events = kinds.flatMap(([k, n, f]) => Array.from({ length: n }, () => ({ t: t++, p: A, k, ...f })))
+    expect(events).toHaveLength(6400)
+    expect(validateTrack({ ...good(), events }, round).ok).toBe(true)
   })
 
   test('a track without a fingerprint, flags or deaths is fine', () => {

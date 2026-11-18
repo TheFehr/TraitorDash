@@ -10,7 +10,16 @@ export const MAX_TICKS = 100_000
 export const MAX_TRACK_PLAYERS = 128
 export const MAX_TRACK_DEATHS = 512
 export const MAX_SEGMENTS_PER_PLAYER = 64
-export const MAX_TRACK_EVENTS = 4352
+/**
+ * The sum of the bridge's caps of each kind: revive 1024, role 1024, say 1024, buy 512, found 256, pickup 256, drop 256 (4352) and hurt 2048 (RFC 26, 4a).
+ * A safety limit of the backend, kept equal to what the bridge can send.
+ */
+export const MAX_TRACK_EVENTS = 6400
+/** Health in a track: a sample, the most of a player, an event's `h`; TTT2 roles can have more than 100 (RFC 26, 4a). */
+export const MAX_HP = 1000
+/** The most damage one `hurt` event holds (a merged event of many hits). */
+export const MAX_HURT_DAMAGE = 10_000
+const HURT_CAUSE = /^[A-Za-z0-9_.-]{1,40}$/
 /** Where a body lay and which way it was turned, the points of it (RFC 24). */
 export const MAX_TRACK_BODIES = 4096
 export const MAX_SAY_CHARS = 200
@@ -44,8 +53,9 @@ const PART_ANGLE_MAX = 1440 // quarter degrees; the bridge writes -720 to 719, t
 const PART_ANGLE_STEP = 2 * PART_ANGLE_MAX
 
 /** `s` (absent in tracks from an older game server): for each sample how the player moves, as bits: 1 crouching, 2 in the air, 4 in water. */
-export interface TrackSegment { from: number, x: number[], y: number[], z: number[], a: number[], s?: number[] }
-export interface TrackPlayer { id: string, segments: TrackSegment[] }
+export interface TrackSegment { from: number, x: number[], y: number[], z: number[], a: number[], s?: number[], hp?: number[] }
+/** `mh`: the most health the player had (the scale of a health bar), absent in a track from before RFC 26, stage B. */
+export interface TrackPlayer { id: string, mh?: number, segments: TrackSegment[] }
 export interface TrackDeath {
   victim: string, attacker: string | null, t: number
   vx: number, vy: number, vz: number
@@ -58,7 +68,7 @@ export interface TrackEvent {
   t: number
   /** The player it happened to. */
   p: string
-  k: 'revive' | 'role' | 'say' | 'buy' | 'found' | 'pickup' | 'drop'
+  k: 'revive' | 'role' | 'say' | 'buy' | 'found' | 'pickup' | 'drop' | 'hurt'
   /** `role` events: the settled role and team. */
   role?: string
   team?: string
@@ -74,6 +84,11 @@ export interface TrackEvent {
   it?: boolean
   /** `found`, `pickup` and `drop` events: whose body it was, when that player was in the round. */
   of?: string
+  /** `hurt` events (`p` is the victim): the attacker when a player of the round did it, the cause (a weapon or entity class, or a damage type), the damage taken and the victim's health after. */
+  a?: string
+  w?: string
+  d?: number
+  h?: number
 }
 /**
  * One point of a body's path (RFC 24): the player it belonged to, the time in ms, the position of the ragdoll in units / 8 (absolute) and its
@@ -183,10 +198,17 @@ export function validateTrack(body: unknown, round: { roundId: string, map: stri
         if (!m) return no('s must be whole numbers from 0 to 7, as many as there are positions')
         moves = m
       }
-      segments.push(moves ? { from: s.from, x, y, z, a, s: moves } : { from: s.from, x, y, z, a })
+      let hp: number[] | undefined
+      if (s.hp !== undefined) {
+        const h = ints(s.hp, x.length, x.length, -MAX_HP, MAX_HP)
+        if (!h || !rebuilds(h, 0, MAX_HP)) return no(`hp must be whole numbers, as many as there are positions, that add up to a health from 0 to ${MAX_HP}`)
+        hp = h
+      }
+      segments.push({ from: s.from, x, y, z, a, ...(moves ? { s: moves } : {}), ...(hp ? { hp } : {}) })
       next = s.from + x.length
     }
-    players.push({ id: p.id, segments })
+    if (p.mh !== undefined && (!isInt(p.mh) || p.mh < 1 || p.mh > MAX_HP)) return no(`mh must be a whole number from 1 to ${MAX_HP}`)
+    players.push({ id: p.id, ...(p.mh !== undefined ? { mh: p.mh as number } : {}), segments })
   }
 
   const deaths: TrackDeath[] = []
@@ -247,6 +269,12 @@ export function validateTrack(body: unknown, round: { roundId: string, map: stri
       } else if (e.k === 'found' || e.k === 'pickup' || e.k === 'drop') {
         if (e.of !== undefined && (typeof e.of !== 'string' || !round.players.has(e.of))) return no(`a ${e.k} event names a body of a player who was not in the round`)
         events.push({ t: e.t, p: e.p, k: e.k, ...(e.of !== undefined ? { of: e.of as string } : {}) })
+      } else if (e.k === 'hurt') {
+        if (e.a !== undefined && (typeof e.a !== 'string' || !round.players.has(e.a) || e.a === e.p)) return no('a hurt event names an attacker who was not in the round, or the victim as the attacker')
+        if (typeof e.w !== 'string' || !HURT_CAUSE.test(e.w)) return no('a hurt event needs a cause: letters, digits, _ . and -, at most 40')
+        if (!isInt(e.d) || e.d < 1 || e.d > MAX_HURT_DAMAGE) return no(`a hurt event needs damage from 1 to ${MAX_HURT_DAMAGE}`)
+        if (!isInt(e.h) || e.h < 0 || e.h > MAX_HP) return no(`a hurt event needs the health after it, from 0 to ${MAX_HP}`)
+        events.push({ t: e.t, p: e.p, k: 'hurt', ...(e.a !== undefined ? { a: e.a as string } : {}), w: e.w, d: e.d, h: e.h })
       } else return no('an event has an unknown kind')
     }
   }
