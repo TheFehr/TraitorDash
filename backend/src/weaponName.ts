@@ -23,6 +23,13 @@ const PREFIX = /^(weapon_ttt2_|weapon_ttt_|weapon_zm_|weapon_[a-z]{2}_|swep_|nc_
 const ACRONYMS = new Set(['awp', 'aug', 'ak', 'fn', 'fal', 'smg', 'sg', 'mp', 'ar', 'lmg', 'tmp', 'p90', 'ump'])
 const word = (w: string) => (/\d/.test(w) || ACRONYMS.has(w.toLowerCase()) ? w.toUpperCase() : w)
 
+/** What a credit change was for, as a person says it: kill, team award, found on a body, given, received, bought; "" for a reason nobody told (the bridge's "other"). A word of a later bridge shows as it is. */
+const CREDIT_REASONS = new Map([['kill', 'kill'], ['team', 'team award'], ['found', 'found on a body'], ['give', 'given'], ['got', 'received'], ['buy', 'bought'], ['other', '']])
+export const creditReason = (w: string | undefined): string => (w === undefined ? '' : CREDIT_REASONS.get(w) ?? w)
+/** The same for karma: the words of TTT2's own reasons (teamkill, teamhurt, enemykill, enemyhurt, cleanround, roundheal) and unknown/other as nothing. */
+const KARMA_REASONS = new Map([['teamkill', 'team kill'], ['teamhurt', 'team damage'], ['enemykill', 'enemy kill'], ['enemyhurt', 'enemy damage'], ['cleanround', 'clean round'], ['roundheal', 'healing'], ['unknown', ''], ['other', '']])
+export const karmaReason = (w: string | undefined): string => (w === undefined ? '' : KARMA_REASONS.get(w) ?? w)
+
 /** "M16" from "weapon_ttt_m16"; a class nobody named gets its words, capitalised; null stays "Unknown". */
 export function weaponName(cls: string | null | undefined): string {
   if (!cls) return 'Unknown'

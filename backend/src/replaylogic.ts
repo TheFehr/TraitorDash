@@ -3,7 +3,7 @@
 // first. Plain code, no browser and no three.js, so it can be tested; the viewer (replay.ts) and the
 // tests import it.
 
-import { weaponName } from './weaponName'
+import { weaponName, creditReason, karmaReason } from './weaponName'
 
 /** What the backend stores: tick times as differences, per player segments with first-value-then-differences. */
 export interface RawSegment { from: number, x: number[], y: number[], z: number[], a: number[], /** How the player moves, for each sample, as bits: 1 crouching, 2 in the air, 4 in water; absent in older tracks. */ s?: number[], /** Health of each sample, delta coded (RFC 26, 4a); absent in tracks from before it. */ hp?: number[] }
@@ -24,13 +24,15 @@ export interface RawThing { e: number, c: string, mdl: string, b: number[], id?:
 /** A thing that moved, decoded: keyframes at real times, positions in units and angles in degrees; `from` is when it first shows, `until` when it is gone (Infinity when it stayed). */
 export interface Thing { e: number, c: string, model: string, bounds: number[], mapId: number | null, from: number, until: number, t: number[], x: number[], y: number[], z: number[], pitch: number[], yaw: number[], roll: number[] }
 export interface TrackEvent {
-  t: number, p: string, k: 'revive' | 'role' | 'say' | 'buy' | 'found' | 'pickup' | 'drop' | 'hurt' | 'heal' | 'wpick' | 'wdrop' | 'c4' | 'dna' | 'tbtn', role?: string, team?: string, by?: string, how?: string, why?: string
+  t: number, p: string, k: 'revive' | 'role' | 'say' | 'buy' | 'found' | 'pickup' | 'drop' | 'hurt' | 'heal' | 'wpick' | 'wdrop' | 'c4' | 'dna' | 'tbtn' | 'hold' | 'credits' | 'karma' | 'spec', role?: string, team?: string, by?: string, how?: string, why?: string
   /** say: the line and who could read it; buy: the class and whether it is a passive item; found, pickup, drop: whose body (RFC 26, RFC 24) */
   text?: string, ch?: 'all' | 'team' | 'dead', item?: string, it?: boolean, of?: string
   /** hurt (`p` is the victim): the attacker when a player of the round did it, the cause (a weapon or entity class, or a damage type), the damage and the victim's health after (RFC 26, 4a); heal (`p` is the healed player): the healer when a player of the round, the source (a class, or regen, revive, other), the health gained and the health after (RFC 26, 4b) */
   a?: string, w?: string, d?: number, h?: number
   /** wpick, wdrop (RFC 26, 4c, C1): `w` the weapon class; dna: `w` what the sample came from, `of` whose DNA. c4: `st` plant, defuse, fail (a wrong wire) or boom, `of` the owner of the charge (defuse, fail), `s` the timer in seconds (plant); tbtn: `n` the button's text. c4 and tbtn: `x y z` the place in units / 8. */
   st?: 'plant' | 'defuse' | 'fail' | 'boom', s?: number, n?: string, x?: number, y?: number, z?: number
+  /** hold (RFC 26, 4c, C2): `w` the weapon in hand from now on. credits, karma: `d` the change, `c` the amount after, `w` the reason word. spec: `of` the player a dead player watches from now on, none for nobody. */
+  c?: number
 }
 
 /** One run of consecutive samples of one player, in Source units and degrees-in-256ths, at real times. */
@@ -54,7 +56,11 @@ export interface Decoded {
   maxHealth: Map<string, number>
   /** The `hurt` events of each victim, in time order: what the health between two samples was. */
   hurts: Map<string, TrackEvent[]>
+  /** The polled and detoured events of each player in time order (RFC 26, 4c, C2): the weapon in hand, credits, karma, the target of a dead player. */
+  polled: Polled
 }
+/** `hold`, `credits`, `karma` and `spec` events by player. */
+export interface Polled { hold: Map<string, TrackEvent[]>, credits: Map<string, TrackEvent[]>, karma: Map<string, TrackEvent[]>, spec: Map<string, TrackEvent[]> }
 /** One point of a body's path: ms, position in units, and the turn in degrees. */
 export interface BodyPoint { t: number, at: [number, number, number], pitch: number, yaw: number, roll: number }
 export interface Death { victim: string, attacker: string | null, t: number, at: [number, number, number], from: [number, number, number] | null, weapon: string | null }
@@ -123,6 +129,8 @@ export function decodeTrack(raw: RawTrack): Decoded {
   const events = (raw.events ?? []).map(e => ({ ...e, t: e.t - begin })).sort((a, b) => a.t - b.t)
   const hurts = new Map<string, TrackEvent[]>()
   for (const e of events) if (e.k === 'hurt') { const l = hurts.get(e.p) ?? []; l.push(e); hurts.set(e.p, l) }
+  const polled: Polled = { hold: new Map(), credits: new Map(), karma: new Map(), spec: new Map() }
+  for (const e of events) if (e.k === 'hold' || e.k === 'credits' || e.k === 'karma' || e.k === 'spec') { const m = polled[e.k]; const l = m.get(e.p) ?? []; l.push(e); m.set(e.p, l) }
   const bodies = new Map<string, BodyPoint[]>()
   for (const b of [...(raw.bodies ?? [])].sort((a, c) => a.t - c.t)) {
     const list = bodies.get(b.p) ?? []
@@ -137,7 +145,7 @@ export function decodeTrack(raw: RawTrack): Decoded {
       t, x: cumulative(q.x), y: cumulative(q.y), z: cumulative(q.z), pitch: cumulative(q.p).map(a => a / 4), yaw: cumulative(q.w).map(a => a / 4), roll: cumulative(q.r).map(a => a / 4),
     }
   })
-  return { times, length: times.length ? times[times.length - 1]! : 0, start: times.length ? times[0]! : 0, players, deaths, events, bodies, things, maxHealth, hurts }
+  return { times, length: times.length ? times[times.length - 1]! : 0, start: times.length ? times[0]! : 0, players, deaths, events, bodies, things, maxHealth, hurts, polled }
 }
 
 /** Health that makes a bar: from 0 (nothing) up to what the player can have. Colours of the three steps of the bar: green, amber, red. */
@@ -752,6 +760,62 @@ export function tbtnText(e: TrackEvent, nick: Nick): string {
 }
 export function tbtnOwnText(e: TrackEvent): string {
   return `used a traitor button${e.n ? ` (${e.n})` : ''}`
+}
+
+// ---- The weapon in hand, credits, karma and whom a dead player watches (RFC 26, 4c, C2)
+
+/** The last of a player's events (in time order) at or before `ms`, or null. */
+export function lastEventAt(list: TrackEvent[] | undefined, ms: number): TrackEvent | null {
+  if (!list || list.length === 0 || list[0]!.t > ms) return null
+  let i = 0, j = list.length - 1
+  while (i < j) { const m = (i + j + 1) >> 1; if (list[m]!.t <= ms) i = m; else j = m - 1 }
+  return list[i]!
+}
+/** The class of the weapon a living player holds at `ms` (the last `hold` at or before it), or null: nothing recorded yet, or the player is dead (the bridge forgets the hand at a death). */
+export function holdAt(list: TrackEvent[] | undefined, ms: number, dead: boolean): string | null {
+  return dead ? null : lastEventAt(list, ms)?.w ?? null
+}
+/**
+ * A living player's credits at `ms`: the credits after the last change at or before it; before the first change what they had at the start, which is the first
+ * change's amount less its change (the bridge records no event for the start). null when the track has no change of theirs, or the player is dead.
+ */
+export function creditsAt(list: TrackEvent[] | undefined, ms: number, dead: boolean): number | null {
+  if (dead || !list || list.length === 0) return null
+  const e = lastEventAt(list, ms)
+  if (e) return typeof e.c === 'number' ? e.c : null
+  const first = list[0]!
+  return typeof first.c === 'number' && typeof first.d === 'number' ? Math.min(Math.max(first.c - first.d, 0), 255) : null
+}
+/** A player's karma at `ms`: the karma after the last change at or before it, or null before the first (karma is cut at the server's maximum, so the start cannot be worked out). */
+export function karmaAt(list: TrackEvent[] | undefined, ms: number): number | null {
+  const e = lastEventAt(list, ms)
+  return e && typeof e.c === 'number' ? e.c : null
+}
+/** Whom a dead player watches at `ms`: from the last `spec` event since their death (`diedAt`), at or before the time; null for nobody, for an event without a player, and for a living player (diedAt null). */
+export function watchingAt(list: TrackEvent[] | undefined, ms: number, diedAt: number | null): string | null {
+  if (diedAt === null) return null
+  const e = lastEventAt(list, ms)
+  return e && e.t >= diedAt ? e.of ?? null : null
+}
+export const holdingText = (w: string) => `Holding ${weaponName(w)}`
+export const creditsLine = (c: number) => `Credits ${c}`
+export const karmaLine = (c: number) => `Karma ${c}`
+export const watchingText = (name: string) => `Watching ${name}`
+/** A signed change as the lists write it: "+1", "-40". */
+const signed = (d: number) => (d > 0 ? `+${d}` : String(d))
+/** "credits +1 (kill), 3 left", "credits -1 (bought), 2 left"; the reason is left out when the bridge did not know it ("other"). */
+export function creditsOwnText(e: TrackEvent): string {
+  const why = creditReason(e.w)
+  return `credits ${signed(e.d ?? 0)}${why ? ` (${why})` : ''}, ${e.c} left`
+}
+/** "karma -40 (team damage), 960 left". */
+export function karmaOwnText(e: TrackEvent): string {
+  const why = karmaReason(e.w)
+  return `karma ${signed(e.d ?? 0)}${why ? ` (${why})` : ''}, ${e.c} left`
+}
+/** "watches Scip.MLP", "watches nobody" (a prop, roaming, or nothing). */
+export function specOwnText(e: TrackEvent, nick: (id: string) => string): string {
+  return e.of ? `watches ${nick(e.of)}` : 'watches nobody'
 }
 
 /** The events that are lines of the feed besides chat, shop and bodies, damage and healing: equipment (weapons, C4, DNA, buttons). */

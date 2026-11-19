@@ -15,6 +15,7 @@ import { offerBrowser, levelColour, paintPlain, makeCamera, makeRenderer, makeSc
 import { holeUniforms, patchHole, updateHole, ghostFigure, ghostShown, createMask, sizeMask, renderMask, maskWanted } from './followHole'
 import {
   decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, shownLevels, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, bodyAt, thingAt, movedProps, killerDiedBefore, reviveSource, revivePose, fitLabel, healthAt, healthBar, healthColour, hurtText, hurtOwnText, healText, healOwnText, equipText, equipOwnText, c4Text, c4OwnText, dnaText, dnaOwnText, tbtnText, tbtnOwnText, EQUIPMENT_KINDS, hiddenPickups, timeMark, c4Charges, c4At, damageTotals, totalsText,
+  holdAt, creditsAt, karmaAt, watchingAt, holdingText, creditsLine, karmaLine, watchingText, creditsOwnText, karmaOwnText, specOwnText,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
 } from './replaylogic'
 
@@ -110,6 +111,9 @@ async function start(root: HTMLElement) {
       case 'c4': return c4OwnText(e, nick, who)
       case 'dna': return dnaOwnText(e, nick, who)
       case 'tbtn': return tbtnOwnText(e)
+      case 'credits': return creditsOwnText(e)
+      case 'karma': return karmaOwnText(e)
+      case 'spec': return specOwnText(e, nick)
       case 'role': return `became ${e.role} (${e.team})`
       case 'say': return `${e.ch === 'team' ? 'said to their team' : e.ch === 'dead' ? 'said among the dead' : 'said'}: ${e.text}`
       case 'buy': return `bought ${e.item}${e.it ? ' (item)' : ''}`
@@ -143,6 +147,22 @@ async function start(root: HTMLElement) {
   /** The health of a player now, as a bar's numbers: null when the track has none for them at this time, or they are dead. */
   const healthNow = (id: string) => healthBar(healthAt(data.players.get(id) ?? [], data.hurts.get(id), ms), data.maxHealth.get(id))
   const totalsText_ = new Map<string, string>()
+  // The panel's lines for what is polled (RFC 26, 4c, C2): each is in the page, hidden, and shown only when the track has any event of its kind, so an older track keeps the card as it was and a line never appears or goes while the time moves or another player is selected.
+  const kindsInTrack = new Set(data.events.map(e => e.k))
+  const lineHold = el(root, '[data-selected-hold]'), lineCredits = el(root, '[data-selected-credits]'), lineKarma = el(root, '[data-selected-karma]'), lineWatch = el(root, '[data-selected-watch]')
+  for (const [line, kind] of [[lineHold, 'hold'], [lineCredits, 'credits'], [lineKarma, 'karma'], [lineWatch, 'spec']] as const) if (line) line.hidden = !kindsInTrack.has(kind)
+  const showPolled = () => {
+    const death = selected ? currentDeath(data.deaths, data.events, selected, ms) : null
+    const dead = death !== null
+    const hold = selected ? holdAt(data.polled.hold.get(selected), ms, dead) : null
+    const cr = selected ? creditsAt(data.polled.credits.get(selected), ms, dead) : null
+    const ka = selected ? karmaAt(data.polled.karma.get(selected), ms) : null
+    const watched = selected ? watchingAt(data.polled.spec.get(selected), ms, death ? death.t : null) : null
+    if (lineHold) setText(lineHold, hold ? holdingText(hold) : '')
+    if (lineCredits) setText(lineCredits, cr !== null ? creditsLine(cr) : '')
+    if (lineKarma) setText(lineKarma, ka !== null ? karmaLine(ka) : '')
+    if (lineWatch) setText(lineWatch, watched ? watchingText(nick(watched)) : '')
+  }
   /** The health in the player list and in the selected player's panel. */
   const showHealth = () => {
     for (const id of ids) {
@@ -160,6 +180,7 @@ async function start(root: HTMLElement) {
       if (!totalsText_.has(selected ?? '')) totalsText_.set(selected ?? '', selected ? totalsText(damageTotals(data.events, selected)) : '')
       setText(totals, totalsText_.get(selected ?? '') ?? '')
     }
+    showPolled()
   }
 
   // Every revival of the round: from the track when it has them (with the time to the millisecond),
@@ -209,7 +230,7 @@ async function start(root: HTMLElement) {
     if (!eventsEl || listedFor === selected) return
     listedFor = selected
     eventsEl.replaceChildren()
-    const mine = data.events.filter(e => e.p === selected || ((e.k === 'hurt' || e.k === 'heal') && e.a === selected) || ((e.k === 'c4' || e.k === 'dna') && e.of === selected)) // the damage the player dealt, the health they gave, their C4 that was defused and their DNA that was taken are theirs too
+    const mine = data.events.filter(e => e.k !== 'hold' && (e.p === selected || ((e.k === 'hurt' || e.k === 'heal') && e.a === selected) || ((e.k === 'c4' || e.k === 'dna') && e.of === selected))) // the damage the player dealt, the health they gave, their C4 that was defused and their DNA that was taken are theirs too
     for (const e of mine) {
       const li = document.createElement('li')
       const b = document.createElement('button')
