@@ -101,7 +101,7 @@ describe('the page', () => {
     expect(at('>Core<')).toBeGreaterThan(at('id="position-tracking"'))
     expect(at('>What else to record<')).toBeGreaterThan(at('data-setting="traitordash_track_max_ticks"'))
     for (const n of ['traitordash_track', 'traitordash_track_interval_min', 'traitordash_track_budget_ms']) expect(at(`data-setting="${n}"`)).toBeLessThan(at('>What else to record<'))
-    for (const n of ['traitordash_track_prep', 'traitordash_track_parts', 'traitordash_track_props', 'traitordash_track_chat']) expect(at(`data-setting="${n}"`)).toBeGreaterThan(at('>What else to record<'))
+    for (const n of ['traitordash_track_prep', 'traitordash_track_parts', 'traitordash_track_props', 'traitordash_track_chat', 'traitordash_track_spec']) expect(at(`data-setting="${n}"`)).toBeGreaterThan(at('>What else to record<'))
     expect(at('>Core<')).toBeLessThan(at('>What else to record<'))
     expect(t.indexOf('>Core<', at('>Core<') + 1)).toBe(-1) // Round stats has no split
   })

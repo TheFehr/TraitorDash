@@ -79,8 +79,8 @@ describe('validateTrack', () => {
     refused(body([{ t: 1, p: A, k: 'kick' }]), /unknown kind/)
     expect(validateTrack(body([{ t: 1, p: A, k: 'pickup', of: B }, { t: 2, p: A, k: 'drop' }]), round).ok).toBe(true) // RFC 24
     refused(body([{ t: 1, p: A, k: 'pickup', of: 'stranger' }]), /pickup event names a body/)
-    refused(body(Array.from({ length: 8449 }, (_, i) => ({ t: i, p: A, k: 'found' }))), /at most 8448/)
-    expect(validateTrack(body(Array.from({ length: 8448 }, (_, i) => ({ t: i, p: A, k: 'found' }))), round).ok).toBe(true) // the sum of the bridge's caps of every kind (RFC 26, 4a, 4b and 4c C1)
+    refused(body(Array.from({ length: 11_009 }, (_, i) => ({ t: i, p: A, k: 'found' }))), /at most 11008/)
+    expect(validateTrack(body(Array.from({ length: 11_008 }, (_, i) => ({ t: i, p: A, k: 'found' }))), round).ok).toBe(true) // the sum of the bridge's caps of every kind (RFC 26, 4a, 4b, 4c C1 and C2)
   })
 
   test('health of each sample (hp, delta coded) and the most health of a player (mh) are kept when they are there; a track without them is fine (RFC 26, 4a)', () => {
@@ -244,6 +244,47 @@ describe('validateTrack', () => {
     expect(validateTrack(tbtn({ n: undefined, x: 0, y: 0, z: 0 }), round).ok).toBe(true)
   })
 
+  test('hold events (hold) keep the weapon class, checked like the other classes (RFC 26, 4c, C2)', () => {
+    const body = (events: unknown[]) => ({ ...good(), events })
+    const ok = validateTrack(body([{ t: 1, p: A, k: 'hold', w: 'weapon_zm_mac10', extra: 1 }]), round)
+    expect(ok.ok).toBe(true)
+    if (ok.ok) expect(ok.track.events).toEqual([{ t: 1, p: A, k: 'hold', w: 'weapon_zm_mac10' }])
+    const hold = (over: Record<string, unknown>) => body([{ t: 1, p: A, k: 'hold', w: 'weapon_x', ...over }])
+    refused(hold({ p: 'stranger' }), /not in the round/)
+    for (const w of [undefined, '', 'bad name;', 'w'.repeat(41), 7, null]) refused(hold({ w }), /weapon class/)
+    expect(validateTrack(hold({ w: 'w'.repeat(40) }), round).ok).toBe(true)
+  })
+
+  test('credits and karma events (credits, karma) keep the change, the amount after it and the reason, each checked against its own limits (RFC 26, 4c, C2)', () => {
+    const body = (events: unknown[]) => ({ ...good(), events })
+    const ok = validateTrack(body([{ t: 1, p: A, k: 'credits', d: -1, c: 2, w: 'buy', extra: 1 }, { t: 2, p: B, k: 'karma', d: -40, c: 960, w: 'teamhurt', x: 3 }]), round)
+    expect(ok.ok).toBe(true)
+    if (ok.ok) expect(ok.track.events).toEqual([{ t: 1, p: A, k: 'credits', d: -1, c: 2, w: 'buy' }, { t: 2, p: B, k: 'karma', d: -40, c: 960, w: 'teamhurt' }])
+    for (const [k, top] of [['credits', 255], ['karma', 1000]] as const) {
+      const ev = (over: Record<string, unknown>) => body([{ t: 1, p: A, k, d: 1, c: 5, w: 'other', ...over }])
+      expect(validateTrack(ev({}), round).ok).toBe(true)
+      refused(ev({ p: 'stranger' }), /not in the round/)
+      for (const d of [0, top + 1, -top - 1, 1.5, '1', null, undefined]) refused(ev({ d }), /change that is not 0/)
+      expect(validateTrack(ev({ d: top, c: top }), round).ok).toBe(true)
+      expect(validateTrack(ev({ d: -top, c: 0 }), round).ok).toBe(true)
+      for (const c of [-1, top + 1, 2.5, '5', null, undefined]) refused(ev({ c }), /amount after it/)
+      for (const w of [undefined, '', 'Buy', 'a1', 'with space', 'a'.repeat(21), 7, null]) refused(ev({ w }), /reason/)
+      expect(validateTrack(ev({ w: 'a'.repeat(20) }), round).ok).toBe(true)
+    }
+  })
+
+  test('spec events (spec) keep whom a dead player watches when that is another player of the round; no player is "watched nobody" (RFC 26, 4c, C2)', () => {
+    const body = (events: unknown[]) => ({ ...good(), events })
+    const ok = validateTrack(body([{ t: 1, p: A, k: 'spec', of: B, extra: 1 }, { t: 2, p: A, k: 'spec' }]), round)
+    expect(ok.ok).toBe(true)
+    if (ok.ok) expect(ok.track.events).toEqual([{ t: 1, p: A, k: 'spec', of: B }, { t: 2, p: A, k: 'spec' }])
+    const spec = (over: Record<string, unknown>) => body([{ t: 1, p: A, k: 'spec', of: B, ...over }])
+    refused(spec({ p: 'stranger' }), /not in the round/)
+    refused(spec({ of: 'stranger' }), /not in the round/)
+    refused(spec({ of: 5 }), /not in the round/)
+    refused(spec({ of: A }), /themselves/)
+  })
+
   test('a track from a bridge before stage C (none of these kinds) is stored as it was, and a new kind in an old backend is the refusal the deploy order is about', () => {
     const body = (events: unknown[]) => ({ ...good(), events })
     const r = validateTrack(body([{ t: 1, p: A, k: 'hurt', w: 'fall', d: 1, h: 1 }, { t: 2, p: A, k: 'heal', w: 'other', d: 1, h: 2 }, { t: 3, p: A, k: 'found' }]), round)
@@ -251,16 +292,17 @@ describe('validateTrack', () => {
     refused(body([{ t: 1, p: A, k: 'shots', w: 'weapon_x', n: 1, d: 0 }]), /unknown kind/) // a kind of a later package is not known yet
   })
 
-  test('the events of all kinds together may be as many as the bridge\'s caps add up to: 1024 revive, 1024 role, 1024 say, 512 buy, 256 each of found, pickup and drop, 2048 hurt, 512 heal, 512 wpick, 512 wdrop, 128 c4, 128 dna, 256 tbtn', () => {
+  test('the events of all kinds together may be as many as the bridge\'s caps add up to: 1024 revive, 1024 role, 1024 say, 512 buy, 256 each of found, pickup and drop, 2048 hurt, 512 heal, 512 wpick, 512 wdrop, 128 c4, 128 dna, 256 tbtn, 1024 hold, 512 credits, 512 karma, 512 spec', () => {
     const kinds: [string, number, Record<string, unknown>][] = [
       ['revive', 1024, {}], ['role', 1024, { role: 'traitor', team: 'traitors' }], ['say', 1024, { text: 'hi', ch: 'all' }], ['buy', 512, { item: 'weapon_x' }],
       ['found', 256, {}], ['pickup', 256, {}], ['drop', 256, {}], ['hurt', 2048, { w: 'fall', d: 1, h: 1 }], ['heal', 512, { w: 'ttt_health_station', d: 1, h: 1 }],
       ['wpick', 512, { w: 'weapon_zm_mac10' }], ['wdrop', 512, { w: 'weapon_zm_mac10' }], ['c4', 128, { st: 'plant', s: 45, x: 1, y: 2, z: 3 }], ['dna', 128, { of: B, w: 'prop_ragdoll' }],
       ['tbtn', 256, { n: 'Open the vent', x: 1, y: 2, z: 3 }],
+      ['hold', 1024, { w: 'weapon_zm_mac10' }], ['credits', 512, { d: -1, c: 2, w: 'buy' }], ['karma', 512, { d: -40, c: 960, w: 'teamhurt' }], ['spec', 512, { of: B }],
     ]
     let t = 0
     const events = kinds.flatMap(([k, n, f]) => Array.from({ length: n }, () => ({ t: t++, p: A, k, ...f })))
-    expect(events).toHaveLength(8448)
+    expect(events).toHaveLength(11_008)
     expect(validateTrack({ ...good(), events }, round).ok).toBe(true)
   })
 

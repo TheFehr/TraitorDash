@@ -12,12 +12,18 @@ export const MAX_TRACK_DEATHS = 512
 export const MAX_SEGMENTS_PER_PLAYER = 64
 /**
  * The sum of the bridge's caps of each kind: revive 1024, role 1024, say 1024, buy 512, found 256, pickup 256, drop 256 (4352), hurt 2048 (RFC 26, 4a), heal 512 (RFC 26, 4b)
- * and, of stage C package C1 (4c), wpick 512, wdrop 512, c4 128, dna 128 and tbtn 256 (1536): 8448.
+ * and, of stage C package C1 (4c), wpick 512, wdrop 512, c4 128, dna 128 and tbtn 256 (1536): 8448; of package C2 hold 1024, credits 512, karma 512 and spec 512 (2560): 11008.
  * A safety limit of the backend, kept equal to what the bridge can send.
  */
-export const MAX_TRACK_EVENTS = 8448
+export const MAX_TRACK_EVENTS = 11_008
 /** The most characters of a traitor button's text, and of a `tbtn` event's `n` (RFC 26, 4c). */
 export const MAX_TBTN_CHARS = 40
+/** Credits are sent by the game as UInt(8): a `credits` event's `c` is 0 to 255 and its change `d` is -255 to 255 (not 0) (RFC 26, 4c, C2). */
+export const MAX_CREDITS = 255
+/** A `karma` event's change `d` is -1000 to 1000 (not 0) and the karma after it `c` 0 to 1000 (the bridge cuts what the server's maximum allows beyond that). */
+export const MAX_KARMA = 1000
+/** The word of a `credits` event's reason `w`, and of a `karma` event's: lower-case letters only (the bridge sends one of its own short lists). */
+const REASON_WORD = /^[a-z]{1,20}$/
 /** What a `c4` event's `st` can be: the charge was armed, defused, a wire was cut wrong (it explodes), or it exploded. */
 export const C4_STATES: ReadonlySet<string> = new Set(['plant', 'defuse', 'fail', 'boom'])
 /** Health in a track: a sample, the most of a player, an event's `h`; TTT2 roles can have more than 100 (RFC 26, 4a). */
@@ -75,7 +81,7 @@ export interface TrackEvent {
   t: number
   /** The player it happened to. */
   p: string
-  k: 'revive' | 'role' | 'say' | 'buy' | 'found' | 'pickup' | 'drop' | 'hurt' | 'heal' | 'wpick' | 'wdrop' | 'c4' | 'dna' | 'tbtn'
+  k: 'revive' | 'role' | 'say' | 'buy' | 'found' | 'pickup' | 'drop' | 'hurt' | 'heal' | 'wpick' | 'wdrop' | 'c4' | 'dna' | 'tbtn' | 'hold' | 'credits' | 'karma' | 'spec'
   /** `role` events: the settled role and team. */
   role?: string
   team?: string
@@ -96,6 +102,9 @@ export interface TrackEvent {
   w?: string
   d?: number
   h?: number
+  /** `credits` and `karma` events: the amount after the change. */
+  c?: number
+  /** `hold` events: `w` the class of the weapon the player holds from now on. `credits` events: `d` the change (not 0), `c` the credits after, `w` the reason word. `karma` events: the same for karma (`d`, `c`, `w`). `spec` events: `of` the player the dead player watches from now on, none for nobody (RFC 26, 4c, C2). */
   /** `wpick`, `wdrop`: `w` is the weapon class; `dna`: `w` the class of what the sample came from, `of` whose DNA it was (RFC 26, 4c, C1). */
   /** `c4` events: `st` what happened (C4_STATES), `of` (defuse and fail) the player who armed it, `s` (plant) the timer in seconds, `x y z` where the charge was. `tbtn` events: `n` the button's text, `x y z` its place. Units / 8, absolute. */
   st?: 'plant' | 'defuse' | 'fail' | 'boom'
@@ -325,6 +334,18 @@ export function validateTrack(body: unknown, round: { roundId: string, map: stri
         const at = place(e)
         if (at === false) return no('a tbtn event has an invalid place: x, y and z are all given or none, whole numbers of units / 8 inside the map')
         events.push({ t: e.t, p: e.p, k: 'tbtn', ...(e.n !== undefined ? { n: e.n as string } : {}), ...(at ?? {}) })
+      } else if (e.k === 'hold') {
+        if (typeof e.w !== 'string' || !HURT_CAUSE.test(e.w)) return no('a hold event needs the weapon class: letters, digits, _ . and -, at most 40')
+        events.push({ t: e.t, p: e.p, k: 'hold', w: e.w })
+      } else if (e.k === 'credits' || e.k === 'karma') {
+        const top = e.k === 'credits' ? MAX_CREDITS : MAX_KARMA
+        if (!isInt(e.d) || e.d === 0 || Math.abs(e.d) > top) return no(`a ${e.k} event needs a change that is not 0, from -${top} to ${top}`)
+        if (!isInt(e.c) || e.c < 0 || e.c > top) return no(`a ${e.k} event needs the amount after it, from 0 to ${top}`)
+        if (typeof e.w !== 'string' || !REASON_WORD.test(e.w)) return no(`a ${e.k} event needs a reason: lower-case letters, at most 20`)
+        events.push({ t: e.t, p: e.p, k: e.k, d: e.d, c: e.c, w: e.w })
+      } else if (e.k === 'spec') {
+        if (e.of !== undefined && (typeof e.of !== 'string' || !round.players.has(e.of) || e.of === e.p)) return no('a spec event names a player who was not in the round, or the watcher themselves')
+        events.push({ t: e.t, p: e.p, k: 'spec', ...(e.of !== undefined ? { of: e.of as string } : {}) })
       } else return no('an event has an unknown kind')
     }
   }
