@@ -116,7 +116,7 @@ export const ReplayPage = ({ ctx, server, round, hasTrack, src, pinned, here, pi
               </section>
             )}
             {/* last: they appear only when the track has chat, shop, damage or revivals, and where they were they pushed Deaths and the admin panel down by 125 to 172 px */}
-            <section data-feed-wrap hidden class="f c-violet"><h2 class="ft">Chat, shop, bodies, damage and healing</h2><ol data-feed class="list" style="max-height:22rem;overflow:auto"></ol></section>
+            <section data-feed-wrap hidden class="f c-violet"><h2 class="ft">Chat, shop, bodies, damage, healing and equipment</h2><ol data-feed class="list" style="max-height:22rem;overflow:auto"></ol></section>
             <section data-revives-wrap hidden class="f c-mint"><h2 class="ft">Revivals</h2><ol data-revives class="list"></ol></section>
           </aside>
         </div>

@@ -14,7 +14,7 @@ import { startFlat } from './replayflat'
 import { offerBrowser, levelColour, paintPlain, makeCamera, makeRenderer, makeScene, mapLoader, prepareDecoration, prepareMovable, prepareProps, prepareWater, lyingPlaces, boxWithout, mergeDrawn, type Painted } from './sceneKit'
 import { holeUniforms, patchHole, updateHole, ghostFigure, ghostShown, createMask, sizeMask, renderMask, maskWanted } from './followHole'
 import {
-  decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, shownLevels, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, bodyAt, thingAt, movedProps, killerDiedBefore, reviveSource, revivePose, fitLabel, healthAt, healthBar, healthColour, hurtText, hurtOwnText, healText, healOwnText, damageTotals, totalsText,
+  decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, shownLevels, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, bodyAt, thingAt, movedProps, killerDiedBefore, reviveSource, revivePose, fitLabel, healthAt, healthBar, healthColour, hurtText, hurtOwnText, healText, healOwnText, equipText, equipOwnText, c4Text, c4OwnText, dnaText, dnaOwnText, tbtnText, tbtnOwnText, EQUIPMENT_KINDS, hiddenPickups, timeMark, c4Charges, c4At, damageTotals, totalsText,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
 } from './replaylogic'
 
@@ -103,9 +103,13 @@ async function start(root: HTMLElement) {
   const bgText = { mesh: 'Drawn in the map\'s 3D geometry.', plan: 'Drawn on the map\'s floor plan (no 3D geometry for this map).', none: 'No map is available for this round: positions are drawn on an empty grid.' }[payload.background.kind]
   el(root, '[data-background]')!.textContent = bgText
 
-  /** What happened to the player, without the name (a shop item is shown by its class, as the game knows it). */
-  function ownText(e: TrackEvent) {
+  /** What happened to the player `who` (the one the event is about by default), without the name (a shop item is shown by its class, as the game knows it). */
+  function ownText(e: TrackEvent, who: string = e.p) {
     switch (e.k) {
+      case 'wpick': case 'wdrop': return equipOwnText(e)
+      case 'c4': return c4OwnText(e, nick, who)
+      case 'dna': return dnaOwnText(e, nick, who)
+      case 'tbtn': return tbtnOwnText(e)
       case 'role': return `became ${e.role} (${e.team})`
       case 'say': return `${e.ch === 'team' ? 'said to their team' : e.ch === 'dead' ? 'said among the dead' : 'said'}: ${e.text}`
       case 'buy': return `bought ${e.item}${e.it ? ' (item)' : ''}`
@@ -124,6 +128,10 @@ async function start(root: HTMLElement) {
     if (e.k === 'buy' || e.k === 'found' || e.k === 'pickup' || e.k === 'drop') return `${nick(e.p)} ${ownText(e)}`
     if (e.k === 'hurt') return hurtText(e, nick)
     if (e.k === 'heal') return healText(e, nick)
+    if (e.k === 'wpick' || e.k === 'wdrop') return equipText(e, nick)
+    if (e.k === 'c4') return c4Text(e, nick)
+    if (e.k === 'dna') return dnaText(e, nick)
+    if (e.k === 'tbtn') return tbtnText(e, nick)
     return `${nick(e.p)} was revived${e.by ? ' by ' + nick(e.by) : ''} (${reviveSource(e.how)})`
   }
   /** The fact "came back N s after their killer died", when the recorded events show it. */
@@ -163,14 +171,15 @@ async function start(root: HTMLElement) {
   const feedEl = el(root, '[data-feed]')
   const feedWrap = el(root, '[data-feed-wrap]')
   if (feedEl && feedWrap) {
-    const feed = data.events.filter(e => e.k === 'say' || e.k === 'buy' || e.k === 'found' || e.k === 'pickup' || e.k === 'drop' || e.k === 'hurt' || e.k === 'heal')
+    const covered = hiddenPickups(data.events) // a pickup next to the purchase of the same weapon: the purchase line says it
+    const feed = data.events.filter(e => (e.k === 'say' || e.k === 'buy' || e.k === 'found' || e.k === 'pickup' || e.k === 'drop' || e.k === 'hurt' || e.k === 'heal' || EQUIPMENT_KINDS.has(e.k)) && !covered.has(e))
     for (const e of feed) {
       const li = document.createElement('li')
       const b = document.createElement('button')
       b.type = 'button'
       b.className = 'lnk'
       b.textContent = `${stamp(e.t)}  ${eventText(e)}`
-      if ((e.k === 'hurt' || e.k === 'heal') && e.w) b.title = e.w // the weapon's or the source's class, as the game knows it
+      if ((e.k === 'hurt' || e.k === 'heal' || e.k === 'wpick' || e.k === 'wdrop' || e.k === 'dna') && e.w) b.title = e.w // the weapon's or the source's class, as the game knows it
       b.addEventListener('click', () => { selected = e.p; seek(e.t - 2000) })
       li.append(b)
       feedEl.append(li)
@@ -200,12 +209,12 @@ async function start(root: HTMLElement) {
     if (!eventsEl || listedFor === selected) return
     listedFor = selected
     eventsEl.replaceChildren()
-    const mine = data.events.filter(e => e.p === selected || ((e.k === 'hurt' || e.k === 'heal') && e.a === selected)) // the damage the player dealt and the health they gave is theirs too
+    const mine = data.events.filter(e => e.p === selected || ((e.k === 'hurt' || e.k === 'heal') && e.a === selected) || ((e.k === 'c4' || e.k === 'dna') && e.of === selected)) // the damage the player dealt, the health they gave, their C4 that was defused and their DNA that was taken are theirs too
     for (const e of mine) {
       const li = document.createElement('li')
       const b = document.createElement('button')
       b.type = 'button'; b.className = 'lnk'
-      b.textContent = `${stamp(e.t)}  ${e.k === 'hurt' ? hurtOwnText(e, nick, selected!) : e.k === 'heal' ? healOwnText(e, nick, selected!) : ownText(e)}`
+      b.textContent = `${stamp(e.t)}  ${e.k === 'hurt' ? hurtOwnText(e, nick, selected!) : e.k === 'heal' ? healOwnText(e, nick, selected!) : ownText(e, selected!)}`
       b.addEventListener('click', () => seek(e.t - 1000))
       li.append(b)
       eventsEl.append(li)
@@ -256,12 +265,13 @@ async function start(root: HTMLElement) {
     t.title = `${stamp(d.t)} ${nick(d.victim)} died`
     ticks.append(t)
   }
-  // revivals (green) and role changes (violet) beside the deaths
+  // revivals (green), role changes (violet) and C4 (orange armed, blue defused, yellow exploded) beside the deaths
   if (ticks) for (const e of data.events) {
-    if (e.k !== 'revive' && e.k !== 'role') continue // chat, shop and bodies are in the feed, not on the bar
-    const t = text('', 'span', `tick ${e.k === 'revive' ? 'tick-revive' : 'tick-role'}`)
+    const mark = timeMark(e)
+    if (!mark) continue // chat, shop, bodies, weapons, DNA and buttons are in the feed, not on the bar
+    const t = text('', 'span', `tick ${mark.cls}`)
     t.style.left = place(e.t)
-    t.dataset.mark = e.k
+    t.dataset.mark = mark.mark
     t.title = `${stamp(e.t)} ${eventText(e)}`
     ticks.append(t)
   }
@@ -808,6 +818,21 @@ async function start(root: HTMLElement) {
     return { e, pose, ring, line }
   })
 
+  // A C4 charge the bridge found the place of is a small orange square with its name, from the arming to the first defuse, wrong wire or explosion (RFC 26, 4c.7).
+  // The sprite is made once and only shown or hidden, so nothing is drawn again while time runs.
+  const c4Texture = canvasTexture(64, 64, g => {
+    g.fillStyle = '#000000'; g.fillRect(4, 14, 56, 36)
+    g.fillStyle = '#fb923c'; g.fillRect(9, 19, 46, 26)
+    g.fillStyle = '#000000'; g.font = 'bold 22px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('C4', 32, 33)
+  })
+  const c4Marks = c4Charges(data.events).slice(0, 128).map(c => {
+    const sprite = screenSprite(c4Texture, PIN * 1.1, PIN * 1.1)
+    sprite.position.set(c.x, c.y, c.z + 14)
+    sprite.visible = false
+    world.add(sprite)
+    return { c, sprite }
+  })
+
   // ---- drawing
   let queued = false
   const draw = () => {
@@ -985,6 +1010,11 @@ async function start(root: HTMLElement) {
       const from = by ? lastPoseAt(by.segs, ms) : null
       v.line.visible = fresh && !!from && v.pose !== null
       if (v.line.visible && from && v.pose) v.line.geometry.setAttribute('position', new Float32BufferAttribute([from.x, from.y, from.z + 40, v.pose.x, v.pose.y, v.pose.z + 40], 3))
+    }
+    const upC4 = shown()
+    for (const { c, sprite } of c4Marks) {
+      const level = levels.length > 0 && bg.kind !== 'none' ? levelOf(levels, c.z) : 0
+      sprite.visible = ms >= c.from && ms < c.until && !(typeof upC4 === 'number' && level > upC4)
     }
     const upThings = shown()
     for (const { th, box } of thingBoxes) {

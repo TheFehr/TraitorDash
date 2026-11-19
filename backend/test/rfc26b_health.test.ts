@@ -131,13 +131,13 @@ const ratio = (a: string, b: string) => { const [hi, lo] = [lum(a), lum(b)].sort
 
 describe('the page', () => {
   test('the feed is named for what is in it, damage included, and the selected player has a health line', () => {
-    expect(page).toContain('Chat, shop, bodies, damage and healing')
+    expect(page).toContain('Chat, shop, bodies, damage, healing and equipment')
     expect(page).not.toContain('Chat, shop and bodies')
     expect(page).toContain('data-selected-health')
   })
 
   test('the feed has the damage lines as links that seek, and the selected player\'s list has the damage they took and dealt', () => {
-    expect(replay).toContain("e.k === 'hurt' || e.k === 'heal')\n")
+    expect(replay).toContain("e.k === 'hurt' || e.k === 'heal' || EQUIPMENT_KINDS.has(e.k))")
     expect(replay).toMatch(/b\.addEventListener\('click', \(\) => \{ selected = e\.p; seek\(e\.t - 2000\) \}\)/)
     expect(replay).toContain("(e.k === 'hurt' || e.k === 'heal') && e.a === selected)")
   })
@@ -225,7 +225,7 @@ describe('the feed lines of heals', () => {
   test('the sources of a heal that are no class have names, and the page lists heals in the feed and in the lists of the healed and the healer', () => {
     expect(['regen', 'revive', 'other', 'ttt_health_station'].map(weaponName)).toEqual(['Regeneration', 'Revival', 'Other', 'Health station'])
     const replaySrc = fs.readFileSync(path.join(import.meta.dir, '../src/replay.ts'), 'utf8')
-    expect(replaySrc).toContain("e.k === 'hurt' || e.k === 'heal')\n")
+    expect(replaySrc).toContain("e.k === 'hurt' || e.k === 'heal' || EQUIPMENT_KINDS.has(e.k))")
     expect(replaySrc).toContain('healText(e, nick)')
     expect(replaySrc).toContain('healOwnText(e, nick, selected!)')
     expect(fs.readFileSync(path.join(import.meta.dir, '../src/components/ReplayPage.tsx'), 'utf8')).toContain('data-selected-totals')

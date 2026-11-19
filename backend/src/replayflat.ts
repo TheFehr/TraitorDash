@@ -2,7 +2,7 @@
 import { Color, type BufferGeometry, type Mesh, type MeshStandardMaterial, type Object3D } from 'three'
 import { hex } from './teamColours'
 import { mapLoader, levelColour, paintPlain, type Painted } from './sceneKit'
-import { bodyAt, currentDeath, healthAt, healthBar, healthColour, lastPoseAt, levelOf, poseAt, revivePose, trailBetween, type Decoded, type LevelRange, type TrackEvent } from './replaylogic'
+import { bodyAt, c4Charges, c4At, currentDeath, healthAt, healthBar, healthColour, lastPoseAt, levelOf, poseAt, revivePose, trailBetween, type Decoded, type LevelRange, type TrackEvent } from './replaylogic'
 
 // RFC 19, 3.1: the replay drawn from above on a plain 2D canvas, for a browser without WebGL (the game's window). The map's
 // floors are filled shapes, its walls lines, drawn level by level from the lowest; the picture of the map is made once and
@@ -247,6 +247,7 @@ export async function startFlat(host: FlatHost): Promise<void> {
 
   // ---- a frame
   const player = (id: string) => data.players.get(id) ?? []
+  const charges = c4Charges(data.events)
   let queued = false
   const draw = () => {
     queued = false
@@ -301,6 +302,15 @@ export async function startFlat(host: FlatHost): Promise<void> {
     const visible = (z: number) => {
       const lv = levels.length > 0 && bg.kind !== 'none' ? levelOf(levels, z) : 0
       return { above: typeof upTo === 'number' && lv > upTo, dim: typeof upTo === 'number' && lv > 0 && lv < upTo }
+    }
+    for (const c of c4At(charges, ms)) { // a C4 charge from its arming to its end: a small orange square (RFC 26, 4c.7)
+      const v = visible(c.z)
+      if (v.above) continue
+      const x = X(c.x), y = Y(c.y), s = 6 * px
+      g.globalAlpha = v.dim ? 0.4 : 1
+      g.fillStyle = '#000'; g.fillRect(x - s - px, y - s - px, 2 * s + 2 * px, 2 * s + 2 * px)
+      g.fillStyle = '#fb923c'; g.fillRect(x - s, y - s, 2 * s, 2 * s)
+      g.globalAlpha = 1
     }
     g.font = `bold ${12 * px}px sans-serif`; g.textAlign = 'center'; g.textBaseline = 'bottom'
     const drawn: { id: string, x: number, y: number, dim: boolean }[] = []

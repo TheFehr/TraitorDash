@@ -24,11 +24,13 @@ export interface RawThing { e: number, c: string, mdl: string, b: number[], id?:
 /** A thing that moved, decoded: keyframes at real times, positions in units and angles in degrees; `from` is when it first shows, `until` when it is gone (Infinity when it stayed). */
 export interface Thing { e: number, c: string, model: string, bounds: number[], mapId: number | null, from: number, until: number, t: number[], x: number[], y: number[], z: number[], pitch: number[], yaw: number[], roll: number[] }
 export interface TrackEvent {
-  t: number, p: string, k: 'revive' | 'role' | 'say' | 'buy' | 'found' | 'pickup' | 'drop' | 'hurt' | 'heal', role?: string, team?: string, by?: string, how?: string, why?: string
+  t: number, p: string, k: 'revive' | 'role' | 'say' | 'buy' | 'found' | 'pickup' | 'drop' | 'hurt' | 'heal' | 'wpick' | 'wdrop' | 'c4' | 'dna' | 'tbtn', role?: string, team?: string, by?: string, how?: string, why?: string
   /** say: the line and who could read it; buy: the class and whether it is a passive item; found, pickup, drop: whose body (RFC 26, RFC 24) */
   text?: string, ch?: 'all' | 'team' | 'dead', item?: string, it?: boolean, of?: string
   /** hurt (`p` is the victim): the attacker when a player of the round did it, the cause (a weapon or entity class, or a damage type), the damage and the victim's health after (RFC 26, 4a); heal (`p` is the healed player): the healer when a player of the round, the source (a class, or regen, revive, other), the health gained and the health after (RFC 26, 4b) */
   a?: string, w?: string, d?: number, h?: number
+  /** wpick, wdrop (RFC 26, 4c, C1): `w` the weapon class; dna: `w` what the sample came from, `of` whose DNA. c4: `st` plant, defuse, fail (a wrong wire) or boom, `of` the owner of the charge (defuse, fail), `s` the timer in seconds (plant); tbtn: `n` the button's text. c4 and tbtn: `x y z` the place in units / 8. */
+  st?: 'plant' | 'defuse' | 'fail' | 'boom', s?: number, n?: string, x?: number, y?: number, z?: number
 }
 
 /** One run of consecutive samples of one player, in Source units and degrees-in-256ths, at real times. */
@@ -698,3 +700,115 @@ export function hurtOwnText(e: TrackEvent, nick: Nick, who: string): string {
   if (e.a === who) return `hurt ${nick(e.p)}: ${e.d} (${weaponName(e.w)}), ${e.h} left`
   return `took ${e.d}${e.a ? ' from ' + nick(e.a) : ''} (${weaponName(e.w)}), ${e.h} left`
 }
+
+// ---- Weapons, C4, DNA scans and traitor buttons (RFC 26, 4c, C1)
+
+/** Pickups and drops: "Tonda picked up Shotgun". The class goes through the display-name helper of the statistics pages; the class stays in the tooltip. */
+export function equipText(e: TrackEvent, nick: Nick): string {
+  return `${nick(e.p)} ${equipOwnText(e)}`
+}
+/** The same without the name, for the list of the player. */
+export function equipOwnText(e: TrackEvent): string {
+  return `${e.k === 'wdrop' ? 'dropped' : 'picked up'} ${weaponName(e.w)}`
+}
+
+/** What a C4 event says about the charge's owner: "Tonda's C4", or "a C4" when the track does not know whose it was. */
+const charge = (owner: string | undefined, nick: Nick) => (owner ? `${nick(owner)}'s C4` : 'a C4')
+/** C4 lines: "Tonda armed a C4 (45 s)", "Scip.MLP defused the C4 of Tonda", "Scip.MLP cut the wrong wire of Tonda's C4", "Tonda's C4 exploded". */
+export function c4Text(e: TrackEvent, nick: Nick): string {
+  switch (e.st) {
+    case 'plant': return `${nick(e.p)} armed a C4${e.s ? ` (${e.s} s)` : ''}`
+    case 'defuse': return `${nick(e.p)} defused ${e.of ? `the C4 of ${nick(e.of)}` : 'a C4'}`
+    case 'fail': return `${nick(e.p)} cut the wrong wire of ${charge(e.of, nick)}`
+    default: return `${charge(e.p, nick)} exploded`
+  }
+}
+/** The same in the list of one player (`who`): the one who acted, or the owner of the charge when that is another player. */
+export function c4OwnText(e: TrackEvent, nick: Nick, who: string): string {
+  if (e.p === who) {
+    switch (e.st) {
+      case 'plant': return `armed a C4${e.s ? ` (${e.s} s)` : ''}`
+      case 'defuse': return `defused ${e.of ? (e.of === who ? 'their own C4' : `the C4 of ${nick(e.of)}`) : 'a C4'}`
+      case 'fail': return `cut the wrong wire of ${e.of ? (e.of === who ? 'their own C4' : `${nick(e.of)}'s C4`) : 'a C4'}`
+      default: return 'had a C4 explode'
+    }
+  }
+  return e.st === 'defuse' ? `had a C4 defused by ${nick(e.p)}` : `had ${nick(e.p)} cut the wrong wire of their C4`
+}
+/** "from a body" for a ragdoll, else the display name of the class; nothing when the bridge did not say. */
+const dnaFrom = (w: string | undefined) => (!w ? '' : w === 'prop_ragdoll' ? ' from a body' : ` from ${weaponName(w)}`)
+/** "Tonda took the DNA of Scip.MLP from a body"; without the owner of the DNA "Tonda took a DNA sample from a body". */
+export function dnaText(e: TrackEvent, nick: Nick): string {
+  return `${nick(e.p)} ${dnaOwnText(e, nick, e.p)}`
+}
+/** In the list of the scanner's owner, or of the player whose DNA it was ("had their DNA taken by Tonda from a body"). */
+export function dnaOwnText(e: TrackEvent, nick: Nick, who: string): string {
+  if (e.p !== who && e.of === who) return `had their DNA taken by ${nick(e.p)}${dnaFrom(e.w)}`
+  return `took ${e.of ? (e.of === e.p ? 'their own DNA' : `the DNA of ${nick(e.of)}`) : 'a DNA sample'}${dnaFrom(e.w)}`
+}
+/** "Tonda used a traitor button (Open the vent)"; the text is the mapper's and is left out when the map gave none. */
+export function tbtnText(e: TrackEvent, nick: Nick): string {
+  return `${nick(e.p)} ${tbtnOwnText(e)}`
+}
+export function tbtnOwnText(e: TrackEvent): string {
+  return `used a traitor button${e.n ? ` (${e.n})` : ''}`
+}
+
+/** The events that are lines of the feed besides chat, shop and bodies, damage and healing: equipment (weapons, C4, DNA, buttons). */
+export const EQUIPMENT_KINDS: ReadonlySet<string> = new Set(['wpick', 'wdrop', 'c4', 'dna', 'tbtn'])
+/** The two events within which a purchase and the pickup of what was bought are one fact, in ms (RFC 26, 4c.7). */
+export const BUY_PICKUP_MS = 1500
+/**
+ * The pickups the feed does not show because the purchase line already says it: a `wpick` with a `buy` of the same player, for the same class, at most
+ * BUY_PICKUP_MS before or after it. The bridge still records them and the player's own list shows them; only the feed hides them.
+ */
+export function hiddenPickups(events: TrackEvent[]): Set<TrackEvent> {
+  const buys = new Map<string, TrackEvent[]>()
+  for (const e of events) if (e.k === 'buy' && e.item) { const l = buys.get(e.p) ?? []; l.push(e); buys.set(e.p, l) }
+  const hidden = new Set<TrackEvent>()
+  for (const e of events) {
+    if (e.k !== 'wpick' || !e.w) continue
+    if ((buys.get(e.p) ?? []).some(b => b.item!.slice(0, 40) === e.w && Math.abs(b.t - e.t) <= BUY_PICKUP_MS)) hidden.add(e)
+  }
+  return hidden
+}
+
+/** The marks of the time bar: deaths are drawn by the page, then these. Only revivals, role changes and C4 (a mark for every shot, button or weapon would bury the deaths). */
+export function timeMark(e: TrackEvent): { cls: string, mark: string } | null {
+  if (e.k === 'revive') return { cls: 'tick-revive', mark: 'revive' }
+  if (e.k === 'role') return { cls: 'tick-role', mark: 'role' }
+  if (e.k === 'c4') return e.st === 'plant' ? { cls: 'tick-c4plant', mark: 'c4plant' } : e.st === 'boom' ? { cls: 'tick-c4boom', mark: 'c4boom' } : { cls: 'tick-c4defuse', mark: 'c4defuse' } // a wrong wire takes the defuse colour
+  return null
+}
+/** The colours of the C4 marks on the time bar, against the page's dark ground (3 : 1 in a test). */
+export const C4_COLOURS = { plant: '#fb923c', defuse: '#38bdf8', boom: '#fde047' }
+
+/** A charge that was armed where the bridge could find it, from the arming to the first defuse, wrong wire or explosion of that charge. Place in Source units. */
+export interface C4Charge { owner: string, x: number, y: number, z: number, from: number, until: number }
+/**
+ * The charges with a place and how long each lasted (RFC 26, 4c.7). An end (a defuse or a wrong wire, with `of` the owner; an explosion, with `p` the owner) takes
+ * the open charge of that owner that has the same place; with no place on the end, the owner's only open charge; with several and no place, none (it cannot be told).
+ * A wrong wire ends the marker at once, though the charge explodes a moment later; that explosion then finds nothing open and is only a line.
+ */
+export function c4Charges(events: TrackEvent[]): C4Charge[] {
+  const all: C4Charge[] = []
+  let open: C4Charge[] = []
+  const same = (c: C4Charge, e: TrackEvent) => e.x !== undefined && e.y !== undefined && e.z !== undefined && c.x === e.x * UNITS && c.y === e.y * UNITS && c.z === e.z * UNITS
+  for (const e of events) {
+    if (e.k !== 'c4') continue
+    if (e.st === 'plant') {
+      if (e.x === undefined || e.y === undefined || e.z === undefined) continue
+      const c = { owner: e.p, x: e.x * UNITS, y: e.y * UNITS, z: e.z * UNITS, from: e.t, until: Infinity }
+      all.push(c); open.push(c)
+      continue
+    }
+    const owner = e.st === 'boom' ? e.p : e.of
+    const mine = open.filter(c => owner === undefined || c.owner === owner)
+    const placed = mine.filter(c => same(c, e))
+    const pick = e.x !== undefined ? placed[0] : mine.length === 1 ? mine[0] : undefined
+    if (pick) { pick.until = e.t; open = open.filter(c => c !== pick) }
+  }
+  return all
+}
+/** The charges that are there at `ms`: armed at or before it and not yet ended. */
+export const c4At = (charges: C4Charge[], ms: number): C4Charge[] => charges.filter(c => ms >= c.from && ms < c.until)
