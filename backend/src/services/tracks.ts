@@ -11,10 +11,15 @@ export const MAX_TRACK_PLAYERS = 128
 export const MAX_TRACK_DEATHS = 512
 export const MAX_SEGMENTS_PER_PLAYER = 64
 /**
- * The sum of the bridge's caps of each kind: revive 1024, role 1024, say 1024, buy 512, found 256, pickup 256, drop 256 (4352), hurt 2048 (RFC 26, 4a) and heal 512 (RFC 26, 4b).
+ * The sum of the bridge's caps of each kind: revive 1024, role 1024, say 1024, buy 512, found 256, pickup 256, drop 256 (4352), hurt 2048 (RFC 26, 4a), heal 512 (RFC 26, 4b)
+ * and, of stage C package C1 (4c), wpick 512, wdrop 512, c4 128, dna 128 and tbtn 256 (1536): 8448.
  * A safety limit of the backend, kept equal to what the bridge can send.
  */
-export const MAX_TRACK_EVENTS = 6912
+export const MAX_TRACK_EVENTS = 8448
+/** The most characters of a traitor button's text, and of a `tbtn` event's `n` (RFC 26, 4c). */
+export const MAX_TBTN_CHARS = 40
+/** What a `c4` event's `st` can be: the charge was armed, defused, a wire was cut wrong (it explodes), or it exploded. */
+export const C4_STATES: ReadonlySet<string> = new Set(['plant', 'defuse', 'fail', 'boom'])
 /** Health in a track: a sample, the most of a player, an event's `h`; TTT2 roles can have more than 100 (RFC 26, 4a). */
 export const MAX_HP = 1000
 /** The most damage one `hurt` event holds (a merged event of many hits). */
@@ -70,7 +75,7 @@ export interface TrackEvent {
   t: number
   /** The player it happened to. */
   p: string
-  k: 'revive' | 'role' | 'say' | 'buy' | 'found' | 'pickup' | 'drop' | 'hurt' | 'heal'
+  k: 'revive' | 'role' | 'say' | 'buy' | 'found' | 'pickup' | 'drop' | 'hurt' | 'heal' | 'wpick' | 'wdrop' | 'c4' | 'dna' | 'tbtn'
   /** `role` events: the settled role and team. */
   role?: string
   team?: string
@@ -91,6 +96,14 @@ export interface TrackEvent {
   w?: string
   d?: number
   h?: number
+  /** `wpick`, `wdrop`: `w` is the weapon class; `dna`: `w` the class of what the sample came from, `of` whose DNA it was (RFC 26, 4c, C1). */
+  /** `c4` events: `st` what happened (C4_STATES), `of` (defuse and fail) the player who armed it, `s` (plant) the timer in seconds, `x y z` where the charge was. `tbtn` events: `n` the button's text, `x y z` its place. Units / 8, absolute. */
+  st?: 'plant' | 'defuse' | 'fail' | 'boom'
+  s?: number
+  n?: string
+  x?: number
+  y?: number
+  z?: number
 }
 /**
  * One point of a body's path (RFC 24): the player it belonged to, the time in ms, the position of the ragdoll in units / 8 (absolute) and its
@@ -246,6 +259,12 @@ export function validateTrack(body: unknown, round: { roundId: string, map: stri
       if (e.t < last) return no('events must be in time order')
       last = e.t
       const named = (v: unknown) => typeof v === 'string' && NAME.test(v)
+      /** x, y and z of an event as one place: all three whole numbers inside the map, or none of them (undefined); anything else is false. */
+      const place = (o: Record<string, unknown>): { x: number, y: number, z: number } | undefined | false => {
+        if (o.x === undefined && o.y === undefined && o.z === undefined) return undefined
+        for (const v of [o.x, o.y, o.z]) if (!isInt(v) || Math.abs(v) > POS_MAX) return false
+        return { x: o.x as number, y: o.y as number, z: o.z as number }
+      }
       if (e.k === 'role') {
         if (!named(e.role) || !named(e.team)) return no('a role event needs a role and a team')
         if (e.by !== undefined || e.how !== undefined || e.why !== undefined) return no('a role event cannot carry reviver fields')
@@ -284,6 +303,28 @@ export function validateTrack(body: unknown, round: { roundId: string, map: stri
         if (!isInt(e.d) || e.d < 1 || e.d > MAX_HURT_DAMAGE) return no(`a heal event needs the health gained from 1 to ${MAX_HURT_DAMAGE}`)
         if (!isInt(e.h) || e.h < 1 || e.h > MAX_HP) return no(`a heal event needs the health after it, from 1 to ${MAX_HP}`)
         events.push({ t: e.t, p: e.p, k: 'heal', ...(healer !== undefined ? { a: healer } : {}), w: e.w, d: e.d, h: e.h })
+      } else if (e.k === 'wpick' || e.k === 'wdrop') {
+        if (typeof e.w !== 'string' || !HURT_CAUSE.test(e.w)) return no(`a ${e.k} event needs the weapon class: letters, digits, _ . and -, at most 40`)
+        events.push({ t: e.t, p: e.p, k: e.k, w: e.w })
+      } else if (e.k === 'c4') {
+        if (typeof e.st !== 'string' || !C4_STATES.has(e.st)) return no('a c4 event needs st: plant, defuse, fail or boom')
+        const st = e.st as 'plant' | 'defuse' | 'fail' | 'boom'
+        if (st === 'defuse' || st === 'fail') {
+          if (e.of !== undefined && (typeof e.of !== 'string' || !round.players.has(e.of))) return no('a c4 event names an owner who was not in the round')
+        }
+        if (st === 'plant' && e.s !== undefined && (!isInt(e.s) || e.s < 1 || e.s > 3600)) return no('a c4 plant needs a timer of 1 to 3600 seconds')
+        const at = place(e)
+        if (at === false) return no('a c4 event has an invalid place: x, y and z are all given or none, whole numbers of units / 8 inside the map')
+        events.push({ t: e.t, p: e.p, k: 'c4', st, ...(st !== 'plant' && st !== 'boom' && e.of !== undefined ? { of: e.of as string } : {}), ...(st === 'plant' && e.s !== undefined ? { s: e.s as number } : {}), ...(at ?? {}) })
+      } else if (e.k === 'dna') {
+        if (e.of !== undefined && (typeof e.of !== 'string' || !round.players.has(e.of))) return no('a dna event names a player who was not in the round')
+        if (e.w !== undefined && (typeof e.w !== 'string' || !HURT_CAUSE.test(e.w))) return no('a dna event has an invalid source class')
+        events.push({ t: e.t, p: e.p, k: 'dna', ...(e.of !== undefined ? { of: e.of as string } : {}), ...(e.w !== undefined ? { w: e.w as string } : {}) })
+      } else if (e.k === 'tbtn') {
+        if (e.n !== undefined && (typeof e.n !== 'string' || e.n.length === 0 || [...e.n].length > MAX_TBTN_CHARS || /[\u0000-\u001f\u007f]/.test(e.n))) return no(`a tbtn event needs text of 1 to ${MAX_TBTN_CHARS} characters with no control characters, or none`)
+        const at = place(e)
+        if (at === false) return no('a tbtn event has an invalid place: x, y and z are all given or none, whole numbers of units / 8 inside the map')
+        events.push({ t: e.t, p: e.p, k: 'tbtn', ...(e.n !== undefined ? { n: e.n as string } : {}), ...(at ?? {}) })
       } else return no('an event has an unknown kind')
     }
   }

@@ -79,8 +79,8 @@ describe('validateTrack', () => {
     refused(body([{ t: 1, p: A, k: 'kick' }]), /unknown kind/)
     expect(validateTrack(body([{ t: 1, p: A, k: 'pickup', of: B }, { t: 2, p: A, k: 'drop' }]), round).ok).toBe(true) // RFC 24
     refused(body([{ t: 1, p: A, k: 'pickup', of: 'stranger' }]), /pickup event names a body/)
-    refused(body(Array.from({ length: 6913 }, (_, i) => ({ t: i, p: A, k: 'found' }))), /at most 6912/)
-    expect(validateTrack(body(Array.from({ length: 6912 }, (_, i) => ({ t: i, p: A, k: 'found' }))), round).ok).toBe(true) // the sum of the bridge's caps of every kind (RFC 26, 4a and 4b)
+    refused(body(Array.from({ length: 8449 }, (_, i) => ({ t: i, p: A, k: 'found' }))), /at most 8448/)
+    expect(validateTrack(body(Array.from({ length: 8448 }, (_, i) => ({ t: i, p: A, k: 'found' }))), round).ok).toBe(true) // the sum of the bridge's caps of every kind (RFC 26, 4a, 4b and 4c C1)
   })
 
   test('health of each sample (hp, delta coded) and the most health of a player (mh) are kept when they are there; a track without them is fine (RFC 26, 4a)', () => {
@@ -175,14 +175,92 @@ describe('validateTrack', () => {
     refused(body([{ t: 5, p: B, k: 'heal', w: 'other', d: 1, h: 1 }, { t: 4, p: B, k: 'heal', w: 'other', d: 1, h: 1 }]), /time order/)
   })
 
-  test('the events of all kinds together may be as many as the bridge\'s caps add up to: 1024 revive, 1024 role, 1024 say, 512 buy, 256 each of found, pickup and drop, 2048 hurt, 512 heal', () => {
+  test('weapon pickups and drops (wpick, wdrop) need the player of the round and a weapon class that is a short word; unknown fields are dropped (RFC 26, 4c, C1)', () => {
+    const body = (events: unknown[]) => ({ ...good(), events })
+    const ok = validateTrack(body([{ t: 1, p: A, k: 'wpick', w: 'weapon_zm_mac10', extra: 1, of: B }, { t: 2, p: B, k: 'wdrop', w: 'w'.repeat(40) }]), round)
+    expect(ok.ok).toBe(true)
+    if (ok.ok) expect(ok.track.events).toEqual([{ t: 1, p: A, k: 'wpick', w: 'weapon_zm_mac10' }, { t: 2, p: B, k: 'wdrop', w: 'w'.repeat(40) }])
+    for (const k of ['wpick', 'wdrop']) {
+      for (const w of [undefined, '', 'bad name;', 'w'.repeat(41), 7, null]) refused(body([{ t: 1, p: A, k, w }]), /needs the weapon class/)
+      refused(body([{ t: 1, p: 'stranger', k, w: 'weapon_x' }]), /not in the round/)
+      refused(body([{ t: 1, p: A, k }]), /needs the weapon class/)
+    }
+  })
+
+  test('C4 events (c4) need the state, keep the owner for a defuse and a failed one, the timer for an arming and the place when all three coordinates are there; every field is checked (RFC 26, 4c, C1)', () => {
+    const body = (events: unknown[]) => ({ ...good(), events })
+    const ok = validateTrack(body([
+      { t: 1, p: A, k: 'c4', st: 'plant', s: 45, x: 10, y: -20, z: 30, of: B, extra: 1 }, // `of` is not a field of a plant: dropped
+      { t: 2, p: B, k: 'c4', st: 'defuse', of: A, x: 10, y: -20, z: 30, s: 9 }, // nor is the timer of a defuse
+      { t: 3, p: B, k: 'c4', st: 'fail', of: A },
+      { t: 4, p: A, k: 'c4', st: 'boom', x: 4096, y: -4096, z: 0, of: B },
+    ]), round)
+    expect(ok.ok).toBe(true)
+    if (ok.ok) expect(ok.track.events).toEqual([
+      { t: 1, p: A, k: 'c4', st: 'plant', s: 45, x: 10, y: -20, z: 30 },
+      { t: 2, p: B, k: 'c4', st: 'defuse', of: A, x: 10, y: -20, z: 30 },
+      { t: 3, p: B, k: 'c4', st: 'fail', of: A },
+      { t: 4, p: A, k: 'c4', st: 'boom', x: 4096, y: -4096, z: 0 },
+    ])
+    const c4 = (over: Record<string, unknown>) => body([{ t: 1, p: A, k: 'c4', st: 'defuse', of: B, ...over }])
+    expect(validateTrack(c4({}), round).ok).toBe(true)
+    for (const st of [undefined, '', 'planted', 'PLANT', 7, null]) refused(c4({ st }), /needs st/)
+    refused(c4({ p: 'stranger' }), /not in the round/)
+    refused(c4({ of: 'stranger' }), /owner who was not in the round/)
+    refused(c4({ of: 5 }), /owner/)
+    expect(validateTrack(c4({ of: undefined }), round).ok).toBe(true)
+    for (const s of [0, -1, 3601, 2.5, '45', null]) refused(c4({ st: 'plant', s }), /timer of 1 to 3600/)
+    expect(validateTrack(c4({ st: 'plant', s: 1 }), round).ok).toBe(true)
+    expect(validateTrack(c4({ st: 'plant', s: 3600 }), round).ok).toBe(true)
+    for (const bad of [{ x: 1 }, { x: 1, y: 2 }, { y: 2, z: 3 }, { x: 4097, y: 0, z: 0 }, { x: 0, y: -4097, z: 0 }, { x: 0, y: 0, z: 4097 }, { x: 1.5, y: 0, z: 0 }, { x: '1', y: 0, z: 0 }, { x: null, y: 0, z: 0 }, { x: 0, y: 0, z: NaN }]) {
+      refused(c4(bad), /invalid place/)
+    }
+    expect(validateTrack(c4({ x: -4096, y: 4096, z: 0 }), round).ok).toBe(true)
+  })
+
+  test('DNA events (dna) keep whose DNA it was when a player of the round and the class of what it came from, both optional and checked (RFC 26, 4c, C1)', () => {
+    const body = (events: unknown[]) => ({ ...good(), events })
+    const ok = validateTrack(body([{ t: 1, p: A, k: 'dna', of: B, w: 'prop_ragdoll', extra: 1 }, { t: 2, p: B, k: 'dna' }]), round)
+    expect(ok.ok).toBe(true)
+    if (ok.ok) expect(ok.track.events).toEqual([{ t: 1, p: A, k: 'dna', of: B, w: 'prop_ragdoll' }, { t: 2, p: B, k: 'dna' }])
+    const dna = (over: Record<string, unknown>) => body([{ t: 1, p: A, k: 'dna', of: B, w: 'prop_ragdoll', ...over }])
+    refused(dna({ p: 'stranger' }), /not in the round/)
+    refused(dna({ of: 'stranger' }), /not in the round/)
+    refused(dna({ of: 5 }), /not in the round/)
+    for (const w of ['', 'bad name;', 'w'.repeat(41), 7, null]) refused(dna({ w }), /source class/)
+    expect(validateTrack(dna({ of: A }), round).ok).toBe(true) // own DNA is possible in the game
+  })
+
+  test('traitor button events (tbtn) keep the text (1 to 40 characters, no control characters) and the place, both optional and checked (RFC 26, 4c, C1)', () => {
+    const body = (events: unknown[]) => ({ ...good(), events })
+    const ok = validateTrack(body([{ t: 1, p: A, k: 'tbtn', n: 'Open the vent', x: 1, y: 2, z: 3, extra: 1 }, { t: 2, p: B, k: 'tbtn' }, { t: 3, p: B, k: 'tbtn', n: 'ä'.repeat(40) }]), round)
+    expect(ok.ok).toBe(true)
+    if (ok.ok) expect(ok.track.events).toEqual([{ t: 1, p: A, k: 'tbtn', n: 'Open the vent', x: 1, y: 2, z: 3 }, { t: 2, p: B, k: 'tbtn' }, { t: 3, p: B, k: 'tbtn', n: 'ä'.repeat(40) }]) // characters, not bytes
+    const tbtn = (over: Record<string, unknown>) => body([{ t: 1, p: A, k: 'tbtn', n: 'x', ...over }])
+    refused(tbtn({ p: 'stranger' }), /not in the round/)
+    for (const n of ['', 'x'.repeat(41), 'a\nb', 'a\u007fb', 'a\u0000b', 7, null]) refused(tbtn({ n }), /text of 1 to 40/)
+    refused(tbtn({ x: 1, y: 2 }), /invalid place/)
+    refused(tbtn({ x: 5000, y: 0, z: 0 }), /invalid place/)
+    expect(validateTrack(tbtn({ n: undefined, x: 0, y: 0, z: 0 }), round).ok).toBe(true)
+  })
+
+  test('a track from a bridge before stage C (none of these kinds) is stored as it was, and a new kind in an old backend is the refusal the deploy order is about', () => {
+    const body = (events: unknown[]) => ({ ...good(), events })
+    const r = validateTrack(body([{ t: 1, p: A, k: 'hurt', w: 'fall', d: 1, h: 1 }, { t: 2, p: A, k: 'heal', w: 'other', d: 1, h: 2 }, { t: 3, p: A, k: 'found' }]), round)
+    expect(r.ok).toBe(true)
+    refused(body([{ t: 1, p: A, k: 'shots', w: 'weapon_x', n: 1, d: 0 }]), /unknown kind/) // a kind of a later package is not known yet
+  })
+
+  test('the events of all kinds together may be as many as the bridge\'s caps add up to: 1024 revive, 1024 role, 1024 say, 512 buy, 256 each of found, pickup and drop, 2048 hurt, 512 heal, 512 wpick, 512 wdrop, 128 c4, 128 dna, 256 tbtn', () => {
     const kinds: [string, number, Record<string, unknown>][] = [
       ['revive', 1024, {}], ['role', 1024, { role: 'traitor', team: 'traitors' }], ['say', 1024, { text: 'hi', ch: 'all' }], ['buy', 512, { item: 'weapon_x' }],
       ['found', 256, {}], ['pickup', 256, {}], ['drop', 256, {}], ['hurt', 2048, { w: 'fall', d: 1, h: 1 }], ['heal', 512, { w: 'ttt_health_station', d: 1, h: 1 }],
+      ['wpick', 512, { w: 'weapon_zm_mac10' }], ['wdrop', 512, { w: 'weapon_zm_mac10' }], ['c4', 128, { st: 'plant', s: 45, x: 1, y: 2, z: 3 }], ['dna', 128, { of: B, w: 'prop_ragdoll' }],
+      ['tbtn', 256, { n: 'Open the vent', x: 1, y: 2, z: 3 }],
     ]
     let t = 0
     const events = kinds.flatMap(([k, n, f]) => Array.from({ length: n }, () => ({ t: t++, p: A, k, ...f })))
-    expect(events).toHaveLength(6912)
+    expect(events).toHaveLength(8448)
     expect(validateTrack({ ...good(), events }, round).ok).toBe(true)
   })
 
