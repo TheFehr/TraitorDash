@@ -44,9 +44,9 @@ describe('the feed lines of equipment', () => {
     expect(c4OwnText(ev({ k: 'c4', st: 'fail', p: 'B', of: 'B' }), nick, 'B')).toBe('cut the wrong wire of their own C4')
   })
 
-  test('DNA: whose, and from what; a body is "a body", another class is named, nothing when the bridge did not say; in the list of the one whose DNA it was', () => {
+  test('DNA: whose, and from what; a body is "a body", anything else "an object", nothing when the bridge did not say; in the list of the one whose DNA it was', () => {
     expect(dnaText(ev({ k: 'dna', p: 'B', of: 'C', w: 'prop_ragdoll' }), nick)).toBe('Tonda took the DNA of Scip.MLP from a body')
-    expect(dnaText(ev({ k: 'dna', p: 'B', of: 'C', w: 'weapon_zm_shotgun' }), nick)).toBe('Tonda took the DNA of Scip.MLP from Shotgun')
+    expect(dnaText(ev({ k: 'dna', p: 'B', of: 'C', w: 'prop_physics' }), nick)).toBe('Tonda took the DNA of Scip.MLP from an object')
     expect(dnaText(ev({ k: 'dna', p: 'B', w: 'prop_ragdoll' }), nick)).toBe('Tonda took a DNA sample from a body')
     expect(dnaText(ev({ k: 'dna', p: 'B' }), nick)).toBe('Tonda took a DNA sample')
     expect(dnaText(ev({ k: 'dna', p: 'B', of: 'B', w: 'prop_ragdoll' }), nick)).toBe('Tonda took their own DNA from a body')
@@ -81,6 +81,8 @@ describe('hiding the pickup that sits next to its purchase', () => {
     const drop = ev({ k: 'wdrop', t: 1000, w: 'weapon_zm_mac10' })
     const hidden = hiddenPickups([buy(1000), late, early, other, stranger, alone, drop])
     expect(hidden.size).toBe(0)
+    expect(hiddenPickups([buy(1000, 'B'), pick(1000, 'A')]).size).toBe(0) // somebody else's purchase of the same weapon at the same time
+    expect(hiddenPickups([buy(1000, 'B'), pick(1000, 'A'), pick(1000, 'B')]).size).toBe(1)
   })
 
   test('the purchase\'s class is cut as the bridge cuts it (a long class is 64 characters in a purchase and 40 in a pickup)', () => {

@@ -306,10 +306,11 @@ export async function startFlat(host: FlatHost): Promise<void> {
     for (const c of c4At(charges, ms)) { // a C4 charge from its arming to its end: a small orange square (RFC 26, 4c.7)
       const v = visible(c.z)
       if (v.above) continue
-      const x = X(c.x), y = Y(c.y), s = 6 * px
+      const x = X(c.x), y = Y(c.y), s = 9 * px
       g.globalAlpha = v.dim ? 0.4 : 1
       g.fillStyle = '#000'; g.fillRect(x - s - px, y - s - px, 2 * s + 2 * px, 2 * s + 2 * px)
       g.fillStyle = '#fb923c'; g.fillRect(x - s, y - s, 2 * s, 2 * s)
+      g.fillStyle = '#000'; g.font = `bold ${10 * px}px sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('C4', x, y + px)
       g.globalAlpha = 1
     }
     g.font = `bold ${12 * px}px sans-serif`; g.textAlign = 'center'; g.textBaseline = 'bottom'

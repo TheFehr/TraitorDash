@@ -826,7 +826,7 @@ async function start(root: HTMLElement) {
     g.fillStyle = '#000000'; g.font = 'bold 22px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('C4', 32, 33)
   })
   const c4Marks = c4Charges(data.events).slice(0, 128).map(c => {
-    const sprite = screenSprite(c4Texture, PIN * 1.1, PIN * 1.1)
+    const sprite = screenSprite(c4Texture, PIN * 1.4, PIN * 1.4)
     sprite.position.set(c.x, c.y, c.z + 14)
     sprite.visible = false
     world.add(sprite)

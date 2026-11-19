@@ -735,8 +735,8 @@ export function c4OwnText(e: TrackEvent, nick: Nick, who: string): string {
   }
   return e.st === 'defuse' ? `had a C4 defused by ${nick(e.p)}` : `had ${nick(e.p)} cut the wrong wire of their C4`
 }
-/** "from a body" for a ragdoll, else the display name of the class; nothing when the bridge did not say. */
-const dnaFrom = (w: string | undefined) => (!w ? '' : w === 'prop_ragdoll' ? ' from a body' : ` from ${weaponName(w)}`)
+/** "from a body" for a ragdoll, "from an object" for anything else (the class is in the line's tooltip); nothing when the bridge did not say. */
+const dnaFrom = (w: string | undefined) => (!w ? '' : w === 'prop_ragdoll' ? ' from a body' : ' from an object')
 /** "Tonda took the DNA of Scip.MLP from a body"; without the owner of the DNA "Tonda took a DNA sample from a body". */
 export function dnaText(e: TrackEvent, nick: Nick): string {
   return `${nick(e.p)} ${dnaOwnText(e, nick, e.p)}`
