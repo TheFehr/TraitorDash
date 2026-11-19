@@ -1817,16 +1817,46 @@ describe('track.lua: weapons picked up and dropped (RFC 26, 4c, C1)', () => {
     expect(evs(r, 'wpick', 'wdrop').map(e => [e.k, e.w])).toEqual([['wdrop', 'weapon_alive']])
   })
 
+  test('a player who was recorded in the preparation but is not in the round (a spectator who is alive again) has no pickups, drops, scans or button events', () => {
+    const r = play(C1 + `
+      SPEC.alive = true
+      Fire("TTTPrepareRound")
+      Run(2)
+      SPEC.alive = false
+      Fire("TTTBeginRound"); NOW = NOW + 1.2
+      SPEC.alive = true
+      Fire("WeaponEquip", Wep("weapon_spec"), SPEC)
+      Fire("PlayerDroppedWeapon", SPEC, Wep("weapon_spec"))
+      Fire("TTTFoundDNA", SPEC, A, Thing("prop_ragdoll"))
+      Fire("TTTFoundDNA", A, SPEC, Thing("prop_ragdoll"))
+      Fire("TTTTraitorButtonActivated", Button("x"), SPEC)
+      Fire("TTT2AddedEvent", "c4plant", { event = { sid64 = SPEC.sid } })
+      for i = 1, 600 do Fire("WeaponEquip", Wep("weapon_spec"), SPEC) end -- they do not use up the room of the players of the round either
+      for i = 1, 150 do Fire("TTT2AddedEvent", "c4plant", { event = { sid64 = SPEC.sid } }) end
+      Fire("WeaponEquip", Wep("weapon_round"), A)
+      Plant(A)
+      Ends()
+    `)
+    expect(evs(r, 'wpick', 'wdrop', 'c4', 'tbtn').map(e => [e.p, e.k])).toEqual([[A, 'wpick'], [A, 'c4']])
+    expect(trackOf(r).truncated).toBe(false)
+    expect(evs(r, 'dna')).toEqual([{ p: A, k: 'dna', w: 'prop_ragdoll', t: expect.any(Number) }]) // the scanner is in the round, the DNA was a spectator's: left out
+  })
+
   test('the preparation is not recorded: a weapon picked up before the round began is not in the track', () => {
     const r = play(C1 + `
       Fire("TTTPrepareRound")
+      Run(10)                                                   -- two seconds of preparation: longer than the grace after the round's start
       Fire("WeaponEquip", Wep("weapon_prep"), A)
       Fire("PlayerDroppedWeapon", A, Wep("weapon_prep"))
-      Run(10); Fire("TTTBeginRound"); NOW = NOW + 1.2
+      Fire("TTTFoundDNA", A, B, Thing("prop_ragdoll"))
+      Fire("TTTTraitorButtonActivated", Button("x"), A)
+      Fire("TTT2AddedEvent", "c4plant", { event = { sid64 = A.sid } })
+      Fire("TTTBeginRound"); NOW = NOW + 1.2
       Fire("WeaponEquip", Wep("weapon_round"), A)
       Ends()
     `)
     expect(evs(r, 'wpick', 'wdrop').map(e => e.w)).toEqual(['weapon_round'])
+    expect(evs(r, 'dna', 'tbtn', 'c4')).toEqual([])
   })
 
   test('a class is cut to a safe word of at most 40 characters; one with nothing safe in it is not recorded', () => {
@@ -1879,7 +1909,7 @@ describe('track.lua: C4 (RFC 26, 4c, C1)', () => {
       C.x, C.y, C.z = 950, 200, 64
       Run(1)
       Disarm(C, B, true)
-      C.x = 0; Disarm(C, B, true)                              -- far from the other charge: no place
+      Disarm(C, B, true)                                       -- the first charge is gone, the other one is far away: no place
       Ends()
     `)
     expect(evs(r, 'c4').map(e => [e.p, e.st, e.of, e.x, e.y, e.z])).toEqual([
@@ -2023,7 +2053,7 @@ describe('track.lua: DNA scans and traitor buttons (RFC 26, 4c, C1)', () => {
       NOW = NOW + 0.999; Fire("TTTTraitorButtonActivated", door, A)   -- still one
       Fire("TTTTraitorButtonActivated", door, B)                     -- another player
       Fire("TTTTraitorButtonActivated", Button("?", 8, 8, 8), A)      -- another button, no text
-      NOW = NOW + 0.002; Fire("TTTTraitorButtonActivated", door, A)   -- a second after the first
+      NOW = NOW + 0.001; Fire("TTTTraitorButtonActivated", door, A)   -- exactly a second after the first: another event
       Fire("TTTTraitorButtonActivated", Button("  Line\\nbreak\\t " .. string.rep("x", 60), 0, 0, 0), C)
       Fire("TTTTraitorButtonActivated", Button(nil), C)
       Ends()
@@ -2071,6 +2101,18 @@ describe('track.lua: C1 hooks do no harm', () => {
       }
     `)
     expect(on.out).toEqual({ pick: 0, drop: 0, c4: 0, dna: 0, btn: 0, broken: 0 })
+    const bad = play(C1 + `
+      Start()
+      local bad = setmetatable({}, { __index = function() error("an argument that raises") end })
+      OUT = {
+        pick = FireValues("WeaponEquip", bad, bad), drop = FireValues("PlayerDroppedWeapon", bad, bad), c4 = FireValues("TTT2AddedEvent", bad, bad),
+        dna = FireValues("TTTFoundDNA", bad, bad, bad), btn = FireValues("TTTTraitorButtonActivated", bad, bad),
+        okAfter = FireValues("WeaponEquip", Wep("weapon_x"), A),
+      }
+      Ends()
+    `)
+    expect(bad.out).toEqual({ pick: 0, drop: 0, c4: 0, dna: 0, btn: 0, okAfter: 0 })
+    expect(trackOf(bad).events).toEqual([expect.objectContaining({ k: 'wpick', w: 'weapon_x' })]) // the game and the recorder carry on
     const off = play(C1 + `Start() OUT = { pick = FireValues("WeaponEquip", Wep("weapon_x"), A), c4 = FireValues("TTT2AddedEvent", "c4plant", { event = { sid64 = A.sid } }) }`, false)
     expect(off.out).toEqual({ pick: 0, c4: 0 })
   })
