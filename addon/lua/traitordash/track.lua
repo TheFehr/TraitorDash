@@ -19,6 +19,9 @@
 -- Health (RFC 26, stage B): each sample also holds the player's health `hp` (delta coded like the position; read from `ply:Health()`, no hook), and
 -- each player the most health they had, `mh`. Damage to a player of the round is an event `hurt` (PostEntityTakeDamage; see Track.Hurt below).
 --
+-- Weapons, C4, DNA and traitor buttons (RFC 26, stage C, package C1): events `wpick` and `wdrop` (WeaponEquip, PlayerDroppedWeapon), `c4` (TTT2's event log through
+-- TTT2AddedEvent), `dna` (TTTFoundDNA) and `tbtn` (TTTTraitorButtonActivated); see the section after Track.Spawned below. None of them uses a hook that runs before the action.
+--
 -- Parts that move (RFC 20, 4.3): with traitordash_track_parts on, the doors, lifts and other brush entities that can move are recorded
 -- as keyframes on the same tick list, and the inputs that reach them (also a player pressing use) as a list; see the Parts section below.
 --
@@ -46,13 +49,19 @@ local MAX_TICKS_FLOOR, MAX_TICKS_CEILING = 1000, 100000 -- what traitordash_trac
 local MAX_SEGMENTS = 64          -- per player
 local MAX_DEATHS = 512
 -- What happened to players besides moving (RFC 14, 4.3 and RFC 26): each kind has a cap of its own, so a chatty round does not use up the room of the others.
-local EVENT_CAP = { revive = 1024, role = 1024, say = 1024, buy = 512, found = 256, pickup = 256, drop = 256, hurt = 2048, heal = 512 }
+local EVENT_CAP = { revive = 1024, role = 1024, say = 1024, buy = 512, found = 256, pickup = 256, drop = 256, hurt = 2048, heal = 512,
+    wpick = 512, wdrop = 512, c4 = 128, dna = 128, tbtn = 256 } -- the last five: RFC 26, stage C, package C1
 local HP_MAX = 1000             -- the most health a sample or an event holds (TTT2 roles can have more than 100); more is cut, less than 0 is 0 (RFC 26, 4a)
 local HURT_MERGE_MS = 50        -- damage to the same victim, from the same attacker with the same cause, within this is one event (pellets, a blast)
 local HURT_W_LEN = 40
 local HEAL_MERGE_MS = 1000          -- health gained by the same player from the same source (and healer) within this of the last of it is one event (a health station gives 1 hp every 0.2 s)
 local HEAL_GRACE_MS = 1000          -- after a player spawned or was revived, and after the round began, a rise of health is the game setting it up, not a heal (RFC 26, 4b)
 local SAY_LEN = 200             -- characters of a chat line that are kept
+local TBTN_LEN = 40             -- characters of a traitor button's description that are kept (RFC 26, 4c)
+local WEAPON_GRACE_MS = 1000    -- after a player spawned, got a new role, and after the round began, weapons given are loadout, not pickups (RFC 26, 4c)
+local TBTN_MERGE_MS = 1000      -- the same player on the same traitor button within this is one event
+local C4_RANGE = 256            -- units: the game's own range for defusing a charge, used to tell which charge was defused
+local POS_MAX = 4096            -- the backend's limit for a position in units / 8; a place beyond it is left out
 local MAX_BODIES = 4096         -- points of bodies' paths (RFC 24)
 local BODY_MOVE = 16                -- units a body must move from its last point to be recorded again
 local BODY_TURN = 80                -- quarter degrees (20 degrees) it must turn
@@ -912,6 +921,7 @@ end
 function Track.RoleChanged(sid, role, team)
     local r = rec
     if not r or r.stopped or not r.players[sid] then return end
+    r.players[sid].roleAt = RoundMs(r, CurTime()) -- weapons that come with a new role are not pickups (RFC 26, 4c)
     AddEvent(r, CurTime(), { p = sid, k = "role", role = role, team = team })
 end
 
@@ -919,15 +929,16 @@ end
 
 -- A chat line as it is kept: control characters are spaces, the ends are trimmed, text that is not valid UTF-8 keeps its ASCII only, and the
 -- line is cut at SAY_LEN characters.
-local function CleanText(text)
+local function CleanText(text, limit)
+    limit = limit or SAY_LEN
     local s = string.gsub(tostring(text or ""), "[%c\127]", " ")
     s = string.gsub(string.gsub(s, "^%s+", ""), "%s+$", "")
     if utf8 and utf8.len then
         local n = utf8.len(s)
         if not n then s = string.gsub(s, "[\128-\255]", "?"); n = #s end
-        if n > SAY_LEN then s = string.sub(s, 1, (utf8.offset(s, SAY_LEN + 1) or (SAY_LEN + 1)) - 1) end
+        if n > limit then s = string.sub(s, 1, (utf8.offset(s, limit + 1) or (limit + 1)) - 1) end
     else
-        s = string.sub(string.gsub(s, "[\128-\255]", "?"), 1, SAY_LEN)
+        s = string.sub(string.gsub(s, "[\128-\255]", "?"), 1, limit)
     end
     return s
 end
@@ -1146,6 +1157,263 @@ function Track.Spawned(ply)
     if sid then r.players[sid].spawnAt = RoundMs(r, CurTime()) end
 end
 
+-- ---- Weapons, C4, DNA and traitor buttons (RFC 26, stage C, package C1)
+
+-- A class or name as one safe word: letters, digits, _ . and -, at most HURT_W_LEN; nil when nothing is left.
+local function Word(v)
+    if type(v) ~= "string" then return nil end
+    local w = string.sub(string.gsub(v, "[^%w_.%-]", ""), 1, HURT_W_LEN)
+    return w ~= "" and w or nil
+end
+
+local function ClassOf(ent)
+    if not IsValid(ent) or not ent.GetClass then return nil end
+    local ok, class = pcall(ent.GetClass, ent)
+    return ok and Word(class) or nil
+end
+
+-- Is `sid` a player of this round (and not only of the preparation)?
+local function Member(r, sid)
+    return sid ~= nil and r.players[sid] ~= nil and (r.members == nil or r.members[sid] == true)
+end
+
+-- The round player behind an entity that the game's hook named, or nil.
+local function RoundPlayer(r, ply)
+    if not IsValid(ply) or not ply.IsPlayer or not ply:IsPlayer() then return nil end
+    local sid = SidOf(r, ply)
+    if sid and Member(r, sid) then return sid end
+    return nil
+end
+
+-- The place of an entity in units / 8 as the backend wants it, or nil when it cannot be read or is beyond the map.
+local function PlaceOf(ent)
+    if not IsValid(ent) or not ent.GetPos then return nil end
+    local ok, pos = pcall(ent.GetPos, ent)
+    if not ok or type(pos) ~= "table" then return nil end
+    local x, y, z = pos.x, pos.y, pos.z
+    if type(x) ~= "number" or type(y) ~= "number" or type(z) ~= "number" or x ~= x or y ~= y or z ~= z then return nil end
+    x, y, z = Floor(x / 8), Floor(y / 8), Floor(z / 8)
+    if math.abs(x) > POS_MAX or math.abs(y) > POS_MAX or math.abs(z) > POS_MAX then return nil end
+    return x, y, z
+end
+
+-- A weapon the game gave to a player of the round, in a quiet moment: not in the preparation, not within WEAPON_GRACE_MS of the round's start, of a spawn, of a
+-- revival or of a role change (loadouts and the weapons of a role), and only while the player is alive. Returns the player's id, or nil.
+local function WeaponMoment(r, ply)
+    if r.prep then return nil end
+    local sid = RoundPlayer(r, ply)
+    if not sid then return nil end
+    if not ply.IsTerror or not ply:IsTerror() then return nil end
+    local now = RoundMs(r, CurTime())
+    local p = r.players[sid]
+    if now - r.begin < WEAPON_GRACE_MS or (p.spawnAt and now - p.spawnAt < WEAPON_GRACE_MS) or (p.roleAt and now - p.roleAt < WEAPON_GRACE_MS) then return nil end
+    return sid
+end
+
+-- GM:WeaponEquip(wep, ply) of TTT2: runs as a weapon is picked up (its owner is still NULL then, so the player is the second argument). A weapon with no
+-- `Kind` is one the game removes at once. The TTT base calls it with the weapon only: there is no player then, and nothing is recorded.
+function Track.WeaponPicked(wep, ply)
+    local r = rec
+    if not r or r.stopped then return end
+    local sid = WeaponMoment(r, ply)
+    if not sid or not IsValid(wep) or wep.Kind == nil then return end
+    local class = ClassOf(wep)
+    if class then AddEvent(r, CurTime(), { p = sid, k = "wpick", w = class }) end
+end
+
+-- GM:PlayerDroppedWeapon(ply, wep) of TTT2. A drop because the player died is not recorded (`IsDroppedBecauseDeath` is set while the hook runs, which the
+-- first real round has to confirm; a player who is not alive counts as a death drop anyway).
+function Track.WeaponDropped(ply, wep)
+    local r = rec
+    if not r or r.stopped then return end
+    local sid = WeaponMoment(r, ply)
+    if not sid or not IsValid(wep) or wep.IsDroppedBecauseDeath then return end
+    local class = ClassOf(wep)
+    if class then AddEvent(r, CurTime(), { p = sid, k = "wdrop", w = class }) end
+end
+
+-- The player of the round that TTT2's event log names by SteamID64 or, for a bot, by nick (as stats.lua does), or nil.
+local function PlayerByIdentity(r, sid64, nick)
+    for _, sid in ipairs(r.order) do
+        local ply = r.players[sid].ply
+        if Member(r, sid) and IsValid(ply) then
+            if sid64 ~= nil and sid64 ~= "" then
+                local ok, id = pcall(ply.SteamID64, ply)
+                if sid == tostring(sid64) or (ok and id ~= nil and tostring(id) == tostring(sid64)) then return sid end
+            end
+            if nick ~= nil and ply.IsBot and ply:IsBot() and ply.Nick and ply:Nick() == nick then return sid end
+        end
+    end
+    return nil
+end
+
+-- ent:Method() under pcall: the value, or nil when the method is not there or raises an error.
+local function Call(ent, method)
+    local ok, v = pcall(function() return ent[method](ent) end)
+    if ok then return v end
+    return nil
+end
+
+-- The charge that was just armed by `ply`: a valid ttt_c4, armed, thrown (or originated) by them, with the newest arm time. nil when the game cannot say.
+local function ArmedCharge(ply)
+    local best, bestAt
+    for _, ent in ipairs(ents.FindByClass("ttt_c4")) do
+        if IsValid(ent) and Call(ent, "GetArmed") then
+            local who, orig = Call(ent, "GetThrower"), Call(ent, "GetOriginator")
+            if who == ply or orig == ply then
+                local at = Call(ent, "GetArmTime")
+                at = type(at) == "number" and at or 0
+                if not best or at > bestAt then best, bestAt = ent, at end
+            end
+        end
+    end
+    return best
+end
+
+local function Distance(a, b)
+    local dx, dy, dz = a.x - b.x, a.y - b.y, a.z - b.z
+    return math.sqrt(dx * dx + dy * dy + dz * dz)
+end
+
+-- The charge a defuse, a failed defuse or an explosion was about, among those that were seen being armed: the ones of that owner (when the owner is known)
+-- that still exist. A defuse takes the nearest to the disarmer within the game's range of 256 units; an explosion the one whose explode time is 0 (the
+-- game removes the charge right after the event). Several candidates and no way to tell: nil, and the place is left out.
+local function KeptCharge(r, owner, near, exploded)
+    local pick, count = nil, 0
+    local bestD
+    for _, c in ipairs(r.c4) do
+        if IsValid(c.ent) and (owner == nil or c.owner == owner) then
+            if exploded then
+                local t = Call(c.ent, "GetExplodeTime")
+                if t == nil or (type(t) == "number" and t <= 0) then -- an entity that cannot be asked counts only when it is the only one
+                    count = count + 1
+                    pick = c
+                end
+            elseif near then
+                local ok, pos = pcall(c.ent.GetPos, c.ent)
+                if ok and type(pos) == "table" then
+                    local okd, d = pcall(Distance, pos, near)
+                    if okd and d <= C4_RANGE and (not bestD or d < bestD) then bestD, pick, count = d, c, 1 end
+                end
+            else
+                count = count + 1
+                pick = c
+            end
+        end
+    end
+    if count ~= 1 then return nil end
+    return pick
+end
+
+local function ForgetCharge(r, charge)
+    for i, c in ipairs(r.c4) do
+        if c == charge then table.remove(r.c4, i) return end
+    end
+end
+
+local function PosOf(ply)
+    if not IsValid(ply) or not ply.GetPos then return nil end
+    local ok, pos = pcall(ply.GetPos, ply)
+    if ok and type(pos) == "table" and type(pos.x) == "number" and type(pos.y) == "number" and type(pos.z) == "number" then return pos end
+    return nil
+end
+
+-- TTT2's own event log, after the action: `TTT2AddedEvent(name, event)` runs once the event was made (lua/ttt2/libraries/events.lua). The names are the
+-- lower-case strings the EVENT_ constants hold. Of the three C4 events the arming, the defusing (`successful` true, or a wrong wire: false) and the
+-- explosion are recorded; the hooks TTTC4Arm and the like run BEFORE the action and may cancel it, so they are not used. The event holds no entity and no
+-- place; the charge is found as KeptCharge says.
+function Track.AddedEvent(name, event)
+    local r = rec
+    if not r or r.stopped or r.prep then return end
+    if name ~= "c4plant" and name ~= "c4disarm" and name ~= "c4explode" then return end
+    local data = type(event) == "table" and event.event
+    if type(data) ~= "table" then return end
+    r.c4 = r.c4 or {}
+    if name == "c4plant" then
+        local sid = PlayerByIdentity(r, data.sid64, data.nick)
+        if not sid then return end
+        local ev = { p = sid, k = "c4", st = "plant" }
+        local ent = ArmedCharge(r.players[sid].ply)
+        local kept = nil
+        if ent then
+            local x, y, z = PlaceOf(ent)
+            if x then
+                ev.x, ev.y, ev.z = x, y, z
+                local idx = Call(ent, "EntIndex")
+                for i = #r.c4, 1, -1 do
+                    if r.c4[i].ent == ent or (idx ~= nil and r.c4[i].idx == idx) then table.remove(r.c4, i) end
+                end
+                kept = { ent = ent, idx = idx, owner = sid }
+                local timerS = Call(ent, "GetDetonateTimer")
+                if type(timerS) == "number" and timerS == timerS then
+                    timerS = Floor(timerS)
+                    if timerS >= 1 and timerS <= 3600 then ev.s = timerS end
+                end
+            end
+        end
+        if AddEvent(r, CurTime(), ev) and kept then r.c4[#r.c4 + 1] = kept end -- at the cap the charge is not followed
+    elseif name == "c4disarm" then
+        local who, owner = data.disarmer, data.owner
+        if type(who) ~= "table" then return end
+        local sid = PlayerByIdentity(r, who.sid64, who.nick)
+        if not sid then return end
+        local ofSid = type(owner) == "table" and PlayerByIdentity(r, owner.sid64, owner.nick) or nil
+        local st = data.successful == true and "defuse" or data.successful == false and "fail" or nil
+        if not st then return end
+        local ev = { p = sid, k = "c4", st = st, of = ofSid }
+        local charge = KeptCharge(r, ofSid, PosOf(r.players[sid].ply), false)
+        if charge then
+            ev.x, ev.y, ev.z = PlaceOf(charge.ent)
+            if st == "defuse" then ForgetCharge(r, charge) end -- a wrong wire is followed by the explosion of the same charge
+        end
+        AddEvent(r, CurTime(), ev)
+    else
+        local sid = PlayerByIdentity(r, data.sid64, data.nick)
+        if not sid then return end
+        local ev = { p = sid, k = "c4", st = "boom" }
+        local charge = KeptCharge(r, sid, nil, true)
+        if charge then
+            ev.x, ev.y, ev.z = PlaceOf(charge.ent)
+            ForgetCharge(r, charge)
+        end
+        AddEvent(r, CurTime(), ev)
+    end
+end
+
+-- TTTFoundDNA(owner, ply, ent), after a sample was stored (a duplicate or a failed scan fires nothing): `owner` holds the scanner, `ply` is whose DNA it is
+-- (the killer, or the player who touched the object) and `ent` the body or object the sample came from.
+function Track.FoundDNA(owner, ply, ent)
+    local r = rec
+    if not r or r.stopped or r.prep then return end
+    local sid = RoundPlayer(r, owner)
+    if not sid then return end
+    AddEvent(r, CurTime(), { p = sid, k = "dna", of = RoundPlayer(r, ply), w = ClassOf(ent) })
+end
+
+-- TTTTraitorButtonActivated(ent, ply): after the button's outputs ran and it was locked. The same player on the same button within a second is one event.
+function Track.ButtonUsed(ent, ply)
+    local r = rec
+    if not r or r.stopped or r.prep then return end
+    local sid = RoundPlayer(r, ply)
+    if not sid or not IsValid(ent) then return end
+    local p, now = r.players[sid], RoundMs(r, CurTime())
+    local idx = Call(ent, "EntIndex")
+    if idx ~= nil then
+        p.btnLast = p.btnLast or {}
+        local at = p.btnLast[idx]
+        if at and now - at < TBTN_MERGE_MS then return end
+        p.btnLast[idx] = now
+    end
+    local ev = { p = sid, k = "tbtn" }
+    local desc = Call(ent, "GetDescription")
+    if type(desc) == "string" then
+        desc = CleanText(desc, TBTN_LEN)
+        if desc ~= "" and desc ~= "?" then ev.n = desc end -- "?" is what the game says when the map gave the button no text
+    end
+    ev.x, ev.y, ev.z = PlaceOf(ent)
+    AddEvent(r, CurTime(), ev)
+end
+
 -- ---- Bodies (RFC 24)
 
 -- TTT2 made a ragdoll for a tracked player's death: it is followed from the next tick on (SampleBodies).
@@ -1185,6 +1453,12 @@ hook.Add("OnPlayerPhysicsDrop", "TraitorDash_TrackDrop", function(ply, ent) pcal
 hook.Add("PostEntityTakeDamage", "TraitorDash_TrackHurt", function(ent, info, took) pcall(Track.Hurt, ent, info, took) end)
 hook.Add("PlayerSpawn", "TraitorDash_TrackSpawn", function(ply) pcall(Track.Spawned, ply) end)
 hook.Add("TTTBodyFound", "TraitorDash_TrackFound", function(finder, dead) pcall(Track.Found, finder, dead) end)
+-- RFC 26, stage C, package C1: all of them run after the thing happened (the "about to" hooks of TTT2 can be cancelled and are not used) and return nothing.
+hook.Add("WeaponEquip", "TraitorDash_TrackWeaponPick", function(wep, ply) pcall(Track.WeaponPicked, wep, ply) end)
+hook.Add("PlayerDroppedWeapon", "TraitorDash_TrackWeaponDrop", function(ply, wep) pcall(Track.WeaponDropped, ply, wep) end)
+hook.Add("TTT2AddedEvent", "TraitorDash_TrackEvents", function(name, event) pcall(Track.AddedEvent, name, event) end)
+hook.Add("TTTFoundDNA", "TraitorDash_TrackDNA", function(owner, ply, ent) pcall(Track.FoundDNA, owner, ply, ent) end)
+hook.Add("TTTTraitorButtonActivated", "TraitorDash_TrackButton", function(ent, ply) pcall(Track.ButtonUsed, ent, ply) end)
 
 -- The round is over: stops the timer, prints the one line, and returns the track to upload (or nil
 -- when there is nothing to send). `fingerprint` of the map is added when it is known.

@@ -1728,3 +1728,381 @@ describe('track.lua: health gained (RFC 26, 4b)', () => {
     expect(trackOf(nothing).t.length).toBeGreaterThan(1)
   })
 })
+
+// RFC 26, stage C, package C1: weapon pickups and drops, C4, DNA scans and traitor buttons, from the hooks as the game (TTT2) runs them.
+const C1 = `
+  THING_IDX = 5000
+  function Thing(class, extra)
+    THING_IDX = THING_IDX + 1
+    local e = { class = class, idx = THING_IDX }
+    function e:GetClass() return self.class end
+    function e:IsPlayer() return false end
+    function e:EntIndex() return self.idx end
+    for k, v in pairs(extra or {}) do e[k] = v end
+    return e
+  end
+  function Wep(class, extra) local e = Thing(class, { Kind = 1 }) for k, v in pairs(extra or {}) do e[k] = v end return e end
+  for _, p in ipairs({ A, B, C, SPEC }) do p.nick = p:Nick() end
+  function Start() Begin() SPEC.alive = true NOW = NOW + 1.2 end -- SPEC is alive, but was not there when the round began: not a player of it
+  function Ends() Fire("TTTEndRound", WIN_TRAITOR); Accept(1) end
+  -- a charge as the game has it: an entity of the class ttt_c4 with the data table's accessors
+  function Charge(owner, x, y, z, armAt, over)
+    local c = Part("ttt_c4", "", "", x, y, z)
+    c.armed, c.thrower, c.armAt, c.timer, c.explode = true, owner, armAt or NOW, 45, 0
+    function c:GetArmed() return self.armed end
+    function c:GetThrower() return self.thrower end
+    function c:GetOriginator() return self.thrower end
+    function c:GetArmTime() return self.armAt end
+    function c:GetDetonateTimer() return self.timer end
+    function c:GetExplodeTime() return self.explode end
+    for k, v in pairs(over or {}) do c[k] = v end
+    return c
+  end
+  function Plant(p) Fire("TTT2AddedEvent", "c4plant", { event = { nick = p.nick, sid64 = p.sid } }) end
+  function Disarm(by, owner, ok) Fire("TTT2AddedEvent", "c4disarm", { event = { successful = ok, owner = owner and { nick = owner.nick, sid64 = owner.sid }, disarmer = { nick = by.nick, sid64 = by.sid } } }) end
+  function Boom(p) Fire("TTT2AddedEvent", "c4explode", { event = { nick = p.nick, sid64 = p.sid } }) end
+  function Button(desc, x, y, z) return Thing("ttt_traitor_button", { x = x or 0, y = y or 0, z = z or 0, desc = desc, GetDescription = function(self) return self.desc end, GetPos = function(self) return { x = self.x, y = self.y, z = self.z } end }) end
+`
+const evs = (r: Run, ...kinds: string[]) => ((trackOf(r).events as any[] | undefined) ?? []).filter(e => kinds.includes(e.k))
+
+describe('track.lua: weapons picked up and dropped (RFC 26, 4c, C1)', () => {
+  test('a pickup and a drop each have the player and the weapon class, at the time; the backend takes them', () => {
+    const r = play(C1 + `
+      Start()
+      Run(1)
+      Fire("WeaponEquip", Wep("weapon_zm_shotgun"), B)
+      Fire("PlayerDroppedWeapon", B, Wep("weapon_zm_shotgun"))
+      Ends()
+    `)
+    expect(evs(r, 'wpick', 'wdrop')).toEqual([
+      { p: B, k: 'wpick', w: 'weapon_zm_shotgun', t: 1400 },
+      { p: B, k: 'wdrop', w: 'weapon_zm_shotgun', t: 1400 },
+    ])
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('the first second of the round, a second after a spawn and a second after a role change are loadout, not pickups or drops; a moment later they count', () => {
+    const r = play(C1 + `
+      Begin()
+      Fire("WeaponEquip", Wep("weapon_a"), A)                 -- the round has just begun
+      NOW = NOW + 0.999; Fire("WeaponEquip", Wep("weapon_b"), A)
+      NOW = NOW + 0.001; Fire("WeaponEquip", Wep("weapon_c"), A) -- exactly one second: counts
+      Fire("PlayerSpawn", B)
+      NOW = NOW + 0.5; Fire("WeaponEquip", Wep("weapon_d"), B); Fire("PlayerDroppedWeapon", B, Wep("weapon_d"))
+      NOW = NOW + 0.5; Fire("WeaponEquip", Wep("weapon_e"), B)
+      TraitorDash.Track.RoleChanged(C.sid, "zombie", "zombies")
+      NOW = NOW + 0.9; Fire("WeaponEquip", Wep("weapon_f"), C); Fire("PlayerDroppedWeapon", C, Wep("weapon_f"))
+      NOW = NOW + 0.2; Fire("WeaponEquip", Wep("weapon_g"), C)
+      Ends()
+    `)
+    expect(evs(r, 'wpick', 'wdrop').map(e => [e.p, e.k, e.w])).toEqual([[A, 'wpick', 'weapon_c'], [B, 'wpick', 'weapon_e'], [C, 'wpick', 'weapon_g']])
+  })
+
+  test('a player who is not in the round, a dead one, no player at all (the TTT base calls the hook with the weapon only), a weapon with no Kind and a drop at death record nothing', () => {
+    const r = play(C1 + `
+      Start()
+      Fire("WeaponEquip", Wep("weapon_spec"), SPEC)
+      Fire("PlayerDroppedWeapon", SPEC, Wep("weapon_spec"))
+      B.alive = false
+      Fire("WeaponEquip", Wep("weapon_dead"), B)
+      Fire("PlayerDroppedWeapon", B, Wep("weapon_dead"))
+      B.alive = true
+      Fire("WeaponEquip", Wep("weapon_base"))                       -- the base game's one argument
+      Fire("WeaponEquip", Thing("weapon_nokind"), A)                 -- the game removes it
+      Fire("PlayerDroppedWeapon", A, Wep("weapon_death", { IsDroppedBecauseDeath = true }))
+      Fire("WeaponEquip", nil, A); Fire("PlayerDroppedWeapon", nil, nil); Fire("WeaponEquip", Wep("weapon_notaplayer"), Thing("prop_physics"))
+      Fire("PlayerDroppedWeapon", A, Wep("weapon_alive", { IsDroppedBecauseDeath = false }))
+      Ends()
+    `)
+    expect(evs(r, 'wpick', 'wdrop').map(e => [e.k, e.w])).toEqual([['wdrop', 'weapon_alive']])
+  })
+
+  test('the preparation is not recorded: a weapon picked up before the round began is not in the track', () => {
+    const r = play(C1 + `
+      Fire("TTTPrepareRound")
+      Fire("WeaponEquip", Wep("weapon_prep"), A)
+      Fire("PlayerDroppedWeapon", A, Wep("weapon_prep"))
+      Run(10); Fire("TTTBeginRound"); NOW = NOW + 1.2
+      Fire("WeaponEquip", Wep("weapon_round"), A)
+      Ends()
+    `)
+    expect(evs(r, 'wpick', 'wdrop').map(e => e.w)).toEqual(['weapon_round'])
+  })
+
+  test('a class is cut to a safe word of at most 40 characters; one with nothing safe in it is not recorded', () => {
+    const r = play(C1 + `
+      Start()
+      Fire("WeaponEquip", Wep("weapon bad;name!"), A)
+      Fire("WeaponEquip", Wep(string.rep("w", 100)), A)
+      Fire("WeaponEquip", Wep("!!!"), A)
+      Ends()
+    `)
+    expect(evs(r, 'wpick').map(e => e.w)).toEqual(['weaponbadname', 'w'.repeat(40)])
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('512 pickups and 512 drops at most: the track is marked truncated and the other kinds keep their room', () => {
+    const r = play(C1 + `
+      Start()
+      for i = 1, 600 do Fire("WeaponEquip", Wep("weapon_x"), A); Fire("PlayerDroppedWeapon", A, Wep("weapon_x")) end
+      Fire("TTT2OrderedEquipment", A, "weapon_ttt_c4", false)
+      Ends()
+    `)
+    expect(evs(r, 'wpick')).toHaveLength(512)
+    expect(evs(r, 'wdrop')).toHaveLength(512)
+    expect(evs(r, 'buy')).toHaveLength(1)
+    expect(trackOf(r).truncated).toBe(true)
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+})
+
+describe('track.lua: C4 (RFC 26, 4c, C1)', () => {
+  test('arming a charge records the planter, the charge\'s place in units / 8 and the timer; the charge is the armed one of that player with the newest arm time', () => {
+    const r = play(C1 + `
+      Start()
+      Charge(A, 4000, 4000, 4000, NOW - 50)                    -- an older charge of A, armed earlier
+      Charge(B, 0, 0, 0, NOW)                                 -- somebody else's
+      Charge(A, 1000, 200, 64, NOW, { armed = false })         -- A's, not armed
+      Charge(A, 1008, -208, 70, NOW, { timer = 45.4 })         -- the one just armed
+      Plant(A)
+      Ends()
+    `)
+    expect(evs(r, 'c4')).toEqual([{ p: A, k: 'c4', st: 'plant', x: 126, y: -26, z: 9, s: 45, t: 1200 }])
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('a defuse is by the disarmer, with the owner as of and the place of the nearest charge of that owner within 256 units; the charge is forgotten after it', () => {
+    const r = play(C1 + `
+      Start()
+      Charge(B, 1000, 200, 64); Plant(B)
+      Charge(B, -2000, 0, 0, NOW + 1); Plant(B)
+      C.x, C.y, C.z = 950, 200, 64
+      Run(1)
+      Disarm(C, B, true)
+      C.x = 0; Disarm(C, B, true)                              -- far from the other charge: no place
+      Ends()
+    `)
+    expect(evs(r, 'c4').map(e => [e.p, e.st, e.of, e.x, e.y, e.z])).toEqual([
+      [B, 'plant', undefined, 125, 25, 8],
+      [B, 'plant', undefined, -250, 0, 0],
+      [C, 'defuse', B, 125, 25, 8],
+      [C, 'defuse', B, undefined, undefined, undefined],
+    ])
+  })
+
+  test('a wrong wire is a fail and the charge stays followed: its explosion has the place; an explosion picks the charge whose explode time is 0', () => {
+    const r = play(C1 + `
+      Start()
+      Charge(B, 1000, 200, 64); Plant(B)
+      Charge(B, 2000, 200, 64, NOW + 1, { explode = 20 }); Plant(B)
+      C.x, C.y, C.z = 1000, 200, 64
+      Disarm(C, B, false)
+      Boom(B)
+      Ends()
+    `)
+    expect(evs(r, 'c4').map(e => [e.p, e.st, e.of, e.x])).toEqual([
+      [B, 'plant', undefined, 125], [B, 'plant', undefined, 250], [C, 'fail', B, 125], [B, 'boom', undefined, 125],
+    ])
+  })
+
+  test('two charges that both look exploded, or two that cannot say, leave the place out; the event is still recorded; one that cannot say, alone, is the one', () => {
+    const r = play(C1 + `
+      Start()
+      Charge(B, 1000, 200, 64); Plant(B)
+      Charge(B, 2000, 200, 64, NOW + 1); Plant(B)
+      Boom(B)
+      Ends()
+    `)
+    expect(evs(r, 'c4').find(e => e.st === 'boom')).toEqual({ p: B, k: 'c4', st: 'boom', t: 1200 })
+    const one = play(C1 + `
+      Start()
+      Charge(B, 1000, 200, 64, NOW, { GetExplodeTime = false }); Plant(B)
+      Boom(B)
+      Ends()
+    `)
+    expect(evs(one, 'c4').find(e => e.st === 'boom')!.x).toBe(125)
+    const two = play(C1 + `
+      Start()
+      Charge(B, 1000, 200, 64, NOW, { GetExplodeTime = false }); Plant(B)
+      Charge(B, 2000, 200, 64, NOW + 1, { GetExplodeTime = false }); Plant(B)
+      Boom(B)
+      Ends()
+    `)
+    expect(evs(two, 'c4').find(e => e.st === 'boom')!.x).toBeUndefined()
+  })
+
+  test('a game whose charge cannot be asked (no accessors) or whose place is out of the map still records the events, without the place', () => {
+    const r = play(C1 + `
+      Start()
+      Plant(A)
+      local bare = Part("ttt_c4", "", "", 0, 0, 0)
+      Plant(B)
+      Charge(C, 40000, 0, 0); Plant(C)                         -- 5000 units / 8: beyond what the backend takes
+      Ends()
+    `)
+    expect(evs(r, 'c4').map(e => [e.p, e.st, e.x])).toEqual([[A, 'plant', undefined], [B, 'plant', undefined], [C, 'plant', undefined]])
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('the events of other names, of players who were not in the round, without a disarmer or with no success flag, and with a broken event are not recorded', () => {
+    const r = play(C1 + `
+      Start()
+      Fire("TTT2AddedEvent", "respawn", { event = { sid64 = A.sid } })
+      Fire("TTT2AddedEvent", "c4plant", { event = { sid64 = SPEC.sid } })
+      Fire("TTT2AddedEvent", "c4plant", { event = {} })
+      Fire("TTT2AddedEvent", "c4plant", {})
+      Fire("TTT2AddedEvent", "c4plant", nil)
+      Fire("TTT2AddedEvent", nil, nil)
+      Fire("TTT2AddedEvent", "c4disarm", { event = { successful = true, owner = { sid64 = A.sid } } })
+      Fire("TTT2AddedEvent", "c4disarm", { event = { owner = { sid64 = A.sid }, disarmer = { sid64 = B.sid } } })
+      Fire("TTT2AddedEvent", "c4explode", { event = { sid64 = SPEC.sid } })
+      Ends()
+    `)
+    expect(evs(r, 'c4')).toEqual([])
+  })
+
+  test('an owner who was not in the round is left out as of, a disarmer outside it is no event', () => {
+    const r = play(C1 + `
+      Start()
+      Disarm(B, SPEC, true)
+      Disarm(SPEC, B, true)
+      Ends()
+    `)
+    expect(evs(r, 'c4')).toEqual([{ p: B, k: 'c4', st: 'defuse', t: 1200 }])
+  })
+
+  test('a bot is found by its nick, as stats.lua does; nothing is recorded in the preparation; 128 events at most', () => {
+    const bot = play(C1 + `
+      SetCv("traitordash_stats_bots", "1")
+      function C:IsBot() return true end
+      function C:EntIndex() return 3 end
+      Start()
+      Fire("TTT2AddedEvent", "c4plant", { event = { nick = "Cara", sid64 = "0" } })
+      Ends()
+    `)
+    expect(evs(bot, 'c4').map(e => e.p)).toEqual(['999000000003'])
+    const prep = play(C1 + `Fire("TTTPrepareRound") Plant(A) Run(1) Fire("TTTBeginRound") NOW = NOW + 1.2 Ends()`)
+    expect(evs(prep, 'c4')).toEqual([])
+    const cap = play(C1 + `
+      Start()
+      for i = 1, 150 do Plant(A) end
+      Fire("TTT2OrderedEquipment", A, "weapon_ttt_c4", false)
+      Ends()
+    `)
+    expect(evs(cap, 'c4')).toHaveLength(128)
+    expect(evs(cap, 'buy')).toHaveLength(1)
+    expect(trackOf(cap).truncated).toBe(true)
+    expect(okTrack(trackOf(cap))).toBe(true)
+  })
+})
+
+describe('track.lua: DNA scans and traitor buttons (RFC 26, 4c, C1)', () => {
+  test('a DNA sample has the owner of the scanner, whose DNA it was when a round player, and the class of what it was taken from', () => {
+    const r = play(C1 + `
+      Start()
+      Fire("TTTFoundDNA", A, B, Thing("prop_ragdoll"))
+      Fire("TTTFoundDNA", A, SPEC, Thing("prop_physics"))        -- a disconnected killer, or one not in the round: of is left out
+      Fire("TTTFoundDNA", C, nil, nil)
+      Fire("TTTFoundDNA", SPEC, A, Thing("prop_ragdoll"))        -- the scanner's owner is not in the round
+      Fire("TTTFoundDNA", nil, A, Thing("prop_ragdoll"))
+      Ends()
+    `)
+    expect(evs(r, 'dna')).toEqual([
+      { p: A, k: 'dna', of: B, w: 'prop_ragdoll', t: 1200 },
+      { p: A, k: 'dna', w: 'prop_physics', t: 1200 },
+      { p: C, k: 'dna', t: 1200 },
+    ])
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('a traitor button has the player, the mapper\'s text (cleaned, at most 40 characters, nothing for the "?" of a button with no text) and the place; the same player on the same button within a second is one', () => {
+    const r = play(C1 + `
+      Start()
+      local door = Button("Open the vent", 80, 160, -16)
+      Fire("TTTTraitorButtonActivated", door, A)
+      NOW = NOW + 0.999; Fire("TTTTraitorButtonActivated", door, A)   -- still one
+      Fire("TTTTraitorButtonActivated", door, B)                     -- another player
+      Fire("TTTTraitorButtonActivated", Button("?", 8, 8, 8), A)      -- another button, no text
+      NOW = NOW + 0.002; Fire("TTTTraitorButtonActivated", door, A)   -- a second after the first
+      Fire("TTTTraitorButtonActivated", Button("  Line\\nbreak\\t " .. string.rep("x", 60), 0, 0, 0), C)
+      Fire("TTTTraitorButtonActivated", Button(nil), C)
+      Ends()
+    `)
+    const ev = evs(r, 'tbtn')
+    expect(ev.map(e => [e.p, e.n])).toEqual([[A, 'Open the vent'], [B, 'Open the vent'], [A, undefined], [A, 'Open the vent'], [C, 'Line break  ' + 'x'.repeat(28)], [C, undefined]])
+    expect(ev[0]).toMatchObject({ x: 10, y: 20, z: -2 })
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('players outside the round, a missing button and a button that cannot say its place are handled: nothing recorded, or no place', () => {
+    const r = play(C1 + `
+      Start()
+      Fire("TTTTraitorButtonActivated", Button("x"), SPEC)
+      Fire("TTTTraitorButtonActivated", nil, A)
+      Fire("TTTTraitorButtonActivated", Thing("ttt_traitor_button"), A)
+      Ends()
+    `)
+    expect(evs(r, 'tbtn')).toEqual([{ p: A, k: 'tbtn', t: 1200 }])
+  })
+
+  test('128 DNA events and 256 button events at most; the track is marked truncated', () => {
+    const r = play(C1 + `
+      Start()
+      for i = 1, 150 do Fire("TTTFoundDNA", A, B, Thing("prop_ragdoll")) end
+      for i = 1, 300 do Fire("TTTTraitorButtonActivated", Button("b" .. i), A) end
+      Ends()
+    `)
+    expect(evs(r, 'dna')).toHaveLength(128)
+    expect(evs(r, 'tbtn')).toHaveLength(256)
+    expect(trackOf(r).truncated).toBe(true)
+  })
+})
+
+describe('track.lua: C1 hooks do no harm', () => {
+  test('every hook returns nothing (a value would stop the game\'s own function), recording or not, and a broken argument raises nothing', () => {
+    const on = play(C1 + `
+      Start()
+      Charge(A, 8, 8, 8)
+      OUT = {
+        pick = FireValues("WeaponEquip", Wep("weapon_x"), A), drop = FireValues("PlayerDroppedWeapon", A, Wep("weapon_x")),
+        c4 = FireValues("TTT2AddedEvent", "c4plant", { event = { sid64 = A.sid } }), dna = FireValues("TTTFoundDNA", A, B, Thing("prop_ragdoll")),
+        btn = FireValues("TTTTraitorButtonActivated", Button("x"), A),
+        broken = FireValues("WeaponEquip", 5, "x") + FireValues("TTT2AddedEvent", 1, 2) + FireValues("TTTFoundDNA", 1, 2, 3) + FireValues("TTTTraitorButtonActivated", {}, {}),
+      }
+    `)
+    expect(on.out).toEqual({ pick: 0, drop: 0, c4: 0, dna: 0, btn: 0, broken: 0 })
+    const off = play(C1 + `Start() OUT = { pick = FireValues("WeaponEquip", Wep("weapon_x"), A), c4 = FireValues("TTT2AddedEvent", "c4plant", { event = { sid64 = A.sid } }) }`, false)
+    expect(off.out).toEqual({ pick: 0, c4: 0 })
+  })
+
+  test('with tracking off nothing is recorded and nothing is asked of the game; a round that has ended records nothing more', () => {
+    const off = play(C1 + `
+      ASKED = 0
+      local w = Wep("weapon_x", { GetClass = function(self) ASKED = ASKED + 1 return "weapon_x" end })
+      Begin(); NOW = NOW + 1.2
+      Fire("WeaponEquip", w, A); Fire("PlayerDroppedWeapon", A, w); Fire("TTT2AddedEvent", "c4plant", { event = { sid64 = A.sid } })
+      Fire("TTTFoundDNA", A, B, w); Fire("TTTTraitorButtonActivated", Button("x"), A)
+      OUT = { asked = ASKED }
+    `, false)
+    expect(off.out).toEqual({ asked: 0 })
+    const after = play(C1 + `
+      Start() Ends()
+      Fire("WeaponEquip", Wep("weapon_late"), A)
+    `)
+    expect(trackOf(after).events).toBeUndefined()
+  })
+
+  test('a track with every C1 kind passes the backend\'s own validation', () => {
+    const r = play(C1 + `
+      Start()
+      Charge(A, 80, 160, 24); Plant(A)
+      Fire("WeaponEquip", Wep("weapon_zm_mac10"), B); Fire("PlayerDroppedWeapon", B, Wep("weapon_zm_mac10"))
+      Disarm(B, A, true)
+      Fire("TTTFoundDNA", C, A, Thing("prop_ragdoll"))
+      Fire("TTTTraitorButtonActivated", Button("Trap", 8, 16, 24), A)
+      Ends()
+    `)
+    expect(evs(r, 'wpick', 'wdrop', 'c4', 'dna', 'tbtn').map(e => e.k)).toEqual(['c4', 'wpick', 'wdrop', 'c4', 'dna', 'tbtn'])
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+})
