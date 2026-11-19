@@ -94,6 +94,7 @@ describe('what a player held, had and watched at a time', () => {
     expect(watchingAt(sp, 5000, 900)).toBe('C')
     expect(watchingAt(sp, 1500, null)).toBeNull() // alive
     expect(watchingAt(sp, 4000, 3000)).toBeNull() // the last target is from before this death
+    expect(watchingAt([ev({ k: 'spec', t: 1000, of: 'B' })], 4000, 3000)).toBeNull() // a target of an earlier death is not this death's
     expect(watchingAt(sp, 5000, 5000)).toBe('C') // at the very time of the death
     expect(watchingAt(sp, 500, 400)).toBeNull()
     expect(watchingAt(undefined, 500, 400)).toBeNull()

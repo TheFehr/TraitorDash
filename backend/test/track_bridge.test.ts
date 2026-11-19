@@ -2379,6 +2379,42 @@ describe('track.lua: credits (RFC 26, 4c, C2)', () => {
     expect(okTrack(trackOf(r))).toBe(true)
   })
 
+  test('a gain and a spend for the same reason are two events, not one that adds up to nothing', () => {
+    const r = play(C2 + `Start(); B.cred = 4; Run(1); B.cred = 3; Run(1); Ends()`)
+    expect(credits(r).map(e => [e.d, e.c, e.w])).toEqual([[1, 4, 'other'], [-1, 3, 'other']])
+  })
+
+  test('a player who was not in the round has no weapon, credits or target recorded even when the game answers for them', () => {
+    const r = play(C2 + `
+      SetCv("traitordash_track_spec", "1")
+      Start()
+      SPEC.wep = Wep(W_A); SPEC.cred = 9
+      Run(1); SPEC.cred = 5; SPEC.alive = false; SPEC.obs = A; Run(2)
+      Ends()
+    `)
+    expect(evs(r, 'hold', 'credits', 'spec').filter(e => e.p === '76561198000000009')).toEqual([])
+  })
+
+  test('a player recorded in the preparation who was not in the round (dead when it began, alive again later) has nothing polled', () => {
+    const r = play(C2 + `
+      SetCv("traitordash_track_spec", "1")
+      SPEC.alive = true; SPEC.wep = Wep(W_A)
+      Fire("TTTPrepareRound"); Run(2)
+      SPEC.alive = false
+      Fire("TTTBeginRound"); NOW = NOW + 1.2
+      SPEC.alive = true; SPEC.cred = 9; Run(1); SPEC.alive = false; SPEC.obs = A; Run(2)
+      Ends()
+    `)
+    expect(evs(r, 'hold', 'credits', 'spec').filter(e => e.p === '76561198000000009')).toEqual([])
+  })
+
+  test('without the preparation the setting is still read from the ConVar: off records no targets', () => {
+    const r = play(C2 + `SetCv("traitordash_track_prep", "0"); Start(); B.alive = false; B.obs = A; Run(2); Ends()`)
+    expect(specs(r)).toEqual([])
+    const on = play(C2 + `SetCv("traitordash_track_prep", "0"); SetCv("traitordash_track_spec", "1"); Start(); B.alive = false; B.obs = A; Run(2); Ends()`)
+    expect(specs(on)).toHaveLength(1)
+  })
+
   test('a dead player has no credits looked at; the first look after a revival is the baseline again, so what changed while dead is no event; later changes count', () => {
     const r = play(C2 + `
       Start()
