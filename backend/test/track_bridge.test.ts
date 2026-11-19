@@ -2148,3 +2148,574 @@ describe('track.lua: C1 hooks do no harm', () => {
     expect(okTrack(trackOf(r))).toBe(true)
   })
 })
+
+// RFC 26, stage C, package C2: the weapon in hand, credits, karma and the target of a dead player, polled at the sample or seen through a detour.
+const C2 = C1 + `
+  W_A, W_B, W_C = "weapon_ttt_m16", "weapon_zm_shotgun", "weapon_zm_mac10"
+  POLLS = { hold = 0, cred = 0, obs = 0 }
+  for _, p in ipairs({ A, B, C, SPEC }) do
+    p.cred, p.karma, p.wep, p.obs = 3, 1000, nil, nil
+    function p:GetActiveWeapon() POLLS.hold = POLLS.hold + 1 if self.badwep then error("no weapon") end return self.wep end
+    function p:GetCredits() POLLS.cred = POLLS.cred + 1 return self.cred end
+    function p:GetLiveKarma() return self.karma end
+    function p:GetObserverTarget() POLLS.obs = POLLS.obs + 1 return self.obs end
+  end
+  A.wep, B.wep, C.wep = Wep(W_A), Wep(W_B), Wep(W_C)
+  -- the game's function: it clamps the live karma like the game and returns two values so the detour has something to hand on
+  KCALLS = 0
+  KARMA = {}
+  function KARMA.DoKarmaChange(ply, amount, reason, ...)
+    KCALLS = KCALLS + 1
+    KARGS = { n = select("#", ...), ply, amount, reason, ... }
+    ply.karma = math.min(math.max(ply.karma + amount, 0), 1000)
+    return "done", 42
+  end
+  ORIGK = KARMA.DoKarmaChange
+  function Karma(ply, amount, reason) return KARMA.DoKarmaChange(ply, amount, reason) end
+  function Gap(ms) NOW = NOW + ms / 1000 end
+`
+const holds = (r: Run, p?: string) => evs(r, 'hold').filter(e => p === undefined || e.p === p)
+const credits = (r: Run, p?: string) => evs(r, 'credits').filter(e => p === undefined || e.p === p)
+const karmas = (r: Run, p?: string) => evs(r, 'karma').filter(e => p === undefined || e.p === p)
+const specs = (r: Run, p?: string) => evs(r, 'spec').filter(e => p === undefined || e.p === p)
+
+describe('track.lua: the weapon in hand (RFC 26, 4c, C2)', () => {
+  test('the first look at each living round player writes what they hold; then only a change, and nothing for an empty hand; the backend takes it', () => {
+    const r = play(C2 + `
+      Start()
+      Run(1)                                  -- the same weapons: nothing
+      A.wep = Wep(W_C); Run(1)                -- 1600
+      B.wep = nil; Run(1)                     -- nothing in hand: nothing is written
+      B.wep = Wep(W_B); Run(1)                -- the same weapon again after the empty hand: nothing
+      Ends()
+    `)
+    expect(holds(r)).toEqual([
+      { p: A, k: 'hold', w: 'weapon_ttt_m16', t: 0 }, { p: B, k: 'hold', w: 'weapon_zm_shotgun', t: 0 }, { p: C, k: 'hold', w: 'weapon_zm_mac10', t: 0 },
+      { p: A, k: 'hold', w: 'weapon_zm_mac10', t: 1600 },
+    ])
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('a change within 300 ms of the player\'s last one replaces it (quick switching is one change): 300 ms is still one, 301 are two; the replaced event moves with the change', () => {
+    const r = play(C2 + `
+      Start()
+      Run(1, 0.2)                               -- 1400
+      A.wep = Wep("weapon_x"); Run(1, 0.1)      -- 1500: a change
+      A.wep = Wep("weapon_y"); Run(1, 0.3)      -- 1800: exactly 300 ms after it: replaces it
+      A.wep = Wep("weapon_z"); Run(1, 0.301)    -- 2101: 301 ms: a new one
+      Ends()
+    `)
+    expect(holds(r, A).map(e => [e.w, e.t])).toEqual([['weapon_ttt_m16', 0], ['weapon_y', 1800], ['weapon_z', 2101]])
+  })
+
+  test('a weapon replaced that is not the newest event of the track keeps its time, so the events stay in time order', () => {
+    const r = play(C2 + `
+      Start()
+      Run(1, 0.2)
+      A.wep = Wep("weapon_x"); Run(1, 0.1)                    -- 1500
+      Fire("TTT2OrderedEquipment", B, "weapon_ttt_c4", false) -- a later event of another kind
+      A.wep = Wep("weapon_y"); Run(1, 0.1)                    -- 1600: replaces
+      Ends()
+    `)
+    expect(holds(r, A).map(e => [e.w, e.t])).toEqual([['weapon_ttt_m16', 0], ['weapon_y', 1500]])
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('a dead player holds nothing and is not asked; the first look after a revival writes the weapon again, also the same one; a player who was not in the round has none', () => {
+    const r = play(C2 + `
+      Start()
+      B.alive = false; Run(1); POLLS.hold = 0; Run(2)
+      OUT = { asked = POLLS.hold }                -- A and C are asked on each of the two ticks, B never
+      B.alive = true; Run(1)
+      Ends()
+    `)
+    expect(r.out.asked).toBe(4)
+    expect(holds(r, B).map(e => [e.w, e.t])).toEqual([['weapon_zm_shotgun', 0], ['weapon_zm_shotgun', 2000]])
+    expect(holds(r, '76561198000000009')).toEqual([])
+  })
+
+  test('the preparation records no weapons; the start of the round writes what everybody holds', () => {
+    const r = play(C2 + `
+      Fire("TTTPrepareRound")
+      Run(3); A.wep = Wep(W_C); Run(2)
+      OUT = { prep = POLLS.hold }
+      Fire("TTTBeginRound")
+      Run(1)
+      Ends()
+    `)
+    expect(r.out.prep).toBe(0)
+    expect(holds(r).map(e => [e.p, e.w, e.t])).toEqual([[A, 'weapon_zm_mac10', 1000], [B, 'weapon_zm_shotgun', 1000], [C, 'weapon_zm_mac10', 1000]])
+  })
+
+  test('1024 hold events at most: the track is marked truncated, the other kinds keep their room, and the backend takes it', () => {
+    const r = play(C2 + `
+      Start()
+      local x, y = Wep("weapon_x"), Wep("weapon_y")
+      for i = 1, 1100 do A.wep = (i % 2 == 0) and x or y; Gap(400); Run(1, 0) end
+      Fire("TTT2OrderedEquipment", A, "weapon_ttt_c4", false)
+      Ends()
+    `)
+    expect(holds(r)).toHaveLength(1024)
+    expect(evs(r, 'buy')).toHaveLength(1)
+    expect(trackOf(r).truncated).toBe(true)
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('a game that has no GetActiveWeapon, or one that raises an error, records the round as before, without holds', () => {
+    const r = play(C2 + `
+      for _, p in ipairs({ A, B, C }) do p.GetActiveWeapon = nil end
+      Start(); Run(2); Ends()
+    `)
+    expect(holds(r)).toEqual([])
+    expect(trackOf(r).t.length).toBe(3)
+    const bad = play(C2 + `A.badwep = true; Start(); Run(2); Ends()`)
+    expect(holds(bad).map(e => e.p)).toEqual([B, C]) // Alice's hand cannot be read; the others can
+    expect(trackOf(bad).t.length).toBe(3)
+  })
+})
+
+describe('track.lua: credits (RFC 26, 4c, C2)', () => {
+  test('a change is one event with the change, the credits after and the reason "other" when no hook said why; the start is no change; the backend takes it', () => {
+    const r = play(C2 + `
+      Start()
+      Run(1)                       -- no change: nothing
+      B.cred = 5; Run(1)           -- 1600
+      B.cred = 5; Run(1)
+      C.cred = 0; Run(1)           -- 2000
+      Ends()
+    `)
+    expect(credits(r)).toEqual([{ p: B, k: 'credits', d: 2, c: 5, w: 'other', t: 1600 }, { p: C, k: 'credits', d: -3, c: 0, w: 'other', t: 2000 }])
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('nothing in the first second of the round or within a second of a spawn (the game setting credits up); 999 ms is silent, 1000 ms counts; the baseline moves on silently', () => {
+    const first = play(C2 + `Begin(); B.cred = 5; Run(1, 0.999); B.cred = 6; Run(1, 0.001); Ends()`)
+    expect(credits(first).map(e => [e.d, e.c, e.t])).toEqual([[1, 6, 1000]]) // 999 ms into the round the 5 is the baseline; at 1000 ms the 6 counts
+    const spawn = play(C2 + `Start(); Fire("PlayerSpawn", B); B.cred = 9; Run(1, 0.999); B.cred = 10; Run(1, 0.001); Ends()`)
+    expect(credits(spawn).map(e => [e.d, e.c, e.t])).toEqual([[1, 10, 2200]]) // 999 ms after the spawn the 9 is the baseline; 1000 ms after it the 10 counts
+  })
+
+  test('the reason comes from the hooks that run after the change: found, team, buy, kill (also when the game gives the players in the documented order), give and got', () => {
+    const r = play(C2 + `
+      Start()
+      B.cred = 4; Fire("TTT2OnGiveFoundCredits", B, Thing("prop_ragdoll"), 1); Run(1)
+      Gap(1100)
+      C.cred = 4; Fire("TTT2OnReceiveTeamAwardCredits", C, 1); Run(1)
+      Gap(1100)
+      A.cred = 2; Fire("TTT2OrderedEquipment", A, "weapon_ttt_c4", false, 1, false); Run(1)
+      Gap(1100)
+      A.cred = 3; Fire("TTT2OnReceiveKillCredits", B, A, 1); Run(1)         -- as the game runs it: (victim, attacker, credits)
+      Gap(1100)
+      C.cred = 5; Fire("TTT2OnReceiveKillCredits", C, B, 1); Run(1)         -- as it is documented: (ply, victim, credits)
+      Gap(1100)
+      A.cred = 2; B.cred = 5; Fire("TTT2OnTransferCredits", A, B, 1, false); Run(1)
+      Ends()
+    `)
+    expect(credits(r).map(e => [e.p, e.d, e.c, e.w])).toEqual([
+      [B, 1, 4, 'found'], [C, 1, 4, 'team'], [A, -1, 2, 'buy'], [A, 1, 3, 'kill'], [C, 1, 5, 'kill'], [A, -1, 2, 'give'], [B, 1, 5, 'got'],
+    ])
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('the kill hook tags only the player whose credits rose since the last look: the victim is not the one who got them', () => {
+    const r = play(C2 + `
+      Start()
+      A.cred = 4                                 -- the killer got a credit
+      Fire("TTT2OnReceiveKillCredits", B, A, 1)  -- (victim, attacker, credits)
+      B.cred = 4                                 -- and, by something else, so did the victim
+      Run(1)
+      Ends()
+    `)
+    expect(credits(r).map(e => [e.p, e.w])).toEqual([[A, 'kill'], [B, 'other']])
+  })
+
+  test('when several reasons fall in one look the sign of the change picks: a spend is the purchase, a gain the kill; the newest fitting one wins; none that fits is "other"', () => {
+    const net = (cred: number) => play(C2 + `
+      Start()
+      B.cred = 4; Fire("TTT2OnReceiveKillCredits", C, B, 1)
+      Fire("TTT2OnGiveFoundCredits", B, nil, 1)
+      Fire("TTT2OrderedEquipment", B, "weapon_ttt_c4", false, 1, false)
+      B.cred = ${cred}; Run(1)
+      Ends()
+    `)
+    expect(credits(net(5)).map(e => e.w)).toEqual(['found']) // up: the found credits are newer than the kill's
+    expect(credits(net(1)).map(e => e.w)).toEqual(['buy'])   // down: the purchase
+    const none = play(C2 + `Start(); Fire("TTT2OnGiveFoundCredits", B, nil, 1); B.cred = 1; Run(1); Ends()`) // a gain was noted, a spend came
+    expect(credits(none).map(e => e.w)).toEqual(['other'])
+  })
+
+  test('a note older than 1500 ms is not used, one made since the last look is, however long ago that was; the notes are for one change only', () => {
+    const old = play(C2 + `
+      Start()
+      Fire("TTT2OnGiveFoundCredits", B, nil, 1)
+      Run(7)                                      -- 1.4 s of looks with no change
+      Gap(200); B.cred = 4; Run(1, 0.001)         -- the note is 1601 ms old and the last look was 200 ms ago
+      Ends()
+    `)
+    expect(credits(old).map(e => e.w)).toEqual(['other'])
+    const slow = play(C2 + `
+      Start()
+      Run(1, 0.2)
+      Fire("TTT2OnGiveFoundCredits", B, nil, 1); B.cred = 4
+      Run(1, 3)                                   -- the next look is 3 s later
+      B.cred = 5; Run(1, 0.2)                     -- the note was used up by the first change
+      Ends()
+    `)
+    expect(credits(slow).map(e => e.w)).toEqual(['found', 'other'])
+  })
+
+  test('changes of the same player for the same reason in the same direction within a second of the last are one event; 1000 ms is still one, 1001 are two; another reason or direction is another event', () => {
+    const r = play(C2 + `
+      Start()
+      B.cred = 4; Fire("TTT2OnGiveFoundCredits", B, nil, 1); Run(1, 0.2)   -- 1400
+      B.cred = 5; Fire("TTT2OnGiveFoundCredits", B, nil, 1); Run(1, 0.2)   -- 1600: merged
+      B.cred = 6; Fire("TTT2OnGiveFoundCredits", B, nil, 1); Run(1, 1.0)   -- 2600: 1000 ms after the last: merged
+      B.cred = 7; Fire("TTT2OnGiveFoundCredits", B, nil, 1); Run(1, 1.001) -- 3601: a new event
+      B.cred = 8; Fire("TTT2OnReceiveTeamAwardCredits", B, 1); Run(1, 0.2) -- another reason
+      B.cred = 6; Fire("TTT2OrderedEquipment", B, "weapon_ttt_c4", false, 2, false); Run(1, 0.2) -- the other direction
+      Ends()
+    `)
+    expect(credits(r).map(e => [e.d, e.c, e.w, e.t])).toEqual([[3, 6, 'found', 1400], [1, 7, 'found', 3601], [1, 8, 'team', 3801], [-2, 6, 'buy', 4001]])
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('a dead player has no credits looked at; the first look after a revival is the baseline again, so what changed while dead is no event; later changes count', () => {
+    const r = play(C2 + `
+      Start()
+      B.alive = false; B.cred = 9; Run(2)
+      B.alive = true; Fire("PlayerSpawn", B); Run(7)    -- the baseline, then 1.2 s of looks
+      B.cred = 8; Run(1)
+      Ends()
+    `)
+    expect(credits(r, B).map(e => [e.d, e.c])).toEqual([[-1, 8]])
+  })
+
+  test('the credits are cut to 0 to 255 and a game that cannot say, or says no number, gives no event', () => {
+    const r = play(C2 + `
+      Start()
+      B.cred = 300; Run(1)
+      B.cred = -4; Gap(1100); Run(1)
+      C.cred = 0/0; Run(1)
+      A.GetCredits = nil; Run(1)
+      Ends()
+    `)
+    expect(credits(r).map(e => [e.p, e.d, e.c])).toEqual([[B, 252, 255], [B, -255, 0]])
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('notes about a player who is not in the round, in the preparation or with nothing to go on are not kept; the hooks return nothing and survive arguments that raise', () => {
+    const r = play(C2 + `
+      Fire("TTTPrepareRound")
+      Fire("TTT2OnGiveFoundCredits", B, nil, 1)                    -- in the preparation
+      Fire("TTTBeginRound"); NOW = NOW + 1.2; Run(1)
+      Fire("TTT2OnGiveFoundCredits", SPEC, nil, 1)
+      Fire("TTT2OnReceiveTeamAwardCredits", nil, 1); Fire("TTT2OnTransferCredits", nil, nil, 1); Fire("TTT2OnReceiveKillCredits", nil, nil, 1)
+      local bad = setmetatable({}, { __index = function() error("an argument that raises") end })
+      OUT = { values = FireValues("TTT2OnGiveFoundCredits", B) + FireValues("TTT2OnReceiveTeamAwardCredits", B) + FireValues("TTT2OnTransferCredits", A, B)
+        + FireValues("TTT2OnReceiveKillCredits", B, A) + FireValues("TTT2OnGiveFoundCredits", bad, bad, bad) + FireValues("TTT2OnTransferCredits", bad, bad)
+        + FireValues("TTT2OnReceiveKillCredits", bad, bad) }
+      Gap(2000); Run(1)                                             -- a look 2 s later, with no change: the notes just made are stale for the next one
+      B.cred = 4; Run(1)
+      Ends()
+    `)
+    expect(r.out.values).toBe(0)
+    expect(credits(r).map(e => [e.w])).toEqual([['other']])
+  })
+
+  test('512 credit events at most: the track is marked truncated, the other kinds keep their room, and the backend takes it', () => {
+    const r = play(C2 + `
+      Start()
+      for i = 1, 600 do B.cred = (i % 2 == 0) and 3 or 4; Gap(1100); Run(1, 0) end
+      Fire("TTT2OrderedEquipment", A, "weapon_ttt_c4", false)
+      Ends()
+    `)
+    expect(credits(r)).toHaveLength(512)
+    expect(evs(r, 'buy')).toHaveLength(1)
+    expect(trackOf(r).truncated).toBe(true)
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+})
+
+describe('track.lua: karma (RFC 26, 4c, C2)', () => {
+  test('a change is recorded after the original ran: the amount rounded as the game does, the live karma after, the reason without karma_ and _tooltip; the backend takes it', () => {
+    const r = play(C2 + `
+      Start()
+      Karma(B, -40, "karma_teamhurt_tooltip")
+      Gap(1100); Karma(B, 30.4, "karma_cleanround_tooltip")
+      Gap(1100); Karma(A, -2.5, "karma_enemyhurt_tooltip")     -- rounds towards zero here as the game's own half-up rounding does for -2.5
+      Gap(1100); Karma(C, 5, "karma_somethingnew_tooltip")
+      Gap(1100); Karma(C, 5, nil)
+      Gap(1100); Karma(C, 5, "karma_teamkill_tooltip")
+      Gap(1100); Karma(C, 5, "teamhurt")
+      Gap(1100); Karma(C, 5, "karma_TEAMHURT_tooltip")
+      Ends()
+    `)
+    expect(karmas(r).map(e => [e.p, e.d, e.c, e.w])).toEqual([
+      [B, -40, 960, 'teamhurt'], [B, 30, 990, 'cleanround'], [A, -2, 998, 'enemyhurt'], [C, 5, 1000, 'other'], [C, 5, 1000, 'other'], [C, 5, 1000, 'teamkill'], [C, 5, 1000, 'teamhurt'], [C, 5, 1000, 'other'],
+    ])
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('no change after rounding, a value that is no number, a player who is not in the round and a karma that cannot be read are not recorded; the original still runs', () => {
+    const r = play(C2 + `
+      Start()
+      Karma(B, 0.4, "karma_teamhurt_tooltip"); Karma(B, -0.4, "karma_teamhurt_tooltip"); Karma(B, 0/0, "karma_teamhurt_tooltip"); Karma(B, "5", "karma_teamhurt_tooltip")
+      Karma(SPEC, -10, "karma_teamhurt_tooltip")
+      A.GetLiveKarma = nil; Karma(A, -10, "karma_teamhurt_tooltip")
+      C.GetLiveKarma = function() return "high" end; Karma(C, -10, "karma_teamhurt_tooltip")
+      OUT = { calls = KCALLS }
+      Ends()
+    `)
+    expect(karmas(r)).toEqual([])
+    expect(r.out.calls).toBe(7) // the original ran for every call
+  })
+
+  test('the same player, reason and direction within a second of the last are one event (a shotgun at a teammate): the changes added, the karma of the last; 1000 ms is still one, 1001 two; another reason or direction is another event', () => {
+    const r = play(C2 + `
+      Start()
+      Karma(B, -10, "karma_teamhurt_tooltip"); Gap(500)
+      Karma(B, -10, "karma_teamhurt_tooltip"); Gap(1000)
+      Karma(B, -10, "karma_teamhurt_tooltip"); Gap(1001)
+      Karma(B, -10, "karma_teamhurt_tooltip"); Gap(100)
+      Karma(B, -10, "karma_teamkill_tooltip"); Gap(100)
+      Karma(B, 10, "karma_teamkill_tooltip")
+      Ends()
+    `)
+    expect(karmas(r).map(e => [e.d, e.c, e.w, e.t])).toEqual([[-30, 970, 'teamhurt', 1200], [-10, 960, 'teamhurt', 3701], [-10, 950, 'teamkill', 3801], [10, 960, 'teamkill', 3901]])
+  })
+
+  test('the change and the karma after are cut to 1000: a change of more is 1000, a karma above 1000 is 1000, below 0 is 0', () => {
+    const r = play(C2 + `
+      Start()
+      Karma(B, -5000, "karma_teamkill_tooltip"); Gap(1100)
+      B.karma = 1500; Karma(B, 5000, "karma_cleanround_tooltip"); B.karma = -20; Gap(1100)
+      Karma(C, 1, "karma_cleanround_tooltip"); C.karma = -20; Karma(C, -1, "karma_teamhurt_tooltip")
+      Ends()
+    `)
+    expect(karmas(r).map(e => [e.p, e.d, e.c])).toEqual([[B, -1000, 0], [B, 1000, 1000], [C, 1, 1000], [C, -1, 0]])
+    expect(okTrack(trackOf(r))).toBe(true)
+    const high = play(C2 + `KARMA.DoKarmaChange = function(ply, amount) ply.karma = ply.karma + amount end; Start(); Karma(B, 500, "karma_cleanround_tooltip"); Ends()`) // a server whose maximum is higher
+    expect(karmas(high).map(e => [e.d, e.c])).toEqual([[500, 1000]])
+  })
+
+  test('the detour hands every argument to the original and returns what it returned, also when the recorder raises an error', () => {
+    const r = play(C2 + `
+      Start()
+      local a, b, c = KARMA.DoKarmaChange(B, -5, "karma_teamhurt_tooltip", "extra1", "extra2")
+      OUT = { a = a, b = b, c = c, extra = KARGS.n, e1 = KARGS[4], e2 = KARGS[5], karma = B.karma, count = select("#", KARMA.DoKarmaChange(B, -5, "x")) }
+      local T = TraitorDash.Track
+      T.Karma = function() error("boom") end
+      local a2, b2 = KARMA.DoKarmaChange(B, -7, "x", "z")
+      OUT.after = { a2, b2, B.karma, KARGS[4] }
+      OUT.calls = KCALLS
+    `)
+    expect(r.out.a).toBe('done'); expect(r.out.b).toBe(42); expect(r.out.c).toBeUndefined(); expect(r.out.count).toBe(2)
+    expect([r.out.extra, r.out.e1, r.out.e2, r.out.karma]).toEqual([2, 'extra1', 'extra2', 995])
+    expect(r.out.after).toEqual(['done', 42, 983, 'z'])
+    expect(r.out.calls).toBe(3)
+  })
+
+  test('the original is put back when the round ends and when the recording is dropped (traitordash_track 0); it is in place only while the round is recorded, not in the preparation', () => {
+    const r = play(C2 + `
+      Fire("TTTPrepareRound")
+      local prep = KARMA.DoKarmaChange == ORIGK
+      Fire("TTTBeginRound")
+      local during = KARMA.DoKarmaChange ~= ORIGK
+      Ends()
+      OUT = { prep = prep, during = during, back = KARMA.DoKarmaChange == ORIGK }
+    `)
+    expect(r.out).toEqual({ prep: true, during: true, back: true })
+    const killed = play(C2 + `Start(); SetCv("traitordash_track", "0"); Run(1); OUT = { back = KARMA.DoKarmaChange == ORIGK, timers = Count() }`)
+    expect(killed.out).toEqual({ back: true, timers: 0 })
+  })
+
+  test('somebody else who wrapped it after us is not undone at the end of the round: our wrapper stays in their chain, switched off, and passes everything on', () => {
+    const r = play(C2 + `
+      Start()
+      local ours = KARMA.DoKarmaChange
+      local theirs = function(ply, amount, reason) THEIRS = (THEIRS or 0) + 1 return ours(ply, amount, reason) end
+      KARMA.DoKarmaChange = theirs
+      Ends()
+      OUT = { kept = KARMA.DoKarmaChange == theirs }
+      local a = Karma(B, -5, "karma_teamhurt_tooltip")
+      OUT.a, OUT.theirs, OUT.calls, OUT.karma = a, THEIRS, KCALLS, B.karma
+    `)
+    expect(r.out).toEqual({ kept: true, a: 'done', theirs: 1, calls: 1, karma: 995 })
+  })
+
+  test('a reload of the file while the detour is in place wraps nothing twice: the next round takes the old wrapper off, and one change is one event', () => {
+    const r = play(C2 + `
+      Start()
+      local wrapper = KARMA.DoKarmaChange
+      assert(load(${luaLong(read('track.lua'))}, "@track.lua"))()
+      SetCv("traitordash_track", "1")
+      local kept = KARMA.DoKarmaChange == wrapper
+      Fire("TTTPrepareRound")
+      local gone = KARMA.DoKarmaChange == ORIGK
+      Fire("TTTBeginRound"); NOW = NOW + 1.2
+      KCALLS = 0; Karma(B, -5, "karma_teamhurt_tooltip")
+      OUT = { kept = kept, gone = gone, calls = KCALLS }
+      Ends()
+      OUT.back = KARMA.DoKarmaChange == ORIGK
+    `)
+    expect(r.out).toEqual({ kept: true, gone: true, calls: 1, back: true })
+    expect(karmas(r).map(e => [e.p, e.d])).toEqual([[B, -5]])
+  })
+
+  test('a game with no KARMA (the TTT base), or one with no DoKarmaChange, records the round as before, without karma; with tracking off nothing is touched', () => {
+    const none = play(C2 + `KARMA = nil; Start(); Run(1); Ends()`)
+    expect(karmas(none)).toEqual([])
+    expect(trackOf(none).t.length).toBe(2)
+    const empty = play(C2 + `KARMA = {}; Start(); Run(1); Ends()`)
+    expect(trackOf(empty).t.length).toBe(2)
+    const off = play(C2 + `Begin(); NOW = NOW + 1.2; Karma(B, -5, "karma_teamhurt_tooltip"); OUT = { same = KARMA.DoKarmaChange == ORIGK, calls = KCALLS }`, false)
+    expect(off.out).toEqual({ same: true, calls: 1 })
+  })
+
+  test('512 karma events at most: the track is marked truncated, the other kinds keep their room, and the backend takes it', () => {
+    const r = play(C2 + `
+      Start()
+      for i = 1, 600 do Gap(1100); Karma(B, (i % 2 == 0) and 5 or -5, "karma_teamhurt_tooltip") end
+      Fire("TTT2OrderedEquipment", A, "weapon_ttt_c4", false)
+      Ends()
+    `)
+    expect(karmas(r)).toHaveLength(512)
+    expect(evs(r, 'buy')).toHaveLength(1)
+    expect(trackOf(r).truncated).toBe(true)
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+})
+
+describe('track.lua: whom a dead player watches (RFC 26, 4c, C2)', () => {
+  test('with traitordash_track_spec 0 (the default) a dead player who watches somebody records nothing and the game is not even asked', () => {
+    const r = play(C2 + `Start(); B.alive = false; B.obs = A; Run(3); OUT = { asked = POLLS.obs }; Ends()`)
+    expect(specs(r)).toEqual([])
+    expect(r.out.asked).toBe(0)
+  })
+
+  test('the setting is read when the round begins: switched on during a round it changes nothing until the next one; switched off during a round it does not stop it', () => {
+    const late = play(C2 + `Start(); SetCv("traitordash_track_spec", "1"); B.alive = false; B.obs = A; Run(3); Ends()`)
+    expect(specs(late)).toEqual([])
+    const early = play(C2 + `SetCv("traitordash_track_spec", "1"); Start(); B.alive = false; B.obs = A; Run(1); SetCv("traitordash_track_spec", "0"); B.obs = C; Run(1, 0.6); Ends()`)
+    expect(specs(early).map(e => [e.of, e.t])).toEqual([[A, 1400], [C, 2000]])
+  })
+
+  test('the first look after a death records the target; a change is an event; a prop, roaming, nobody, oneself or a player who was not in the round is "watches nobody" (no player); a dead player who watches nobody at first records nothing', () => {
+    const r = play(C2 + `
+      SetCv("traitordash_track_spec", "1")
+      Start()
+      B.alive = false; Run(1)                            -- watches nobody: nothing
+      B.obs = A; Run(1, 0.6)                             -- 2000
+      B.obs = A; Run(1, 0.6)                             -- the same: nothing
+      B.obs = C; Run(1, 0.6)                             -- 3200
+      B.obs = Thing("prop_physics"); Run(1, 0.6)         -- 3800: a prop
+      B.obs = SPEC; Run(1, 0.6)                          -- a spectator who was not in the round: nobody, nothing new
+      B.obs = A; Run(1, 0.6)                             -- 5000
+      B.obs = B; Run(1, 0.6)                             -- 5600: oneself: nobody
+      Ends()
+    `)
+    expect(specs(r).map(e => [e.p, e.of, e.t])).toEqual([[B, A, 2000], [B, C, 3200], [B, undefined, 3800], [B, A, 5000], [B, undefined, 5600]])
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('a change within 500 ms of the player\'s last one replaces it (cycling with the mouse): 500 ms is still one, 501 are two', () => {
+    const r = play(C2 + `
+      SetCv("traitordash_track_spec", "1")
+      Start()
+      B.alive = false; B.obs = A; Run(1, 0.2)            -- 1400
+      B.obs = C; Run(1, 0.5)                             -- 1900: 500 ms: replaces it
+      B.obs = A; Run(1, 0.501)                           -- 2401: a new one
+      Ends()
+    `)
+    expect(specs(r).map(e => [e.of, e.t])).toEqual([[C, 1900], [A, 2401]])
+  })
+
+  test('only dead players of the round are looked at; a revival forgets the target, so a second death records it again; the preparation records none', () => {
+    const r = play(C2 + `
+      SetCv("traitordash_track_spec", "1")
+      Start()
+      A.obs = C                                          -- a living player's target is never asked about
+      POLLS.obs = 0; Run(2)
+      OUT = { living = POLLS.obs }
+      B.alive = false; B.obs = A; Run(1)                 -- 1800: Bob is the only one asked (the spectator was not in the round)
+      OUT.dead = POLLS.obs
+      B.alive = true; Run(1)
+      B.alive = false; B.obs = A; Run(1)                 -- 2200: dies again watching Alice
+      Ends()
+    `)
+    expect(r.out).toEqual({ living: 0, dead: 1 })
+    expect(specs(r).map(e => [e.p, e.of, e.t])).toEqual([[B, A, 1800], [B, A, 2200]])
+    const prep = play(C2 + `
+      SetCv("traitordash_track_spec", "1")
+      Fire("TTTPrepareRound"); Run(2); B.alive = false; B.obs = A; Run(2)
+      OUT = { asked = POLLS.obs }
+      Fire("TTTBeginRound"); Run(1); Ends()
+    `)
+    expect(prep.out.asked).toBe(0)
+    expect(specs(prep)).toEqual([]) // Bob was dead when the round began: not a player of it
+  })
+
+  test('512 spec events at most: the track is marked truncated, the other kinds keep their room, and the backend takes it', () => {
+    const r = play(C2 + `
+      SetCv("traitordash_track_spec", "1")
+      Start()
+      B.alive = false
+      for i = 1, 600 do B.obs = (i % 2 == 0) and A or C; Gap(600); Run(1, 0) end
+      Fire("TTT2OrderedEquipment", A, "weapon_ttt_c4", false)
+      Ends()
+    `)
+    expect(specs(r)).toHaveLength(512)
+    expect(evs(r, 'buy')).toHaveLength(1)
+    expect(trackOf(r).truncated).toBe(true)
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('a game that has no GetObserverTarget, or whose call raises an error, records the round as before', () => {
+    const r = play(C2 + `SetCv("traitordash_track_spec", "1"); B.GetObserverTarget = nil; Start(); B.alive = false; Run(2); Ends()`)
+    expect(specs(r)).toEqual([])
+    expect(trackOf(r).t.length).toBe(3)
+    const bad = play(C2 + `SetCv("traitordash_track_spec", "1"); B.GetObserverTarget = function() error("no") end; Start(); B.alive = false; Run(2); Ends()`)
+    expect(specs(bad)).toEqual([])
+    expect(trackOf(bad).t.length).toBe(3)
+  })
+})
+
+describe('track.lua: C2 does no harm', () => {
+  test('with tracking off nothing is asked of the game: no weapon, no credits, no target, and the hooks return nothing', () => {
+    const off = play(C2 + `
+      SetCv("traitordash_track_spec", "1")
+      Begin(); NOW = NOW + 1.2; B.alive = false; B.obs = A; B.cred = 7
+      OUT = { polls = POLLS.hold + POLLS.cred + POLLS.obs,
+        values = FireValues("TTT2OnGiveFoundCredits", B) + FireValues("TTT2OnReceiveTeamAwardCredits", B) + FireValues("TTT2OnTransferCredits", A, B) + FireValues("TTT2OnReceiveKillCredits", B, A) }
+    `, false)
+    expect(off.out).toEqual({ polls: 0, values: 0 })
+  })
+
+  test('a failure of the poll itself ends the polls, not the round: the positions go on, and one line says so', () => {
+    const r = play(C2 + `
+      SetCv("traitordash_track_spec", "1")
+      A.IsTerror = function(self) FAILNOW = false return self.alive end    -- the sample asks first and resets the trap
+      A.GetActiveWeapon = function(self) FAILNOW = true return self.wep end -- the poll of the first player springs it for the next one
+      B.IsTerror = function(self) if FAILNOW then error("the game failed") end return self.alive end
+      Start(); Run(3); Ends()
+    `)
+    expect(trackOf(r).t.length).toBe(4)
+    expect(r.printed.join('\n')).toMatch(/polling the weapons, credits and targets failed/)
+    expect(holds(r)).toEqual([expect.objectContaining({ p: A })]) // only what was written before the failure
+  })
+
+  test('a track with every C2 kind passes the backend\'s own validation', () => {
+    const r = play(C2 + `
+      SetCv("traitordash_track_spec", "1")
+      Start()
+      B.cred = 5; Fire("TTT2OnGiveFoundCredits", B, nil, 1)
+      Karma(A, -20, "karma_teamhurt_tooltip")
+      C.alive = false; C.obs = A
+      A.wep = Wep("weapon_zm_mac10")
+      Run(1)
+      Ends()
+    `)
+    expect(evs(r, 'hold', 'credits', 'karma', 'spec').map(e => e.k).sort()).toEqual(['credits', 'hold', 'hold', 'hold', 'hold', 'karma', 'spec'])
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+})

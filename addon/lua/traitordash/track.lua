@@ -22,6 +22,10 @@
 -- Weapons, C4, DNA and traitor buttons (RFC 26, stage C, package C1): events `wpick` and `wdrop` (WeaponEquip, PlayerDroppedWeapon), `c4` (TTT2's event log through
 -- TTT2AddedEvent), `dna` (TTTFoundDNA) and `tbtn` (TTTTraitorButtonActivated); see the section after Track.Spawned below. None of them uses a hook that runs before the action.
 --
+-- Polled state and karma (RFC 26, stage C, package C2): events `hold` (the weapon in hand, polled at the sample), `credits` (a change of credits, polled; the reason
+-- from the hooks that run after the change), `karma` (a detour of KARMA.DoKarmaChange, TTT2 only) and `spec` (whom a dead player watches, polled, opt-in); see PollState
+-- and the karma detour below.
+--
 -- Parts that move (RFC 20, 4.3): with traitordash_track_parts on, the doors, lifts and other brush entities that can move are recorded
 -- as keyframes on the same tick list, and the inputs that reach them (also a player pressing use) as a list; see the Parts section below.
 --
@@ -42,6 +46,7 @@ local cv_prep = CreateConVar("traitordash_track_prep", "1", {FCVAR_ARCHIVE}, "Al
 local cv_parts = CreateConVar("traitordash_track_parts", "0", {FCVAR_ARCHIVE}, "Also record doors, lifts and other parts that move, and who set them off (1/0; needs traitordash_track).")
 local cv_props = CreateConVar("traitordash_track_props", "0", {FCVAR_ARCHIVE}, "Also record props, prop doors and weapons on the floor that move (1/0; needs traitordash_track).")
 local cv_chat = CreateConVar("traitordash_track_chat", "0", {FCVAR_ARCHIVE}, "Also record what players write in chat, for the replay (1/0; needs traitordash_track). Everyone who may open a replay can read it.")
+local cv_spec = CreateConVar("traitordash_track_spec", "0", {FCVAR_ARCHIVE}, "Also record whom a dead player is watching, for the replay (1/0; needs traitordash_track). Everyone who may open a replay can read it.")
 local cv_debug = CreateConVar("traitordash_stats_debug", "1", {FCVAR_ARCHIVE}, "Log what the stats tracker does (1/0).")
 
 local TIMER = "TraitorDash_Track"
@@ -50,7 +55,8 @@ local MAX_SEGMENTS = 64          -- per player
 local MAX_DEATHS = 512
 -- What happened to players besides moving (RFC 14, 4.3 and RFC 26): each kind has a cap of its own, so a chatty round does not use up the room of the others.
 local EVENT_CAP = { revive = 1024, role = 1024, say = 1024, buy = 512, found = 256, pickup = 256, drop = 256, hurt = 2048, heal = 512,
-    wpick = 512, wdrop = 512, c4 = 128, dna = 128, tbtn = 256 } -- the last five: RFC 26, stage C, package C1
+    wpick = 512, wdrop = 512, c4 = 128, dna = 128, tbtn = 256, -- these five: RFC 26, stage C, package C1
+    hold = 1024, credits = 512, karma = 512, spec = 512 } -- these four: package C2
 local HP_MAX = 1000             -- the most health a sample or an event holds (TTT2 roles can have more than 100); more is cut, less than 0 is 0 (RFC 26, 4a)
 local HURT_MERGE_MS = 50        -- damage to the same victim, from the same attacker with the same cause, within this is one event (pellets, a blast)
 local HURT_W_LEN = 40
@@ -61,6 +67,14 @@ local TBTN_LEN = 40             -- characters of a traitor button's description 
 local WEAPON_GRACE_MS = 1000    -- after a player spawned, got a new role, and after the round began, weapons given are loadout, not pickups (RFC 26, 4c)
 local TBTN_MERGE_MS = 1000      -- the same player on the same traitor button within this is one event
 local C4_RANGE = 256            -- units: the game's own range for defusing a charge, used to tell which charge was defused
+local HOLD_MERGE_MS = 300           -- a change of the weapon in hand within this of the player's last `hold` replaces it (quick switching is one change)
+local SPEC_MERGE_MS = 500           -- the same for the target of a dead player (cycling with the mouse)
+local CREDIT_GRACE_MS = 1000        -- after the round began and after a spawn, a change of credits is the game setting them up, not a gain or a spend
+local CREDIT_TAG_MS = 1500          -- a hook's note about why a player's credits changed is used for a change seen within this of it (or since the last poll, when that is longer)
+local CREDIT_MERGE_MS = 1000        -- changes of one player's credits in the same direction for the same reason within this of the last are one event
+local CREDITS_MAX = 255             -- the game sends credits as UInt(8)
+local KARMA_MAX = 1000              -- the most a `karma` event's change or karma-after holds (the server's maximum may be higher: cut)
+local KARMA_MERGE_MS = 1000         -- karma changes of the same player for the same reason within this of the last are one event (a shotgun at a teammate)
 local POS_MAX = 4096            -- the backend's limit for a position in units / 8; a place beyond it is left out
 local MAX_BODIES = 4096         -- points of bodies' paths (RFC 24)
 local BODY_MOVE = 16                -- units a body must move from its last point to be recorded again
@@ -195,11 +209,56 @@ local function InstallHeal()
     TraitorDash[HEAL_KEY] = st
 end
 
+-- ---- The karma detour (RFC 26, 4c, package C2)
+-- TTT2 changes karma in one place, KARMA.DoKarmaChange(ply, amount, reason) (sv_karma.lua), after the hook TTTKarmaGivePenalty, which runs BEFORE and may cancel it
+-- and is therefore not used. Like SetHealth above, the function is replaced by a wrapper while a round is recorded: the original runs first with every argument and
+-- its results are handed on; what was done is looked at afterwards, under pcall (Track.Karma). It is put back when the recording ends; the state lives in
+-- TraitorDash so that a reload of this file neither wraps twice nor leaves a second one recording. The TTT base has no such function: nothing is recorded there.
+local KARMA_KEY = "TrackKarma"
+
+local function MakeKarma(st)
+    local orig = st.orig
+    local function finish(T, ply, amount, reason, ...)
+        pcall(T.Karma, ply, amount, reason)
+        return ...
+    end
+    return function(ply, amount, reason, ...)
+        if not st.on then return orig(ply, amount, reason, ...) end
+        return finish(TraitorDash.Track, ply, amount, reason, orig(ply, amount, reason, ...))
+    end
+end
+
+local function RemoveKarma()
+    local st = TraitorDash[KARMA_KEY]
+    if not st then return end
+    st.on = false
+    if st.tbl.DoKarmaChange == st.wrapper then
+        st.tbl.DoKarmaChange = st.had -- nil when the table only inherited it
+        TraitorDash[KARMA_KEY] = nil
+    end
+    -- else somebody else wrapped it after us: our wrapper stays in their chain, switched off, and passes everything through
+end
+
+local function InstallKarma()
+    local tbl = KARMA
+    if type(tbl) ~= "table" then return end
+    local st = TraitorDash[KARMA_KEY]
+    if st and st.tbl == tbl and tbl.DoKarmaChange == st.wrapper then st.on = true return end -- already in place (a reload of this file)
+    if st then st.on = false end
+    local cur = tbl.DoKarmaChange
+    if type(cur) ~= "function" then return end
+    st = { tbl = tbl, orig = cur, had = rawget(tbl, "DoKarmaChange"), on = true }
+    st.wrapper = MakeKarma(st)
+    tbl.DoKarmaChange = st.wrapper
+    TraitorDash[KARMA_KEY] = st
+end
+
 local HOOK_ID = "TraitorDash_TrackParts"
 
 -- The timer and, with it, the two hooks of the parts (RFC 20, 4.4): both go when a recording ends for any reason.
 local function RemoveTimer()
     RemoveHeal()
+    RemoveKarma()
     if timer.Exists and timer.Exists(TIMER) then timer.Remove(TIMER) end
     if hook.Remove then
         hook.Remove("AcceptInput", HOOK_ID)
@@ -653,6 +712,8 @@ local function AddPrepPlayers(r)
     end
 end
 
+local PollState -- defined with the events of package C2 below: the weapon, credits and spectator target polled at each sample
+
 local function SampleAll(r, now, also)
     if r.prep then AddPrepPlayers(r) end
     local idx = AddTick(r, now)
@@ -679,6 +740,13 @@ local function SampleAll(r, now, also)
         end
     end
     SampleBodies(r, now)
+    if not r.pollOff and PollState then
+        local ok, err = pcall(PollState, r, now)
+        if not ok then
+            r.pollOff = true
+            print("[TraitorDash:track] polling the weapons, credits and targets failed, they are left out: " .. tostring(err))
+        end
+    end
     if r.candList and not r.thingsOff then
         local ok, err = pcall(SampleThings, r, idx - 1)
         if not ok then
@@ -799,7 +867,7 @@ local function NewRecording(roundId)
         id = roundId, t0 = CurTime(), lastMs = 0, t = {}, order = {}, players = {}, deaths = {}, events = {},
         samples = 0, ticks = 0, skipped = 0, interval = mn, minUsed = math.huge, maxUsed = 0,
         ring = {}, costSum = 0, worst = 0, truncated = false, degraded = false, stopped = false,
-        keys = 0, inputs = {}, bodies = {}, kinds = {}, chat = cv_chat:GetBool(), begin = 0,
+        keys = 0, inputs = {}, bodies = {}, kinds = {}, chat = cv_chat:GetBool(), spec = cv_spec:GetBool(), begin = 0,
     }
 end
 
@@ -826,7 +894,7 @@ function Track.Begin(roundId, players)
     if prep and prep.prep and not prep.stopped and cv_track:GetBool() then
         -- the preparation was recorded: it becomes the start of this round's track, and the round starts now
         local r = prep
-        r.id, r.prep, r.chat = roundId, false, cv_chat:GetBool()
+        r.id, r.prep, r.chat, r.spec = roundId, false, cv_chat:GetBool(), cv_spec:GetBool()
         r.begin = RoundMs(r, CurTime())
         r.members = {}
         for _, e in ipairs(players) do
@@ -836,12 +904,14 @@ function Track.Begin(roundId, players)
         if cv_parts:GetBool() then StartParts(r) end
         if cv_props:GetBool() then StartThings(r) end
         InstallHeal() -- from here on a rise of health is looked at (not in the preparation)
+        InstallKarma()
         if RoundMs(r, CurTime()) > r.lastMs then
             SampleAll(r, CurTime()) -- where everybody stands at the start
         else -- a tick just took them: only the parts and props that were started now are looked at, in that tick
             local tick = #r.t - 1
             if r.partList then pcall(SampleParts, r, tick) end
             if r.candList then pcall(SampleThings, r, tick) end
+            if PollState then pcall(PollState, r, CurTime()) end -- what everybody holds and has at the start
         end
         Dbg(string.format("recording round %s: %d players, the preparation before it %.1f s", roundId, #r.order, r.begin / 1000))
         return
@@ -858,6 +928,7 @@ function Track.Begin(roundId, players)
     if cv_parts:GetBool() then StartParts(r) end
     if cv_props:GetBool() then StartThings(r) end
     InstallHeal()
+    InstallKarma()
     SampleAll(r, r.t0) -- where everybody stands at the start
     timer.Create(TIMER, r.interval, 0, SafeTick)
     Dbg(string.format("recording round %s: %d players, interval %.2f-%.2f s", roundId, #r.order, mn, select(2, Settings())))
@@ -965,6 +1036,7 @@ function Track.Buy(ply, item, isItem)
     if not sid then return end
     local name = string.sub(string.gsub(tostring(item or ""), "[^%w_.%-]", ""), 1, 64)
     if name == "" then return end
+    Track.CreditTag(ply, "buy") -- what it cost shows at the next poll of the credits (package C2)
     local p, now = r.players[sid], RoundMs(r, CurTime())
     if p.lastBuy == name and p.lastBuyAt and now - p.lastBuyAt < 1000 then return end
     p.lastBuy, p.lastBuyAt = name, now
@@ -1414,6 +1486,206 @@ function Track.ButtonUsed(ent, ply)
     AddEvent(r, CurTime(), ev)
 end
 
+-- ---- Polled state, credits and karma (RFC 26, stage C, package C2)
+
+-- The class of the weapon the player holds, or nil (nothing in hand, or the game cannot say).
+local function HeldClass(ply)
+    if not ply.GetActiveWeapon then return nil end
+    local ok, wep = pcall(ply.GetActiveWeapon, ply)
+    if not ok then return nil end
+    return ClassOf(wep)
+end
+
+-- The player's credits as a whole number from 0 to CREDITS_MAX (the game sends them as UInt(8)), or nil when the game cannot say.
+local function ReadCredits(ply)
+    if not ply.GetCredits then return nil end
+    local ok, v = pcall(ply.GetCredits, ply)
+    if not ok or type(v) ~= "number" or v ~= v then return nil end
+    return math.min(math.max(Floor(v), 0), CREDITS_MAX)
+end
+
+-- Why a player's credits changed: the hooks of TTT2 that run after the change leave a note (Track.CreditTag); the sign of the change picks among them
+-- (a purchase or a gift costs, the rest pays), the newest one wins; no note, or none that fits: "other".
+local CREDIT_SIGN = { kill = 1, team = 1, found = 1, got = 1, buy = -1, give = -1 }
+
+local function CreditReason(tags, pollAt, d, ms)
+    local sign = d > 0 and 1 or -1
+    local from = math.min(ms - CREDIT_TAG_MS, pollAt or ms)
+    if tags then
+        for i = #tags, 1, -1 do
+            local t = tags[i]
+            if t.at >= from and CREDIT_SIGN[t.w] == sign then return t.w end
+        end
+    end
+    return "other"
+end
+
+-- The weapon in hand, polled: the first look at a player writes it, then each change; changes within HOLD_MERGE_MS of the last one are one.
+local function PollHold(r, p, ply, now, ms)
+    local w = HeldClass(ply)
+    if not w or w == p.holdW then return end
+    p.holdW = w
+    local last = p.holdEv
+    if last and p.holdAt and ms - p.holdAt <= HOLD_MERGE_MS then
+        last.w = w
+        p.holdAt = ms
+        if r.events[#r.events] == last then last.t = ms end -- the newest event of all: it moves with the change, so the order of the list holds
+        return
+    end
+    p.holdEv = AddEvent(r, now, { p = p.sid, k = "hold", w = w })
+    p.holdAt = ms
+end
+
+-- Credits, polled: no event at the first look (the baseline), nor in the first second of the round or after a spawn (the game's own setting up); then one event
+-- with the net change since the last look, the reason from the hooks' notes, merged with the last event of the same player, reason and direction within CREDIT_MERGE_MS.
+local function PollCredits(r, p, ply, now, ms)
+    local c = ReadCredits(ply)
+    if c == nil then return end
+    local last = p.credLast
+    local pollAt = p.credPollAt
+    p.credLast, p.credPollAt = c, ms
+    if last == nil or c == last then return end
+    local tags = p.credTags
+    p.credTags = nil -- the notes were for this change, used or not
+    if ms - r.begin < CREDIT_GRACE_MS or (p.spawnAt and ms - p.spawnAt < CREDIT_GRACE_MS) then return end
+    local d = c - last
+    local w = CreditReason(tags, pollAt, d, ms)
+    local prev = p.credEv
+    if prev and p.credAt and prev.w == w and (prev.d > 0) == (d > 0) and ms - p.credAt <= CREDIT_MERGE_MS then
+        prev.d = math.min(math.max(prev.d + d, -CREDITS_MAX), CREDITS_MAX)
+        prev.c = c
+        p.credAt = ms
+        return
+    end
+    local ev = AddEvent(r, now, { p = p.sid, k = "credits", d = d, c = c, w = w })
+    p.credEv, p.credAt = ev, ms
+end
+
+-- Whom a dead player watches, polled (only with traitordash_track_spec 1, read when the round began): a round player is `of`; a prop, roaming or nothing is
+-- "watching nobody". Nothing is written for a dead player who watches nobody at first; changes within SPEC_MERGE_MS of the last are one.
+local function PollSpec(r, p, ply, now, ms)
+    if not ply.GetObserverTarget then return end
+    local ok, target = pcall(ply.GetObserverTarget, ply)
+    if not ok then return end
+    local of = false
+    if target ~= nil and IsValid(target) then
+        local tsid = RoundPlayer(r, target)
+        if tsid and tsid ~= p.sid then of = tsid end
+    end
+    local was = p.specOf or false
+    if of == was then return end
+    p.specOf = of
+    local last = p.specEv
+    if last and p.specAt and ms - p.specAt <= SPEC_MERGE_MS then
+        last.of = of or nil
+        p.specAt = ms
+        if r.events[#r.events] == last then last.t = ms end
+        return
+    end
+    p.specEv = AddEvent(r, now, { p = p.sid, k = "spec", of = of or nil })
+    p.specAt = ms
+end
+
+-- The poll at one sample (in SampleAll, under pcall): the weapon in hand and the credits of every living round player, the target of every dead one. A player
+-- who is dead has what was polled forgotten, so the first look after a revival is a baseline again. Not in the preparation. A call the game does not have counts as nothing.
+PollState = function(r, now)
+    if r.prep then return end
+    local ms = RoundMs(r, now)
+    for _, sid in ipairs(r.order) do
+        if Member(r, sid) then
+            local p = r.players[sid]
+            local ply = p.ply
+            if IsValid(ply) then
+                p.sid = sid
+                if ply.IsTerror and ply:IsTerror() then
+                    if r.spec then p.specOf, p.specEv, p.specAt = false, nil, nil end
+                    PollHold(r, p, ply, now, ms)
+                    PollCredits(r, p, ply, now, ms)
+                else
+                    p.holdW, p.holdEv, p.credLast, p.credEv, p.credTags, p.credPollAt = nil, nil, nil, nil, nil, nil
+                    if r.spec then PollSpec(r, p, ply, now, ms) end
+                end
+            end
+        end
+    end
+end
+
+-- A hook of TTT2 that runs after credits changed leaves a note for the player: the reason (kill, team, found, give, got, buy). The notes are only read by the next poll.
+function Track.CreditTag(ply, w)
+    local r = rec
+    if not r or r.stopped or r.prep then return end
+    local sid = RoundPlayer(r, ply)
+    if not sid then return end
+    local p, now = r.players[sid], RoundMs(r, CurTime())
+    local tags = p.credTags
+    if not tags then tags = {} p.credTags = tags end
+    local n = #tags
+    if n > 0 and tags[n].w == w and tags[n].at == now then return end
+    tags[n + 1] = { w = w, at = now }
+    if #tags > 8 then table.remove(tags, 1) end
+end
+
+-- TTT2OnReceiveKillCredits: documented as (ply, victim, credits) but run as (victim, attacker, credits) (credits.lua:55), so both players are looked at, and
+-- the one whose credits are above what the last poll saw is the one who got them.
+function Track.KillCredits(a, b)
+    local r = rec
+    if not r or r.stopped or r.prep then return end
+    for _, ply in ipairs({ a, b }) do
+        local sid = RoundPlayer(r, ply)
+        local p = sid and r.players[sid]
+        if p and p.credLast ~= nil then
+            local c = ReadCredits(ply)
+            if c and c > p.credLast then Track.CreditTag(ply, "kill") end
+        end
+    end
+end
+
+-- TTT2OnTransferCredits(ply, target, credits): the giver pays, the receiver is paid.
+function Track.CreditsTransferred(ply, target)
+    Track.CreditTag(ply, "give")
+    Track.CreditTag(target, "got")
+end
+
+-- The reason of a karma change as one word: karma_teamkill_tooltip is "teamkill"; a word that is not one of the game's own is "other".
+local KARMA_REASONS = { teamkill = true, teamhurt = true, enemykill = true, enemyhurt = true, cleanround = true, roundheal = true, unknown = true }
+
+local function KarmaReason(reason)
+    if type(reason) ~= "string" then return "other" end
+    local w = string.gsub(string.gsub(reason, "^karma_", ""), "_tooltip$", "")
+    return KARMA_REASONS[w] and w or "other"
+end
+
+-- After KARMA.DoKarmaChange(ply, amount, reason) ran: the change is the amount the game rounds it to (as its own record of the round does), the karma after is the
+-- live karma now. Not recorded: no change after rounding, a player who is not in the round, a karma the game cannot say. The same player, reason and direction
+-- within KARMA_MERGE_MS of the last is one event, the changes added and the karma of the last.
+function Track.Karma(ply, amount, reason)
+    local r = rec
+    if not r or r.stopped or r.prep then return end
+    if type(amount) ~= "number" or amount ~= amount then return end
+    local sid = RoundPlayer(r, ply)
+    if not sid then return end
+    local d = math.min(math.max(Floor(amount), -KARMA_MAX), KARMA_MAX)
+    if d == 0 then return end
+    if not ply.GetLiveKarma then return end
+    local ok, live = pcall(ply.GetLiveKarma, ply)
+    if not ok or type(live) ~= "number" or live ~= live then return end
+    local c = math.min(math.max(Floor(live), 0), KARMA_MAX)
+    local p, now = r.players[sid], RoundMs(r, CurTime())
+    local w = KarmaReason(reason)
+    local last = p.karmaLast and p.karmaLast[w]
+    if last and (last.ev.d > 0) == (d > 0) and now - last.at <= KARMA_MERGE_MS then
+        last.ev.d = math.min(math.max(last.ev.d + d, -KARMA_MAX), KARMA_MAX)
+        last.ev.c = c
+        last.at = now
+        return
+    end
+    local ev = AddEvent(r, CurTime(), { p = sid, k = "karma", d = d, c = c, w = w })
+    if ev then
+        p.karmaLast = p.karmaLast or {}
+        p.karmaLast[w] = { ev = ev, at = now }
+    end
+end
+
 -- ---- Bodies (RFC 24)
 
 -- TTT2 made a ragdoll for a tracked player's death: it is followed from the next tick on (SampleBodies).
@@ -1459,6 +1731,11 @@ hook.Add("PlayerDroppedWeapon", "TraitorDash_TrackWeaponDrop", function(ply, wep
 hook.Add("TTT2AddedEvent", "TraitorDash_TrackEvents", function(name, event) pcall(Track.AddedEvent, name, event) end)
 hook.Add("TTTFoundDNA", "TraitorDash_TrackDNA", function(owner, ply, ent) pcall(Track.FoundDNA, owner, ply, ent) end)
 hook.Add("TTTTraitorButtonActivated", "TraitorDash_TrackButton", function(ent, ply) pcall(Track.ButtonUsed, ent, ply) end)
+-- Package C2: the credits' reasons, from hooks that run after the credits changed (TTT2; the TTT base has none of them). The change itself is polled.
+hook.Add("TTT2OnGiveFoundCredits", "TraitorDash_TrackCreditFound", function(ply) pcall(Track.CreditTag, ply, "found") end)
+hook.Add("TTT2OnReceiveTeamAwardCredits", "TraitorDash_TrackCreditTeam", function(ply) pcall(Track.CreditTag, ply, "team") end)
+hook.Add("TTT2OnTransferCredits", "TraitorDash_TrackCreditTransfer", function(ply, target) pcall(Track.CreditsTransferred, ply, target) end)
+hook.Add("TTT2OnReceiveKillCredits", "TraitorDash_TrackCreditKill", function(a, b) pcall(Track.KillCredits, a, b) end)
 
 -- The round is over: stops the timer, prints the one line, and returns the track to upload (or nil
 -- when there is nothing to send). `fingerprint` of the map is added when it is known.
