@@ -94,6 +94,7 @@ export const ReplayPage = ({ ctx, server, round, hasTrack, src, pinned, here, pi
               <p data-selected-credits class="phealth-line" hidden></p>
               <p data-selected-karma class="phealth-line" hidden></p>
               <p data-selected-watch class="phealth-line" hidden></p>
+              <p data-selected-talk class="phealth-line" hidden></p>
               <p data-selected-role style="margin:var(--space-1) 0"></p>
               <ol data-player-events class="list"></ol>
             </section>

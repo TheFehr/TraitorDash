@@ -19,6 +19,8 @@ export interface RawTrack {
   /** Props, prop doors and weapons that moved (RFC 20, 4.8); absent in tracks without them. */
   things?: RawThing[]
   bodies?: { p: string, t: number, x: number, y: number, z: number, pt: number, w: number, r: number }[]
+  /** Who spoke on the dashboard's voice page, in ms since the round's start (RFC 26, 4c.5): added by the backend when it serves the track; absent when nothing was recorded. */
+  talk?: { p: string, from: number, to: number }[]
 }
 export interface RawThing { e: number, c: string, mdl: string, b: number[], id?: number, g?: number, k: number[], x: number[], y: number[], z: number[], p: number[], w: number[], r: number[] }
 /** A thing that moved, decoded: keyframes at real times, positions in units and angles in degrees; `from` is when it first shows, `until` when it is gone (Infinity when it stayed). */
@@ -59,6 +61,8 @@ export interface Decoded {
   hurts: Map<string, TrackEvent[]>
   /** The polled and detoured events of each player in time order (RFC 26, 4c, C2): the weapon in hand, credits, karma, the target of a dead player. */
   polled: Polled
+  /** Each player's speaking spans as [from, to) in ms since the round's start, in order and not overlapping (RFC 26, 4c.5); empty when none were recorded. */
+  talk: Map<string, [number, number][]>
 }
 /** `hold`, `credits`, `karma` and `spec` events by player. */
 export interface Polled { hold: Map<string, TrackEvent[]>, credits: Map<string, TrackEvent[]>, karma: Map<string, TrackEvent[]>, spec: Map<string, TrackEvent[]> }
@@ -146,7 +150,36 @@ export function decodeTrack(raw: RawTrack): Decoded {
       t, x: cumulative(q.x), y: cumulative(q.y), z: cumulative(q.z), pitch: cumulative(q.p).map(a => a / 4), yaw: cumulative(q.w).map(a => a / 4), roll: cumulative(q.r).map(a => a / 4),
     }
   })
-  return { times, length: times.length ? times[times.length - 1]! : 0, start: times.length ? times[0]! : 0, players, deaths, events, bodies, things, maxHealth, hurts, polled }
+  const talk = new Map<string, [number, number][]>()
+  for (const s of raw.talk ?? []) {
+    if (typeof s?.p !== 'string' || !Number.isFinite(s.from) || !Number.isFinite(s.to) || !(s.from < s.to)) continue
+    const l = talk.get(s.p) ?? []
+    l.push([s.from, s.to]); talk.set(s.p, l)
+  }
+  for (const [p, l] of talk) { // in order, and one where they touch or overlap, so a lookup by bisection is sure
+    l.sort((a, b) => a[0] - b[0] || a[1] - b[1])
+    const merged: [number, number][] = []
+    for (const s of l) { const last = merged[merged.length - 1]; if (last && s[0] <= last[1]) last[1] = Math.max(last[1], s[1]); else merged.push([s[0], s[1]]) }
+    talk.set(p, merged)
+  }
+  return { times, length: times.length ? times[times.length - 1]! : 0, start: times.length ? times[0]! : 0, players, deaths, events, bodies, things, maxHealth, hurts, polled, talk }
+}
+
+/**
+ * Whether a player is speaking on the dashboard's voice page at `t` ms into the round (RFC 26, 4c.5): inside a span, the start included and the
+ * end not. `spans` is the player's list from `decodeTrack`; a player with none, or a track without any, is not speaking.
+ */
+export function isTalking(spans: readonly (readonly [number, number])[] | undefined, t: number): boolean {
+  if (!spans || spans.length === 0) return false
+  let lo = 0, hi = spans.length - 1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    const s = spans[mid]!
+    if (t < s[0]) hi = mid - 1
+    else if (t >= s[1]) lo = mid + 1
+    else return true
+  }
+  return false
 }
 
 /** Health that makes a bar: from 0 (nothing) up to what the player can have. Colours of the three steps of the bar: green, amber, red. */

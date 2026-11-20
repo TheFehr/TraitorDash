@@ -190,6 +190,9 @@ html.theater{overflow:hidden}
 .prole{margin-left:auto;font-size:.8rem;color:var(--dim)}
 .phealth{flex:none;min-width:2.4em;text-align:right;font-size:.8rem;font-variant-numeric:tabular-nums;color:var(--dim)}
 .prow.sel .phealth{color:var(--soft)}
+.ptalk{flex:none;display:inline-block;width:.6rem;height:.6rem;border-radius:50%}
+.ptalk.on{background:var(--st-ok)}
+.prow.sel .ptalk.on{background:var(--good)}
 .phealth-line{margin:var(--space-1) 0 0;min-height:1.5em;font-size:.85rem;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--dim)}
 .phealth-line.two{white-space:normal;line-height:1.5;height:3em}
 .warn{margin:var(--space-1) 0 0;font-size:.85rem;color:var(--amber)}

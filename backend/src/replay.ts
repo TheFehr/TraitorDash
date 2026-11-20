@@ -14,7 +14,7 @@ import { startFlat } from './replayflat'
 import { offerBrowser, levelColour, paintPlain, makeCamera, makeRenderer, makeScene, mapLoader, prepareDecoration, prepareMovable, prepareProps, prepareWater, lyingPlaces, boxWithout, mergeDrawn, type Painted } from './sceneKit'
 import { holeUniforms, patchHole, updateHole, ghostFigure, ghostShown, createMask, sizeMask, renderMask, maskWanted } from './followHole'
 import {
-  decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, shownLevels, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, bodyAt, thingAt, movedProps, killerDiedBefore, reviveSource, revivePose, fitLabel, healthAt, healthBar, healthColour, hurtText, hurtOwnText, healText, healOwnText, equipText, equipOwnText, c4Text, c4OwnText, dnaText, dnaOwnText, tbtnText, tbtnOwnText, EQUIPMENT_KINDS, hiddenPickups, timeMark, c4Charges, c4At, damageTotals, shotsByWeapon, shotsTitle, totalsText,
+  decodeTrack, isTalking, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, shownLevels, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, bodyAt, thingAt, movedProps, killerDiedBefore, reviveSource, revivePose, fitLabel, healthAt, healthBar, healthColour, hurtText, hurtOwnText, healText, healOwnText, equipText, equipOwnText, c4Text, c4OwnText, dnaText, dnaOwnText, tbtnText, tbtnOwnText, EQUIPMENT_KINDS, hiddenPickups, timeMark, c4Charges, c4At, damageTotals, shotsByWeapon, shotsTitle, totalsText,
   holdAt, creditsAt, karmaAt, holdingText, creditsLine, karmaLine, creditsOwnText, karmaOwnText, specOwnText, watchEventAt, watchLine,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
 } from './replaylogic'
@@ -149,6 +149,8 @@ async function start(root: HTMLElement) {
   const totalsText_ = new Map<string, { text: string, title: string }>()
   // The panel's lines for what is polled (RFC 26, 4c, C2): each is in the page, hidden, and shown only when the track has any event of its kind, so an older track keeps the card as it was and a line never appears or goes while the time moves or another player is selected.
   const kindsInTrack = new Set(data.events.map(e => e.k))
+  const lineTalk = el(root, '[data-selected-talk]')
+  if (lineTalk) lineTalk.hidden = data.talk.size === 0
   const lineHold = el(root, '[data-selected-hold]'), lineCredits = el(root, '[data-selected-credits]'), lineKarma = el(root, '[data-selected-karma]'), lineWatch = el(root, '[data-selected-watch]')
   for (const [line, kind] of [[lineHold, 'hold'], [lineCredits, 'credits'], [lineKarma, 'karma'], [lineWatch, 'spec']] as const) if (line) line.hidden = !kindsInTrack.has(kind)
   const totalsLine = el(root, '[data-selected-totals]')
@@ -164,6 +166,14 @@ async function start(root: HTMLElement) {
     if (lineCredits) setText(lineCredits, cr !== null ? creditsLine(cr) : '')
     if (lineKarma) setText(lineKarma, ka !== null ? karmaLine(ka) : '')
     if (lineWatch) setText(lineWatch, watchLine(watched, nick))
+    // who is speaking on the dashboard's voice page now (RFC 26, 4c.5): a dot at each name in the list, and a line in the card
+    for (const id of ids) {
+      const dot = chips.get(id)?.talk
+      if (!dot) continue
+      const on = isTalking(data.talk.get(id), ms)
+      if (dot.classList.contains('on') !== on) { dot.classList.toggle('on', on); dot.title = on ? 'Speaking' : ''; if (on) dot.setAttribute('aria-label', 'Speaking'); else dot.removeAttribute('aria-label') }
+    }
+    if (lineTalk) setText(lineTalk, selected && isTalking(data.talk.get(selected), ms) ? 'Speaking' : '')
   }
   /** The health in the player list and in the selected player's panel. */
   const showHealth = () => {
@@ -264,7 +274,8 @@ async function start(root: HTMLElement) {
 
   const listEl = el(root, '[data-players]')
   const rows = new Map<string, HTMLElement>()
-  const chips = new Map<string, { dot: HTMLElement, role: HTMLElement, hp: HTMLElement }>()
+  const chips = new Map<string, { dot: HTMLElement, role: HTMLElement, hp: HTMLElement, talk: HTMLElement | null }>()
+  const hasTalk = data.talk.size > 0 // a track with no recorded speech has no marker at all, so its rows are as they were
   for (const id of ids) {
     if (!listEl) break
     const b = document.createElement('button')
@@ -275,11 +286,12 @@ async function start(root: HTMLElement) {
     const roleEl = text(meta.get(id)?.role ?? '', 'span', 'prole')
     const hpEl = text('', 'span', 'phealth') // the health now, in a box of its own width so the row does not move when it changes (RFC 26, 4a)
     hpEl.title = 'Health'
-    b.append(dot, text(nick(id), 'span', 'pname'), roleEl, hpEl)
+    const talkEl = hasTalk ? text('', 'span', 'ptalk') : null // a dot of its own width: it is there (empty) before and after, so the row never moves
+    b.append(dot, text(nick(id), 'span', 'pname'), ...(talkEl ? [talkEl] : []), roleEl, hpEl)
     b.addEventListener('click', () => { selected = id; changed() })
     listEl.append(b)
     rows.set(id, b)
-    chips.set(id, { dot, role: roleEl, hp: hpEl })
+    chips.set(id, { dot, role: roleEl, hp: hpEl, talk: talkEl })
   }
   const scrub = el<HTMLInputElement>(root, '[data-scrub]')!
   scrub.min = String(data.start); scrub.max = String(data.length); scrub.value = String(data.start)
