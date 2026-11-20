@@ -31,6 +31,7 @@ export const MAX_HP = 1000
 /** The most damage one `hurt` event holds (a merged event of many hits). */
 export const MAX_HURT_DAMAGE = 10_000
 const HURT_CAUSE = /^[A-Za-z0-9_.-]{1,40}$/
+const PROP_MODEL_NAME = /^[a-z0-9_-]{1,40}$/ // the file name of a possessed prop's model, without folders or extension (RFC 26, 4c.x)
 /** The words a `heal` event's source `w` may be besides the class of a weapon or entity: no player is the healer in them, so a heal with one of them cannot name the healed as the healer (RFC 26, 4b). */
 export const HEAL_CAUSE_WORDS: ReadonlySet<string> = new Set(['regen', 'revive', 'other'])
 /** Where a body lay and which way it was turned, the points of it (RFC 24). */
@@ -104,7 +105,10 @@ export interface TrackEvent {
   h?: number
   /** `credits` and `karma` events: the amount after the change. */
   c?: number
-  /** `hold` events: `w` the class of the weapon the player holds from now on. `credits` events: `d` the change (not 0), `c` the credits after, `w` the reason word. `karma` events: the same for karma (`d`, `c`, `w`). `spec` events: `of` the player the dead player watches from now on, none for nobody (RFC 26, 4c, C2). */
+  /** `hold` events: `w` the class of the weapon the player holds from now on. `credits` events: `d` the change (not 0), `c` the credits after, `w` the reason word. `karma` events: the same for karma (`d`, `c`, `w`). `spec` events: `of` the player the dead player watches from now on, none for nobody (RFC 26, 4c, C2); or, instead of `of`, the prop they possess: `pr` its class, `pm` the file name of its model, `ti` its number in `things` (4c.x). */
+  pr?: string
+  pm?: string
+  ti?: number
   /** `wpick`, `wdrop`: `w` is the weapon class; `dna`: `w` the class of what the sample came from, `of` whose DNA it was (RFC 26, 4c, C1). */
   /** `c4` events: `st` what happened (C4_STATES), `of` (defuse and fail) the player who armed it, `s` (plant) the timer in seconds, `x y z` where the charge was. `tbtn` events: `n` the button's text, `x y z` its place. Units / 8, absolute. */
   st?: 'plant' | 'defuse' | 'fail' | 'boom'
@@ -258,6 +262,7 @@ export function validateTrack(body: unknown, round: { roundId: string, map: stri
 
   // Revivals and role changes (RFC 14, 4.3). Optional: tracks from before it, and bridges that send none, have no events.
   const events: TrackEvent[] = []
+  const possessed: TrackEvent[] = [] // the spec events that name a thing: checked once the things are known
   if (b.events !== undefined) {
     if (!Array.isArray(b.events) || b.events.length > MAX_TRACK_EVENTS) return no(`events must be at most ${MAX_TRACK_EVENTS} entries`)
     let last = 0
@@ -345,7 +350,17 @@ export function validateTrack(body: unknown, round: { roundId: string, map: stri
         events.push({ t: e.t, p: e.p, k: e.k, d: e.d, c: e.c, w: e.w })
       } else if (e.k === 'spec') {
         if (e.of !== undefined && (typeof e.of !== 'string' || !round.players.has(e.of) || e.of === e.p)) return no('a spec event names a player who was not in the round, or the watcher themselves')
-        events.push({ t: e.t, p: e.p, k: 'spec', ...(e.of !== undefined ? { of: e.of as string } : {}) })
+        // A possessed prop (RFC 26, 4c.x): its class `pr`, the file name of its model `pm` and the number of the thing it is `ti`; never together with `of`.
+        if (e.pr === undefined && (e.pm !== undefined || e.ti !== undefined)) return no('a spec event has a prop model or thing without a prop class')
+        if (e.pr !== undefined) {
+          if (e.of !== undefined) return no('a spec event watches a player or possesses a prop, not both')
+          if (typeof e.pr !== 'string' || !HURT_CAUSE.test(e.pr)) return no('a spec event needs the prop class: letters, digits, _ . and -, at most 40')
+          if (e.pm !== undefined && (typeof e.pm !== 'string' || !PROP_MODEL_NAME.test(e.pm))) return no('a spec event needs the prop model as a lower-case name: letters, digits, _ and -, at most 40')
+          if (e.ti !== undefined && (!isInt(e.ti) || e.ti < 1 || e.ti > 65535)) return no('a spec event needs the number of a thing, from 1 to 65535')
+        }
+        const ev: TrackEvent = { t: e.t, p: e.p, k: 'spec', ...(e.of !== undefined ? { of: e.of as string } : {}), ...(e.pr !== undefined ? { pr: e.pr as string } : {}), ...(e.pm !== undefined ? { pm: e.pm as string } : {}), ...(e.ti !== undefined ? { ti: e.ti as number } : {}) }
+        if (e.ti !== undefined) possessed.push(ev)
+        events.push(ev)
       } else return no('an event has an unknown kind')
     }
   }
@@ -436,6 +451,7 @@ export function validateTrack(body: unknown, round: { roundId: string, map: stri
       things.push({ e: q.e, c: q.c, mdl: q.mdl, b: bounds, ...(q.id !== undefined ? { id: q.id as number } : {}), ...(q.g !== undefined ? { g: q.g as number } : {}), k, x, y, z, p, w, r })
     }
   }
+  for (const ev of possessed) if (!things.some(q => q.e === ev.ti)) return no('a spec event names a thing that is not in the track')
   const inputs: TrackInput[] = []
   if (b.inputs !== undefined) {
     if (!Array.isArray(b.inputs) || b.inputs.length > MAX_TRACK_INPUTS) return no(`inputs must be at most ${MAX_TRACK_INPUTS} entries`)

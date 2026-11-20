@@ -15,7 +15,7 @@ import { offerBrowser, levelColour, paintPlain, makeCamera, makeRenderer, makeSc
 import { holeUniforms, patchHole, updateHole, ghostFigure, ghostShown, createMask, sizeMask, renderMask, maskWanted } from './followHole'
 import {
   decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, shownLevels, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, bodyAt, thingAt, movedProps, killerDiedBefore, reviveSource, revivePose, fitLabel, healthAt, healthBar, healthColour, hurtText, hurtOwnText, healText, healOwnText, equipText, equipOwnText, c4Text, c4OwnText, dnaText, dnaOwnText, tbtnText, tbtnOwnText, EQUIPMENT_KINDS, hiddenPickups, timeMark, c4Charges, c4At, damageTotals, totalsText,
-  holdAt, creditsAt, karmaAt, watchingAt, holdingText, creditsLine, karmaLine, watchingText, creditsOwnText, karmaOwnText, specOwnText,
+  holdAt, creditsAt, karmaAt, holdingText, creditsLine, karmaLine, creditsOwnText, karmaOwnText, specOwnText, watchEventAt, watchLine,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
 } from './replaylogic'
 
@@ -157,11 +157,11 @@ async function start(root: HTMLElement) {
     const hold = selected ? holdAt(data.polled.hold.get(selected), ms, dead) : null
     const cr = selected ? creditsAt(data.polled.credits.get(selected), ms, dead) : null
     const ka = selected ? karmaAt(data.polled.karma.get(selected), ms) : null
-    const watched = selected ? watchingAt(data.polled.spec.get(selected), ms, death ? death.t : null) : null
+    const watched = selected ? watchEventAt(data.polled.spec.get(selected), ms, death ? death.t : null) : null
     if (lineHold) setText(lineHold, hold ? holdingText(hold) : '')
     if (lineCredits) setText(lineCredits, cr !== null ? creditsLine(cr) : '')
     if (lineKarma) setText(lineKarma, ka !== null ? karmaLine(ka) : '')
-    if (lineWatch) setText(lineWatch, watched ? watchingText(nick(watched)) : '')
+    if (lineWatch) setText(lineWatch, watchLine(watched, nick))
   }
   /** The health in the player list and in the selected player's panel. */
   const showHealth = () => {

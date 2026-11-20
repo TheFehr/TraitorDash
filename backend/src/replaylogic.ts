@@ -31,8 +31,9 @@ export interface TrackEvent {
   a?: string, w?: string, d?: number, h?: number
   /** wpick, wdrop (RFC 26, 4c, C1): `w` the weapon class; dna: `w` what the sample came from, `of` whose DNA. c4: `st` plant, defuse, fail (a wrong wire) or boom, `of` the owner of the charge (defuse, fail), `s` the timer in seconds (plant); tbtn: `n` the button's text. c4 and tbtn: `x y z` the place in units / 8. */
   st?: 'plant' | 'defuse' | 'fail' | 'boom', s?: number, n?: string, x?: number, y?: number, z?: number
-  /** hold (RFC 26, 4c, C2): `w` the weapon in hand from now on. credits, karma: `d` the change, `c` the amount after, `w` the reason word. spec: `of` the player a dead player watches from now on, none for nobody. */
+  /** hold (RFC 26, 4c, C2): `w` the weapon in hand from now on. credits, karma: `d` the change, `c` the amount after, `w` the reason word. spec: `of` the player a dead player watches from now on, none for nobody; `pr`, `pm` and `ti` instead of `of`: the prop they possess (its class, the name of its model, its number in the track's things). */
   c?: number
+  pr?: string, pm?: string, ti?: number
 }
 
 /** One run of consecutive samples of one player, in Source units and degrees-in-256ths, at real times. */
@@ -791,16 +792,24 @@ export function karmaAt(list: TrackEvent[] | undefined, ms: number): number | nu
   const e = lastEventAt(list, ms)
   return e && typeof e.c === 'number' ? e.c : null
 }
-/** Whom a dead player watches at `ms`: from the last `spec` event since their death (`diedAt`), at or before the time; null for nobody, for an event without a player, and for a living player (diedAt null). */
-export function watchingAt(list: TrackEvent[] | undefined, ms: number, diedAt: number | null): string | null {
+/** What a dead player watches at `ms`: the last `spec` event since their death (`diedAt`), at or before the time; null for a living player (diedAt null) and when there is none yet or the last is from an earlier death. */
+export function watchEventAt(list: TrackEvent[] | undefined, ms: number, diedAt: number | null): TrackEvent | null {
   if (diedAt === null) return null
   const e = lastEventAt(list, ms)
-  return e && e.t >= diedAt ? e.of ?? null : null
+  return e && e.t >= diedAt ? e : null
 }
+/** Whom a dead player watches at `ms`: the player of the last `spec` event (see watchEventAt); null for nobody, a prop, and an event without a player. */
+export function watchingAt(list: TrackEvent[] | undefined, ms: number, diedAt: number | null): string | null {
+  return watchEventAt(list, ms, diedAt)?.of ?? null
+}
+/** A possessed prop as a person reads it: "a prop (oildrum001)", or "a prop" when the bridge could not name its model (RFC 26, 4c.x). */
+export const propLabel = (e: TrackEvent) => (e.pm ? `a prop (${e.pm})` : 'a prop')
 export const holdingText = (w: string) => `Holding ${weaponName(w)}`
 export const creditsLine = (c: number) => `Credits ${c}`
 export const karmaLine = (c: number) => `Karma ${c}`
 export const watchingText = (name: string) => `Watching ${name}`
+/** The panel line for a `spec` event: "Watching Scip.MLP", "Possessing a prop (oildrum001)", nothing for nobody or no event. */
+export const watchLine = (e: TrackEvent | null, nick: (id: string) => string) => (!e ? '' : e.of ? watchingText(nick(e.of)) : e.pr ? `Possessing ${propLabel(e)}` : '')
 /** A signed change as the lists write it: "+1", "-40". */
 const signed = (d: number) => (d > 0 ? `+${d}` : String(d))
 /** "credits +1 (kill), 3 left", "credits -1 (bought), 2 left"; the reason is left out when the bridge did not know it ("other"). */
@@ -813,9 +822,9 @@ export function karmaOwnText(e: TrackEvent): string {
   const why = karmaReason(e.w)
   return `karma ${signed(e.d ?? 0)}${why ? ` (${why})` : ''}, ${e.c} left`
 }
-/** "watches Scip.MLP", "watches nobody" (a prop, roaming, or nothing). */
+/** "watches Scip.MLP", "possesses a prop (oildrum001)", "watches nobody" (roaming, a body, or nothing). */
 export function specOwnText(e: TrackEvent, nick: (id: string) => string): string {
-  return e.of ? `watches ${nick(e.of)}` : 'watches nobody'
+  return e.of ? `watches ${nick(e.of)}` : e.pr ? `possesses ${propLabel(e)}` : 'watches nobody'
 }
 
 /** The events that are lines of the feed besides chat, shop and bodies, damage and healing: equipment (weapons, C4, DNA, buttons). */

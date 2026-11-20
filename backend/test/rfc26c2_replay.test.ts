@@ -2,7 +2,7 @@ import { expect, test, describe } from 'bun:test'
 import fs from 'fs'
 import path from 'path'
 import {
-  decodeTrack, lastEventAt, holdAt, creditsAt, karmaAt, watchingAt, holdingText, creditsLine, karmaLine, watchingText, creditsOwnText, karmaOwnText, specOwnText, timeMark, EQUIPMENT_KINDS,
+  decodeTrack, lastEventAt, holdAt, creditsAt, karmaAt, watchingAt, holdingText, creditsLine, karmaLine, watchingText, creditsOwnText, karmaOwnText, specOwnText, watchEventAt, watchLine, propLabel, timeMark, EQUIPMENT_KINDS,
   type RawTrack, type TrackEvent,
 } from '../src/replaylogic'
 import { weaponName, creditReason, karmaReason } from '../src/weaponName'
@@ -129,6 +129,9 @@ describe('the lines of the lists', () => {
   test('the target: a name, or nobody', () => {
     expect(specOwnText(ev({ k: 'spec', of: 'C' }), nick)).toBe('watches Scip.MLP')
     expect(specOwnText(ev({ k: 'spec' }), nick)).toBe('watches nobody')
+    expect(specOwnText(ev({ k: 'spec', pr: 'prop_physics', pm: 'oildrum001' }), nick)).toBe('possesses a prop (oildrum001)')
+    expect(specOwnText(ev({ k: 'spec', pr: 'prop_physics' }), nick)).toBe('possesses a prop')
+    expect(specOwnText(ev({ k: 'spec', of: 'C', pr: 'prop_physics' }), nick)).toBe('watches Scip.MLP') // not what a valid track holds: the player wins
   })
 
   test('the words for the reasons are not taken from the prototype: a reason called constructor is shown as the word it is', () => {
@@ -168,7 +171,8 @@ describe('the page', () => {
     expect(replay).toContain('holdAt(data.polled.hold.get(selected), ms, dead)')
     expect(replay).toContain('creditsAt(data.polled.credits.get(selected), ms, dead)')
     expect(replay).toContain('karmaAt(data.polled.karma.get(selected), ms)')
-    expect(replay).toContain('watchingAt(data.polled.spec.get(selected), ms, death ? death.t : null)')
+    expect(replay).toContain('watchEventAt(data.polled.spec.get(selected), ms, death ? death.t : null)')
+    expect(replay).toContain('setText(lineWatch, watchLine(watched, nick))')
     expect(replay).toContain('    showPolled()\n')
   })
 
@@ -179,5 +183,31 @@ describe('the page', () => {
     expect(replay).toContain("case 'spec': return specOwnText(e, nick)")
     const feedFilter = replay.match(/const feed = data\.events\.filter\(([^\n]*)\n/)![1]!
     for (const k of ['hold', 'credits', 'karma', 'spec']) expect(feedFilter).not.toContain(`'${k}'`)
+  })
+})
+
+describe('a possessed prop (RFC 26, 4c.x)', () => {
+  const list = [ev({ k: 'spec', t: 1000, of: 'B' }), ev({ k: 'spec', t: 2000, pr: 'prop_physics', pm: 'oildrum001', ti: 3 }), ev({ k: 'spec', t: 3000 }), ev({ k: 'spec', t: 4000, pr: 'prop_physics_multiplayer' })]
+  test('the panel line says whom the dead player watches or which prop they possess; nothing for nobody, a living player or before the first event', () => {
+    expect(watchLine(watchEventAt(list, 1500, 900), nick)).toBe('Watching Tonda')
+    expect(watchLine(watchEventAt(list, 2500, 900), nick)).toBe('Possessing a prop (oildrum001)')
+    expect(watchLine(watchEventAt(list, 3500, 900), nick)).toBe('')
+    expect(watchLine(watchEventAt(list, 4500, 900), nick)).toBe('Possessing a prop') // no model name
+    expect(watchLine(watchEventAt(list, 2500, null), nick)).toBe('') // alive
+    expect(watchLine(watchEventAt(list, 2500, 2400), nick)).toBe('') // from before this death
+    expect(watchLine(watchEventAt(list, 500, 400), nick)).toBe('')
+    expect(watchLine(null, nick)).toBe('')
+    expect(propLabel(ev({ k: 'spec', pr: 'x', pm: 'barrel' }))).toBe('a prop (barrel)')
+  })
+  test('whom is still the player of the event only: a prop is nobody for watchingAt, as before', () => {
+    expect(watchingAt(list, 1500, 900)).toBe('B')
+    expect(watchingAt(list, 2500, 900)).toBeNull()
+    expect(watchingAt(list, 4500, 900)).toBeNull()
+  })
+  test('a track with none of the new fields reads as before, and the fields survive the decoding', () => {
+    const d = decodeTrack({ t: [0, 200, 200], players: [{ id: 'A', segments: [{ from: 0, x: [1, 0, 0], y: [0, 0, 0], z: [0, 0, 0], a: [0, 0, 0] }] }], deaths: [], events: [ev({ k: 'spec', p: 'B', t: 100, pr: 'prop_physics', pm: 'barrel', ti: 2 }), ev({ k: 'spec', p: 'B', t: 150, of: 'A' })] })
+    expect(d.polled.spec.get('B')![0]).toMatchObject({ pr: 'prop_physics', pm: 'barrel', ti: 2 })
+    expect(d.polled.spec.get('B')![1]).toMatchObject({ of: 'A' })
+    expect(d.polled.spec.get('B')![1]!.pr).toBeUndefined()
   })
 })

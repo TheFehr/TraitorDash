@@ -285,6 +285,32 @@ describe('validateTrack', () => {
     refused(spec({ of: A }), /themselves/)
   })
 
+  test('spec events that name a possessed prop (RFC 26, 4c.x): class pr, model name pm and thing ti, never with of; pm and ti need pr; ti must be a thing of the track; unknown fields are dropped', () => {
+    const thing = { e: 7, c: 'prop_physics', mdl: 'models/props_c17/oildrum001.mdl', b: [-8, -8, 0, 8, 8, 32], k: [0, 1], x: [100, 80], y: [100, 0], z: [0, 0], p: [0, 0], w: [0, 0], r: [0, 0] }
+    const body = (events: unknown[], things: unknown[] = []) => ({ ...good(), events, ...(things.length ? { things } : {}) })
+    const ev = (over: Record<string, unknown>) => ({ t: 1, p: A, k: 'spec', ...over })
+    const ok = validateTrack(body([ev({ pr: 'prop_physics', pm: 'oildrum001', ti: 7, extra: 1 }), { ...ev({ pr: 'prop_physics_multiplayer' }), t: 2 }, { ...ev({ pr: 'prop_physics', pm: 'a-b_9' }), t: 3 }], [thing]), round)
+    expect(ok.ok).toBe(true)
+    if (ok.ok) expect(ok.track.events).toEqual([
+      { t: 1, p: A, k: 'spec', pr: 'prop_physics', pm: 'oildrum001', ti: 7 }, { t: 2, p: A, k: 'spec', pr: 'prop_physics_multiplayer' }, { t: 3, p: A, k: 'spec', pr: 'prop_physics', pm: 'a-b_9' },
+    ])
+    for (const pr of [40]) expect(validateTrack(body([ev({ pr: 'p'.repeat(pr) })]), round).ok).toBe(true)
+    for (const pr of ['', 'p'.repeat(41), 'a b', 'prop<x>', 7, null, 'prop/physics']) refused(body([ev({ pr })]), /prop class/)
+    expect(validateTrack(body([ev({ pr: 'prop_physics', pm: 'm'.repeat(40) })]), round).ok).toBe(true)
+    for (const pm of ['', 'm'.repeat(41), 'Upper', 'a.b', 'a/b', 'a b', 7, null]) refused(body([ev({ pr: 'prop_physics', pm })]), /prop model/)
+    refused(body([ev({ pr: 'prop_physics', of: B })]), /not both/)
+    refused(body([ev({ pr: 'prop_physics', of: 'stranger' })]), /not in the round/) // an invalid player is refused first
+    refused(body([ev({ pm: 'oildrum001' })]), /without a prop class/)
+    refused(body([ev({ ti: 7 })], [thing]), /without a prop class/)
+    for (const ti of [0, -1, 65536, 1.5, '7', null]) refused(body([ev({ pr: 'prop_physics', ti })], [thing]), /number of a thing/)
+    refused(body([ev({ pr: 'prop_physics', ti: 8 })], [thing]), /not in the track/)
+    refused(body([ev({ pr: 'prop_physics', ti: 7 })]), /not in the track/) // no things at all
+    // an event of before this change is the same as ever
+    const old = validateTrack(body([ev({ of: B }), { ...ev({}), t: 2 }]), round)
+    expect(old.ok).toBe(true)
+    if (old.ok) expect(old.track.events).toEqual([{ t: 1, p: A, k: 'spec', of: B }, { t: 2, p: A, k: 'spec' }])
+  })
+
   test('a track from a bridge before stage C (none of these kinds) is stored as it was, and a new kind in an old backend is the refusal the deploy order is about', () => {
     const body = (events: unknown[]) => ({ ...good(), events })
     const r = validateTrack(body([{ t: 1, p: A, k: 'hurt', w: 'fall', d: 1, h: 1 }, { t: 2, p: A, k: 'heal', w: 'other', d: 1, h: 2 }, { t: 3, p: A, k: 'found' }]), round)

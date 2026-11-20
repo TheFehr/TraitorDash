@@ -2716,6 +2716,168 @@ describe('track.lua: whom a dead player watches (RFC 26, 4c, C2)', () => {
   })
 })
 
+// RFC 26, 4c.x: a dead player who possesses a prop (TTT's prop spectating). The game sets `spec_owner` on the prop to the player and makes the prop their observer target.
+const POSS = `
+  -- a prop as PROPSPEC.Start leaves it: the observer target of the player, with spec_owner on it
+  function Poss(owner, class, model, extra)
+    local e = Thing(class or "prop_physics", extra)
+    e.model = model; e.owner = owner
+    function e:GetModel() return self.model end
+    function e:GetNWEntity(k, d) if k == "spec_owner" and self.owner then return self.owner end return d end
+    return e
+  end
+  -- a prop that the props recording can see (it moves, so it becomes a thing)
+  function Pickable(class, model, x)
+    local e = Part(class, model, "", x, 0, 0, 0)
+    e.asleep = false; e.owner2 = nil
+    function e:IsPlayer() return false end
+    function e:GetOwner() return nil end
+    function e:GetModelBounds() return { x = -8, y = -8, z = 0 }, { x = 8, y = 8, z = 32 } end
+    function e:GetPhysicsObject() local me = self return { IsAsleep = function() return me.asleep end } end
+    function e:MapCreationID() return -1 end
+    function e:GetNWEntity(k, d) if k == "spec_owner" and self.owner2 then return self.owner2 end return d end
+    return e
+  end
+`
+describe('track.lua: whom a dead player possesses (RFC 26, 4c.x)', () => {
+  const evOf = (r: Run, p = B) => specs(r, p).map(e => ({ ...e, t: undefined }))
+  const spec = (body: string) => play(C2 + POSS + `SetCv("traitordash_track_spec", "1") Start() B.alive = false ` + body)
+
+  test('a prop the dead player possesses is pr (its class) and pm (its model\'s file name) and has no of; a player is of and has no pr; roaming is neither; the backend takes all of it', () => {
+    const r = spec(`
+      B.obs = Poss(B, "prop_physics", "models/props_c17/oildrum001.mdl"); Run(1, 0.6)
+      B.obs = A; Run(1, 0.6)
+      B.obs = nil; Run(1, 0.6)
+      B.obs = Poss(B, "prop_physics_multiplayer", "models/props_junk/wood_crate001a.mdl"); Run(1, 0.6)
+      Ends()
+    `)
+    expect(evOf(r)).toEqual([
+      { p: B, k: 'spec', pr: 'prop_physics', pm: 'oildrum001' }, { p: B, k: 'spec', of: A }, { p: B, k: 'spec' }, { p: B, k: 'spec', pr: 'prop_physics_multiplayer', pm: 'wood_crate001a' },
+    ])
+    expect(okTrack(trackOf(r))).toBe(true)
+    expect(JSON.stringify(trackOf(r))).not.toContain('"cand"')
+  })
+
+  test('only a prop the game says this player possesses counts: not a ragdoll (the dead player\'s own body is the target at first), a weapon, the world, a prop somebody else possesses or nobody does, nor one only looked at', () => {
+    const r = spec(`
+      B.obs = Thing("prop_ragdoll"); Run(1, 0.6)                              -- the own body: nobody, nothing is written
+      B.obs = Poss(nil, "prop_physics", "models/a.mdl"); Run(1, 0.6)          -- spec_owner is not set
+      B.obs = Poss(C, "prop_physics", "models/a.mdl"); Run(1, 0.6)            -- somebody else's
+      B.obs = Wep("weapon_zm_mac10"); Run(1, 0.6)
+      B.obs = Thing("worldspawn"); Run(1, 0.6)
+      B.obs = Poss(B, "prop_physics", "models/a.mdl"); Run(1, 0.6)            -- possessed
+      Ends()
+    `)
+    expect(evOf(r)).toEqual([{ p: B, k: 'spec', pr: 'prop_physics', pm: 'a' }])
+    // the player's own propspec table names it as well
+    const t = spec(`
+      local e = Thing("prop_physics", { model = "models/x/Barrel.MDL" }); function e:GetModel() return self.model end
+      B.propspec = { ent = e }; B.obs = e; Run(1, 0.6)
+      B.propspec = nil; B.obs = Thing("prop_ragdoll"); Run(1, 0.6)
+      Ends()
+    `)
+    expect(evOf(t)).toEqual([{ p: B, k: 'spec', pr: 'prop_physics', pm: 'barrel' }, { p: B, k: 'spec' }])
+    // an entity with no GetNWEntity and no propspec: nobody
+    const bare = spec(`B.obs = Thing("prop_physics"); Run(1, 0.6) B.obs = Thing("prop_physics"); Run(1, 0.6) Ends()`)
+    expect(evOf(bare)).toEqual([])
+  })
+
+  test('the class and the model are cut to safe words: class letters, digits, _ . and - at most 40; model name lower-case a-z 0-9 _ - at most 40 with no folders and no extension; no model name is no pm', () => {
+    const r = spec(`
+      B.obs = Poss(B, "prop_phys<b>ics" .. string.rep("x", 60), "models/props/Some Odd(Name)!.v2.MDL"); Run(1, 0.6)
+      B.obs = Poss(B, "prop_physics", "models\\\\props\\\\WIN_Path-1.mdl"); Run(1, 0.6)
+      B.obs = Poss(B, "prop_physics", "models/p/" .. string.rep("a", 60) .. ".mdl"); Run(1, 0.6)
+      B.obs = Poss(B, "prop_physics", "models/p/!!!.mdl"); Run(1, 0.6)
+      B.obs = Poss(B, "prop_physics", nil); Run(1, 0.6)
+      B.obs = Poss(B, "prop_physics", 42); Run(1, 0.6)
+      B.obs = Poss(B, "prop_physics", "models/p/noext"); Run(1, 0.6)
+      Ends()
+    `)
+    const e = evOf(r)
+    expect(e[0]!.pr).toBe(('prop_physbics' + 'x'.repeat(60)).slice(0, 40)) // "<" and ">" are cut
+    expect(e.map(x => x.pm)).toEqual(['someoddnamev2', 'win_path-1', 'a'.repeat(40), undefined, undefined, undefined, 'noext'])
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('the same prop is no new event; another prop, a player or nobody is; a change within 500 ms replaces the event (and takes its prop away again); 500 ms is one, 501 are two', () => {
+    const r = spec(`
+      P1 = Poss(B, "prop_physics", "models/a.mdl"); P2 = Poss(B, "prop_physics", "models/a.mdl")
+      B.obs = P1; Run(1, 0.2)                            -- 1400
+      B.obs = P1; Run(1, 0.6)                            -- the same: nothing
+      B.obs = P2; Run(1, 0.6)                            -- 2600: another prop of the same class and model: new event
+      B.obs = A; Run(1, 0.5)                             -- 3100: within 500 ms: replaces it, the prop is gone from it
+      B.obs = P1; Run(1, 0.501)                          -- 3601: a new one
+      Ends()
+    `)
+    expect(specs(r).map(e => [e.of, e.pr, e.pm, e.t])).toEqual([[undefined, 'prop_physics', 'a', 1400], [A, undefined, undefined, 3100], [undefined, 'prop_physics', 'a', 3601]])
+    const back = spec(`
+      B.obs = A; Run(1, 0.2); B.obs = Poss(B, "prop_physics", "models/a.mdl"); Run(1, 0.3)   -- the player's event becomes the prop's
+      Ends()
+    `)
+    expect(specs(back).map(e => [e.of, e.pr])).toEqual([[undefined, 'prop_physics']])
+  })
+
+  test('with traitordash_track_spec at 0 a possessed prop records nothing; 512 spec events at most with props too', () => {
+    const off = play(C2 + POSS + `Start() B.alive = false B.obs = Poss(B, "prop_physics", "models/a.mdl"); Run(3) Ends()`)
+    expect(specs(off)).toEqual([])
+    const r = spec(`
+      PA, PB = Poss(B, "prop_physics", "models/a.mdl"), Poss(B, "prop_physics", "models/b.mdl")
+      for i = 1, 600 do B.obs = (i % 2 == 0) and PA or PB; Gap(600); Run(1, 0) end
+      Ends()
+    `)
+    expect(specs(r)).toHaveLength(512)
+    expect(trackOf(r).truncated).toBe(true)
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('a possessed prop that is a thing of the track (traitordash_track_props 1, it moved) gets ti, its number in things, even when it was only looked at after the possession began; one that never moved, with props off, or that is no candidate has none', () => {
+    const r = play(C2 + POSS + `
+      SetCv("traitordash_track_props", "1"); SetCv("traitordash_track_spec", "1")
+      still = Pickable("prop_physics", "models/props_junk/barrel.mdl", 0)
+      crate = Pickable("prop_physics", "models/props_junk/wood_crate001a.mdl", 100)
+      Start() B.alive = false
+      still.owner2 = B; B.obs = still; Run(1, 0.6)        -- possessed, never moves: no thing
+      crate.owner2 = B; B.obs = crate; Run(1, 0.6)
+      crate.x = 180; Run(2); crate.x = 260; Run(1)
+      Ends()
+    `)
+    const t = trackOf(r)
+    expect(t.things).toHaveLength(1)
+    expect(specs(r).map(x => [x.pr, x.pm, x.ti])).toEqual([['prop_physics', 'barrel', undefined], ['prop_physics', 'wood_crate001a', t.things[0].e]])
+    expect(JSON.stringify(t)).not.toContain('"cand"')
+    expect(okTrack(t)).toBe(true)
+    const off = play(C2 + POSS + `
+      SetCv("traitordash_track_spec", "1")
+      crate = Pickable("prop_physics", "models/props_junk/wood_crate001a.mdl", 100)
+      Start() B.alive = false; crate.owner2 = B; B.obs = crate; Run(1, 0.6); crate.x = 180; Run(2); Ends()
+    `)
+    expect(specs(off).map(x => [x.pr, x.ti])).toEqual([['prop_physics', undefined]])
+    expect(trackOf(off).things).toBeUndefined()
+    const lateCand = play(C2 + POSS + `
+      SetCv("traitordash_track_props", "1"); SetCv("traitordash_track_spec", "1")
+      Start() B.alive = false
+      crate = Pickable("prop_physics", "models/props_junk/wood_crate001a.mdl", 100)   -- created after the round began: no candidate until the list is made again
+      crate.owner2 = B; B.obs = crate; Run(1, 0.6)
+      Run(30); crate.x = 180; Run(3); Ends()
+    `)
+    const lt = trackOf(lateCand)
+    expect(lt.things).toHaveLength(1)
+    expect(specs(lateCand).map(x => x.ti)).toEqual([lt.things[0].e])
+  })
+
+  test('calls that fail: an EntIndex or GetModel that raises, a GetNWEntity that raises: the round is recorded and the event says what is known', () => {
+    const r = spec(`
+      local e = Poss(B, "prop_physics", "models/a.mdl"); function e:EntIndex() error("no") end; function e:GetModel() error("no") end
+      B.obs = e; Run(1, 0.6)
+      local f = Poss(B, "prop_physics", "models/a.mdl"); function f:GetNWEntity() error("no") end
+      B.obs = f; Run(1, 0.6)
+      Ends()
+    `)
+    expect(evOf(r)).toEqual([{ p: B, k: 'spec', pr: 'prop_physics' }, { p: B, k: 'spec' }])
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+})
+
 describe('track.lua: C2 does no harm', () => {
   test('with tracking off nothing is asked of the game: no weapon, no credits, no target, and the hooks return nothing', () => {
     const off = play(C2 + `

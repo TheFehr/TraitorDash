@@ -68,6 +68,7 @@ local WEAPON_GRACE_MS = 1000    -- after a player spawned, got a new role, and a
 local TBTN_MERGE_MS = 1000      -- the same player on the same traitor button within this is one event
 local C4_RANGE = 256            -- units: the game's own range for defusing a charge, used to tell which charge was defused
 local HOLD_MERGE_MS = 300           -- a change of the weapon in hand within this of the player's last `hold` replaces it (quick switching is one change)
+local SPEC_MODEL_LEN = 40          -- characters of a possessed prop's model name that are kept (RFC 26, 4c.x)
 local SPEC_MERGE_MS = 500           -- the same for the target of a dead player (cycling with the mouse)
 local CREDIT_GRACE_MS = 1000        -- after the round began and after a spawn, a change of credits is the game setting them up, not a gain or a spend
 local CREDIT_TAG_MS = 1500          -- a hook's note about why a player's credits changed is used for a change seen within this of it (or since the last poll, when that is longer)
@@ -1561,28 +1562,66 @@ local function PollCredits(r, p, ply, now, ms)
     p.credEv, p.credAt = ev, ms
 end
 
--- Whom a dead player watches, polled (only with traitordash_track_spec 1, read when the round began): a round player is `of`; a prop, roaming or nothing is
--- "watching nobody". Nothing is written for a dead player who watches nobody at first; changes within SPEC_MERGE_MS of the last are one.
+-- Whom a dead player watches, polled (only with traitordash_track_spec 1, read when the round began): a round player is `of`; a prop the dead player possesses
+-- (TTT's prop spectating) is `pr` (its class), `pm` (its model's file name) and, when the prop is a thing that moved, `ti` (its number in `things`, set in Finish);
+-- roaming, a ragdoll, a weapon or nothing is "watching nobody". Nothing is written for a dead player who watches nobody at first; changes within SPEC_MERGE_MS
+-- of the last are one. RFC 26, 4c.x: PROPSPEC.Start does `SpectateEntity(ent, true)`, so GetObserverTarget is the prop, and sets `spec_owner` on it to the player.
+local function PropModel(ent)
+    if not ent.GetModel then return nil end
+    local ok, m = pcall(ent.GetModel, ent)
+    if not ok or type(m) ~= "string" then return nil end
+    local name = string.lower(string.match(m, "([^/\\]*)$") or "")
+    name = string.gsub(name, "%.[^.]*$", "")
+    name = string.sub(string.gsub(name, "[^a-z0-9_%-]", ""), 1, SPEC_MODEL_LEN)
+    return name ~= "" and name or nil
+end
+
+-- Is `target` a prop that `ply` possesses? Only the game's own marker counts (the entity's `spec_owner` is the player, which is what TTT2's own client code asks;
+-- or the player's `propspec` table names it), so a ragdoll, a weapon, a prop somebody only looks at and the player's own body are not.
+local function PossessedProp(ply, target)
+    if not target.IsPlayer or target:IsPlayer() then return false end
+    if target.GetNWEntity then
+        local ok, owner = pcall(target.GetNWEntity, target, "spec_owner")
+        if ok and owner == ply then return true end
+    end
+    local ps = ply.propspec
+    return type(ps) == "table" and ps.ent == target
+end
+
 local function PollSpec(r, p, ply, now, ms)
     if not ply.GetObserverTarget then return end
     local ok, target = pcall(ply.GetObserverTarget, ply)
     if not ok then return end
-    local of = false
+    local of, pr, pm, key, cand = false, nil, nil, false, nil
     if target ~= nil and IsValid(target) then
         local tsid = RoundPlayer(r, target)
-        if tsid and tsid ~= p.sid then of = tsid end
+        if tsid then
+            if tsid ~= p.sid then of, key = tsid, tsid end
+        elseif PossessedProp(ply, target) then
+            pr = ClassOf(target)
+            if pr then
+                pm = PropModel(target)
+                local okIdx, idx = pcall(target.EntIndex, target)
+                key = "prop:" .. (okIdx and tostring(idx) or "?")
+                cand = okIdx and r.candByEnt and r.candByEnt[idx] or nil
+            end
+        end
     end
-    local was = p.specOf or false
-    if of == was then return end
-    p.specOf = of
+    local was = p.specKey or false
+    if key == was then
+        local last = p.specEv
+        if cand and last and last.pr and not last.cand then last.cand = cand end -- the prop became a candidate after the possession began
+        return
+    end
+    p.specKey = key
     local last = p.specEv
     if last and p.specAt and ms - p.specAt <= SPEC_MERGE_MS then
-        last.of = of or nil
+        last.of, last.pr, last.pm, last.cand = of or nil, pr, pm, cand
         p.specAt = ms
         if r.events[#r.events] == last then last.t = ms end
         return
     end
-    p.specEv = AddEvent(r, now, { p = p.sid, k = "spec", of = of or nil })
+    p.specEv = AddEvent(r, now, { p = p.sid, k = "spec", of = of or nil, pr = pr, pm = pm, cand = cand })
     p.specAt = ms
 end
 
@@ -1598,7 +1637,7 @@ PollState = function(r, now)
             if IsValid(ply) then
                 p.sid = sid
                 if ply.IsTerror and ply:IsTerror() then
-                    if r.spec then p.specOf, p.specEv, p.specAt = false, nil, nil end
+                    if r.spec then p.specKey, p.specEv, p.specAt = false, nil, nil end
                     PollHold(r, p, ply, now, ms)
                     PollCredits(r, p, ply, now, ms)
                 else
@@ -1779,6 +1818,15 @@ function Track.Finish(roundId)
         if d.attacker ~= nil and not In(d.attacker) then d.attacker, d.ax, d.ay, d.az = nil, nil, nil, nil end
     end
     local events = Only(r.events, "p", { "by", "of", "a" })
+    local things = ThingsOut(r)
+    -- A possessed prop that moved is a thing: the `spec` event gets its number in `things` (`ti`); the held reference to the candidate is never sent.
+    local inThings = {}
+    for _, th in ipairs(things or {}) do inThings[th.e] = true end
+    for _, e in ipairs(events) do
+        local cand = e.cand
+        e.cand = nil
+        if e.k == "spec" and e.pr and cand and cand.thing and inThings[cand.thing.e] then e.ti = cand.thing.e end
+    end
     local bodies = Only(r.bodies, "p")
     local inputs = {}
     for _, e in ipairs(r.inputs) do
@@ -1803,7 +1851,7 @@ function Track.Finish(roundId)
         t = r.t, players = players, deaths = deaths, begin = r.begin > 0 and r.begin or nil,
         events = #events > 0 and events or nil,
         bodies = #bodies > 0 and bodies or nil,
-        parts = PartsOut(r), things = ThingsOut(r), inputs = #inputs > 0 and inputs or nil,
+        parts = PartsOut(r), things = things, inputs = #inputs > 0 and inputs or nil,
     }
 end
 
