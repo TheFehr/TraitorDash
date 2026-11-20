@@ -151,6 +151,8 @@ async function start(root: HTMLElement) {
   const kindsInTrack = new Set(data.events.map(e => e.k))
   const lineHold = el(root, '[data-selected-hold]'), lineCredits = el(root, '[data-selected-credits]'), lineKarma = el(root, '[data-selected-karma]'), lineWatch = el(root, '[data-selected-watch]')
   for (const [line, kind] of [[lineHold, 'hold'], [lineCredits, 'credits'], [lineKarma, 'karma'], [lineWatch, 'spec']] as const) if (line) line.hidden = !kindsInTrack.has(kind)
+  const totalsLine = el(root, '[data-selected-totals]')
+  if (totalsLine) totalsLine.classList.toggle('two', kindsInTrack.has('shots')) // a track with shots has two fixed lines for the sums (took, dealt, healed and shot can pass one line); decided by the whole track, so it never changes with the time or the selection
   const showPolled = () => {
     const death = selected ? currentDeath(data.deaths, data.events, selected, ms) : null
     const dead = death !== null

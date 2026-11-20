@@ -64,6 +64,9 @@ describe('the page', () => {
     expect(rule('.phealth-line')).toContain('nowrap')
     expect(rule('.phealth-line')).toContain('overflow:hidden')
     expect(rule('.phealth-line')).toContain('text-overflow:ellipsis')
+    expect(rule('.phealth-line.two')).toMatch(/height:3em/) // a track with shots: two lines of 1.5em, whatever the text
+    expect(rule('.phealth-line.two')).toContain('white-space:normal')
+    expect(replay).toContain("totalsLine.classList.toggle('two', kindsInTrack.has('shots'))") // by the whole track, not by the selection
     expect(replay).toContain('totalsText(damageTotals(data.events, selected))')
     expect(replay).toContain('if (!totalsText_.has(selected ?? \'\'))')
     expect(replay).toContain('shotsTitle(shotsByWeapon(data.events, selected))')
