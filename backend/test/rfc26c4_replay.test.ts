@@ -84,6 +84,8 @@ describe('the page', () => {
   })
   test('it is written only when it changes (the dot), and both drawings use the shared function that does it', () => {
     expect(replay).toContain("if (dot.classList.contains('on') !== on)")
+    expect(replay).toContain('const on = isTalking(data.talk.get(id), ms)') // the dot follows the lookup at the time shown, for each player of the list
+    expect(replay).toContain("setText(lineTalk, selected && isTalking(data.talk.get(selected), ms) ? 'Speaking' : '')") // the card's line, for the selected player only
     const flat = read('replayflat.ts')
     expect(flat).not.toContain('isTalking') // the flat drawing only calls `lists`, which calls showHealth, which is where it is written
   })
