@@ -12,12 +12,14 @@ export const MAX_TRACK_DEATHS = 512
 export const MAX_SEGMENTS_PER_PLAYER = 64
 /**
  * The sum of the bridge's caps of each kind: revive 1024, role 1024, say 1024, buy 512, found 256, pickup 256, drop 256 (4352), hurt 2048 (RFC 26, 4a), heal 512 (RFC 26, 4b)
- * and, of stage C package C1 (4c), wpick 512, wdrop 512, c4 128, dna 128 and tbtn 256 (1536): 8448; of package C2 hold 1024, credits 512, karma 512 and spec 512 (2560): 11008.
+ * and, of stage C package C1 (4c), wpick 512, wdrop 512, c4 128, dna 128 and tbtn 256 (1536): 8448; of package C2 hold 1024, credits 512, karma 512 and spec 512 (2560): 11008; of package C3 shots 1536: 12544.
  * A safety limit of the backend, kept equal to what the bridge can send.
  */
-export const MAX_TRACK_EVENTS = 11_008
+export const MAX_TRACK_EVENTS = 12_544
 /** The most characters of a traitor button's text, and of a `tbtn` event's `n` (RFC 26, 4c). */
 export const MAX_TBTN_CHARS = 40
+/** The most shots one `shots` event holds (the bridge merges the shots of one player and weapon within a second). */
+export const MAX_SHOTS = 10_000
 /** Credits are sent by the game as UInt(8): a `credits` event's `c` is 0 to 255 and its change `d` is -255 to 255 (not 0) (RFC 26, 4c, C2). */
 export const MAX_CREDITS = 255
 /** A `karma` event's change `d` is -1000 to 1000 (not 0) and the karma after it `c` 0 to 1000 (the bridge cuts what the server's maximum allows beyond that). */
@@ -82,7 +84,7 @@ export interface TrackEvent {
   t: number
   /** The player it happened to. */
   p: string
-  k: 'revive' | 'role' | 'say' | 'buy' | 'found' | 'pickup' | 'drop' | 'hurt' | 'heal' | 'wpick' | 'wdrop' | 'c4' | 'dna' | 'tbtn' | 'hold' | 'credits' | 'karma' | 'spec'
+  k: 'revive' | 'role' | 'say' | 'buy' | 'found' | 'pickup' | 'drop' | 'hurt' | 'heal' | 'wpick' | 'wdrop' | 'c4' | 'dna' | 'tbtn' | 'hold' | 'credits' | 'karma' | 'spec' | 'shots'
   /** `role` events: the settled role and team. */
   role?: string
   team?: string
@@ -113,7 +115,8 @@ export interface TrackEvent {
   /** `c4` events: `st` what happened (C4_STATES), `of` (defuse and fail) the player who armed it, `s` (plant) the timer in seconds, `x y z` where the charge was. `tbtn` events: `n` the button's text, `x y z` its place. Units / 8, absolute. */
   st?: 'plant' | 'defuse' | 'fail' | 'boom'
   s?: number
-  n?: string
+  /** `tbtn` events: the button's text (a string); `shots` events: the number of shots, a whole number from 1 to MAX_SHOTS (RFC 26, 4c, C3; `w` is the weapon class). */
+  n?: string | number
   x?: number
   y?: number
   z?: number
@@ -339,6 +342,10 @@ export function validateTrack(body: unknown, round: { roundId: string, map: stri
         const at = place(e)
         if (at === false) return no('a tbtn event has an invalid place: x, y and z are all given or none, whole numbers of units / 8 inside the map')
         events.push({ t: e.t, p: e.p, k: 'tbtn', ...(e.n !== undefined ? { n: e.n as string } : {}), ...(at ?? {}) })
+      } else if (e.k === 'shots') {
+        if (typeof e.w !== 'string' || !HURT_CAUSE.test(e.w)) return no('a shots event needs the weapon class: letters, digits, _ . and -, at most 40')
+        if (!isInt(e.n) || e.n < 1 || e.n > MAX_SHOTS) return no(`a shots event needs the number of shots, from 1 to ${MAX_SHOTS}`)
+        events.push({ t: e.t, p: e.p, k: 'shots', w: e.w, n: e.n })
       } else if (e.k === 'hold') {
         if (typeof e.w !== 'string' || !HURT_CAUSE.test(e.w)) return no('a hold event needs the weapon class: letters, digits, _ . and -, at most 40')
         events.push({ t: e.t, p: e.p, k: 'hold', w: e.w })

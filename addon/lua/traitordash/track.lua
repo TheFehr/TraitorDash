@@ -56,7 +56,12 @@ local MAX_DEATHS = 512
 -- What happened to players besides moving (RFC 14, 4.3 and RFC 26): each kind has a cap of its own, so a chatty round does not use up the room of the others.
 local EVENT_CAP = { revive = 1024, role = 1024, say = 1024, buy = 512, found = 256, pickup = 256, drop = 256, hurt = 2048, heal = 512,
     wpick = 512, wdrop = 512, c4 = 128, dna = 128, tbtn = 256, -- these five: RFC 26, stage C, package C1
-    hold = 1024, credits = 512, karma = 512, spec = 512 } -- these four: package C2
+    hold = 1024, credits = 512, karma = 512, spec = 512, -- these four: package C2
+    shots = 1536 } -- package C3
+-- Shots (RFC 26, 4c, C3): a shot is one call of FireBullets by a player's weapon (never a pellet). One `shots` event holds the shots of one player and one
+-- weapon within MERGE_MS of the first of them. The hook runs for every bullet of the server, so it has a safety valve: a round that makes it run more
+-- than CALLS times, or in which the timed calls (one in SAMPLE, from MIN_SAMPLES of them) add up to more than COST seconds, stops recording shots.
+local SHOT = { MERGE_MS = 1000, N_MAX = 10000, CALLS = 200000, SAMPLE = 64, MIN_SAMPLES = 32, COST = 1.0 }
 local HP_MAX = 1000             -- the most health a sample or an event holds (TTT2 roles can have more than 100); more is cut, less than 0 is 0 (RFC 26, 4a)
 local HURT_MERGE_MS = 50        -- damage to the same victim, from the same attacker with the same cause, within this is one event (pellets, a blast)
 local HURT_W_LEN = 40
@@ -694,10 +699,11 @@ local function SampleBodies(r, now)
 end
 
 local function AddPlayer(r, sid, ply)
-    if r.players[sid] then r.players[sid].ply = ply return end
+    if r.players[sid] then r.players[sid].ply = ply r.shotMap = {} return end
     if #r.order >= 128 then return end
     r.order[#r.order + 1] = sid
     r.players[sid] = { ply = ply, segs = {} }
+    r.shotMap = {} -- the shots hook's lookup by entity index is made again
 end
 
 -- During the preparation the round has no players yet (they are chosen when it begins), so everybody who takes part now is recorded, and a
@@ -869,6 +875,7 @@ local function NewRecording(roundId)
         samples = 0, ticks = 0, skipped = 0, interval = mn, minUsed = math.huge, maxUsed = 0,
         ring = {}, costSum = 0, worst = 0, truncated = false, degraded = false, stopped = false,
         keys = 0, inputs = {}, bodies = {}, kinds = {}, chat = cv_chat:GetBool(), spec = cv_spec:GetBool(), begin = 0,
+        shotCalls = 0, shotCost = 0, shotSamples = 0, shotMap = {}, shotsOff = false,
     }
 end
 
@@ -1754,6 +1761,67 @@ end
 function Track.Pickup(ply, ent) BodyHandled("pickup", ply, ent) end
 function Track.Drop(ply, ent) BodyHandled("drop", ply, ent) end
 
+-- ---- Shots fired (RFC 26, 4c, package C3)
+-- GM:EntityFireBullets(entity, data) runs for every call of FireBullets, by a player, an NPC or a prop, so it is the hottest hook of the bridge. With no round
+-- recorded it is one upvalue check and a return. Under recording a player is found by entity index in a table that is made once per player (checked
+-- against the entity, so a slot a new player took is looked at again), the weapon class is cached per player and only looked up again when the class
+-- the game names changes, and the only allocation is the event of a new one-second bucket. The hook returns nothing: the wiki says to return true
+-- to apply changes to the bullet table and false to suppress the bullet; it does not say what nothing does, and nothing is what every hook of the
+-- bridge returns, so the bullet is never changed.
+-- The shooter is a player of the round (not in the preparation); a bullet with Damage 0 is not a shot (the crowbar fires one for the blood decal when it hits a
+-- player); the weapon is the bullet's Inflictor when that is a weapon, else the player's active weapon, and none of the two is no shot.
+local function ShotShooter(r, ent)
+    local idx = ent:EntIndex()
+    local e = r.shotMap[idx]
+    if e and e.ply == ent then return e.p, e.sid end
+    local sid = RoundPlayer(r, ent)
+    local p = sid and r.players[sid] or false
+    r.shotMap[idx] = { ply = ent, p = p, sid = sid }
+    return p, sid
+end
+
+function Track.Shot(r, ent, data)
+    if not ent:IsPlayer() or type(data) ~= "table" or data.Damage == 0 then return end
+    local p, sid = ShotShooter(r, ent)
+    if not p then return end
+    local wep = data.Inflictor
+    if not IsValid(wep) or not wep.IsWeapon or not wep:IsWeapon() then wep = ent:GetActiveWeapon() end
+    if not IsValid(wep) then return end
+    local raw = wep:GetClass()
+    if raw ~= p.shotRaw then p.shotRaw, p.shotClass = raw, Word(raw) end
+    local class = p.shotClass
+    if not class then return end
+    local now = RoundMs(r, CurTime())
+    local b = p.shotB
+    if not b then b = {} p.shotB = b end
+    local ev = b[class]
+    if ev and now - ev.t < SHOT.MERGE_MS then
+        if ev.n < SHOT.N_MAX then ev.n = ev.n + 1 end
+        return
+    end
+    if (r.kinds.shots or 0) >= EVENT_CAP.shots then r.truncated = true return end
+    b[class] = AddEvent(r, CurTime(), { p = sid, k = "shots", w = class, n = 1 })
+end
+
+local function ShotsOff(r, why)
+    r.shotsOff = true
+    print(string.format("[TraitorDash:track] shots: %s, so no more shots are recorded in this round (%d calls, about %.2f ms timed so far)", why, r.shotCalls, r.shotCost * 1000))
+end
+
+local function ShotHook(ent, data)
+    local r = rec
+    if not r or r.shotsOff or r.prep or r.stopped then return end
+    local n = r.shotCalls + 1
+    r.shotCalls = n
+    if n > SHOT.CALLS then ShotsOff(r, "the hook ran more than " .. SHOT.CALLS .. " times") return end
+    if n % SHOT.SAMPLE ~= 0 then pcall(Track.Shot, r, ent, data) return end
+    local t0 = SysTime()
+    pcall(Track.Shot, r, ent, data)
+    r.shotCost = r.shotCost + (SysTime() - t0)
+    r.shotSamples = r.shotSamples + 1
+    if r.shotSamples >= SHOT.MIN_SAMPLES and r.shotCost * SHOT.SAMPLE > SHOT.COST then ShotsOff(r, "the hook took about " .. math.floor(r.shotCost * SHOT.SAMPLE * 1000) .. " ms") end
+end
+
 -- The hooks return nothing, so they can never block or change what they watch.
 hook.Add("PlayerSay", "TraitorDash_TrackSay", function(ply, text, teamOnly) pcall(Track.Say, ply, text, teamOnly) end)
 hook.Add("TTT2OrderedEquipment", "TraitorDash_TrackBuy", function(ply, item, isItem) pcall(Track.Buy, ply, item, isItem) end)
@@ -1775,6 +1843,7 @@ hook.Add("TTT2OnGiveFoundCredits", "TraitorDash_TrackCreditFound", function(ply)
 hook.Add("TTT2OnReceiveTeamAwardCredits", "TraitorDash_TrackCreditTeam", function(ply) pcall(Track.CreditTag, ply, "team") end)
 hook.Add("TTT2OnTransferCredits", "TraitorDash_TrackCreditTransfer", function(ply, target) pcall(Track.CreditsTransferred, ply, target) end)
 hook.Add("TTT2OnReceiveKillCredits", "TraitorDash_TrackCreditKill", function(a, b) pcall(Track.KillCredits, a, b) end)
+hook.Add("EntityFireBullets", "TraitorDash_TrackShots", ShotHook) -- returns nothing (see above)
 
 -- The round is over: stops the timer, prints the one line, and returns the track to upload (or nil
 -- when there is nothing to send). `fingerprint` of the map is added when it is known.
@@ -1789,6 +1858,10 @@ function Track.Finish(roundId)
         "[TraitorDash:track] round %s: %d ticks (%d samples, %d skipped), interval %.2f-%.2f s, tick cost avg %.3f ms worst %.3f ms, about %d KB%s%s",
         r.id, #r.t, r.samples, r.skipped, r.minUsed == math.huge and 0 or r.minUsed, r.maxUsed, avg * 1000, r.worst * 1000,
         math.floor(EstimateBytes(r) / 1024), r.truncated and ", TRUNCATED" or "", r.degraded and ", DEGRADED" or ""))
+    if r.shotCalls > 0 then
+        print(string.format("[TraitorDash:track] shots: the hook ran %d times, %d events, about %.3f ms in all (from %d timed calls)%s",
+            r.shotCalls, r.kinds.shots or 0, r.shotSamples > 0 and r.shotCost / r.shotSamples * r.shotCalls * 1000 or 0, r.shotSamples, r.shotsOff and ", SWITCHED OFF" or ""))
+    end
     if r.thingList then print(string.format("[TraitorDash:track] props: %d moved, %d keyframes", #r.thingList, r.thingKeys)) end
     if r.partList then print(string.format("[TraitorDash:track] parts: %d, %d keyframes, %d inputs", #r.partList, r.keys, #r.inputs)) end
 

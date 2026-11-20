@@ -2917,3 +2917,271 @@ describe('track.lua: C2 does no harm', () => {
     expect(okTrack(trackOf(r))).toBe(true)
   })
 })
+
+// ---- Shots fired (RFC 26, 4c, package C3)
+const C3 = C2 + `
+  function Gun(class) local e = Wep(class) function e:IsWeapon() return true end return e end
+  A.wep, B.wep, C.wep = Gun(W_A), Gun(W_B), Gun(W_C)
+  A.EntIndex = function() return 1 end; B.EntIndex = function() return 2 end; C.EntIndex = function() return 3 end; SPEC.EntIndex = function() return 9 end
+  function Shoot(ply, extra) local d = { Num = 1, Damage = 10 } for k, v in pairs(extra or {}) do d[k] = v end Fire("EntityFireBullets", ply, d) end
+  -- an entity (and a bullet table) that fails the test when the hook touches it at all
+  COST = 0.000001 -- a microsecond a timed call: 200 000 calls come to 0.2 s, under the valve's second
+  TOUCHED = 0
+  function Untouchable() return setmetatable({}, { __index = function() TOUCHED = TOUCHED + 1 error("touched") end }) end
+`
+const shotsOf = (r: Run) => evs(r, 'shots')
+
+describe('track.lua: shots fired (RFC 26, 4c, C3)', () => {
+  test('a shot is an event with the player, the weapon class of the one in hand and the time; the backend takes it', () => {
+    const r = play(C3 + `Start() Gap(500) Shoot(A) Ends()`)
+    expect(shotsOf(r)).toEqual([{ p: A, k: 'shots', w: 'weapon_ttt_m16', n: 1, t: 1700 }])
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('one shot is one call of FireBullets: a bullet table that says Num 8 (a shotgun\'s pellets) is still one shot', () => {
+    const r = play(C3 + `Start() Shoot(B, { Num = 8 }) Shoot(B, { Num = 8 }) Ends()`)
+    expect(shotsOf(r)).toEqual([expect.objectContaining({ p: B, w: 'weapon_zm_shotgun', n: 2 })])
+  })
+
+  test('shots of the same player and weapon within a second of the first are one event with the time of the first; at exactly a second a new one begins', () => {
+    const r = play(C3 + `Start() Shoot(A) Gap(499) Shoot(A) Gap(500) Shoot(A) Gap(1) Shoot(A) Gap(999) Shoot(A) Ends()`)
+    // shots at 0, 499, 999 are one bucket (n 3); 1000 starts the next, which 1999 still belongs to
+    expect(shotsOf(r).map(e => [e.t, e.n])).toEqual([[1200, 3], [2200, 2]])
+  })
+
+  test('the bucket is counted from its first shot, not from the last: a long burst is a series of one-second events', () => {
+    const r = play(C3 + `Start() for i = 1, 25 do Shoot(A) Gap(200) end Ends()`)
+    expect(shotsOf(r).map(e => e.n)).toEqual([5, 5, 5, 5, 5])
+    expect(shotsOf(r).map(e => e.t)).toEqual([1200, 2200, 3200, 4200, 5200])
+  })
+
+  test('two weapons in the same second are two events; two players are two events', () => {
+    const r = play(C3 + `
+      Start()
+      Shoot(A); A.wep = Gun(W_B); Shoot(A); A.wep = Gun(W_A); Shoot(A)
+      Shoot(B)
+      Ends()
+    `)
+    expect(shotsOf(r).map(e => [e.p, e.w, e.n])).toEqual([[A, 'weapon_ttt_m16', 2], [A, 'weapon_zm_shotgun', 1], [B, 'weapon_zm_shotgun', 1]])
+  })
+
+  test('a bullet with Damage 0 is no shot (the crowbar\'s decal); one with a small damage or with no Damage at all is', () => {
+    const r = play(C3 + `
+      Start()
+      Shoot(A, { Damage = 0 })
+      Gap(1000) Shoot(B, { Damage = 1 })
+      Fire("EntityFireBullets", C, { Num = 1 })
+      Ends()
+    `)
+    expect(shotsOf(r).map(e => [e.p, e.n])).toEqual([[B, 1], [C, 1]])
+  })
+
+  test('only a player of the round shoots: not an NPC, not something that claims to be a player, not a player who was not in the round, nobody in the preparation', () => {
+    const r = play(C3 + `
+      Fire("TTTPrepareRound")
+      Shoot(A)                                  -- the preparation
+      Fire("TTTBeginRound") SPEC.alive = true NOW = NOW + 1.2
+      Shoot(Thing("npc_zombie"))                -- not a player
+      SPEC.wep = Gun("weapon_x") Shoot(SPEC)    -- a player who was not in the round
+      Shoot(Thing("prop_physics", { IsPlayer = function() return true end }))
+      Ends()
+    `)
+    expect(shotsOf(r)).toEqual([])
+    const prep = play(C3 + `Fire("TTTPrepareRound") Shoot(A) Shoot(B) Fire("TTTBeginRound") NOW = NOW + 1.2 Shoot(C) Ends()`)
+    expect(shotsOf(prep).map(e => e.p)).toEqual([C])
+  })
+
+  test('a player who was recorded in the preparation but was not in the round (a spectator by then) does not shoot', () => {
+    const r = play(C3 + `
+      SPEC.alive = true
+      Fire("TTTPrepareRound")
+      SPEC.wep = Gun("weapon_x")
+      SPEC.alive = false
+      Fire("TTTBeginRound") NOW = NOW + 1.2
+      SPEC.alive = true
+      Shoot(SPEC) Shoot(A)
+      Ends()
+    `)
+    expect(shotsOf(r).map(e => e.p)).toEqual([A])
+  })
+
+  test('something that is not a player is turned away before anything else is asked of it: no entity index, no cache entry', () => {
+    const r = play(C3 + `
+      Start()
+      IDX = 0
+      local npc = Thing("npc_zombie", { EntIndex = function() IDX = IDX + 1 return 77 end, GetActiveWeapon = function() IDX = IDX + 100 end })
+      for i = 1, 5 do Shoot(npc) end
+      OUT = { asked = IDX }
+      Ends()
+    `)
+    expect(r.out.asked).toBe(0)
+  })
+
+  test('the weapon is the bullet\'s Inflictor when it is a weapon, else the one in hand; with neither there is no shot', () => {
+    const r = play(C3 + `
+      Start()
+      Shoot(A, { Inflictor = Gun("weapon_ttt_flaregun") })          -- the flare gun, though the hand says m16
+      Shoot(B, { Inflictor = Thing("env_explosion") })              -- not a weapon: the hand
+      A.wep = nil; Gap(1000) Shoot(A)                               -- nothing in hand, no inflictor
+      Shoot(C, { Inflictor = Gun("weapon_zm_pistol") }) C.wep = nil Gap(1000) Shoot(C, { Inflictor = Gun("weapon_zm_pistol") })
+      Ends()
+    `)
+    expect(shotsOf(r).map(e => [e.p, e.w])).toEqual([[A, 'weapon_ttt_flaregun'], [B, 'weapon_zm_shotgun'], [C, 'weapon_zm_pistol'], [C, 'weapon_zm_pistol']])
+  })
+
+  test('the weapon class is cleaned and cut to 40 characters; a class with no letters at all is no shot; a change of class is seen at once', () => {
+    const r = play(C3 + `
+      Start()
+      A.wep = Gun("weapon bad!class") Shoot(A)
+      A.wep = Gun(string.rep("x", 60)) Shoot(A)
+      A.wep = Gun("!!!") Shoot(A)
+      A.wep = Gun("weapon_ttt_m16") Shoot(A)
+      Ends()
+    `)
+    expect(shotsOf(r).map(e => e.w)).toEqual(['weaponbadclass', 'x'.repeat(40), 'weapon_ttt_m16'])
+  })
+
+  test('the cap is 1536 events, and a shot that would make the 1537th marks the track truncated; the other kinds keep their room', () => {
+    const r = play(C3 + `
+      Start()
+      for i = 1, 1536 do Shoot(A) Gap(1000) end
+      Fire("WeaponEquip", Gun("weapon_zm_mac10"), B)
+      Ends()
+    `)
+    expect(shotsOf(r)).toHaveLength(1536)
+    expect(trackOf(r).truncated).toBe(false)
+    const over = play(C3 + `
+      Start()
+      for i = 1, 1537 do Shoot(A) Gap(1000) end
+      Fire("WeaponEquip", Gun("weapon_zm_mac10"), B)
+      Ends()
+    `)
+    expect(shotsOf(over)).toHaveLength(1536)
+    expect(trackOf(over).truncated).toBe(true)
+    expect(evs(over, 'wpick')).toHaveLength(1)
+  })
+
+  test('at the cap a shot into the open bucket still counts and does not truncate', () => {
+    const r = play(C3 + `Start() for i = 1, 1535 do Shoot(A) Gap(1000) end Shoot(A) Gap(10) Shoot(A) Gap(10) Shoot(A) Ends()`)
+    expect(shotsOf(r)).toHaveLength(1536)
+    expect(shotsOf(r)[1535]!.n).toBe(3)
+    expect(trackOf(r).truncated).toBe(false)
+  })
+
+  test('n stops at 10000 (the backend\'s limit) however many shots come within the second', () => {
+    const r = play(C3 + `Start() for i = 1, 10005 do Shoot(A) end Ends()`)
+    expect(shotsOf(r)).toEqual([expect.objectContaining({ n: 10000 })])
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('players are found by entity index and checked against the entity: two players that answer the same index are each their own', () => {
+    const r = play(C3 + `Start() B.EntIndex = function() return 1 end Shoot(A) Shoot(B) Shoot(A) Shoot(B) Ends()`)
+    expect(shotsOf(r).map(e => [e.p, e.n])).toEqual([[A, 2], [B, 2]])
+  })
+
+  test('the hook returns nothing, so the bullet is never changed or stopped: recording, not recording, in the preparation, past the valve, and when the game raises', () => {
+    const r = play(C3 + `
+      local vals = {}
+      Start()
+      vals.on = FireValues("EntityFireBullets", A, { Damage = 5 })
+      vals.crowbar = FireValues("EntityFireBullets", A, { Damage = 0 })
+      vals.npc = FireValues("EntityFireBullets", Thing("npc"), { Damage = 5 })
+      vals.bad = FireValues("EntityFireBullets", Untouchable(), Untouchable())
+      vals.nothing = FireValues("EntityFireBullets")
+      Ends()
+      vals.after = FireValues("EntityFireBullets", A, { Damage = 5 })
+      Fire("TTTPrepareRound")
+      vals.prep = FireValues("EntityFireBullets", A, { Damage = 5 })
+      OUT = vals
+    `)
+    expect(r.out).toEqual({ on: 0, crowbar: 0, npc: 0, bad: 0, nothing: 0, after: 0, prep: 0 })
+    const off = play(C3 + `Begin() OUT = { n = FireValues("EntityFireBullets", A, { Damage = 5 }) }`, false)
+    expect(off.out.n).toBe(0)
+    const valve = play(C3 + `Start() COST = 0.5 for i = 1, 2100 do Fire("EntityFireBullets", A, { Damage = 5 }) end OUT = { n = FireValues("EntityFireBullets", A, { Damage = 5 }) }`)
+    expect(valve.out.n).toBe(0)
+    expect(valve.printed.filter(l => /no more shots/.test(l))).toHaveLength(1)
+  })
+
+  test('with nothing recorded the hook touches neither the entity nor the bullet: tracking off, before a round, after one, and in the preparation', () => {
+    const off = play(C3 + `Begin() Fire("EntityFireBullets", Untouchable(), Untouchable()) OUT = { touched = TOUCHED }`, false)
+    expect(off.out.touched).toBe(0)
+    const before = play(C3 + `Fire("EntityFireBullets", Untouchable(), Untouchable()) OUT = { touched = TOUCHED }`)
+    expect(before.out.touched).toBe(0)
+    const after = play(C3 + `Start() Ends() Fire("EntityFireBullets", Untouchable(), Untouchable()) OUT = { touched = TOUCHED }`)
+    expect(after.out.touched).toBe(0)
+    const prep = play(C3 + `Fire("TTTPrepareRound") Fire("EntityFireBullets", Untouchable(), Untouchable()) OUT = { touched = TOUCHED }`)
+    expect(prep.out.touched).toBe(0)
+    const on = play(C3 + `Start() Fire("EntityFireBullets", Untouchable(), Untouchable()) OUT = { touched = TOUCHED }`)
+    expect(on.out.touched).toBeGreaterThan(0) // the probe does see the call of a recorded round
+  })
+
+  test('the game raising inside the hook is no harm: the next shot is recorded', () => {
+    const r = play(C3 + `Start() A.GetActiveWeapon = function() error("no") end Shoot(A) A.GetActiveWeapon = function() return Gun(W_A) end Shoot(A) Ends()`)
+    expect(shotsOf(r)).toHaveLength(1)
+  })
+
+  test('the valve: calls are counted from the round\'s start (not the preparation); the 200 000th is recorded, the 200 001st switches shots off with one line', () => {
+    const r = play(C3 + `
+      Fire("TTTPrepareRound")
+      for i = 1, 250000 do Fire("EntityFireBullets", A, { Damage = 5 }) end -- the preparation is not counted
+      Fire("TTTBeginRound") NOW = NOW + 1.2
+      for i = 1, 200000 do Fire("EntityFireBullets", A, { Damage = 5 }) end
+      for i = 1, 6 do Fire("EntityFireBullets", A, { Damage = 5 }) end
+      Gap(2000) Shoot(A)
+      Fire("WeaponEquip", Gun("weapon_zm_mac10"), B) -- everything else goes on
+      Ends()
+    `)
+    expect(shotsOf(r)).toEqual([expect.objectContaining({ n: 10000 })]) // n stops at 10000 within the bucket; nothing came after the valve
+    expect(r.printed.filter(l => /shots: the hook ran more than 200000 times, so no more shots/.test(l))).toHaveLength(1)
+    expect(r.printed.filter(l => /shots: the hook ran 200001 times, 1 events.*SWITCHED OFF/.test(l))).toHaveLength(1)
+    expect(evs(r, 'wpick')).toHaveLength(1)
+    expect(trackOf(r).truncated).toBe(false)
+  })
+
+  test('the valve: the 200 001st call is not recorded, the 200 000th is', () => {
+    const r = play(C3 + `
+      Start()
+      for i = 1, 200000 do Fire("EntityFireBullets", Thing("npc"), { Damage = 5 }) end -- counted, not recorded
+      Shoot(A)                                -- the 200 001st
+      Gap(1100) Shoot(B)
+      Ends()
+    `)
+    expect(shotsOf(r)).toEqual([])
+    const ok = play(C3 + `
+      Start()
+      for i = 1, 199999 do Fire("EntityFireBullets", Thing("npc"), { Damage = 5 }) end
+      Shoot(A)                                -- the 200 000th
+      Ends()
+    `)
+    expect(shotsOf(ok)).toHaveLength(1)
+  })
+
+  test('the valve: one call in 64 is timed; from 32 timed calls an estimate (their average times all calls) above one second switches shots off, with one line', () => {
+    const slow = play(C3 + `Start() COST = 0.0006 for i = 1, 2048 do Shoot(A) end Shoot(A) Ends()`)
+    // the 32nd timed call is the 2048th: it is recorded, the 2049th is not
+    expect(shotsOf(slow)).toEqual([expect.objectContaining({ n: 2048 })])
+    expect(slow.printed.filter(l => /shots: the hook took about \d+ ms, so no more shots/.test(l))).toHaveLength(1)
+    const fine = play(C3 + `Start() COST = 0.00004 for i = 1, 4096 do Shoot(A) end Ends()`)
+    expect(shotsOf(fine)).toEqual([expect.objectContaining({ n: 4096 })])
+    expect(fine.printed.filter(l => /no more shots/.test(l))).toHaveLength(0)
+  })
+
+  test('the valve: a few slow calls (a collection of garbage) do not trip it before 32 timed calls', () => {
+    const r = play(C3 + `Start() COST = 0.5 for i = 1, 64 * 31 do Shoot(A) end Shoot(A) Ends()`)
+    expect(shotsOf(r)).toEqual([expect.objectContaining({ n: 64 * 31 + 1 })])
+    expect(r.printed.filter(l => /no more shots/.test(l))).toHaveLength(0)
+  })
+
+  test('the round\'s log line says how often the hook ran, how many events came of it, and what it cost; none when it never ran', () => {
+    const r = play(C3 + `Start() Shoot(A) Shoot(B) Fire("EntityFireBullets", Thing("npc"), { Damage = 5 }) Ends()`)
+    expect(r.printed.some(l => /shots: the hook ran 3 times, 2 events, about [\d.]+ ms in all \(from 0 timed calls\)$/.test(l))).toBe(true)
+    const none = play(C3 + `Start() Ends()`)
+    expect(none.printed.some(l => /shots:/.test(l))).toBe(false)
+  })
+
+  test('a track with shots keeps the other events, in time order, and the backend takes it', () => {
+    const r = play(C3 + `Start() Shoot(A) Gap(100) Shoot(B) Fire("PlayerDroppedWeapon", A, Gun("weapon_zm_mac10")) Ends()`)
+    expect(evs(r, 'wdrop', 'shots').map(e => e.k)).toEqual(['shots', 'shots', 'wdrop'])
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+})

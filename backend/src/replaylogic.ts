@@ -24,13 +24,13 @@ export interface RawThing { e: number, c: string, mdl: string, b: number[], id?:
 /** A thing that moved, decoded: keyframes at real times, positions in units and angles in degrees; `from` is when it first shows, `until` when it is gone (Infinity when it stayed). */
 export interface Thing { e: number, c: string, model: string, bounds: number[], mapId: number | null, from: number, until: number, t: number[], x: number[], y: number[], z: number[], pitch: number[], yaw: number[], roll: number[] }
 export interface TrackEvent {
-  t: number, p: string, k: 'revive' | 'role' | 'say' | 'buy' | 'found' | 'pickup' | 'drop' | 'hurt' | 'heal' | 'wpick' | 'wdrop' | 'c4' | 'dna' | 'tbtn' | 'hold' | 'credits' | 'karma' | 'spec', role?: string, team?: string, by?: string, how?: string, why?: string
+  t: number, p: string, k: 'revive' | 'role' | 'say' | 'buy' | 'found' | 'pickup' | 'drop' | 'hurt' | 'heal' | 'wpick' | 'wdrop' | 'c4' | 'dna' | 'tbtn' | 'hold' | 'credits' | 'karma' | 'spec' | 'shots', role?: string, team?: string, by?: string, how?: string, why?: string
   /** say: the line and who could read it; buy: the class and whether it is a passive item; found, pickup, drop: whose body (RFC 26, RFC 24) */
   text?: string, ch?: 'all' | 'team' | 'dead', item?: string, it?: boolean, of?: string
   /** hurt (`p` is the victim): the attacker when a player of the round did it, the cause (a weapon or entity class, or a damage type), the damage and the victim's health after (RFC 26, 4a); heal (`p` is the healed player): the healer when a player of the round, the source (a class, or regen, revive, other), the health gained and the health after (RFC 26, 4b) */
   a?: string, w?: string, d?: number, h?: number
   /** wpick, wdrop (RFC 26, 4c, C1): `w` the weapon class; dna: `w` what the sample came from, `of` whose DNA. c4: `st` plant, defuse, fail (a wrong wire) or boom, `of` the owner of the charge (defuse, fail), `s` the timer in seconds (plant); tbtn: `n` the button's text. c4 and tbtn: `x y z` the place in units / 8. */
-  st?: 'plant' | 'defuse' | 'fail' | 'boom', s?: number, n?: string, x?: number, y?: number, z?: number
+  st?: 'plant' | 'defuse' | 'fail' | 'boom', s?: number, n?: string | number, x?: number, y?: number, z?: number
   /** hold (RFC 26, 4c, C2): `w` the weapon in hand from now on. credits, karma: `d` the change, `c` the amount after, `w` the reason word. spec: `of` the player a dead player watches from now on, none for nobody; `pr`, `pm` and `ti` instead of `of`: the prop they possess (its class, the name of its model, its number in the track's things). */
   c?: number
   pr?: string, pm?: string, ti?: number
@@ -686,22 +686,34 @@ export function healOwnText(e: TrackEvent, nick: Nick, who: string): string {
   if (e.a === who) return `healed ${nick(e.p)} +${e.d}${src ? ` (${src})` : ''}, ${tail}`
   return `healed +${e.d}${e.a ? ` by ${nick(e.a)}${src ? ` (${src})` : ''}` : src ? ` by ${src}` : ''}, ${tail}`
 }
-/** What a player took, dealt and was healed over the round, as sums of the `hurt` and `heal` events ("healed" is health they gained, from anybody). */
-export function damageTotals(events: TrackEvent[], who: string): { took: number, dealt: number, healed: number } {
-  let took = 0, dealt = 0, healed = 0
+/** What a player took, dealt and was healed over the round, as sums of the `hurt` and `heal` events ("healed" is health they gained, from anybody), and the shots they fired (the sum of the `n` of their `shots` events, RFC 26, 4c, C3). */
+export function damageTotals(events: TrackEvent[], who: string): { took: number, dealt: number, healed: number, shots: number } {
+  let took = 0, dealt = 0, healed = 0, shots = 0
   for (const e of events) {
+    if (e.k === 'shots') { if (e.p === who && typeof e.n === 'number' && e.n > 0) shots += e.n; continue }
     if (typeof e.d !== 'number') continue
     if (e.k === 'hurt') { if (e.p === who) took += e.d; if (e.a === who) dealt += e.d }
     else if (e.k === 'heal' && e.p === who) healed += e.d
   }
-  return { took, dealt, healed }
+  return { took, dealt, healed, shots }
 }
-/** The line under the selected player's health: "Took 48, dealt 22, healed 40", or nothing when the track has no damage or heals for them. */
-export function totalsText(t: { took: number, dealt: number, healed: number }): string {
+/** The shots a player fired over the round by weapon class, the most first (then by class), for the totals line's tooltip. */
+export function shotsByWeapon(events: TrackEvent[], who: string): { w: string, n: number }[] {
+  const by = new Map<string, number>()
+  for (const e of events) if (e.k === 'shots' && e.p === who && typeof e.n === 'number' && e.n > 0 && e.w) by.set(e.w, (by.get(e.w) ?? 0) + e.n)
+  return [...by].map(([w, n]) => ({ w, n })).sort((a, b) => b.n - a.n || (a.w < b.w ? -1 : a.w > b.w ? 1 : 0))
+}
+/** "Shots: Pistol 20, Shotgun 17" for the tooltip of the totals line, or nothing when the player fired none. */
+export function shotsTitle(list: { w: string, n: number }[]): string {
+  return list.length ? `Shots: ${list.map(s => `${weaponName(s.w)} ${s.n}`).join(', ')}` : ''
+}
+/** The line under the selected player's health: "Took 48, dealt 22, healed 40, shot 37", or nothing when the track has no damage, heals or shots for them. */
+export function totalsText(t: { took: number, dealt: number, healed: number, shots?: number }): string {
   const parts: string[] = []
   if (t.took > 0) parts.push(`took ${t.took}`)
   if (t.dealt > 0) parts.push(`dealt ${t.dealt}`)
   if (t.healed > 0) parts.push(`healed ${t.healed}`)
+  if (t.shots !== undefined && t.shots > 0) parts.push(`shot ${t.shots}`)
   return parts.length ? parts.join(', ').replace(/^./, c => c.toUpperCase()) : ''
 }
 /** The same for the list of one player, who is the victim (`who` is `e.p`: "took 22 from Tonda (MAC10), 78 left") or the attacker ("hurt Tonda: 22 (MAC10), 78 left"). */
