@@ -516,6 +516,24 @@ export const migrations: Array<(db: Database) => void> = [
   (db) => {
     db.run('CREATE TABLE steam_names (steam_id TEXT PRIMARY KEY, name TEXT, fetched_at INTEGER NOT NULL)')
   },
+
+  // v31 (RFC 26, 4c.5): who spoke on the dashboard's voice page, and when, for one round: one row per round, `data` the JSON list of
+  // { p: SteamID64, from, to } in milliseconds since the round's start (times and ids only, never audio or text). It goes with the round
+  // and with the round's track.
+  (db) => {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS round_talk (
+        server_id  TEXT NOT NULL,
+        round_id   TEXT NOT NULL,
+        spans      INTEGER NOT NULL,
+        bytes      INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        data       TEXT NOT NULL,
+        PRIMARY KEY (server_id, round_id),
+        FOREIGN KEY (server_id, round_id) REFERENCES rounds(server_id, round_id) ON DELETE CASCADE
+      )
+    `)
+  },
 ]
 
 /** Brings `db` up to the latest schema, in one transaction. */

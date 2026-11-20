@@ -417,9 +417,9 @@ describe('where it is NOT read: every other route answers as for an anonymous vi
     }
   })
 
-  test('the sweep: every route that is not public or one of the three voice routes answers the cookie as it answers nobody', async () => {
+  test('the sweep: every route that is not public or one of the four voice routes answers the cookie as it answers nobody', async () => {
     const value = await pair()
-    const voiceRoutes = new Set(['GET /servers/:serverId/voice', 'POST /servers/:serverId/voice/token', 'GET /servers/:serverId/voice/people'])
+    const voiceRoutes = new Set(['GET /servers/:serverId/voice', 'POST /servers/:serverId/voice/token', 'GET /servers/:serverId/voice/people', 'POST /servers/:serverId/voice/talk'])
     const seen = new Map<string, { method: string, path: string }>()
     for (const r of app.routes) if (r.method !== 'ALL') seen.set(`${r.method} ${r.path}`, { method: r.method, path: r.path })
     let checked = 0
@@ -437,7 +437,7 @@ describe('where it is NOT read: every other route answers as for an anonymous vi
     expect(checked).toBeGreaterThan(20)
   })
 
-  test('the tiers file: exactly the three voice routes are named as taking the voice cookie in its comment, and the new routes are declared', () => {
+  test('the tiers file: exactly the four voice routes are named as taking the voice cookie in its comment, and the new routes are declared', () => {
     expect(tiers.TIERS['POST /api/v1/voice-codes']).toBe('bridge')
     expect(tiers.TIERS['POST /auth/voice-code']).toBe('login')
     expect(tiers.TIERS['POST /auth/voice-logout']).toBe('login')
@@ -445,6 +445,7 @@ describe('where it is NOT read: every other route answers as for an anonymous vi
     expect(tiers.TIERS['GET /servers/:serverId/voice']).toBe('user')
     expect(tiers.TIERS['POST /servers/:serverId/voice/token']).toBe('user')
     expect(tiers.TIERS['GET /servers/:serverId/voice/people']).toBe('user')
+    expect(tiers.TIERS['POST /servers/:serverId/voice/talk']).toBe('user')
   })
 })
 

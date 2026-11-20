@@ -15,6 +15,7 @@ import { FINGERPRINT, NAME, ROUND_ID, STEAM_ID, STEAM_ID64, WSID } from '../serv
 import { bridgeSetting, checkSettingValue, cleanReport, formatSettingCommand } from '../services/bridgeSettings'
 import { makeGameKey, KEY_TTL_SECONDS } from '../services/gameKey'
 import { parseVoiceState, voiceConfig, voiceHub } from '../services/voice'
+import { attachTalk, talkEnabled, talkLog } from '../services/talk'
 import { voiceCodes, showCode, CODE_TTL_MS } from '../services/voiceCode'
 
 type Variables = {
@@ -406,6 +407,8 @@ api.post('/v1/round', getServer, async (c) => {
 
   const stored = Store.recordRound(server.id, report)
   Store.updateHeartbeat(server.id)
+  // Who spoke on the dashboard's voice page during this round, if the server records it (RFC 26, 4c.5): written a few seconds from now.
+  if (stored) void attachTalk(server.id, report.roundId, report.duration, inRound)
   console.log(
     `[Stats] Round ${report.roundId} from ${server.name}: ${stored ? 'stored' : 'duplicate, ignored'} ` +
     `(map=${report.map}, result=${result}, ${players.length} players, ${deaths.length} deaths, ${report.duration ?? '?'}s)`
@@ -484,7 +487,10 @@ api.post('/v1/voice', getServer, async (c) => {
   if (read.tooLarge) return c.json({ error: 'Too large' }, 413)
   const parsed = parseVoiceState(read.body)
   if (typeof parsed === 'string') return c.json({ error: parsed }, 400)
-  return c.json({ ok: true, result: voiceHub.setState(server.id, parsed) })
+  const result = voiceHub.setState(server.id, parsed)
+  // The voice state carries no round id: the times at which a round begins and ends are what ties the spans of the voice page to the round the report names (RFC 26, 4c.5).
+  if (result === 'ok') talkLog.phase(server.id, parsed.phase, talkEnabled(server.id))
+  return c.json({ ok: true, result })
 })
 
 export const mapsLimiter = new RateLimiter(6, 60_000)

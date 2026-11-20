@@ -7,6 +7,7 @@ import { roleColour } from '../teamColours'
 import { chooseBackground, versionMismatch, type BackgroundKind } from '../replaylogic'
 import { playerModelEnabled } from './playermodel'
 import { sourceHash } from './version'
+import { cleanTalk } from './talk'
 
 /** Raise when what the payload holds changes in a way the ETag's other parts do not show, so the copies in browsers are replaced. */
 const PAYLOAD_FORMAT = 2
@@ -86,19 +87,22 @@ export function buildReplay(serverId: string, roundId: string, o?: StatsOptions,
   const colours: Record<string, string> = {}
   for (const r of Store.getRoles(serverId)) colours[String(r.role_name)] = roleColour(r.color, r.team ?? null)
 
+  // Who spoke on the dashboard's voice page (RFC 26, 4c.5), added at read time, only for players of the round; a round without it has no `talk`.
+  const storedTalk = Store.getTalk(serverId, roundId)
+  const talk = storedTalk ? cleanTalk(storedTalk.list, new Set(round.players.map(p => p.id))) : []
   const payload: ReplayPayload = {
     round: { id: round.roundId, map: round.map, result: round.result, duration: round.duration, startedAt: round.startedAt },
     players: round.players,
     colours,
     revives: round.revives,
-    track: stored.track,
+    track: talk.length > 0 ? { ...(stored.track as object), talk } : stored.track,
     trackInfo: { truncated: stored.meta.truncated, degraded: stored.meta.degraded, fingerprint: stored.meta.fingerprint, pinned: stored.meta.pinned },
     background,
     ...(playerModelEnabled() ? { playerModel: `/servers/${serverId}/playermodel.glb?v=${sourceHash()}` } : {}),
   }
   // A track is immutable; what can change is what is drawn behind it, and the pin.
   const etag = 'W/"' + createHash('sha1').update(JSON.stringify([
-    stored.meta.createdAt, stored.meta.bytes, stored.meta.pinned, !!o?.bots, kind, meshFingerprint, planMeta?.scannedAt ?? null, background.mismatch, colours, payload.playerModel ?? null, background.listed ?? null, PAYLOAD_FORMAT,
+    stored.meta.createdAt, stored.meta.bytes, stored.meta.pinned, !!o?.bots, kind, meshFingerprint, planMeta?.scannedAt ?? null, background.mismatch, colours, payload.playerModel ?? null, background.listed ?? null, PAYLOAD_FORMAT, talk.length > 0 ? storedTalk!.tag : null, // the tag changes whenever who spoke does
   ])).digest('hex').slice(0, 20) + '"'
   return { payload, etag }
 }

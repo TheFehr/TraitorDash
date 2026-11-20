@@ -12,6 +12,7 @@ import { ReplayPage } from './components/ReplayPage'
 import { VoicePage, VoiceEntryPage, VoiceCodePage } from './components/VoicePage'
 import { getVoiceSession, getVoiceSessionVia } from './services/voiceSession'
 import { joinToken, roomOf, voiceConfig, voiceHub } from './services/voice'
+import { TALK, cleanTalkBody, talkEnabled, talkLog } from './services/talk'
 import { steamNames } from './services/steamNames'
 import { gzipSync } from 'node:zlib'
 import { getRolesWithState } from './services/roles'
@@ -691,7 +692,36 @@ app.post('/servers/:serverId/voice/token', async (c) => {
   if (!cfg) return c.json({ error: 'Voice chat is not set up' }, 503)
   if (voiceTokenLimiter.hit(session.steamId) > 0) return c.json({ error: 'Too many requests; slow down' }, 429)
   voiceHub.watch(serverId)
-  return c.json({ url: cfg.url, token: joinToken(cfg, roomOf(serverId), session.steamId, (voiceHub.nameOf(serverId, session.steamId) ?? Store.getNick(serverId, session.steamId) ?? steamNames.names([session.steamId]).get(session.steamId) ?? session.steamId).slice(0, 64)) })
+  // `talk` says whether this server records who speaks (the setting traitordash_track_voice, RFC 26, 4c.5): the page tells the player so and sends its spans only then.
+  return c.json({ url: cfg.url, talk: talkEnabled(serverId), token: joinToken(cfg, roomOf(serverId), session.steamId, (voiceHub.nameOf(serverId, session.steamId) ?? Store.getNick(serverId, session.steamId) ?? steamNames.names([session.steamId]).get(session.steamId) ?? session.steamId).slice(0, 64)) })
+})
+
+export const voiceTalkLimiter = new RateLimiter(20, 10_000)
+
+/**
+ * The spans in which the signed-in player's own microphone gate was open (RFC 26, 4c.5): `{ now, spans: [{ from, to }] }`, milliseconds in
+ * the browser's clock. The identity is the session's (or the paired browser's), never the body's, so nobody can post for another player.
+ * With the server's setting `traitordash_track_voice` off the answer is `{ record: false }` and nothing is read or kept, which tells the page
+ * to stop. Otherwise 204. Times and ids only.
+ */
+app.post('/servers/:serverId/voice/talk', async (c) => {
+  const session = await getVoiceSession(c)
+  if (!session) return c.json({ error: 'Sign-in required', signin: '/auth/steam' }, 401)
+  const serverId = c.req.param('serverId')
+  if (!Store.getServerById(serverId)) return c.json({ error: 'Not found' }, 404)
+  if (!voiceConfig()) return c.json({ error: 'Voice chat is not set up' }, 503)
+  if (voiceTalkLimiter.hit(session.steamId) > 0) return c.json({ error: 'Too many requests; slow down' }, 429)
+  if (!talkEnabled(serverId)) return c.json({ record: false })
+  if (Number(c.req.header('content-length') ?? 0) > TALK.maxBodyBytes) return c.json({ error: 'Too large' }, 413)
+  const text = await c.req.text().catch(() => '')
+  if (Buffer.byteLength(text) > TALK.maxBodyBytes) return c.json({ error: 'Too large' }, 413)
+  let body: unknown = null
+  try { body = JSON.parse(text) } catch { /* answered below */ }
+  const now = Date.now()
+  const clean = cleanTalkBody(body, now)
+  if (typeof clean === 'string') return c.json({ error: clean }, 400)
+  talkLog.add(serverId, session.steamId, clean.spans, now)
+  return c.body(null, 204)
 })
 
 export const voicePeopleLimiter = new RateLimiter(60, 60_000)

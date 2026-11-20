@@ -225,6 +225,7 @@ export class Store {
     db.run('DELETE FROM deaths WHERE server_id = ?', [id])
     db.run('DELETE FROM round_revives WHERE server_id = ?', [id])
     db.run('DELETE FROM round_damage WHERE server_id = ?', [id])
+    db.run('DELETE FROM round_talk WHERE server_id = ?', [id])
     db.run('DELETE FROM round_tracks WHERE server_id = ?', [id])
     db.run('DELETE FROM round_players WHERE server_id = ?', [id])
     db.run('DELETE FROM rounds WHERE server_id = ?', [id])
@@ -277,6 +278,7 @@ export class Store {
 
   /** Removes a round and everything stored for it: its players, deaths, revivals and track. Returns whether it existed. */
   private static removeRound(serverId: string, roundId: string): boolean {
+    db.run('DELETE FROM round_talk WHERE server_id = ? AND round_id = ?', [serverId, roundId])
     db.run('DELETE FROM round_tracks WHERE server_id = ? AND round_id = ?', [serverId, roundId])
     db.run('DELETE FROM deaths WHERE server_id = ? AND round_id = ?', [serverId, roundId])
     db.run('DELETE FROM round_revives WHERE server_id = ? AND round_id = ?', [serverId, roundId])
@@ -297,7 +299,24 @@ export class Store {
 
   /** Deletes only a round's replay (its track); the round stays in the statistics. Returns whether there was one. */
   static deleteTrack(serverId: string, roundId: string): boolean {
+    db.run('DELETE FROM round_talk WHERE server_id = ? AND round_id = ?', [serverId, roundId]) // who spoke goes with the replay it is shown in
     return db.run('DELETE FROM round_tracks WHERE server_id = ? AND round_id = ?', [serverId, roundId]).changes > 0
+  }
+
+  /** Stores who spoke in a round (RFC 26, 4c.5): `{ p, from, to }` in ms since the round's start. Replaces an earlier row. false when the round is not stored. */
+  static recordTalk(serverId: string, roundId: string, list: { p: string, from: number, to: number }[]): boolean {
+    if (!db.prepare('SELECT 1 FROM rounds WHERE server_id = ? AND round_id = ?').get(serverId, roundId)) return false
+    const data = JSON.stringify(list)
+    db.prepare('INSERT OR REPLACE INTO round_talk (server_id, round_id, spans, bytes, created_at, data) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(serverId, roundId, list.length, Buffer.byteLength(data), new Date().toISOString(), data)
+    return true
+  }
+
+  /** Who spoke in the round, as stored (not yet checked against the round's players), and a tag that changes when it does; null when nothing was recorded. */
+  static getTalk(serverId: string, roundId: string): { list: unknown, tag: string } | null {
+    const r = db.prepare('SELECT spans, bytes, created_at, data FROM round_talk WHERE server_id = ? AND round_id = ?').get(serverId, roundId) as { spans: number, bytes: number, created_at: string, data: string } | null
+    if (!r) return null
+    try { return { list: JSON.parse(r.data), tag: `${r.created_at}:${r.spans}:${r.bytes}:${contentHash(r.data).slice(0, 12)}` } } catch { return null }
   }
 
   /** The rounds only test bots played in: at least one bot and no one else. */
@@ -384,6 +403,7 @@ export class Store {
     const cap = limits.mb * 1024 * 1024
     for (const r of rows) {
       if (count <= limits.count && bytes <= cap) break
+      db.run('DELETE FROM round_talk WHERE server_id = ? AND round_id = ?', [serverId, r.round_id])
       db.run('DELETE FROM round_tracks WHERE server_id = ? AND round_id = ?', [serverId, r.round_id])
       count--; bytes -= r.bytes
     }
