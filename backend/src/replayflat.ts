@@ -394,7 +394,7 @@ export async function startFlat(host: FlatHost): Promise<void> {
   const markCam = () => root.querySelectorAll<HTMLElement>('[data-cam]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.cam === mode)))
   const setMode = (m: 'top' | 'follow') => { mode = m; markCam(); baked.ok = false; paint() }
   root.querySelectorAll<HTMLElement>('[data-cam]').forEach(b => {
-    if (b.dataset.cam === 'orbit') b.classList.add('gone') // the 3D view needs WebGL; its place stays (hiding it moved the buttons after it by 44 px)
+    if (b.dataset.cam === 'orbit' || b.dataset.cam === 'pov') b.classList.add('gone') // the 3D view and POV need WebGL; their places stay (hiding it moved the buttons after it by 44 px)
     else b.addEventListener('click', () => setMode(b.dataset.cam === 'follow' ? 'follow' : 'top'))
   })
   canvas.style.cursor = 'grab'

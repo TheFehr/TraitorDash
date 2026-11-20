@@ -244,7 +244,7 @@ export function addGhost(root: Object3D, material: Material): Mesh[] {
 }
 
 /** The ghost is drawn for the followed player, and only in the follow camera, and only while that player is drawn. */
-export const ghostShown = (camera: 'orbit' | 'top' | 'follow', selected: string | null, id: string, drawn: boolean): boolean => camera === 'follow' && selected === id && drawn
+export const ghostShown = (camera: 'orbit' | 'top' | 'follow' | 'pov', selected: string | null, id: string, drawn: boolean): boolean => camera === 'follow' && selected === id && drawn
 
 /** The ghost of a figure: its meshes marked in the stencil, drawn again with a ghost material in `colour`. */
 export function ghostFigure(root: Object3D, colour: number) {

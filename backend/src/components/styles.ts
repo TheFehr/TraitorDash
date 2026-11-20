@@ -202,6 +202,21 @@ html.theater{overflow:hidden}
 .view canvas{display:block;width:100%;height:min(60vh,28rem);background:var(--night);touch-action:none}
 .view [data-status]{position:absolute;left:0;right:0;top:0;bottom:0;margin:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:0 var(--space-3);pointer-events:none;color:var(--muted)}
 .view [data-status][hidden]{display:none}
+.view [data-pov-overlay]{position:absolute;left:0;right:0;top:0;bottom:0;overflow:hidden;pointer-events:none;color:#fff;text-shadow:0 1px 3px #000,0 0 2px #000;font-size:.85rem;font-variant-numeric:tabular-nums}
+.view [data-pov-overlay][hidden]{display:none}
+.view [data-pov-vignette]{position:absolute;left:0;right:0;top:0;bottom:0;opacity:0;box-shadow:inset 0 0 110px 30px rgba(220,38,38,.95)}
+.view [data-pov-dot]{position:absolute;left:50%;top:50%;width:6px;height:6px;transform:translate(-50%,-50%);border-radius:50%;background:#fff;box-shadow:0 0 0 1px #000}
+.view [data-pov-dot][hidden]{display:none}
+.view [data-pov-hit]{position:absolute;left:50%;top:50%;width:26px;height:26px;transform:translate(-50%,-50%);opacity:0}
+.view [data-pov-hit]::before,.view [data-pov-hit]::after{content:"";position:absolute;left:50%;top:50%;width:3px;height:100%;background:#fff;box-shadow:0 0 0 1px #000;transform:translateX(-50%) rotate(45deg)}
+.view [data-pov-hit]::after{transform:translateX(-50%) rotate(-45deg)}
+.view [data-pov-hit][data-kill="1"]{width:36px;height:36px}
+.view [data-pov-hit][data-kill="1"]::before,.view [data-pov-hit][data-kill="1"]::after{background:#ef4444}
+.view [data-pov-who]{position:absolute;left:var(--space-2);top:var(--space-2);right:var(--space-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.view [data-pov-weapon],.view [data-pov-health]{position:absolute;left:var(--space-2);white-space:nowrap}
+.view [data-pov-weapon]{bottom:calc(var(--space-2) + 1.4em)}
+.view [data-pov-health]{bottom:var(--space-2)}
+[data-pov-controls][hidden]{display:flex;visibility:hidden}
 .view.nogl{background:var(--night)}
 .view.nogl [data-status]{position:static;display:block;padding:var(--space-4);text-align:left;overflow-wrap:anywhere;color:var(--soft)}
 .tools{display:flex;flex-wrap:wrap;gap:var(--space-2) var(--space-4);align-items:center;margin:var(--space-2) 0}

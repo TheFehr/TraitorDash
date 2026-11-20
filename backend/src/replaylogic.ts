@@ -394,8 +394,8 @@ export function cutHeight(levels: LevelRange[], upTo: number | 'all', above = 12
  * follows the player's level, nothing is hidden, and what is between the camera and the player is cut away by the hole of the follow camera instead (RFC 34, followHole.ts). A level the viewer
  * picked on the level bar is kept in every camera.
  */
-export const shownLevels = (upTo: number | 'all', followLevel: boolean, camera: 'orbit' | 'top' | 'follow'): number | 'all' =>
-  camera === 'follow' && followLevel ? 'all' : upTo
+export const shownLevels = (upTo: number | 'all', followLevel: boolean, camera: 'orbit' | 'top' | 'follow' | 'pov'): number | 'all' =>
+  camera === 'pov' || (camera === 'follow' && followLevel) ? 'all' : upTo // the POV camera is inside the building: no level is cut away (RFC 39, 4)
 
 /** How long the level the cut follows stays after the player is found on a lower one, so stairs and a jump at a boundary do not make it flicker. */
 export const LEVEL_HOLD_MS = 400
@@ -970,3 +970,121 @@ export function c4Charges(events: TrackEvent[]): C4Charge[] {
 }
 /** The charges that are there at `ms`: armed at or before it and not yet ended. */
 export const c4At = (charges: C4Charge[], ms: number): C4Charge[] => charges.filter(c => ms >= c.from && ms < c.until)
+
+// ---- RFC 39, stage B: the POV camera (the replay through a player's eyes)
+
+/** The field of view the viewer can choose for the POV camera, in degrees, horizontal (RFC 39, 4): 90 to start. */
+export const POV_FOV = { normal: 90, wide: 105 }
+/** The POV camera's near plane in units (RFC 39, 4): close enough that a wall pressed against the eye is not cut away early. */
+export const POV_NEAR = 2
+/** The most the vertical field may be, in degrees: on a tall (phone) canvas the horizontal field of a wide choice would make it absurd (RFC 39, 4). */
+export const POV_VFOV_MAX = 100
+/** The vertical field of view (what the camera takes) for a horizontal one on a canvas of this aspect (width / height), capped at POV_VFOV_MAX. */
+export function povVerticalFov(horizontalDeg: number, aspect: number): number {
+  const v = 2 * Math.atan(Math.tan((horizontalDeg * Math.PI) / 360) / Math.max(aspect, 0.1)) * 180 / Math.PI
+  return Math.min(v, POV_VFOV_MAX)
+}
+
+/** How long the eye takes to go from standing to crouching height or back (the game's own duck takes a moment; a jump of 36 units between samples would be seen). */
+export const DUCK_BLEND_MS = 150
+/**
+ * The eye's height above the feet at `ms` (RFC 39, 4): the standing or the crouching height by the crouch bit of the sample, blended over DUCK_BLEND_MS from the
+ * first sample that shows the new state. The start of a segment, and a state that has lasted, are at their height at once.
+ */
+export function eyeHeightAt(segments: Segment[], ms: number, eye: { stand: number, duck: number }): number {
+  let lo = 0, hi = segments.length - 1, seg: Segment | null = null
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    const s = segments[mid]!
+    if (ms < s.t[0]!) hi = mid - 1
+    else if (ms > s.t[s.t.length - 1]!) lo = mid + 1
+    else { seg = s; break }
+  }
+  if (!seg) return eye.stand
+  const state = (i: number) => ((seg!.s[i] ?? 0) & MOVE.crouching ? eye.duck : eye.stand)
+  let a = 0, b = seg.t.length - 1
+  while (a < b) { const m = (a + b + 1) >> 1; if (seg.t[m]! <= ms) a = m; else b = m - 1 }
+  const now = state(a)
+  let j = a
+  while (j > 0 && state(j - 1) === now && seg.t[j]! > ms - 2 * DUCK_BLEND_MS) j--
+  if (j === 0 || state(j - 1) === now) return now
+  const f = Math.min(Math.max((ms - seg.t[j]!) / DUCK_BLEND_MS, 0), 1)
+  const e = f * f * (3 - 2 * f)
+  return state(j - 1) + (now - state(j - 1)) * e
+}
+
+/** Where a POV camera is and which way it looks: the eye in units (Source axes), the heading in 256ths of a turn, the pitch in degrees positive looking down. */
+export interface PovEye { x: number, y: number, z: number, yaw: number, pitch: number }
+/** The eye of a player at `ms`: the smooth position plus the eye height, the smooth heading and pitch (level when the track has no pitch). null where the player has no sample. */
+export function povEye(segments: Segment[], ms: number, eye: { stand: number, duck: number }): PovEye | null {
+  const p = poseAt(segments, ms)
+  if (!p) return null
+  return { x: p.x, y: p.y, z: p.z + eyeHeightAt(segments, ms, eye), yaw: p.yaw, pitch: pitchAt(segments, ms) ?? 0 }
+}
+
+/** The direction a POV eye looks in three.js axes (Source (x, y, z) is three (x, z, -y)): a unit vector. */
+export function povDirection(e: { yaw: number, pitch: number }): [number, number, number] {
+  const yaw = (e.yaw / 256) * Math.PI * 2, pitch = (Math.min(Math.max(e.pitch, -89), 89) * Math.PI) / 180 // never straight up or down: the camera's up vector would have no side
+  const dx = Math.cos(yaw) * Math.cos(pitch), dy = Math.sin(yaw) * Math.cos(pitch), dz = -Math.sin(pitch)
+  return [dx, dz, -dy]
+}
+
+/** How long the camera takes to turn towards the body after the player's death when there is no killer to go to (RFC 39, 4). */
+export const DEATH_TURN_MS = 1000
+/** The eye turned towards a point (the body) by the fraction of DEATH_TURN_MS that has passed since the death; the position stays. */
+export function turnToBody(eye: PovEye, body: [number, number, number], sinceMs: number): PovEye {
+  const f = Math.min(Math.max(sinceMs / DEATH_TURN_MS, 0), 1)
+  const e = f * f * (3 - 2 * f)
+  const dx = body[0] - eye.x, dy = body[1] - eye.y, dz = eye.z - body[2]
+  const yawT = ((Math.atan2(dy, dx) / (Math.PI * 2)) * 256 % 256 + 256) % 256
+  const pitchT = (Math.atan2(dz, Math.hypot(dx, dy)) * 180) / Math.PI
+  return { ...eye, yaw: ((lerpYaw(eye.yaw, yawT, e) % 256) + 256) % 256, pitch: eye.pitch + (pitchT - eye.pitch) * e }
+}
+
+/** Whose eyes the POV camera shows (RFC 39, 4): the followed player; when they are dead, their killer (a player of the round with a position then), and the killer's killer if they are dead too. */
+export interface PovSubject {
+  /** The player whose eyes these are. */
+  id: string
+  /** The player who died and whose killer's eyes these are, for "Watching X, who killed Y"; null when it is the followed player's own view. */
+  killed: string | null
+  /** The subject is dead and there is no killer to go to: the camera stays at their last eye and turns to the body. */
+  dead: Death | null
+}
+export function povSubject(data: { deaths: Death[], events: TrackEvent[], players: Map<string, Segment[]> }, selected: string, ms: number, maxHops = 24): PovSubject {
+  let id = selected, killed: string | null = null
+  const seen = new Set<string>([selected])
+  for (let hop = 0; hop < maxHops; hop++) {
+    const d = currentDeath(data.deaths, data.events, id, ms)
+    if (!d) return { id, killed, dead: null }
+    const k = d.attacker
+    if (k && !seen.has(k) && poseAt(data.players.get(k) ?? [], ms)) { seen.add(k); killed = id; id = k; continue }
+    return { id, killed, dead: d }
+  }
+  return { id, killed, dead: currentDeath(data.deaths, data.events, id, ms) }
+}
+
+/** The `hurt` events each attacker dealt, in time order (the victims' lists, regrouped): what the hit marker of POV is drawn from. */
+export function hurtsDealt(events: TrackEvent[]): Map<string, TrackEvent[]> {
+  const out = new Map<string, TrackEvent[]>()
+  for (const e of events) if (e.k === 'hurt' && e.a) { const l = out.get(e.a) ?? []; l.push(e); out.set(e.a, l) }
+  return out
+}
+export const HIT_MS = 250
+export const VIGNETTE_MS = 450
+/**
+ * The cues of POV at `ms` (RFC 39, 4): `hit` 0..1, the hit marker of the last damage the player dealt (fading over HIT_MS from its recorded time), `kill` when that
+ * damage left the victim at 0 health (a stronger marker); `hurt` 0..1, the damage vignette of the last damage they took (fading over VIGNETTE_MS, stronger for more
+ * damage: 40 or more is full, less is at least a quarter). Shots are not used: they are merged per second and say nothing about when a bullet left.
+ */
+export function cueLevels(dealt: TrackEvent[] | undefined, taken: TrackEvent[] | undefined, ms: number): { hit: number, kill: boolean, hurt: number } {
+  const h = lastEventAt(dealt, ms)
+  const hitAge = h ? ms - h.t : Infinity
+  const t = lastEventAt(taken, ms)
+  const takenAge = t ? ms - t.t : Infinity
+  const strength = t ? Math.min(Math.max((t.d ?? 0) / 40, 0.25), 1) : 0
+  return {
+    hit: h && hitAge >= 0 && hitAge < HIT_MS ? 1 - hitAge / HIT_MS : 0,
+    kill: !!h && h.h === 0,
+    hurt: t && takenAge >= 0 && takenAge < VIGNETTE_MS ? strength * (1 - takenAge / VIGNETTE_MS) : 0,
+  }
+}

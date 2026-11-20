@@ -12,10 +12,11 @@ import { clone as cloneRig } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { startFlat } from './replayflat'
 import { offerBrowser, levelColour, paintPlain, makeCamera, makeRenderer, makeScene, mapLoader, prepareDecoration, prepareMovable, prepareProps, prepareWater, lyingPlaces, boxWithout, mergeDrawn, type Painted } from './sceneKit'
+import { weaponName } from './weaponName'
 import { holeUniforms, patchHole, updateHole, ghostFigure, ghostShown, createMask, sizeMask, renderMask, maskWanted } from './followHole'
 import {
   decodeTrack, isTalking, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, shownLevels, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, bodyAt, thingAt, movedProps, killerDiedBefore, reviveSource, revivePose, fitLabel, healthAt, healthBar, healthColour, hurtText, hurtOwnText, healText, healOwnText, equipText, equipOwnText, c4Text, c4OwnText, dnaText, dnaOwnText, tbtnText, tbtnOwnText, EQUIPMENT_KINDS, hiddenPickups, timeMark, c4Charges, c4At, damageTotals, shotsByWeapon, shotsTitle, totalsText,
-  holdAt, creditsAt, karmaAt, holdingText, creditsLine, karmaLine, creditsOwnText, karmaOwnText, specOwnText, watchEventAt, watchLine,
+  holdAt, creditsAt, karmaAt, holdingText, POV_FOV, POV_NEAR, povVerticalFov, eyeHeights, povEye, povDirection, turnToBody, povSubject, hurtsDealt, cueLevels, creditsLine, karmaLine, creditsOwnText, karmaOwnText, specOwnText, watchEventAt, watchLine,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
 } from './replaylogic'
 
@@ -88,7 +89,9 @@ async function start(root: HTMLElement) {
   const place = (t: number) => `${((t - data.start) / span) * 100}%`
   let ms = data.start, playing = false, speed = 1, last = 0
   let selected = defaultSelection(ids, viewer, data.deaths)
-  let camMode: 'orbit' | 'top' | 'follow' = 'orbit'
+  let camMode: 'orbit' | 'top' | 'follow' | 'pov' = 'orbit'
+  let povFov: number = POV_FOV.normal // the viewer's choice of the horizontal field of view in POV (RFC 39, 4)
+  let povDot = true
   let followLevel = true
   let levelHold: LevelHold | null = null, levelHoldFor: string | null = null // the level the cut follows, held for a moment when the player is found lower (replaylogic: holdLevel)
   let upTo: number | 'all' = 'all'
@@ -145,6 +148,10 @@ async function start(root: HTMLElement) {
   }
 
   /** The health of a player now, as a bar's numbers: null when the track has none for them at this time, or they are dead. */
+  // POV (RFC 39, 4): the parts of the overlay the page has, and the damage each player dealt (what the hit marker is drawn from)
+  const dealt = hurtsDealt(data.events)
+  const q = (sel: string) => root.querySelector<HTMLElement>(sel)
+  const pov = { box: q('[data-pov-overlay]'), who: q('[data-pov-who]'), weapon: q('[data-pov-weapon]'), health: q('[data-pov-health]'), hit: q('[data-pov-hit]'), vignette: q('[data-pov-vignette]'), dot: q('[data-pov-dot]'), controls: q('[data-pov-controls]'), note: q('[data-pov-note]') }
   const healthNow = (id: string) => healthBar(healthAt(data.players.get(id) ?? [], data.hurts.get(id), ms), data.maxHealth.get(id))
   const totalsText_ = new Map<string, { text: string, title: string }>()
   // The panel's lines for what is polled (RFC 26, 4c, C2): each is in the page, hidden, and shown only when the track has any event of its kind, so an older track keeps the card as it was and a line never appears or goes while the time moves or another player is selected.
@@ -388,6 +395,18 @@ async function start(root: HTMLElement) {
     if (e.key === 'Escape' && root.classList.contains('theater')) setTheater(false)
     else if (e.key === 't' || e.key === 'T') setTheater(!root.classList.contains('theater'))
   })
+  // POV's own controls (RFC 39, 4, 5): the field of view (Normal 90, Wide 105) and the centre dot; the choices are kept on this device
+  const keep = (k: string, v?: string): string | null => { try { if (v !== undefined) localStorage.setItem(k, v); else return localStorage.getItem(k) } catch { /* private window: the choice is for this visit */ } return null }
+  const wantFov = Number(keep('td-pov-fov')); if (wantFov === POV_FOV.normal || wantFov === POV_FOV.wide) povFov = wantFov
+  if (keep('td-pov-dot') === '0') povDot = false
+  const markPov = () => {
+    root.querySelectorAll<HTMLElement>('[data-pov-fov]').forEach(b => b.setAttribute('aria-pressed', String(Number(b.dataset.povFov) === povFov)))
+    const box = root.querySelector<HTMLInputElement>('[data-pov-dotbox]'); if (box) box.checked = povDot
+    if (pov.dot) pov.dot.hidden = !povDot
+  }
+  root.querySelectorAll<HTMLElement>('[data-pov-fov]').forEach(b => b.addEventListener('click', () => { povFov = Number(b.dataset.povFov); keep('td-pov-fov', String(povFov)); markPov(); lens(); changed() }))
+  root.querySelector<HTMLInputElement>('[data-pov-dotbox]')?.addEventListener('change', e => { povDot = (e.target as HTMLInputElement).checked; keep('td-pov-dot', povDot ? '1' : '0'); markPov() })
+  markPov()
   root.querySelectorAll<HTMLElement>('[data-speed]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.speed === '1')))
 
   // ---- WebGL: a browser without it gets the lists above and this message
@@ -881,12 +900,19 @@ async function start(root: HTMLElement) {
   orbit.addEventListener('change', render)
   topControls.addEventListener('change', render)
 
+  // The lens of the POV camera (RFC 39, 4): a near plane of its own and the viewer's field of view, capped on a tall canvas; every other mode has the one it always had.
+  const lens = () => {
+    persp.near = camMode === 'pov' ? POV_NEAR : 1
+    persp.fov = camMode === 'pov' ? povVerticalFov(povFov, persp.aspect) : 40
+    persp.updateProjectionMatrix()
+  }
   const resize = () => {
     const w = canvas.clientWidth, h = canvas.clientHeight
     if (w === 0 || h === 0) return
     renderer.setSize(w, h, false)
     if (mask) sizeMask(renderer, mask, hole)
     persp.aspect = w / h; persp.updateProjectionMatrix()
+    lens()
     fitOrtho()
     render()
   }
@@ -1102,6 +1128,31 @@ async function start(root: HTMLElement) {
       persp.lookAt(tmp)
       // the hole is made around where the player is drawn (the settled camera follows them a little behind)
       updateHole(hole, persp, tmp.set(mine.x, mine.z, -mine.y), true)
+    } else if (camMode === 'pov' && selected) {
+      // POV (RFC 39, 4): the camera is the eye of the followed player, or of their killer once they are dead; no hole, no mask, no ghost, and that body is not drawn
+      const sub = povSubject(data, selected, ms)
+      const segs = data.players.get(sub.id) ?? []
+      let e = povEye(segs, sub.dead ? Math.min(ms, sub.dead.t) : ms, eyeHeights(data.eyes, sub.id))
+      if (e && sub.dead) e = turnToBody(e, sub.dead.at, ms - sub.dead.t) // no killer to go to: the last eye, turning to the body
+      if (e) {
+        persp.position.set(e.x, e.z, -e.y)
+        const dir = povDirection(e)
+        persp.lookAt(e.x + dir[0], e.z + dir[1], -e.y + dir[2])
+      }
+      const mk = markers.get(sub.id)
+      if (mk) { mk.group.visible = false; mk.ring.visible = false; mk.label.visible = false; mk.pin.visible = false; mk.bar.visible = false; mk.deadPin.visible = false }
+      if (pov.box) {
+        const hold = holdAt(data.polled.hold.get(sub.id), ms, !!sub.dead)
+        const hb = healthBar(healthAt(segs, data.hurts.get(sub.id), ms), data.maxHealth.get(sub.id))
+        const cues = cueLevels(dealt.get(sub.id), data.hurts.get(sub.id), ms)
+        if (pov.who) setText(pov.who, sub.killed ? `Watching ${nick(sub.id)}, who killed ${nick(sub.killed)}` : sub.dead ? `${nick(sub.id)} is dead` : '')
+        if (pov.weapon) setText(pov.weapon, hold ? weaponName(hold) : '')
+        if (pov.health) setText(pov.health, hb ? `${hb.hp} / ${hb.max}` : '')
+        if (pov.hit) { pov.hit.style.opacity = String(cues.hit); pov.hit.dataset.kill = cues.kill ? '1' : '0' }
+        if (pov.vignette) pov.vignette.style.opacity = String(cues.hurt)
+        if (pov.note) pov.note.hidden = segs.length === 0 || !!segs[0]!.ap
+      }
+      updateHole(hole, camera, null, false)
     } else updateHole(hole, camera, null, false) // no follow camera, no hole
     scrub.value = String(ms)
     setText(timeEl, `${stamp(ms)} / ${stamp(data.length)}`)
@@ -1116,7 +1167,8 @@ async function start(root: HTMLElement) {
   hooks.decoration = on => { if (decorationNode) decorationNode.visible = on; render() }
   hooks.resize = resize
 
-  const setCam = (mode: 'orbit' | 'top' | 'follow') => {
+  const setCam = (mode: 'orbit' | 'top' | 'follow' | 'pov') => {
+    if (mode === 'pov' && !selected) { say('Select a player to watch from their POV.'); return }
     if (camMode === 'orbit' && mode !== 'orbit') saved = { pos: persp.position.clone(), target: orbit.target.clone() }
     if (mode === 'orbit' && saved) { persp.position.copy(saved.pos); orbit.target.copy(saved.target) }
     camMode = mode
@@ -1124,6 +1176,9 @@ async function start(root: HTMLElement) {
     camera = mode === 'top' ? ortho : persp
     orbit.enabled = mode === 'orbit'
     topControls.enabled = mode === 'top'
+    lens()
+    if (pov.box) pov.box.hidden = mode !== 'pov'
+    if (pov.controls) pov.controls.hidden = mode !== 'pov'
     if (mode === 'orbit') { orbit.update() }
     root.querySelectorAll<HTMLElement>('[data-cam]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.cam === mode)))
     changed()

@@ -49,6 +49,15 @@ export const ReplayPage = ({ ctx, server, round, hasTrack, src, pinned, here, pi
             <div class="view">
               <canvas data-canvas aria-label="3D replay of the round"></canvas>
               <p data-status>This view needs JavaScript.</p>
+              {/* POV (RFC 39): drawn over the canvas, fixed in size and out of the layout, shown only in that camera */}
+              <div data-pov-overlay hidden aria-hidden="true">
+                <span data-pov-vignette></span>
+                <span data-pov-dot></span>
+                <span data-pov-hit data-kill="0"></span>
+                <span data-pov-who></span>
+                <span data-pov-weapon></span>
+                <span data-pov-health></span>
+              </div>
             </div>
             <div data-controls>
               <div class="scrub">
@@ -65,8 +74,18 @@ export const ReplayPage = ({ ctx, server, round, hasTrack, src, pinned, here, pi
                   <button type="button" data-cam="orbit" aria-pressed="true" class="tog">3D</button>
                   <button type="button" data-cam="top" aria-pressed="false" class="tog">From above</button>
                   <button type="button" data-cam="follow" aria-pressed="false" class="tog">Follow</button>
+                  <button type="button" data-cam="pov" aria-pressed="false" class="tog" title="See the round through the selected player's eyes">POV</button>
                 </span>
                 <button type="button" data-theater aria-pressed="false" class="tog" title="Fill the window (T; Esc leaves)">Theater</button>
+              </div>
+              {/* only in POV; hidden it keeps its place, so switching camera does not move the page */}
+              <div data-pov-controls hidden class="tools">
+                <span role="group" aria-label="Field of view"><span class="cap">View</span>
+                  <button type="button" data-pov-fov="90" aria-pressed="true" class="tog">Normal</button>
+                  <button type="button" data-pov-fov="105" aria-pressed="false" class="tog">Wide</button>
+                </span>
+                <label><input type="checkbox" data-pov-dotbox checked /> Centre dot</label>
+                <span data-pov-note class="d" hidden>This round was recorded without view pitch: the view stays level.</span>
               </div>
               <div data-levels-wrap class="tools">
                 <span role="group" aria-label="Levels shown"><span class="cap">Up to level</span><span data-levels></span></span>
