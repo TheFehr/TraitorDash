@@ -79,8 +79,8 @@ describe('validateTrack', () => {
     refused(body([{ t: 1, p: A, k: 'kick' }]), /unknown kind/)
     expect(validateTrack(body([{ t: 1, p: A, k: 'pickup', of: B }, { t: 2, p: A, k: 'drop' }]), round).ok).toBe(true) // RFC 24
     refused(body([{ t: 1, p: A, k: 'pickup', of: 'stranger' }]), /pickup event names a body/)
-    refused(body(Array.from({ length: 11_009 }, (_, i) => ({ t: i, p: A, k: 'found' }))), /at most 11008/)
-    expect(validateTrack(body(Array.from({ length: 11_008 }, (_, i) => ({ t: i, p: A, k: 'found' }))), round).ok).toBe(true) // the sum of the bridge's caps of every kind (RFC 26, 4a, 4b, 4c C1 and C2)
+    refused(body(Array.from({ length: 12_545 }, (_, i) => ({ t: i, p: A, k: 'found' }))), /at most 12544/)
+    expect(validateTrack(body(Array.from({ length: 12_544 }, (_, i) => ({ t: i, p: A, k: 'found' }))), round).ok).toBe(true) // the sum of the bridge's caps of every kind (RFC 26, 4a, 4b, 4c C1, C2 and C3)
   })
 
   test('health of each sample (hp, delta coded) and the most health of a player (mh) are kept when they are there; a track without them is fine (RFC 26, 4a)', () => {
@@ -315,21 +315,34 @@ describe('validateTrack', () => {
     const body = (events: unknown[]) => ({ ...good(), events })
     const r = validateTrack(body([{ t: 1, p: A, k: 'hurt', w: 'fall', d: 1, h: 1 }, { t: 2, p: A, k: 'heal', w: 'other', d: 1, h: 2 }, { t: 3, p: A, k: 'found' }]), round)
     expect(r.ok).toBe(true)
-    refused(body([{ t: 1, p: A, k: 'shots', w: 'weapon_x', n: 1, d: 0 }]), /unknown kind/) // a kind of a later package is not known yet
+    refused(body([{ t: 1, p: A, k: 'voice', w: 'weapon_x', n: 1 }]), /unknown kind/) // a kind of a later package is not known yet
   })
 
-  test('the events of all kinds together may be as many as the bridge\'s caps add up to: 1024 revive, 1024 role, 1024 say, 512 buy, 256 each of found, pickup and drop, 2048 hurt, 512 heal, 512 wpick, 512 wdrop, 128 c4, 128 dna, 256 tbtn, 1024 hold, 512 credits, 512 karma, 512 spec', () => {
+  test('the events of all kinds together may be as many as the bridge\'s caps add up to: 1024 revive, 1024 role, 1024 say, 512 buy, 256 each of found, pickup and drop, 2048 hurt, 512 heal, 512 wpick, 512 wdrop, 128 c4, 128 dna, 256 tbtn, 1024 hold, 512 credits, 512 karma, 512 spec, 1536 shots', () => {
     const kinds: [string, number, Record<string, unknown>][] = [
       ['revive', 1024, {}], ['role', 1024, { role: 'traitor', team: 'traitors' }], ['say', 1024, { text: 'hi', ch: 'all' }], ['buy', 512, { item: 'weapon_x' }],
       ['found', 256, {}], ['pickup', 256, {}], ['drop', 256, {}], ['hurt', 2048, { w: 'fall', d: 1, h: 1 }], ['heal', 512, { w: 'ttt_health_station', d: 1, h: 1 }],
       ['wpick', 512, { w: 'weapon_zm_mac10' }], ['wdrop', 512, { w: 'weapon_zm_mac10' }], ['c4', 128, { st: 'plant', s: 45, x: 1, y: 2, z: 3 }], ['dna', 128, { of: B, w: 'prop_ragdoll' }],
       ['tbtn', 256, { n: 'Open the vent', x: 1, y: 2, z: 3 }],
       ['hold', 1024, { w: 'weapon_zm_mac10' }], ['credits', 512, { d: -1, c: 2, w: 'buy' }], ['karma', 512, { d: -40, c: 960, w: 'teamhurt' }], ['spec', 512, { of: B }],
+      ['shots', 1536, { w: 'weapon_zm_mac10', n: 12 }],
     ]
     let t = 0
     const events = kinds.flatMap(([k, n, f]) => Array.from({ length: n }, () => ({ t: t++, p: A, k, ...f })))
-    expect(events).toHaveLength(11_008)
+    expect(events).toHaveLength(12_544)
     expect(validateTrack({ ...good(), events }, round).ok).toBe(true)
+  })
+
+  test('shots (RFC 26, 4c, C3): a player of the round, a weapon class and a number of shots from 1 to 10000; other fields are dropped', () => {
+    const body = (events: unknown[]) => ({ ...good(), events })
+    const ev = (o: Record<string, unknown> = {}) => ({ t: 1, p: A, k: 'shots', w: 'weapon_zm_mac10', n: 12, ...o })
+    const r = validateTrack(body([ev({ d: 700, a: B, x: 1, junk: 'y' }), { ...ev({ n: 10_000, w: 'w'.repeat(40) }), t: 2 }, { ...ev({ n: 1 }), t: 3 }]), round)
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.track.events).toEqual([{ t: 1, p: A, k: 'shots', w: 'weapon_zm_mac10', n: 12 }, { t: 2, p: A, k: 'shots', w: 'w'.repeat(40), n: 10_000 }, { t: 3, p: A, k: 'shots', w: 'weapon_zm_mac10', n: 1 }])
+    for (const n of [0, -1, 10_001, 1.5, '3', null, NaN, undefined]) refused(body([ev({ n })]), /number of shots/)
+    for (const w of ['', 'w'.repeat(41), 'a b', 'bad;name', 7, null, undefined]) refused(body([ev({ w })]), /weapon class/)
+    refused(body([ev({ p: 'stranger' })]), /not in the round/)
+    refused(body([ev({ p: undefined })]), /not in the round/)
   })
 
   test('a track without a fingerprint, flags or deaths is fine', () => {
