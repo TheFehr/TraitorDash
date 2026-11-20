@@ -2991,6 +2991,32 @@ describe('track.lua: shots fired (RFC 26, 4c, C3)', () => {
     expect(shotsOf(prep).map(e => e.p)).toEqual([C])
   })
 
+  test('a player who was recorded in the preparation but was not in the round (a spectator by then) does not shoot', () => {
+    const r = play(C3 + `
+      SPEC.alive = true
+      Fire("TTTPrepareRound")
+      SPEC.wep = Gun("weapon_x")
+      SPEC.alive = false
+      Fire("TTTBeginRound") NOW = NOW + 1.2
+      SPEC.alive = true
+      Shoot(SPEC) Shoot(A)
+      Ends()
+    `)
+    expect(shotsOf(r).map(e => e.p)).toEqual([A])
+  })
+
+  test('something that is not a player is turned away before anything else is asked of it: no entity index, no cache entry', () => {
+    const r = play(C3 + `
+      Start()
+      IDX = 0
+      local npc = Thing("npc_zombie", { EntIndex = function() IDX = IDX + 1 return 77 end, GetActiveWeapon = function() IDX = IDX + 100 end })
+      for i = 1, 5 do Shoot(npc) end
+      OUT = { asked = IDX }
+      Ends()
+    `)
+    expect(r.out.asked).toBe(0)
+  })
+
   test('the weapon is the bullet\'s Inflictor when it is a weapon, else the one in hand; with neither there is no shot', () => {
     const r = play(C3 + `
       Start()
