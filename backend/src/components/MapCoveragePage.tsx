@@ -2,7 +2,7 @@ import { PageHead, Shell } from './CaseFile'
 import type { Ctx } from './kit'
 import { COVERAGE, lookup, type CoverageRecord, type Status } from '../maps/coverage'
 import { flagSetStatus, sizeText, worldFacesByStatus, type CoverageReport, type MapRow } from '../services/coveragereport'
-import type { WorkshopStatus, AddonRow } from '../services/workshopStore'
+import type { WorkshopStatus, AddonRow, ModelHit } from '../services/workshopStore'
 
 // RFC 32, 5: what the 3D pipeline draws of the maps of a server, ignores on purpose and misses, counted from the coverage record each map's mesh carries.
 // An admin's page: a maintenance tool, not a statistic for visitors. The look is the case-file card of every page, with the tables of the stats pages.
@@ -69,6 +69,8 @@ export interface WorkshopPanel {
   status: WorkshopStatus
   state: { running: boolean, current: { kind: 'index' | 'model' | 'list', id: string } | null }
   failed: AddonRow[]
+  /** The search box's term and what it found among the indexed models; null without a term. */
+  search: { q: string, hits: ModelHit[] } | null
   /** What the last look at the collection left out or could not read. */
   notes: string[]
   collectionSize: number
@@ -109,6 +111,27 @@ export const WorkshopCard = ({ w, serverId, modelNote }: { w: WorkshopPanel, ser
         {' '}
         <form method="post" action={`${base}/retry`} class="inline"><button type="submit" class="btn">Retry failed</button></form>
       </div>
+      <form method="get" action={`/servers/${serverId}/map-coverage`} class="inline" data-workshop-search>
+        <label>Find a model <input type="text" name="q" value={w.search?.q ?? ''} placeholder="usp, knife, turret ..." maxlength={60} size={24} autocomplete="off" /></label>
+        {' '}<button type="submit" class="btn">Search</button>
+      </form>
+      {w.search ? (
+        w.search.hits.length ? (
+          <div class="scrollx">
+            <table class="log" data-workshop-hits>
+              <tr><th>Model</th><th>Addon</th><th></th></tr>
+              {w.search.hits.map(h => (
+                <tr data-hit={h.path}>
+                  <td>{h.path}</td><td class="d">{h.title ?? h.addon}</td>
+                  <td>{h.model === 'built' ? <span class="d">built</span> : h.model === 'queued' || h.model === 'building' ? <span class="d">queued</span> : (
+                    <form method="post" action={`${base}/model`} class="inline"><input type="hidden" name="path" value={h.path} /><input type="hidden" name="q" value={w.search!.q} /><button type="submit" class="btn">Queue</button></form>
+                  )}</td>
+                </tr>
+              ))}
+            </table>
+          </div>
+        ) : <p class="d" data-workshop-nohits>{w.search.q.trim().length < 2 ? 'Type at least 2 characters.' : 'No indexed model matches that.'}</p>
+      ) : null}
       <form method="post" action={`${base}/model`} class="inline" data-workshop-model>
         <label>Build a model <input type="text" name="path" placeholder="models/weapons/w_example.mdl" maxlength={300} size={40} autocomplete="off" /></label>
         {' '}<button type="submit" class="btn">Queue</button>

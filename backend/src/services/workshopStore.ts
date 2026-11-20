@@ -115,6 +115,33 @@ export function holders(path: string): string[] {
   `).all(path) as { id: string }[]).map(r => r.id)
 }
 
+export interface ModelHit { path: string, addon: string, title: string | null, model: ModelStatus | null }
+/**
+ * Models (`.mdl` paths) of indexed addons whose path contains `q` (case-insensitive, at least 2 characters, `%` and `_` taken literally),
+ * with the addon that holds them (the most recently updated, as `holders` picks) and the model's build status if it has one. At most `limit`.
+ */
+export function searchModels(q: string, limit = 40): ModelHit[] {
+  const term = q.trim().toLowerCase().replace(/[^a-z0-9_./ -]/g, '').replace(/\s+/g, '_')
+  if (term.length < 2) return []
+  const like = '%' + term.replace(/[\\%_]/g, m => '\\' + m) + '%'
+  const rows = db.prepare(`
+    SELECT f.path AS path, a.id AS addon, a.title AS title, m.status AS model
+    FROM workshop_files f JOIN workshop_addons a ON a.id = f.addon_id
+    LEFT JOIN workshop_models m ON m.path = f.path
+    WHERE f.path LIKE ? ESCAPE '\\' AND f.path LIKE 'models/%.mdl' AND a.status = 'indexed'
+    ORDER BY f.path, a.updated DESC, a.id
+  `).all(like) as { path: string, addon: string, title: string | null, model: ModelStatus | null }[]
+  const seen = new Set<string>()
+  const out: ModelHit[] = []
+  for (const r of rows) {
+    if (seen.has(r.path)) continue
+    seen.add(r.path)
+    out.push(r)
+    if (out.length >= limit) break
+  }
+  return out
+}
+
 /** Which of `paths` the addon holds. */
 export function heldBy(addon: string, paths: string[]): Set<string> {
   const out = new Set<string>()

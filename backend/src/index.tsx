@@ -362,11 +362,11 @@ app.get('/servers/:serverId/map-coverage', async (c) => {
   const ctx = await ctxOf(c)
   if (!adminOf(ctx)) return c.redirect('/')
   const rows = [...Store.getGeometryStates(found.serverId)].map(([map, g]) => ({ map, state: g.status, record: asRecord((g.info as { coverage?: unknown } | null)?.coverage) }))
-  return respond(c, ctx, <MapCoveragePage ctx={ctx} server={found.server} report={summarise(rows)} workshop={workshopPanel(found.serverId)} modelNote={c.req.query('model') === 'queued' ? 'queued' : c.req.query('model') === 'refused' ? 'refused' : undefined} />, { noStore: true })
+  return respond(c, ctx, <MapCoveragePage ctx={ctx} server={found.server} report={summarise(rows)} workshop={workshopPanel(found.serverId, (c.req.query('q') ?? '').slice(0, 60))} modelNote={c.req.query('model') === 'queued' ? 'queued' : c.req.query('model') === 'refused' ? 'refused' : undefined} />, { noStore: true })
 })
 
 /** What the "Workshop content" card shows (RFC 40, 5), or undefined when the feature is off. */
-function workshopPanel(serverId: string) {
+function workshopPanel(serverId: string, q = '') {
   const collection = workshopCollectionId()
   if (!collection) return undefined
   const mounted = Store.getMountedAddons(serverId)
@@ -374,6 +374,7 @@ function workshopPanel(serverId: string) {
   try { notes = JSON.parse(WS.metaGet('list_notes') ?? '[]') } catch { /* no notes */ }
   return {
     collection, status: WS.status(), state: workshopQueueState(), failed: WS.failedAddons(25), notes,
+    search: q.trim() ? { q: q.trim(), hits: WS.searchModels(q) } : null,
     collectionSize: Number(WS.metaGet('collection_size') ?? 0), checkedAt: Number(WS.metaGet('collection_checked') ?? 0) || null,
     mounted: mounted.reported ? { count: mounted.ids.length, notInCollection: WS.notInCollection(mounted.ids) } : null,
   }
@@ -407,8 +408,9 @@ app.post('/servers/:serverId/workshop-content/model', async (c) => {
   const form = await c.req.parseBody()
   const path = typeof form.path === 'string' ? form.path.slice(0, 300) : ''
   const queued = queueModelBuild(path)
+  const q = typeof form.q === 'string' ? form.q.slice(0, 60) : ''
   Store.audit(a.serverId, a.steamId, 'WORKSHOP_MODEL', path.slice(0, 120))
-  return c.redirect(`/servers/${a.serverId}/map-coverage?model=${queued ? 'queued' : 'refused'}#workshop-content`)
+  return c.redirect(`/servers/${a.serverId}/map-coverage?model=${queued ? 'queued' : 'refused'}${q ? `&q=${encodeURIComponent(q)}` : ''}#workshop-content`)
 })
 app.get('/servers/:serverId/workshop-content/model.glb', async (c) => {
   const a = await workshopAdmin(c)
