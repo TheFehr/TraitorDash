@@ -75,7 +75,7 @@ export const VoicePage = ({ ctx, server, enabled, forget = false }: VoicePagePro
       {!enabled ? (
         <div data-voice-off class="f c-gray">Voice chat is not set up on this dashboard.</div>
       ) : (
-        <div data-voice data-token={`/servers/${id}/voice/token`} data-people-url={`/servers/${id}/voice/people`} class="stack">
+        <div data-voice data-token={`/servers/${id}/voice/token`} data-people-url={`/servers/${id}/voice/people`} data-talk-url={`/servers/${id}/voice/talk`} class="stack">
           <div class="f c-gray vc">
             <div class="ft">On the voice chat</div>
             <p>
@@ -89,6 +89,7 @@ export const VoicePage = ({ ctx, server, enabled, forget = false }: VoicePagePro
               <span class="muted">Connected: <span data-count>0</span></span>
             </div>
             <p class="muted note" data-who></p>
+            <p class="muted note" data-talk-note></p>
 
             <div>
               <div class="cap">People</div>

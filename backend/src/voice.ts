@@ -104,6 +104,8 @@ function start(root: HTMLElement) {
   const peopleBox = $('[data-people]')
   const who = $('[data-who]')
   const peopleUrl = root.dataset.peopleUrl
+  const talkUrl = root.dataset.talkUrl
+  const talkNote = root.querySelector<HTMLElement>('[data-talk-note]')
 
   let room: Room | null = null
   let mic: LocalAudioTrack | null = null
@@ -255,7 +257,7 @@ function start(root: HTMLElement) {
     level.style.width = pct(db) + '%'
     level.classList.toggle('open', isOpen)
     dbOut.textContent = db <= GATE.silenceDb ? '' : Math.round(db) + ' dBFS'
-    if (isOpen !== talking) { talking = isOpen; speaking.textContent = isOpen ? 'talking' : '' }
+    if (isOpen !== talking) { talking = isOpen; speaking.textContent = isOpen ? 'talking' : ''; noteTalking(isOpen) }
     if (measuring) measuring.push(db)
     const dt = lastT < 0 ? 50 : Math.max(0, Math.min(1000, (t - lastT) * 1000))
     lastT = t
@@ -296,6 +298,59 @@ function start(root: HTMLElement) {
   window.addEventListener('keydown', (e) => { if (!typing(e) && mode() === 'ptt' && keyOf(e) === pttKey.value) { keyDown = true; syncForce() } })
   window.addEventListener('keyup', (e) => { if (keyOf(e) === pttKey.value) { keyDown = false; syncForce() } })
   window.addEventListener('blur', () => { keyDown = false; syncForce() })
+
+  // Who speaks, for the replay (RFC 26, 4c.5): when the server records it (the token's answer says so), the page keeps the spans in which its
+  // own gate was open (two times each, in this browser's clock; never a sound, never a word) and sends the finished ones in small batches. A
+  // pause under 300 ms does not end a span (a flickering gate is one span), a batch goes out at most every 2 seconds (and at most 50 spans),
+  // and what is left goes when the player leaves or closes the page. One request at a time; an error or a "not recorded" answer never
+  // reaches the player: the first stops nothing, the second ends the sending for this visit.
+  const TALK_MERGE_MS = 300, TALK_EVERY_MS = 2000, TALK_BATCH = 50
+  let recording = false
+  let spanFrom: number | null = null
+  let spans: { from: number, to: number }[] = []
+  let sending = false
+  let sendTimer = 0
+  const startRecording = (on: boolean) => {
+    recording = on && !!talkUrl
+    spans = []; spanFrom = null
+    if (talkNote) say(talkNote, recording ? 'This server records when you speak, for the round\'s replay, never what you say.' : '')
+  }
+  const flushTalk = (final: boolean) => {
+    window.clearTimeout(sendTimer); sendTimer = 0
+    if (!recording || !talkUrl) { spans = []; return }
+    if (sending && !final) { sendTimer = window.setTimeout(() => flushTalk(false), TALK_EVERY_MS); return }
+    const batch = spans.slice(0, TALK_BATCH)
+    if (batch.length === 0) return
+    spans = spans.slice(batch.length)
+    sending = true
+    const done = () => { sending = false; if (spans.length && !sendTimer && recording) sendTimer = window.setTimeout(() => flushTalk(false), TALK_EVERY_MS) }
+    try {
+      fetch(talkUrl, { method: 'POST', credentials: 'same-origin', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ now: Date.now(), spans: batch }) })
+        .then(async (res) => {
+          if (res.status === 200) { const data = await res.json().catch(() => null) as { record?: boolean } | null; if (data && data.record === false) { recording = false; spans = [] } }
+          done()
+        }, done)
+    } catch { done() }
+  }
+  const scheduleTalk = () => { if (!sendTimer && recording) sendTimer = window.setTimeout(() => flushTalk(false), TALK_EVERY_MS) }
+  const noteTalking = (open: boolean) => {
+    if (!recording) return
+    const now = Date.now()
+    if (open) {
+      const last = spans[spans.length - 1]
+      if (last && now - last.to < TALK_MERGE_MS) { spanFrom = last.from; spans.pop() } else spanFrom = now
+    } else if (spanFrom !== null) {
+      spans.push({ from: spanFrom, to: Math.max(now, spanFrom + 1) }); spanFrom = null
+      scheduleTalk()
+    }
+  }
+  /** The player left, or the page is closing: the span in progress ends now and everything left is sent at once. */
+  const endTalking = () => {
+    if (spanFrom !== null) { spans.push({ from: spanFrom, to: Math.max(Date.now(), spanFrom + 1) }); spanFrom = null }
+    flushTalk(true)
+    recording = false
+    if (talkNote) say(talkNote, '')
+  }
 
   // Each player's volume (0 to 100) and mute, kept on this device by SteamID64. The audio element's volume is what is set: the browser
   // does not take more than 100. A track comes and goes as the game lets the player be heard or not; the setting stays with the player.
@@ -344,7 +399,7 @@ function start(root: HTMLElement) {
   const leave = async () => {
     window.clearInterval(timer)
     if (gateNode) { gateNode.port.onmessage = null; gateNode = null }
-    talking = false; speaking.textContent = ''
+    endTalking(); talking = false; speaking.textContent = ''
     measuring = null
     fallback.reset(); lastT = -1; tracker = new FloorTracker()
     mic?.stop(); mic = null
@@ -375,7 +430,8 @@ function start(root: HTMLElement) {
     try {
       const res = await fetch(root.dataset.token!, { method: 'POST', credentials: 'same-origin' })
       if (!res.ok) throw new Error(res.status === 503 ? 'Voice chat is not set up.' : res.status === 401 ? 'Sign in first.' : `The dashboard said ${res.status}.`)
-      const { url, token } = await res.json() as { url: string, token: string }
+      const { url, token, talk } = await res.json() as { url: string, token: string, talk?: boolean }
+      startRecording(talk === true)
       // The browser's own processing: echo cancellation, noise suppression, level control (RFC 27, 3).
       const r = new Room({ audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
       r.on(RoomEvent.TrackSubscribed, (track: RemoteTrack, _pub: unknown, who: { identity: string }) => { const el = track.attach(); audioBox.appendChild(el); playing.set(who.identity, el); applyVolume(who.identity) })
@@ -437,7 +493,7 @@ function start(root: HTMLElement) {
 
   join.addEventListener('click', () => { void (room ? leave() : enter()) })
   void poll()
-  window.addEventListener('pagehide', () => { void room?.disconnect() })
+  window.addEventListener('pagehide', () => { endTalking(); void room?.disconnect() })
 }
 
 // Last, after every top-level `const` above: the bundle runs this file from the top, and `start` uses `store` at once. Called before

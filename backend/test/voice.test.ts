@@ -401,7 +401,7 @@ describe('the page\'s code', () => {
     const parts: Record<string, any> = {}
     parts['[data-people]'] = node()
     parts['[data-who]'] = node()
-    for (const sel of ['[data-join]', '[data-status]', '[data-level]', '[data-marker]', '[data-marker-close]', '[data-speaking]', '[data-db]', '[data-threshold-out]', '[data-close-out]', '[data-measure]', '[data-measure-note]', '[data-gate-note]', '[data-count]', '[data-audio]', '[data-vad-box]', '[data-ptt-box]', '[data-ptt-key]', '[data-monitor]', '[data-filter-note]']) parts[sel] = el(sel)
+    for (const sel of ['[data-join]', '[data-status]', '[data-level]', '[data-marker]', '[data-marker-close]', '[data-speaking]', '[data-db]', '[data-threshold-out]', '[data-close-out]', '[data-measure]', '[data-measure-note]', '[data-gate-note]', '[data-count]', '[data-audio]', '[data-vad-box]', '[data-ptt-box]', '[data-ptt-key]', '[data-monitor]', '[data-filter-note]', '[data-talk-note]']) parts[sel] = el(sel)
     parts['[data-threshold]'] = el('[data-threshold]', { value: '-50' })
     parts['[data-close-threshold]'] = el('[data-close-threshold]', { value: '-56' })
     parts['[data-auto]'] = el('[data-auto]'); attrs['[data-auto]']!['aria-pressed'] = 'false'
@@ -409,19 +409,20 @@ describe('the page\'s code', () => {
     const modes = [el('vad', { dataset: { mode: 'vad' } }), el('ptt', { dataset: { mode: 'ptt' }, disabled: true })]
     const filters = [el('on', { dataset: { filter: 'on' } }), el('off', { dataset: { filter: 'off' } })]
     attrs['on']!['aria-pressed'] = 'true'; attrs['off']!['aria-pressed'] = 'false'
-    const root = { dataset: { token: '/servers/x/voice/token', peopleUrl: '/servers/x/voice/people' }, querySelector: (s: string) => parts[s],
+    const root = { dataset: { token: '/servers/x/voice/token', peopleUrl: '/servers/x/voice/people', talkUrl: '/servers/x/voice/talk' }, querySelector: (s: string) => parts[s],
       querySelectorAll: (s: string) => (s.includes('data-filter') ? filters : modes) }
     const timers: Function[] = []
-    const timeouts: { fn: Function, ms: number }[] = []
-    const win = { addEventListener() {}, setInterval: (fn: Function) => { timers.push(fn); return timers.length }, clearInterval() {},
-      setTimeout: (fn: Function, ms: number) => { timeouts.push({ fn, ms }); return timeouts.length }, clearTimeout() {} }
+    const timeouts: { fn: Function, ms: number, dead?: boolean }[] = []
+    const winListeners: Record<string, Function> = {}
+    const win = { addEventListener(t: string, fn: Function) { winListeners[t] = fn }, setInterval: (fn: Function) => { timers.push(fn); return timers.length }, clearInterval() {},
+      setTimeout: (fn: Function, ms: number) => { timeouts.push({ fn, ms }); return timeouts.length }, clearTimeout(id: number) { const t = timeouts[id - 1]; if (t) t.dead = true } }
     const store = new Map<string, string>([['td_voice_mode', 'ptt'], ['td_voice_threshold', '30']]) // a saved choice of the disabled mode, and the old linear threshold (dropped by RFC 29)
     const local = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v) } }
     const run = (extra: Record<string, unknown> = {}) => {
       const names = ['document', 'window', 'localStorage', ...Object.keys(extra)]
       return new Function(...names, code)({ querySelector: () => root, createElement: () => node() }, win, local, ...Object.values(extra))
     }
-    return { run, parts, modes, filters, listeners, attrs, timers, timeouts, local, store, node }
+    return { run, parts, modes, filters, listeners, attrs, timers, timeouts, local, store, node, winListeners }
   }
 
   test('runs as the browser runs it: bundled, against a page with its parts, it starts without an error and wires the buttons', async () => {
@@ -442,7 +443,7 @@ describe('the page\'s code', () => {
   })
 
   /** Everything a join needs: the fake microphone, audio context, fetch; returns what the test looks at. */
-  function setup(opts: { rnnoiseFails?: boolean, gateFails?: boolean, chainFails?: boolean } = {}) {
+  function setup(opts: { rnnoiseFails?: boolean, gateFails?: boolean, chainFails?: boolean, talk?: boolean } = {}) {
     const log: string[] = []
     const g = globalThis as any
     g.__log = log; g.__rnnoiseFails = !!opts.rnnoiseFails
@@ -473,10 +474,18 @@ describe('the page\'s code', () => {
       createMediaStreamSource(stream: any) { sourceTracks = stream.tracks; return { connect() {} } }
     }
     class FakeStream { constructor(public tracks: any[]) {} }
-    const state = { people: [] as { id: string, name: string }[] }
-    const fetchFake = async (url: string) => (url.includes('/people')
-      ? { ok: true, json: async () => ({ people: state.people }) }
-      : { ok: true, json: async () => ({ url: 'wss://lk.test', token: 'tok' }) })
+    // `talk` is what the token answer says about recording who speaks (RFC 26, 4c.5); `posts` are the page's posts of its spans, and `answer` what the route says to them
+    const state = { people: [] as { id: string, name: string }[], talk: opts.talk as boolean | undefined, posts: [] as { url: string, init: any, body: any }[], answer: { status: 204 } as { status: number, json?: unknown } | 'throw' }
+    const fetchFake = async (url: string, init?: any) => {
+      if (url.includes('/people')) return { ok: true, json: async () => ({ people: state.people }) }
+      if (url.includes('/talk')) {
+        state.posts.push({ url, init, body: JSON.parse(init.body) })
+        if (state.answer === 'throw') throw new Error('network down')
+        const a = state.answer
+        return { ok: a.status < 400, status: a.status, json: async () => { if (a.json === undefined) throw new Error('no body'); return a.json } }
+      }
+      return { ok: true, status: 200, json: async () => ({ url: 'wss://lk.test', token: 'tok', ...(state.talk === undefined ? {} : { talk: state.talk }) }) }
+    }
     return { log, g, rawTrack, outTrack, gains, gate, gateNodes, sound, state, globals: { AudioContext: FakeContext, MediaStream: FakeStream, AudioWorkletNode: FakeGateNode, fetch: fetchFake }, done() { delete g.__log; delete g.__mic; delete g.__rnnoiseFails; delete g.__filter; delete g.__room; delete g.__handlers } }
   }
 
@@ -802,6 +811,120 @@ describe('the page\'s code', () => {
     expect(page.parts['[data-speaking]'].textContent).toBe('talking')
     expect(t.log).not.toContain('mute')
     t.done()
+  })
+
+  describe('who speaks (RFC 26, 4c.5): the spans of the gate, sent when the server records them', () => {
+    // The page's clock is a variable here; the gate's posts say open or closed, and the page turns the changes into spans.
+    let clock = 0
+    const realNow = Date.now
+    beforeEach(() => { clock = 1_000_000; Date.now = () => clock })
+    afterAll(() => { Date.now = realNow })
+    const talkJoin = async (opts: Parameters<typeof setup>[0] = { talk: true }) => {
+      const j = await joined(opts)
+      const gate = (open: boolean, at: number) => { clock = at; j.post(-30, open) }
+      /** The timers the page has set for its next batch (2 s), the ones not cancelled. */
+      const batchTimers = () => j.page.timeouts.filter(t => t.ms === 2000 && !t.dead)
+      const fire = async () => { const t = batchTimers(); for (const x of t) { x.dead = true; x.fn() } await new Promise(r => setTimeout(r, 5)) }
+      return { ...j, gate, batchTimers, fire }
+    }
+
+    test('a span is two times; nothing is sent until the batch timer (2 s) runs, and it carries the spans and the browser\'s clock, nothing else', async () => {
+      const j = await talkJoin()
+      j.gate(true, 1_000_100); j.gate(false, 1_002_000)
+      expect(j.t.state.posts).toHaveLength(0)
+      expect(j.batchTimers()).toHaveLength(1)
+      clock = 1_003_000
+      await j.fire()
+      expect(j.t.state.posts).toHaveLength(1)
+      const post = j.t.state.posts[0]!
+      expect(post.url).toBe('/servers/x/voice/talk')
+      expect(post.init).toMatchObject({ method: 'POST', credentials: 'same-origin', keepalive: true })
+      expect(post.body).toEqual({ now: 1_003_000, spans: [{ from: 1_000_100, to: 1_002_000 }] }) // times only: no sound, no text, no id
+      expect(j.page.parts['[data-talk-note]'].textContent).toContain('never what you say')
+      j.t.done()
+    })
+
+    test('a flickering gate is one span: a pause under 300 ms joins, 300 ms does not', async () => {
+      const j = await talkJoin()
+      j.gate(true, 1_000_000); j.gate(false, 1_000_500); j.gate(true, 1_000_700); j.gate(false, 1_001_000) // 200 ms pause
+      j.gate(true, 1_001_300); j.gate(false, 1_002_000)                                                     // 300 ms pause
+      await j.fire()
+      expect(j.t.state.posts[0]!.body.spans).toEqual([{ from: 1_000_000, to: 1_001_000 }, { from: 1_001_300, to: 1_002_000 }])
+      j.t.done()
+    })
+
+    test('many changes make one timer, not one each; a batch is at most 50 spans and the rest follows 2 s later, never faster', async () => {
+      const j = await talkJoin()
+      for (let i = 0; i < 120; i++) { j.gate(true, 1_000_000 + i * 1000); j.gate(false, 1_000_400 + i * 1000) }
+      expect(j.batchTimers()).toHaveLength(1)
+      await j.fire()
+      expect(j.t.state.posts.map(p => p.body.spans.length)).toEqual([50])
+      expect(j.batchTimers()).toHaveLength(1) // the next batch waits for its own 2 s
+      await j.fire()
+      await j.fire()
+      expect(j.t.state.posts.map(p => p.body.spans.length)).toEqual([50, 50, 20])
+      expect(j.batchTimers()).toHaveLength(0) // nothing left: no timer, nothing runs when nobody speaks
+      j.t.done()
+    })
+
+    test('a server that does not record (the token says false, or an old one says nothing): no timer, no post, no note, even on leaving', async () => {
+      for (const talk of [false, undefined]) {
+        const j = await talkJoin({ talk })
+        j.gate(true, 1_000_000); j.gate(false, 1_001_000)
+        expect(j.batchTimers()).toHaveLength(0)
+        j.page.listeners['[data-join]']!.click!() // leave
+        await new Promise(r => setTimeout(r, 20))
+        expect(j.t.state.posts).toHaveLength(0)
+        expect(j.page.parts['[data-talk-note]'].textContent).toBe('')
+        j.t.done()
+      }
+    })
+
+    test('"not recorded" from the route ends the sending for the visit: no more posts, no more timers', async () => {
+      const j = await talkJoin()
+      j.t.state.answer = { status: 200, json: { record: false } }
+      j.gate(true, 1_000_000); j.gate(false, 1_001_000)
+      await j.fire()
+      expect(j.t.state.posts).toHaveLength(1)
+      j.gate(true, 1_005_000); j.gate(false, 1_006_000)
+      expect(j.batchTimers()).toHaveLength(0)
+      await j.fire()
+      expect(j.t.state.posts).toHaveLength(1)
+      j.t.done()
+    })
+
+    test('an error answer, a refusal, or a broken network never reaches the player: the page keeps working and sends what comes next', async () => {
+      const j = await talkJoin()
+      for (const answer of [{ status: 429 }, { status: 500 }, { status: 401 }, 'throw', { status: 200, json: 'junk' }, { status: 200 }] as const) {
+        j.t.state.answer = answer as any
+        j.gate(true, 1_000_000); j.gate(false, 1_001_000)
+        await j.fire()
+      }
+      expect(j.t.state.posts).toHaveLength(6) // each answer left the page sending
+      expect(j.page.parts['[data-status]'].textContent).toBe('Connected.')
+      j.t.done()
+    })
+
+    test('leaving sends the span in progress and everything left at once, with keepalive; closing the page does the same', async () => {
+      const j = await talkJoin()
+      j.gate(true, 1_000_000); j.gate(false, 1_001_000); j.gate(true, 1_002_000) // one finished, one still going
+      clock = 1_002_500
+      j.page.listeners['[data-join]']!.click!()
+      await new Promise(r => setTimeout(r, 30))
+      expect(j.t.state.posts).toHaveLength(1)
+      expect(j.t.state.posts[0]!.body.spans).toEqual([{ from: 1_000_000, to: 1_001_000 }, { from: 1_002_000, to: 1_002_500 }])
+      expect(j.t.state.posts[0]!.init.keepalive).toBe(true)
+      expect(j.page.parts['[data-talk-note]'].textContent).toBe('')
+      j.t.done()
+      const k = await talkJoin()
+      k.gate(true, 1_010_000); k.gate(false, 1_011_000)
+      k.page.winListeners.pagehide!()
+      await new Promise(r => setTimeout(r, 5))
+      expect(k.t.state.posts).toHaveLength(1)
+      expect(k.t.state.posts[0]!.body.spans).toEqual([{ from: 1_010_000, to: 1_011_000 }])
+      k.t.done()
+    })
+
   })
 
   test('when the gate cannot start the join still works: the page says so and does the opening itself with the mute, as before, on a copy of the sound', async () => {
