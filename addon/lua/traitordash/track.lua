@@ -47,6 +47,8 @@ local cv_parts = CreateConVar("traitordash_track_parts", "0", {FCVAR_ARCHIVE}, "
 local cv_props = CreateConVar("traitordash_track_props", "0", {FCVAR_ARCHIVE}, "Also record props, prop doors and weapons on the floor that move (1/0; needs traitordash_track).")
 local cv_chat = CreateConVar("traitordash_track_chat", "0", {FCVAR_ARCHIVE}, "Also record what players write in chat, for the replay (1/0; needs traitordash_track). Everyone who may open a replay can read it.")
 local cv_spec = CreateConVar("traitordash_track_spec", "0", {FCVAR_ARCHIVE}, "Also record whom a dead player is watching, for the replay (1/0; needs traitordash_track). Everyone who may open a replay can read it.")
+-- Declared only so the dashboard can show and set it (RFC 23); the bridge does nothing with it. The dashboard reads the value the bridge reports and, when it is 1, keeps who spoke on its own voice page and when (RFC 26, 4c.5), never what.
+CreateConVar("traitordash_track_voice", "0", {FCVAR_ARCHIVE}, "Let the dashboard record who speaks in its own voice chat, and when, for the replay (1/0; needs traitordash_track). The bridge does not use it; in-game voice is not recorded. Everyone who may open a replay can read it.")
 local cv_debug = CreateConVar("traitordash_stats_debug", "1", {FCVAR_ARCHIVE}, "Log what the stats tracker does (1/0).")
 
 local TIMER = "TraitorDash_Track"
