@@ -23,7 +23,7 @@
 -- TTT2AddedEvent), `dna` (TTTFoundDNA) and `tbtn` (TTTTraitorButtonActivated); see the section after Track.Spawned below. None of them uses a hook that runs before the action.
 --
 -- Polled state and karma (RFC 26, stage C, package C2): events `hold` (the weapon in hand, polled at the sample), `credits` (a change of credits, polled; the reason
--- from the hooks that run after the change), `karma` (a detour of KARMA.DoKarmaChange, TTT2 only) and `spec` (whom a dead player watches, polled, opt-in); see PollState
+-- from the hooks that run after the change), `karma` (a detour of KARMA.DoKarmaChange, TTT2 only) and `spec` (whom a dead player watches, or which prop they possess, polled, opt-in); see PollState
 -- and the karma detour below.
 --
 -- Parts that move (RFC 20, 4.3): with traitordash_track_parts on, the doors, lifts and other brush entities that can move are recorded

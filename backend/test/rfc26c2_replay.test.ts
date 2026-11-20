@@ -197,6 +197,7 @@ describe('a possessed prop (RFC 26, 4c.x)', () => {
     expect(watchLine(watchEventAt(list, 2500, 2400), nick)).toBe('') // from before this death
     expect(watchLine(watchEventAt(list, 500, 400), nick)).toBe('')
     expect(watchLine(null, nick)).toBe('')
+    expect(watchLine(ev({ k: 'spec', of: 'B', pr: 'prop_physics' }), nick)).toBe('Watching Tonda') // not what a valid track holds: the player wins
     expect(propLabel(ev({ k: 'spec', pr: 'x', pm: 'barrel' }))).toBe('a prop (barrel)')
   })
   test('whom is still the player of the event only: a prop is nobody for watchingAt, as before', () => {
