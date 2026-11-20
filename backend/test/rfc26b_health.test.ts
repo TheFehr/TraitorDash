@@ -205,10 +205,10 @@ describe('the feed lines of heals', () => {
       heal('B', 70, { d: 10 }), heal('B', 80, { d: 10, a: 'A' }), heal('A', 90, { d: 5 }),
       { t: 5, p: 'B', k: 'buy', item: 'x' },
     ]
-    expect(damageTotals(events, 'B')).toEqual({ took: 40, dealt: 7, healed: 20 })
-    expect(damageTotals(events, 'A')).toEqual({ took: 7, dealt: 22, healed: 5 })
-    expect(damageTotals(events, 'Z')).toEqual({ took: 0, dealt: 0, healed: 0 })
-    expect(damageTotals([], 'B')).toEqual({ took: 0, dealt: 0, healed: 0 })
+    expect(damageTotals(events, 'B')).toEqual({ took: 40, dealt: 7, healed: 20, shots: 0 })
+    expect(damageTotals(events, 'A')).toEqual({ took: 7, dealt: 22, healed: 5, shots: 0 })
+    expect(damageTotals(events, 'Z')).toEqual({ took: 0, dealt: 0, healed: 0, shots: 0 })
+    expect(damageTotals([], 'B')).toEqual({ took: 0, dealt: 0, healed: 0, shots: 0 })
     expect(totalsText({ took: 40, dealt: 7, healed: 20 })).toBe('Took 40, dealt 7, healed 20')
     expect(totalsText({ took: 0, dealt: 0, healed: 20 })).toBe('Healed 20')
     expect(totalsText({ took: 0, dealt: 0, healed: 0 })).toBe('')

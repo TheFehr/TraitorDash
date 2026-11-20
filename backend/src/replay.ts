@@ -14,7 +14,7 @@ import { startFlat } from './replayflat'
 import { offerBrowser, levelColour, paintPlain, makeCamera, makeRenderer, makeScene, mapLoader, prepareDecoration, prepareMovable, prepareProps, prepareWater, lyingPlaces, boxWithout, mergeDrawn, type Painted } from './sceneKit'
 import { holeUniforms, patchHole, updateHole, ghostFigure, ghostShown, createMask, sizeMask, renderMask, maskWanted } from './followHole'
 import {
-  decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, shownLevels, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, bodyAt, thingAt, movedProps, killerDiedBefore, reviveSource, revivePose, fitLabel, healthAt, healthBar, healthColour, hurtText, hurtOwnText, healText, healOwnText, equipText, equipOwnText, c4Text, c4OwnText, dnaText, dnaOwnText, tbtnText, tbtnOwnText, EQUIPMENT_KINDS, hiddenPickups, timeMark, c4Charges, c4At, damageTotals, totalsText,
+  decodeTrack, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, shownLevels, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, bodyAt, thingAt, movedProps, killerDiedBefore, reviveSource, revivePose, fitLabel, healthAt, healthBar, healthColour, hurtText, hurtOwnText, healText, healOwnText, equipText, equipOwnText, c4Text, c4OwnText, dnaText, dnaOwnText, tbtnText, tbtnOwnText, EQUIPMENT_KINDS, hiddenPickups, timeMark, c4Charges, c4At, damageTotals, shotsByWeapon, shotsTitle, totalsText,
   holdAt, creditsAt, karmaAt, holdingText, creditsLine, karmaLine, creditsOwnText, karmaOwnText, specOwnText, watchEventAt, watchLine,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
 } from './replaylogic'
@@ -146,7 +146,7 @@ async function start(root: HTMLElement) {
 
   /** The health of a player now, as a bar's numbers: null when the track has none for them at this time, or they are dead. */
   const healthNow = (id: string) => healthBar(healthAt(data.players.get(id) ?? [], data.hurts.get(id), ms), data.maxHealth.get(id))
-  const totalsText_ = new Map<string, string>()
+  const totalsText_ = new Map<string, { text: string, title: string }>()
   // The panel's lines for what is polled (RFC 26, 4c, C2): each is in the page, hidden, and shown only when the track has any event of its kind, so an older track keeps the card as it was and a line never appears or goes while the time moves or another player is selected.
   const kindsInTrack = new Set(data.events.map(e => e.k))
   const lineHold = el(root, '[data-selected-hold]'), lineCredits = el(root, '[data-selected-credits]'), lineKarma = el(root, '[data-selected-karma]'), lineWatch = el(root, '[data-selected-watch]')
@@ -177,8 +177,10 @@ async function start(root: HTMLElement) {
     }
     const totals = el(root, '[data-selected-totals]') // what the selected player took, dealt and was healed over the whole round; it changes with the selection only
     if (totals) {
-      if (!totalsText_.has(selected ?? '')) totalsText_.set(selected ?? '', selected ? totalsText(damageTotals(data.events, selected)) : '')
-      setText(totals, totalsText_.get(selected ?? '') ?? '')
+      if (!totalsText_.has(selected ?? '')) totalsText_.set(selected ?? '', selected ? { text: totalsText(damageTotals(data.events, selected)), title: shotsTitle(shotsByWeapon(data.events, selected)) } : { text: '', title: '' })
+      const sums = totalsText_.get(selected ?? '')!
+      setText(totals, sums.text)
+      if (totals.title !== sums.title) totals.title = sums.title // the shots by weapon, for a mouse
     }
     showPolled()
   }
@@ -230,7 +232,7 @@ async function start(root: HTMLElement) {
     if (!eventsEl || listedFor === selected) return
     listedFor = selected
     eventsEl.replaceChildren()
-    const mine = data.events.filter(e => e.k !== 'hold' && (e.p === selected || ((e.k === 'hurt' || e.k === 'heal') && e.a === selected) || ((e.k === 'c4' || e.k === 'dna') && e.of === selected))) // the damage the player dealt, the health they gave, their C4 that was defused and their DNA that was taken are theirs too
+    const mine = data.events.filter(e => e.k !== 'hold' && e.k !== 'shots' && (e.p === selected || ((e.k === 'hurt' || e.k === 'heal') && e.a === selected) || ((e.k === 'c4' || e.k === 'dna') && e.of === selected))) // the damage the player dealt, the health they gave, their C4 that was defused and their DNA that was taken are theirs too
     for (const e of mine) {
       const li = document.createElement('li')
       const b = document.createElement('button')

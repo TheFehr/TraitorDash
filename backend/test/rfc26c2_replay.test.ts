@@ -177,7 +177,7 @@ describe('the page', () => {
   })
 
   test('the list of the player has their credits, karma and target but not the weapon in hand; none of the four is a line of the feed', () => {
-    expect(replay).toContain("e.k !== 'hold' && (e.p === selected")
+    expect(replay).toContain("e.k !== 'hold' && e.k !== 'shots' && (e.p === selected")
     expect(replay).toContain("case 'credits': return creditsOwnText(e)")
     expect(replay).toContain("case 'karma': return karmaOwnText(e)")
     expect(replay).toContain("case 'spec': return specOwnText(e, nick)")
