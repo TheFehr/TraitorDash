@@ -69,9 +69,14 @@ const PART_ANGLE_MAX = 1440 // quarter degrees; the bridge writes -720 to 719, t
 const PART_ANGLE_STEP = 2 * PART_ANGLE_MAX
 
 /** `s` (absent in tracks from an older game server): for each sample how the player moves, as bits: 1 crouching, 2 in the air, 4 in water. */
-export interface TrackSegment { from: number, x: number[], y: number[], z: number[], a: number[], s?: number[], hp?: number[] }
+/** `ap` (RFC 39, 3.1; absent in tracks from before it): the view pitch of each sample in quarter degrees, delta coded, positive looking down. */
+export interface TrackSegment { from: number, x: number[], y: number[], z: number[], a: number[], s?: number[], hp?: number[], ap?: number[] }
+export const MAX_PITCH = 360
+export const MAX_WEAPON_MODELS = 64
+export const WEAPON_MODEL_PATH = /^models\/[a-z0-9_./-]{1,120}\.mdl$/
 /** `mh`: the most health the player had (the scale of a health bar), absent in a track from before RFC 26, stage B. */
-export interface TrackPlayer { id: string, mh?: number, segments: TrackSegment[] }
+/** `eh` and `ed` (RFC 39, 3.2): the eye height above the feet standing and crouching, whole units 1 to 128; absent in older tracks (the replay uses 64 and 28). */
+export interface TrackPlayer { id: string, mh?: number, eh?: number, ed?: number, segments: TrackSegment[] }
 export interface TrackDeath {
   victim: string, attacker: string | null, t: number
   vx: number, vy: number, vz: number
@@ -154,6 +159,8 @@ export interface Track {
   players: TrackPlayer[]
   deaths: TrackDeath[]
   events: TrackEvent[]
+  /** The world model path of each weapon class held in the round (RFC 39, 3.4); absent in older tracks and when none could be read. */
+  wm?: Record<string, string>
   /** Absent in a track from before RFC 24 and in one where no body moved. */
   bodies?: TrackBody[]
   /** Absent in a track recorded without parts (and in every track from before RFC 20). */
@@ -235,11 +242,18 @@ export function validateTrack(body: unknown, round: { roundId: string, map: stri
         if (!h || !rebuilds(h, 0, MAX_HP)) return no(`hp must be whole numbers, as many as there are positions, that add up to a health from 0 to ${MAX_HP}`)
         hp = h
       }
-      segments.push({ from: s.from, x, y, z, a, ...(moves ? { s: moves } : {}), ...(hp ? { hp } : {}) })
+      let ap: number[] | undefined
+      if (s.ap !== undefined) {
+        const q = ints(s.ap, x.length, x.length, -2 * MAX_PITCH, 2 * MAX_PITCH)
+        if (!q || !rebuilds(q, -MAX_PITCH, MAX_PITCH)) return no(`ap must be whole numbers, as many as there are positions, that add up to a pitch from -${MAX_PITCH} to ${MAX_PITCH}`)
+        ap = q
+      }
+      segments.push({ from: s.from, x, y, z, a, ...(moves ? { s: moves } : {}), ...(hp ? { hp } : {}), ...(ap ? { ap } : {}) })
       next = s.from + x.length
     }
     if (p.mh !== undefined && (!isInt(p.mh) || p.mh < 1 || p.mh > MAX_HP)) return no(`mh must be a whole number from 1 to ${MAX_HP}`)
-    players.push({ id: p.id, ...(p.mh !== undefined ? { mh: p.mh as number } : {}), segments })
+    for (const k of ['eh', 'ed'] as const) if (p[k] !== undefined && (!isInt(p[k]) || (p[k] as number) < 1 || (p[k] as number) > 128)) return no(`${k} must be a whole number from 1 to 128`)
+    players.push({ id: p.id, ...(p.mh !== undefined ? { mh: p.mh as number } : {}), ...(p.eh !== undefined ? { eh: p.eh as number } : {}), ...(p.ed !== undefined ? { ed: p.ed as number } : {}), segments })
   }
 
   const deaths: TrackDeath[] = []
@@ -372,6 +386,19 @@ export function validateTrack(body: unknown, round: { roundId: string, map: stri
     }
   }
 
+  // The world model of each weapon class that was held (RFC 39, 3.4): optional, at most MAX_WEAPON_MODELS classes, each a model path of a strict shape.
+  let wm: Record<string, string> | undefined
+  if (b.wm !== undefined) {
+    if (typeof b.wm !== 'object' || b.wm === null || Array.isArray(b.wm)) return no('wm must be an object of weapon class to model path')
+    const ent = Object.entries(b.wm as Record<string, unknown>)
+    if (ent.length > MAX_WEAPON_MODELS) return no(`wm must be at most ${MAX_WEAPON_MODELS} weapon classes`)
+    wm = {}
+    for (const [k, v] of ent) {
+      if (!/^[A-Za-z0-9_]{1,64}$/.test(k) || typeof v !== 'string' || !WEAPON_MODEL_PATH.test(v) || v.includes('..')) return no('wm holds a weapon class (letters, digits, underscore) and a model path (models/..., .mdl, lower case, at most 120 characters)')
+      wm[k] = v
+    }
+  }
+
   // Where the bodies lay (RFC 24, 4.4). Optional, in time order, absolute values, at most MAX_TRACK_BODIES.
   const bodies: TrackBody[] = []
   if (b.bodies !== undefined) {
@@ -481,7 +508,7 @@ export function validateTrack(body: unknown, round: { roundId: string, map: stri
   return { ok: true, track: {
     roundId: round.roundId, map: b.map, fingerprint: typeof b.fingerprint === 'string' ? b.fingerprint : null,
     truncated: b.truncated === true, degraded: b.degraded === true, t, players, deaths, events,
-    ...(bodies.length > 0 ? { bodies } : {}), ...(typeof b.begin === 'number' && b.begin > 0 ? { begin: b.begin } : {}), ...(parts.length > 0 ? { parts } : {}), ...(things.length > 0 ? { things } : {}), ...(inputs.length > 0 ? { inputs } : {}),
+    ...(wm && Object.keys(wm).length > 0 ? { wm } : {}), ...(bodies.length > 0 ? { bodies } : {}), ...(typeof b.begin === 'number' && b.begin > 0 ? { begin: b.begin } : {}), ...(parts.length > 0 ? { parts } : {}), ...(things.length > 0 ? { things } : {}), ...(inputs.length > 0 ? { inputs } : {}),
   } }
 }
 

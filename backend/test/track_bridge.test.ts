@@ -3185,3 +3185,98 @@ describe('track.lua: shots fired (RFC 26, 4c, C3)', () => {
     expect(okTrack(trackOf(r))).toBe(true)
   })
 })
+
+// RFC 39, stage A (3.1, 3.2, 3.4): the view pitch of each sample, the eye heights of each player and the world model of each weapon class that was held.
+describe('track.lua: view pitch, eye heights and weapon models (RFC 39)', () => {
+  const POV = C2 + `
+    for _, p in ipairs({ A, B, C }) do
+      p.pitch = 0
+      function p:EyeAngles() return { y = self.yaw, p = self.pitch } end
+      function p:GetViewOffset() return { z = 64 } end
+      function p:GetViewOffsetDucked() return { z = 28 } end
+    end
+  `
+  const seg = (r: Run, id: string) => trackOf(r).players.find((p: any) => p.id === id)
+  const sum = (v: number[]) => v.reduce((a: number, b: number) => a + b, 0)
+
+  test('each sample holds the pitch in quarter degrees, delta coded, rounded, positive looking down, clamped to -360..360; the eye heights are written once; the backend takes it', () => {
+    const r = play(POV + `
+      Start()
+      A.pitch = 0; Run(1)
+      A.pitch = 30.4; Run(1)    -- 122
+      A.pitch = -89.9; Run(1)   -- -360 (rounded -359.6)
+      A.pitch = 200; Run(1)     -- clamped to 360
+      Ends()
+    `)
+    const a = seg(r, A)
+    const ap = a.segments[0].ap
+    expect(ap.length).toBe(a.segments[0].x.length)
+    const abs: number[] = []; let at = 0
+    for (const d of ap) { at += d; abs.push(at) }
+    expect(abs.slice(0, 5)).toContain(122); expect(abs).toContain(-360); expect(Math.max(...abs)).toBe(360); expect(Math.min(...abs)).toBeGreaterThanOrEqual(-360)
+    expect(a.eh).toBe(64); expect(a.ed).toBe(28)
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('a game that cannot say the pitch or the eye heights records the round as before: no ap, no eh, no ed', () => {
+    const r = play(C2 + `Start() Run(3) Ends()`) // the harness's EyeAngles has a yaw only, and no view offsets
+    const a = seg(r, A)
+    expect(a.segments[0].ap).toBeUndefined(); expect(a.eh).toBeUndefined(); expect(a.ed).toBeUndefined()
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('one sample without a pitch leaves the whole segment without it (the arrays must stay as long as the positions)', () => {
+    const r = play(POV + `
+      Start()
+      Run(1)
+      A.pitch = nil; Run(1)
+      A.pitch = 10; Run(1)
+      Ends()
+    `)
+    expect(seg(r, A).segments[0].ap).toBeUndefined()
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('eye heights are whole units from 1 to 128; an odd value is cut or not written', () => {
+    const r = play(POV + `
+      A.GetViewOffset = function() return { z = 500 } end
+      B.GetViewOffset = function() return { z = 0 } end
+      C.GetViewOffsetDucked = function() error("no") end
+      Start() Run(2) Ends()
+    `)
+    expect(seg(r, A).eh).toBe(128)
+    expect(seg(r, B).eh).toBeUndefined(); expect(seg(r, B).ed).toBe(28)
+    expect(seg(r, C).eh).toBe(64); expect(seg(r, C).ed).toBeUndefined()
+    expect(okTrack(trackOf(r))).toBe(true)
+  })
+
+  test('wm: the world model of each weapon class that appears in a hold event, once, lower case, only a plain models path; the backend takes it', () => {
+    const r = play(POV + `
+      A.wep.WorldModel = "Models/Weapons/W_Pist_USP.mdl"
+      B.wep.WorldModel = "models/../../etc/passwd.mdl"
+      C.wep.WorldModel = "materials/not_a_model.vmt"
+      Start() Run(2)
+      A.wep.WorldModel = "models/weapons/changed.mdl"; Run(1)
+      Ends()
+    `)
+    const t = trackOf(r)
+    expect(t.wm).toEqual({ weapon_ttt_m16: 'models/weapons/w_pist_usp.mdl' })
+    expect(okTrack(t)).toBe(true)
+  })
+
+  test('a weapon whose model cannot be read, or none at all, gives no wm; at most 64 classes are kept', () => {
+    const none = play(POV + `Start() Run(2) Ends()`)
+    expect(trackOf(none).wm).toBeUndefined()
+    const many = play(POV + `
+      Start()
+      for i = 1, 80 do
+        local w = Wep("weapon_many_" .. i); w.WorldModel = "models/weapons/w_many_" .. i .. ".mdl"
+        A.wep = w; Gap(2000); Run(1)
+      end
+      Ends()
+    `)
+    const wm = trackOf(many).wm
+    expect(Object.keys(wm).length).toBeLessThanOrEqual(64)
+    expect(okTrack(trackOf(many))).toBe(true)
+  })
+})

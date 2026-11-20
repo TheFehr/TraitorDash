@@ -305,11 +305,34 @@ local function ReadMaxHealth(ply)
     return math.min(Floor(v), HP_MAX)
 end
 
-local function Push(r, p, idx, x, y, z, a, st, hp)
+-- The view pitch (RFC 39, 3.1): quarter degrees from -360 to 360, positive looking down as in `Angle.p`, read with the yaw from `EyeAngles()`; nil when it cannot be read.
+local PITCH_MAX = 360
+local function ReadPitch(ply)
+    local ok, a = pcall(ply.EyeAngles, ply)
+    if not ok or a == nil then return nil end
+    local ok2, v = pcall(function() return a.p end)
+    if not ok2 or type(v) ~= "number" or v ~= v then return nil end
+    v = Floor(v * 4) -- Floor rounds
+    return math.min(math.max(v, -PITCH_MAX), PITCH_MAX)
+end
+
+-- The eye height above the feet, standing and crouching (RFC 39, 3.2): once for each player of a round, whole units from 1 to 128, or nil for one that cannot be read
+-- (the replay then uses 64 and 28). TTT2 roles and addons can change both.
+local function ReadEye(ply, ducked)
+    local fn = ducked and ply.GetViewOffsetDucked or ply.GetViewOffset
+    if not fn then return nil end
+    local ok, v = pcall(fn, ply)
+    if not ok or v == nil then return nil end
+    local ok2, z = pcall(function() return v.z end)
+    if not ok2 or type(z) ~= "number" or z ~= z or z < 1 then return nil end
+    return math.min(Floor(z), 128)
+end
+
+local function Push(r, p, idx, x, y, z, a, st, hp, ap)
     local c = p.cur
     if not c then
         if #p.segs >= MAX_SEGMENTS then return end
-        c = { from = idx - 1, x = {}, y = {}, z = {}, a = {}, s = {}, hp = {}, lx = 0, ly = 0, lz = 0, la = 0, lh = 0 }
+        c = { from = idx - 1, x = {}, y = {}, z = {}, a = {}, s = {}, hp = {}, ap = {}, lx = 0, ly = 0, lz = 0, la = 0, lh = 0, lp = 0 }
         p.cur = c
         p.segs[#p.segs + 1] = c
     end
@@ -321,6 +344,12 @@ local function Push(r, p, idx, x, y, z, a, st, hp)
         c.lh = hp
     else
         c.hpBad = true
+    end
+    if ap then -- the view pitch (RFC 39, 3.1), delta coded; a sample without it leaves the whole segment without it
+        c.ap[n] = ap - c.lp
+        c.lp = ap
+    else
+        c.apBad = true
     end
     c.lx, c.ly, c.lz, c.la = x, y, z, a
     r.samples = r.samples + 1
@@ -742,7 +771,8 @@ local function SampleAll(r, now, also)
             local hp = ReadHealth(ply)
             if p.mh == nil then p.mh = ReadMaxHealth(ply) end
             if hp and hp > 0 then p.hpPrev = hp end
-            Push(r, p, idx, x, y, z, a, State(ply), hp)
+            if p.eh == nil then p.eh = ReadEye(ply, false) or false; p.ed = ReadEye(ply, true) or false end
+            Push(r, p, idx, x, y, z, a, State(ply), hp, ReadPitch(ply))
         else
             p.cur = nil -- not alive now: the segment ends here (a revived player starts a new one)
             if p.awaiting then p.sawDead = true end
@@ -873,7 +903,7 @@ end
 local function NewRecording(roundId)
     local mn = Settings()
     return {
-        id = roundId, t0 = CurTime(), lastMs = 0, t = {}, order = {}, players = {}, deaths = {}, events = {},
+        id = roundId, t0 = CurTime(), lastMs = 0, t = {}, order = {}, players = {}, deaths = {}, events = {}, wm = {}, wmCount = 0,
         samples = 0, ticks = 0, skipped = 0, interval = mn, minUsed = math.huge, maxUsed = 0,
         ring = {}, costSum = 0, worst = 0, truncated = false, degraded = false, stopped = false,
         keys = 0, inputs = {}, bodies = {}, kinds = {}, chat = cv_chat:GetBool(), spec = cv_spec:GetBool(), begin = 0,
@@ -1530,11 +1560,33 @@ local function CreditReason(tags, pollAt, d, ms)
     return "other"
 end
 
+-- The world model of a weapon class (RFC 39, 3.4), once for each class that appears in a `hold` event: a lower-case path `models/....mdl` of at most 120
+-- characters from letters, digits and `_ . / -`, and at most WM_MAX classes; anything else is not recorded (the replay then draws no weapon model).
+local WM_MAX = 64
+local function NoteModel(r, ply, w)
+    if r.wm == nil or r.wm[w] ~= nil or r.wmCount >= WM_MAX then return end
+    local ok, wep = pcall(ply.GetActiveWeapon, ply)
+    if not ok or wep == nil then return end
+    local m
+    local ok2, v = pcall(function() return wep.WorldModel end)
+    if ok2 and type(v) == "string" and v ~= "" then m = v end
+    if not m and wep.GetModel then
+        local ok3, v3 = pcall(wep.GetModel, wep)
+        if ok3 and type(v3) == "string" then m = v3 end
+    end
+    if not m then return end
+    m = string.lower((string.gsub(m, "\\", "/")))
+    if #m > 120 or not string.match(m, "^models/[a-z0-9_./-]+%.mdl$") or string.find(m, "..", 1, true) then return end
+    r.wm[w] = m
+    r.wmCount = r.wmCount + 1
+end
+
 -- The weapon in hand, polled: the first look at a player writes it, then each change; changes within HOLD_MERGE_MS of the last one are one.
 local function PollHold(r, p, ply, now, ms)
     local w = HeldClass(ply)
     if not w or w == p.holdW then return end
     p.holdW = w
+    NoteModel(r, ply, w)
     local last = p.holdEv
     if last and p.holdAt and ms - p.holdAt <= HOLD_MERGE_MS then
         last.w = w
@@ -1874,8 +1926,8 @@ function Track.Finish(roundId)
         local p = r.players[sid]
         if In(sid) and #p.segs > 0 then
             local segs = {}
-            for i, c in ipairs(p.segs) do segs[i] = { from = c.from, x = c.x, y = c.y, z = c.z, a = c.a, s = c.s, hp = (not c.hpBad and #c.hp == #c.x) and c.hp or nil } end
-            players[#players + 1] = { id = sid, mh = p.mh or nil, segments = segs }
+            for i, c in ipairs(p.segs) do segs[i] = { from = c.from, x = c.x, y = c.y, z = c.z, a = c.a, s = c.s, hp = (not c.hpBad and #c.hp == #c.x) and c.hp or nil, ap = (not c.apBad and #c.ap == #c.x) and c.ap or nil } end
+            players[#players + 1] = { id = sid, mh = p.mh or nil, eh = p.eh or nil, ed = p.ed or nil, segments = segs }
         end
     end
     local function Only(list, key, strip)
@@ -1925,6 +1977,7 @@ function Track.Finish(roundId)
         truncated = r.truncated, degraded = r.degraded,
         t = r.t, players = players, deaths = deaths, begin = r.begin > 0 and r.begin or nil,
         events = #events > 0 and events or nil,
+        wm = r.wmCount > 0 and r.wm or nil,
         bodies = #bodies > 0 and bodies or nil,
         parts = PartsOut(r), things = things, inputs = #inputs > 0 and inputs or nil,
     }

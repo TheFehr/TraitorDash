@@ -6,12 +6,14 @@
 import { weaponName, creditReason, karmaReason } from './weaponName'
 
 /** What the backend stores: tick times as differences, per player segments with first-value-then-differences. */
-export interface RawSegment { from: number, x: number[], y: number[], z: number[], a: number[], /** How the player moves, for each sample, as bits: 1 crouching, 2 in the air, 4 in water; absent in older tracks. */ s?: number[], /** Health of each sample, delta coded (RFC 26, 4a); absent in tracks from before it. */ hp?: number[] }
+export interface RawSegment { from: number, x: number[], y: number[], z: number[], a: number[], /** How the player moves, for each sample, as bits: 1 crouching, 2 in the air, 4 in water; absent in older tracks. */ s?: number[], /** Health of each sample, delta coded (RFC 26, 4a); absent in tracks from before it. */ hp?: number[], /** View pitch of each sample in quarter degrees, delta coded, positive looking down (RFC 39, 3.1); absent in tracks from before it. */ ap?: number[] }
 export interface RawTrack {
   /** ms from the first sample to the round's start: the preparation recorded before it (RFC 12, 3.7); absent when there is none. */
   begin?: number
   t: number[]
-  players: { id: string, /** The most health the player had; absent in older tracks. */ mh?: number, segments: RawSegment[] }[]
+  players: { id: string, /** The most health the player had; absent in older tracks. */ mh?: number, /** The eye height standing and crouching, whole units (RFC 39, 3.2); absent in older tracks. */ eh?: number, ed?: number, segments: RawSegment[] }[]
+  /** The world model path of each weapon class held in the round (RFC 39, 3.4); absent in older tracks. */
+  wm?: Record<string, string>
   deaths: { victim: string, attacker: string | null, t: number, vx: number, vy: number, vz: number, ax: number | null, ay: number | null, az: number | null, weapon: string | null }[]
   /** Revivals and role changes (RFC 14); absent in tracks stored before it. */
   events?: TrackEvent[]
@@ -39,7 +41,7 @@ export interface TrackEvent {
 }
 
 /** One run of consecutive samples of one player, in Source units and degrees-in-256ths, at real times. */
-export interface Segment { t: number[], x: number[], y: number[], z: number[], a: number[], /** As `RawSegment.s`; zeros for a track without it. */ s: number[], /** The health at each sample, absolute; absent for a track without it. */ hp?: number[] }
+export interface Segment { t: number[], x: number[], y: number[], z: number[], a: number[], /** As `RawSegment.s`; zeros for a track without it. */ s: number[], /** The health at each sample, absolute; absent for a track without it. */ hp?: number[], /** The view pitch at each sample in degrees, positive looking down (RFC 39); absent for a track without it. */ ap?: number[] }
 export interface Decoded {
   /** Times in ms since the round began, for every tick. */
   times: number[]
@@ -57,6 +59,10 @@ export interface Decoded {
   things: Thing[]
   /** The most health each player had, where the track says (RFC 26, 4a). */
   maxHealth: Map<string, number>
+  /** The eye height above the feet of each player, standing and crouching, where the track says (RFC 39, 3.2); use `eyeHeights` for the defaults. */
+  eyes: Map<string, { stand: number, duck: number }>
+  /** The world model path of each weapon class held in the round (RFC 39, 3.4); empty for a track without them. */
+  weaponModels: Map<string, string>
   /** The `hurt` events of each victim, in time order: what the health between two samples was. */
   hurts: Map<string, TrackEvent[]>
   /** The polled and detoured events of each player in time order (RFC 26, 4c, C2): the weapon in hand, credits, karma, the target of a dead player. */
@@ -108,6 +114,7 @@ export function decodeTrack(raw: RawTrack): Decoded {
   const times = cumulative(raw.t).map(v => v - begin) // the round's start is 0; the preparation before it is negative
   const players = new Map<string, Segment[]>()
   const maxHealth = new Map<string, number>()
+  const eyes = new Map<string, { stand: number, duck: number }>()
   for (const p of raw.players) {
     const segs: Segment[] = []
     for (const s of p.segments) {
@@ -118,10 +125,12 @@ export function decodeTrack(raw: RawTrack): Decoded {
         a: cumulative(s.a),
         s: s.s ?? s.x.map(() => 0),
         ...(s.hp && s.hp.length === n ? { hp: cumulative(s.hp) } : {}),
+        ...(s.ap && s.ap.length === n ? { ap: cumulative(s.ap).map(v => v / 4) } : {}),
       })
     }
     players.set(p.id, segs)
     if (typeof p.mh === 'number' && p.mh >= 1) maxHealth.set(p.id, p.mh)
+    if ((typeof p.eh === 'number' && p.eh >= 1) || (typeof p.ed === 'number' && p.ed >= 1)) eyes.set(p.id, { stand: typeof p.eh === 'number' && p.eh >= 1 ? p.eh : EYE_STAND, duck: typeof p.ed === 'number' && p.ed >= 1 ? p.ed : EYE_DUCK })
   }
   const deaths: Death[] = raw.deaths.map(d => ({
     victim: d.victim, attacker: d.attacker, t: d.t - begin,
@@ -162,7 +171,7 @@ export function decodeTrack(raw: RawTrack): Decoded {
     for (const s of l) { const last = merged[merged.length - 1]; if (last && s[0] <= last[1]) last[1] = Math.max(last[1], s[1]); else merged.push([s[0], s[1]]) }
     talk.set(p, merged)
   }
-  return { times, length: times.length ? times[times.length - 1]! : 0, start: times.length ? times[0]! : 0, players, deaths, events, bodies, things, maxHealth, hurts, polled, talk }
+  return { times, length: times.length ? times[times.length - 1]! : 0, start: times.length ? times[0]! : 0, players, deaths, events, bodies, things, maxHealth, eyes, weaponModels: new Map(Object.entries(raw.wm ?? {})), hurts, polled, talk }
 }
 
 /**
@@ -246,6 +255,37 @@ function slopeAt(t: number[], v: (i: number) => number, i: number): number {
 function hermite(p0: number, p1: number, m0: number, m1: number, span: number, f: number): number {
   const f2 = f * f, f3 = f2 * f
   return (2 * f3 - 3 * f2 + 1) * p0 + (f3 - 2 * f2 + f) * span * m0 + (-2 * f3 + 3 * f2) * p1 + (f3 - f2) * span * m1
+}
+
+/** The eye height above the feet when the track does not say (the game's defaults, RFC 39, 3.2): standing and crouching. */
+export const EYE_STAND = 64
+export const EYE_DUCK = 28
+/** The player's eye height standing and crouching: from the track where it says, else the defaults. */
+export const eyeHeights = (eyes: Map<string, { stand: number, duck: number }>, id: string): { stand: number, duck: number } => eyes.get(id) ?? { stand: EYE_STAND, duck: EYE_DUCK }
+
+/**
+ * The view pitch of a player at time `ms` in degrees, positive looking down (RFC 39, 3.1): on the same kind of smooth curve as the position, so that a look
+ * up or down is a curve and not a step every 180 ms. null when the track has no pitch for the player there (an older track, a gap between segments, before
+ * the first or after the last sample); the caller then looks level.
+ */
+export function pitchAt(segments: Segment[], ms: number): number | null {
+  let lo = 0, hi = segments.length - 1, seg: Segment | null = null
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    const s = segments[mid]!
+    if (ms < s.t[0]!) hi = mid - 1
+    else if (ms > s.t[s.t.length - 1]!) lo = mid + 1
+    else { seg = s; break }
+  }
+  if (!seg || !seg.ap) return null
+  const ap = seg.ap, t = seg.t
+  let a = 0, b = t.length - 1
+  while (a < b) { const m = (a + b + 1) >> 1; if (t[m]! <= ms) a = m; else b = m - 1 }
+  if (a === t.length - 1) return ap[a]!
+  const span = t[a + 1]! - t[a]!
+  if (!(span > 0)) return ap[a]!
+  const v = hermite(ap[a]!, ap[a + 1]!, slopeAt(t, i => ap[i]!, a), slopeAt(t, i => ap[i]!, a + 1), span, (ms - t[a]!) / span)
+  return Math.min(Math.max(v, -90), 90)
 }
 
 /**
