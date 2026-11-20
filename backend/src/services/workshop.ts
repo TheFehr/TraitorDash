@@ -133,11 +133,11 @@ async function unlzma(path: string, out: string, maxBytes: number): Promise<stri
 
 /**
  * Makes the downloaded files plain archives, returning their paths. The oldest Workshop items (2013 to
- * 2014) are stored as `.gm`, not `.gma`; they are the same LZMA-wrapped archive.
+ * 2014) are stored as `.gm`, not `.gma`; they are the same LZMA-wrapped archive. A few later items come as a bare `<name>.lzma` (found 2026-11-20 on the real collection: "The download held no addon archive" for two addons, one of them a 30 MB `turret remake.lzma` whose header is the same LZMA stream).
  */
 async function archives(dir: string, maxBytes: number): Promise<{ paths: string[] } | { error: string }> {
   const paths: string[] = []
-  for (const f of await findFiles(join(dir, 'out'), ['.gma', '.gm'])) {
+  for (const f of await findFiles(join(dir, 'out'), ['.gma', '.gm', '.lzma'])) {
     const head = new Uint8Array(await Bun.file(f).slice(0, 4).arrayBuffer())
     if (new TextDecoder().decode(head) === 'GMAD') { paths.push(f); continue }
     const plain = f + '.plain'

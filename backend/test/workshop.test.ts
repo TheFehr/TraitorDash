@@ -293,6 +293,15 @@ describe('old items (one LZMA stream around the archive)', () => {
     expect(status('ttt_a').status).toBe('parsed')
   })
 
+  test.skipIf(!xz)('a bare .lzma file (as some later items are saved) is opened all the same', async () => {
+    addon('333', lzma(buildGma({ 'maps/ttt_a.bsp': bspA })))
+    writeFileSync(join(fix, '333.ext'), 'lzma')
+    report([['ttt_a', bspA]], ['333'])
+    want('ttt_a')
+    await geo.runGeometryQueue(fetcher())
+    expect(status('ttt_a').status).toBe('parsed')
+  })
+
   test.skipIf(!xz)('one that unpacks to more than the limit is refused before it is unpacked', async () => {
     addon('333', lzma(buildGma({ 'maps/ttt_a.bsp': bspA })))
     report([['ttt_a', bspA]], ['333'])
