@@ -219,6 +219,34 @@ export function workshopFetcher(opts: WorkshopOptions = {}): Fetcher {
   }
 }
 
+/** Downloads one addon and returns its plain archives (RFC 40): a job directory, removed by `cleanup`. The same helper, limits and archive handling as the maps' fetch. */
+export type AddonFetcher = (wsid: string) => Promise<{ paths: string[], bytes: number, cleanup: () => Promise<void> } | { error: string }>
+
+/** Fetches whole addons for the Workshop content source (RFC 40). One job directory each, in the same scratch root as the map fetch. */
+export function addonFetcher(opts: WorkshopOptions = {}): AddonFetcher {
+  const binary = opts.binary ?? helperPath()
+  const root = opts.scratch ?? scratchRoot()
+  const limits = { maxBytes: opts.maxBytes ?? 1024 ** 3, timeoutMs: opts.timeoutMs ?? 15 * 60_000 }
+  return async (wsid) => {
+    if (!WSID.test(wsid)) return { error: 'Not a Workshop id.' }
+    await mkdir(root, { recursive: true })
+    const dir = await mkdtemp(join(root, 'job-'))
+    const cleanup = () => rm(dir, { recursive: true, force: true })
+    try {
+      const err = await download(binary, wsid, dir, limits)
+      if (err) { await cleanup(); return { error: err } }
+      const got = await archives(dir, limits.maxBytes)
+      if ('error' in got) { await cleanup(); return got }
+      let bytes = 0
+      for (const p of got.paths) bytes += (await stat(p).catch(() => null))?.size ?? 0
+      return { paths: got.paths, bytes, cleanup }
+    } catch (e) {
+      await cleanup().catch(() => {})
+      return { error: e instanceof Error ? e.message : 'The download failed.' }
+    }
+  }
+}
+
 /**
  * Where the helper is: DEPOTDOWNLOADER_PATH, else `bin/DepotDownloader` in the working directory (where
  * the Pelican egg's installer puts it), else whatever `DepotDownloader` the PATH finds.

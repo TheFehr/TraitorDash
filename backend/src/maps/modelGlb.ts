@@ -82,3 +82,58 @@ export async function animatedModelGlb(m: AnimatedMesh, name: string): Promise<U
   doc.getRoot().setExtras({ generator: 'TraitorDash (RFC 22)', model: name, height: m.height, floor: m.floor, clips: m.clips.map(c => ({ name: c.name, duration: c.duration, stride: c.stride })) })
   return await new NodeIO().writeBinary(doc)
 }
+
+/** One run of triangles of a static model that share a material: corners (x y z each), their texture coordinates (u v each, or none), and the material. */
+export interface StaticPart {
+  positions: number[]
+  uvs: number[] | null
+  /** The texture as a PNG, or null for a plain colour. `mask` cuts the texture's alpha out, `blend` is see-through (RFC 18, 4.6). */
+  material: { png: Uint8Array | null, colour: [number, number, number], mode: 'opaque' | 'mask' | 'blend', alpha: number, key: string }
+}
+
+/**
+ * A static model (a weapon, a prop of an addon, RFC 40) as glTF 2.0 (GLB): one primitive for each run of triangles that share a material, the
+ * textures embedded as PNG, the root node turning Source's Z-up into Y-up and the vertices in whole Source units, as the other models are.
+ * Triangles are not indexed, with no normals: a viewer makes flat ones, which is what the maps' props get too.
+ */
+export async function staticModelGlb(parts: StaticPart[], name: string): Promise<Uint8Array> {
+  const doc = new Document()
+  const buffer = doc.createBuffer()
+  const materials = new Map<string, ReturnType<Document['createMaterial']>>()
+  const textures = new Map<string, ReturnType<Document['createTexture']>>()
+  const scene = doc.createScene(name)
+  const root = doc.createNode('z-up').setRotation([-Math.SQRT1_2, 0, 0, Math.SQRT1_2])
+  let triangles = 0
+  const gltfMesh = doc.createMesh(name)
+  for (const part of parts) {
+    const corners = part.positions.length / 3
+    if (corners === 0 || corners % 3 !== 0) continue
+    let material = materials.get(part.material.key)
+    if (!material) {
+      material = doc.createMaterial(part.material.key).setMetallicFactor(0).setRoughnessFactor(1).setDoubleSided(true)
+      const m = part.material
+      material.setBaseColorFactor([m.colour[0], m.colour[1], m.colour[2], m.mode === 'blend' ? m.alpha : 1])
+      if (m.png) {
+        let tex = textures.get(m.key)
+        if (!tex) { tex = doc.createTexture(m.key).setImage(m.png).setMimeType('image/png'); textures.set(m.key, tex) }
+        material.setBaseColorTexture(tex)
+        material.setBaseColorFactor([1, 1, 1, m.mode === 'blend' ? m.alpha : 1])
+      }
+      if (m.mode === 'mask') material.setAlphaMode('MASK').setAlphaCutoff(0.5)
+      else if (m.mode === 'blend') material.setAlphaMode('BLEND')
+      materials.set(part.material.key, material)
+    }
+    const prim = doc.createPrimitive().setMaterial(material)
+      .setAttribute('POSITION', doc.createAccessor('POSITION').setType('VEC3').setArray(new Float32Array(part.positions)).setBuffer(buffer))
+    if (part.uvs && part.uvs.length === corners * 2) prim.setAttribute('TEXCOORD_0', doc.createAccessor('TEXCOORD_0').setType('VEC2').setArray(new Float32Array(part.uvs)).setBuffer(buffer))
+    const index = new Uint32Array(corners)
+    for (let i = 0; i < corners; i++) index[i] = i
+    prim.setIndices(doc.createAccessor('indices').setType('SCALAR').setArray(corners > 65_535 ? index : Uint16Array.from(index)).setBuffer(buffer))
+    gltfMesh.addPrimitive(prim)
+    triangles += corners / 3
+  }
+  root.addChild(doc.createNode('model').setMesh(gltfMesh).setExtras({ triangles }))
+  scene.addChild(root)
+  doc.getRoot().setExtras({ generator: 'TraitorDash (RFC 40)', model: name, triangles })
+  return await new NodeIO().writeBinary(doc)
+}

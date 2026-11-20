@@ -534,6 +534,59 @@ export const migrations: Array<(db: Database) => void> = [
       )
     `)
   },
+
+  // v32 (RFC 40): the server's Workshop collection as a content source. `workshop_addons` is the list (the collection's, and the addons the
+  // bridge reports that are not in it), `workshop_files` the paths of models and materials each holds (everything else is only counted per
+  // top directory in `workshop_dirs`: nothing reads it), `workshop_models` the models built from them, `workshop_meta` small facts (the last
+  // run). `server_map_state.addons` is every addon the server mounts, as reported by the bridge (`map_addons` stays: the maps among them).
+  (db) => {
+    db.run('ALTER TABLE server_map_state ADD COLUMN addons TEXT')
+    db.run(`
+      CREATE TABLE IF NOT EXISTS workshop_addons (
+        id         TEXT PRIMARY KEY,
+        title      TEXT,
+        updated    INTEGER NOT NULL DEFAULT 0,
+        indexed_at INTEGER,
+        status     TEXT NOT NULL DEFAULT 'pending',
+        bytes      INTEGER NOT NULL DEFAULT 0,
+        file_count INTEGER NOT NULL DEFAULT 0,
+        error      TEXT,
+        source     TEXT NOT NULL DEFAULT 'collection',
+        ord        INTEGER NOT NULL DEFAULT 0
+      )
+    `)
+    db.run(`
+      CREATE TABLE IF NOT EXISTS workshop_files (
+        addon_id TEXT NOT NULL,
+        path     TEXT NOT NULL,
+        size     INTEGER NOT NULL,
+        crc      INTEGER NOT NULL,
+        PRIMARY KEY (addon_id, path)
+      ) WITHOUT ROWID
+    `)
+    db.run('CREATE INDEX IF NOT EXISTS idx_workshop_files_path ON workshop_files(path)')
+    db.run(`
+      CREATE TABLE IF NOT EXISTS workshop_dirs (
+        addon_id TEXT NOT NULL,
+        dir      TEXT NOT NULL,
+        files    INTEGER NOT NULL,
+        bytes    INTEGER NOT NULL,
+        PRIMARY KEY (addon_id, dir)
+      ) WITHOUT ROWID
+    `)
+    db.run(`
+      CREATE TABLE IF NOT EXISTS workshop_models (
+        path      TEXT PRIMARY KEY,
+        status    TEXT NOT NULL,
+        addon_id  TEXT,
+        error     TEXT,
+        bytes     INTEGER NOT NULL DEFAULT 0,
+        queued_at INTEGER NOT NULL,
+        built_at  INTEGER
+      )
+    `)
+    db.run('CREATE TABLE IF NOT EXISTS workshop_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
+  },
 ]
 
 /** Brings `db` up to the latest schema, in one transaction. */

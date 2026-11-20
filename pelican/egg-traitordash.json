@@ -266,6 +266,20 @@
         "string",
         "max:64"
       ]
+    },
+    {
+      "sort": 18,
+      "name": "Workshop collection",
+      "description": "The Workshop ID of the collection of addons the game server runs (digits only, RFC 40). The backend indexes the addons in the collection in the background and builds a model, with its materials, from the addon that holds it when something needs it. Empty means off. Needs the download helper. Admin-only.",
+      "env_variable": "WORKSHOP_COLLECTION",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": [
+        "nullable",
+        "string",
+        "regex:/^[0-9]{1,12}$/"
+      ]
     }
   ]
 }

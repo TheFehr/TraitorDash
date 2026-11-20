@@ -47,6 +47,11 @@ export const TIERS: Record<string, Tier> = {
   'GET /servers/:serverId/maps/:map/plan.svg': 'admin',
   'GET /servers/:serverId/maps/:map/plan.json': 'admin',
   'POST /servers/:serverId/maps/:map/geometry': 'admin',
+  // The Workshop content card of the coverage page (RFC 40, 5).
+  'POST /servers/:serverId/workshop-content/run': 'admin',
+  'POST /servers/:serverId/workshop-content/retry': 'admin',
+  'POST /servers/:serverId/workshop-content/model': 'admin',
+  'GET /servers/:serverId/workshop-content/model.glb': 'admin',
   'POST /servers/:serverId/tracks/limits': 'admin',
   'POST /servers/:serverId/rounds/:roundId/pin': 'admin',
   'POST /servers/:serverId/rounds/:roundId/delete': 'admin',

@@ -298,6 +298,7 @@ end
 -- ConVars or recent-map list. Idle without a configuration or without maps.lua.
 local MAX_MAPS = 500
 local MAX_MAP_ADDONS = 300
+local MAX_ADDONS = 2000 -- every mounted addon (RFC 40)
 
 function TraitorDash.PushMaps()
     local baseUrl, token = GetApi()
@@ -323,10 +324,17 @@ function TraitorDash.PushMaps()
         if i > MAX_MAP_ADDONS then break end
         mapAddons[i] = id
     end
+    -- `addons`: every mounted addon (RFC 40); `mapAddons`: the ones of them that are maps, where the
+    -- dashboard looks for a map's file (RFC 11). A dashboard from before RFC 40 reads only `mapAddons`.
+    local addons = {}
+    for i, id in ipairs(report.addons and report.addons.allIds or {}) do
+        if i > MAX_ADDONS then break end
+        addons[i] = id
+    end
     local vote = report.mapvote or {}
     local payload = util.TableToJSON({
         current = report.current, next = report.next, gamemode = report.gamemode, pattern = report.pattern,
-        maps = maps, mapAddons = mapAddons,
+        maps = maps, mapAddons = mapAddons, addons = addons,
         mapvote = { present = vote.present == true, poolBasis = vote.poolBasis, configSource = vote.configSource },
     })
     if not payload or payload == "" then

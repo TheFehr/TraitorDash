@@ -238,7 +238,7 @@ describe('the tables', () => {
     expect(cols(old)).toEqual([])
     migrate(old)
     expect(cols(old)).toEqual(['server_id', 'round_id', 'spans', 'bytes', 'created_at', 'data'])
-    expect(migrations.length).toBe(31)
+    expect(migrations.length).toBeGreaterThanOrEqual(31) // this table was added by the 31st; later migrations only add to it
   })
 
   test('a round\'s talk is stored as given and read back with a tag that changes when it does', () => {

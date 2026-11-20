@@ -36,6 +36,11 @@ import { gameContent, gameContentEnabled } from './services/gameContent'
 import { isPose, playerModel, setPlayerModelContent } from './services/playermodel'
 import { helperAvailable, workshopFetcher } from './services/workshop'
 import { sameOrigin } from './middleware/csrf'
+import { workshopCollectionId, workshopEnabled } from './services/workshopCollection'
+import { chainModels, chainTextures, queueModelBuild, workshopContent, workshopContentRoot, workshopModelGlb } from './services/workshopContent'
+import { kickWorkshopQueue, workshopQueueState } from './services/workshopQueue'
+import { startWorkshop, workshopDeps } from './services/workshopRuntime'
+import * as WS from './services/workshopStore'
 
 // Components
 import { AdminHomePage, ServersPage, ServerPage, RoleConfigPage, ViewLogPage, ServerSettingsPage } from './components/AdminPages'
@@ -357,7 +362,60 @@ app.get('/servers/:serverId/map-coverage', async (c) => {
   const ctx = await ctxOf(c)
   if (!adminOf(ctx)) return c.redirect('/')
   const rows = [...Store.getGeometryStates(found.serverId)].map(([map, g]) => ({ map, state: g.status, record: asRecord((g.info as { coverage?: unknown } | null)?.coverage) }))
-  return respond(c, ctx, <MapCoveragePage ctx={ctx} server={found.server} report={summarise(rows)} />, { noStore: true })
+  return respond(c, ctx, <MapCoveragePage ctx={ctx} server={found.server} report={summarise(rows)} workshop={workshopPanel(found.serverId)} modelNote={c.req.query('model') === 'queued' ? 'queued' : c.req.query('model') === 'refused' ? 'refused' : undefined} />, { noStore: true })
+})
+
+/** What the "Workshop content" card shows (RFC 40, 5), or undefined when the feature is off. */
+function workshopPanel(serverId: string) {
+  const collection = workshopCollectionId()
+  if (!collection) return undefined
+  const mounted = Store.getMountedAddons(serverId)
+  let notes: string[] = []
+  try { notes = JSON.parse(WS.metaGet('list_notes') ?? '[]') } catch { /* no notes */ }
+  return {
+    collection, status: WS.status(), state: workshopQueueState(), failed: WS.failedAddons(25), notes,
+    collectionSize: Number(WS.metaGet('collection_size') ?? 0), checkedAt: Number(WS.metaGet('collection_checked') ?? 0) || null,
+    mounted: mounted.reported ? { count: mounted.ids.length, notInCollection: WS.notInCollection(mounted.ids) } : null,
+  }
+}
+
+/** The Workshop content card's buttons (RFC 40, 5): admins only, and only when WORKSHOP_COLLECTION is set. */
+const workshopAdmin = async (c: any) => {
+  const steamId = await getAdminId(c)
+  if (!steamId) return { error: c.text('Unauthorized', 401) } as const
+  if (!workshopEnabled() || !serverOf(c)) return { error: c.text('Not found', 404) } as const
+  return { steamId, serverId: c.req.param('serverId') as string } as const
+}
+app.post('/servers/:serverId/workshop-content/run', async (c) => {
+  const a = await workshopAdmin(c)
+  if ('error' in a) return a.error
+  Store.audit(a.serverId, a.steamId, 'WORKSHOP_RUN', '')
+  kickWorkshopQueue(workshopDeps())
+  return c.redirect(`/servers/${a.serverId}/map-coverage#workshop-content`)
+})
+app.post('/servers/:serverId/workshop-content/retry', async (c) => {
+  const a = await workshopAdmin(c)
+  if ('error' in a) return a.error
+  Store.audit(a.serverId, a.steamId, 'WORKSHOP_RETRY', '')
+  WS.retryFailedAddons(); WS.retryFailedModels()
+  kickWorkshopQueue(workshopDeps(), { sync: false })
+  return c.redirect(`/servers/${a.serverId}/map-coverage#workshop-content`)
+})
+app.post('/servers/:serverId/workshop-content/model', async (c) => {
+  const a = await workshopAdmin(c)
+  if ('error' in a) return a.error
+  const form = await c.req.parseBody()
+  const path = typeof form.path === 'string' ? form.path.slice(0, 300) : ''
+  const queued = queueModelBuild(path)
+  Store.audit(a.serverId, a.steamId, 'WORKSHOP_MODEL', path.slice(0, 120))
+  return c.redirect(`/servers/${a.serverId}/map-coverage?model=${queued ? 'queued' : 'refused'}#workshop-content`)
+})
+app.get('/servers/:serverId/workshop-content/model.glb', async (c) => {
+  const a = await workshopAdmin(c)
+  if ('error' in a) return a.error
+  const glb = await workshopModelGlb(c.req.query('path') ?? '', workshopContentRoot())
+  if (!glb) return c.text('Not found', 404)
+  return new Response(glb as Uint8Array<ArrayBuffer>, { headers: { 'Content-Type': 'model/gltf-binary', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'" } })
 })
 
 const geometryProp = (serverId: string, name: string) => {
@@ -874,18 +932,26 @@ export const STARTUP_LOG_LINE = '[TraitorDash] Listening on port'
 // so the line is logged right after, and only when run as the program (not by the tests).
 if (import.meta.main) {
   setTimeout(() => console.log(`${STARTUP_LOG_LINE} ${port} (source ${sourceHash()})`), 0)
+  const game = geometryEnabled() && gameContentEnabled() ? gameContent() : null
+  const workshop = workshopEnabled() ? workshopContent() : null
   if (geometryEnabled()) {
     setGeometryFetcher(workshopFetcher())
-    if (gameContentEnabled()) {
-      const content = gameContent()
-      setStockModels(content.models)
-      setStockTextures(content.textures)
-      setPlayerModelContent(content)
-      console.log(`[Geometry] The game's own models are fetched on demand into ${content.root}.`)
+    if (game) {
+      setPlayerModelContent(game)
+      console.log(`[Geometry] The game's own models are fetched on demand into ${game.root}.`)
+    }
+    // The model sources in order (RFC 40, 3.3): the map's own pack (read by the pipeline itself), the game's own content, then the Workshop collection's.
+    if (game || workshop) {
+      setStockModels(chainModels(game?.models, workshop?.models))
+      setStockTextures(chainTextures(game?.textures, workshop?.textures))
     }
     helperAvailable().then(ok => console.log(ok
       ? '[Geometry] Exact map geometry is on.'
       : '[Geometry] MAP_GEOMETRY=1, but the download helper (DepotDownloader) was not found; requested maps will fail. Set DEPOTDOWNLOADER_PATH.'))
+  }
+  if (workshop) {
+    startWorkshop(game?.textures)
+    console.log(`[Workshop] The collection ${workshopCollectionId()} is a content source: indexed at start and every night, models built into ${workshop.root} when something needs them.`)
   }
   Store.resetStaleGeometry()
   kickGeometryQueue()

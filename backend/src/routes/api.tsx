@@ -13,6 +13,7 @@ import { refreshWorkshopText } from '../services/workshopText'
 import { NONCE, signResponse } from '../services/signing'
 import { FINGERPRINT, NAME, ROUND_ID, STEAM_ID, STEAM_ID64, WSID } from '../services/validators'
 import { bridgeSetting, checkSettingValue, cleanReport, formatSettingCommand } from '../services/bridgeSettings'
+import { noteRoundReport } from '../services/workshopQueue'
 import { makeGameKey, KEY_TTL_SECONDS } from '../services/gameKey'
 import { parseVoiceState, voiceConfig, voiceHub } from '../services/voice'
 import { attachTalk, talkEnabled, talkLog } from '../services/talk'
@@ -311,6 +312,7 @@ export const roundLimiter = new RateLimiter(10, 60_000)
 
 api.post('/v1/round', getServer, async (c) => {
   const server = c.get('server')
+  noteRoundReport()
   const wait = roundLimiter.hit(server.id)
   if (wait > 0) {
     console.warn(`[Stats] Rate limit hit by ${server.name}; refusing rounds for ${wait}s`)
@@ -527,16 +529,20 @@ api.post('/v1/maps', getServer, async (c) => {
     })
   }
 
-  // Workshop IDs are plain digits; anything else is dropped, and the list is capped.
-  const mapAddons = Array.isArray(body.mapAddons)
-    ? [...new Set<string>(body.mapAddons.filter((id: unknown): id is string => typeof id === 'string' && WSID.test(id)))].slice(0, 300)
-    : []
+  // Workshop IDs are plain digits; anything else is dropped, and the lists are capped. `mapAddons` are the mounted addons that are maps (RFC 11);
+  // `addons` (RFC 40) are all the mounted ones; a bridge from before RFC 40 sends only `mapAddons` (the fetch of a map's file keeps working from it),
+  // and then the list of all of them is unknown (null), not guessed.
+  const ids = (v: unknown, max: number): string[] | null => Array.isArray(v)
+    ? [...new Set<string>(v.filter((id: unknown): id is string => typeof id === 'string' && WSID.test(id)))].slice(0, max)
+    : null
+  const mapAddons = ids(body.mapAddons, 300) ?? []
+  const addons = ids(body.addons, 2000)
 
   const vote = body.mapvote && typeof body.mapvote === 'object' ? body.mapvote : {}
   Store.setMaps(server.id, {
     current: text(body.current, 64), next: text(body.next, 64), gamemode: text(body.gamemode, 64), pattern: text(body.pattern, 128),
     poolBasis: oneOf(vote.poolBasis, POOL_BASES), configSource: oneOf(vote.configSource, CONFIG_SOURCES),
-    voteAddon: vote.present === true, maps, mapAddons,
+    voteAddon: vote.present === true, maps, mapAddons, addons,
   })
   Store.updateHeartbeat(server.id)
   console.log(`[Maps] Report from ${server.name}: ${maps.length} maps (current=${text(body.current, 64)}, pool by ${oneOf(vote.poolBasis, POOL_BASES) ?? 'unknown'})`)

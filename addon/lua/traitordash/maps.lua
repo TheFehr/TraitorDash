@@ -199,10 +199,14 @@ function TraitorDash.CollectMaps()
 
     -- `ids` are the Workshop IDs of the mounted map addons (digits only). The backend uses them as
     -- the places to look when it fetches a map's file (RFC 11, 3.2).
-    local addons = { mounted = 0, maps = 0, ids = {} }
+    -- `allIds` are the Workshop IDs of every mounted addon (RFC 40): the dashboard checks them against the
+    -- server's Workshop collection.
+    local addons = { mounted = 0, maps = 0, ids = {}, allIds = {} }
     for _, addon in ipairs(engine.GetAddons() or {}) do
         if addon.mounted then
             addons.mounted = addons.mounted + 1
+            local anyId = tostring(addon.wsid or "")
+            if anyId:match("^%d+$") and #anyId <= 12 then addons.allIds[#addons.allIds + 1] = anyId end
             if HasTag(addon.tags, "map") then
                 addons.maps = addons.maps + 1
                 local id = tostring(addon.wsid or "")

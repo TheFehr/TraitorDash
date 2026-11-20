@@ -69,6 +69,8 @@ export interface MapsReport {
   poolBasis: string | null, configSource: string | null, voteAddon: boolean, maps: MapRow[]
   /** Workshop IDs of the mounted map addons (digits). */
   mapAddons?: string[]
+  /** Workshop IDs of every mounted addon (RFC 40), or null from a bridge that does not report them. */
+  addons?: string[] | null
 }
 
 export interface RoundReport {
@@ -460,14 +462,25 @@ export class Store {
         insert.run(serverId, m.name, m.size, m.fingerprint, flag(m.matchesGamemode), flag(m.inCycle), flag(m.onCooldown), flag(m.isCurrent), flag(m.inVotePool), flag(m.votable), now)
       }
       db.prepare(`
-        INSERT INTO server_map_state (server_id, current_map, next_map, gamemode, pattern, pool_basis, config_source, vote_addon, reported_at, map_addons)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO server_map_state (server_id, current_map, next_map, gamemode, pattern, pool_basis, config_source, vote_addon, reported_at, map_addons, addons)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(server_id) DO UPDATE SET
           current_map = excluded.current_map, next_map = excluded.next_map, gamemode = excluded.gamemode,
           pattern = excluded.pattern, pool_basis = excluded.pool_basis, config_source = excluded.config_source,
-          vote_addon = excluded.vote_addon, reported_at = excluded.reported_at, map_addons = excluded.map_addons
-      `).run(serverId, r.current, r.next, r.gamemode, r.pattern, r.poolBasis, r.configSource, r.voteAddon ? 1 : 0, now, JSON.stringify(r.mapAddons ?? []))
+          vote_addon = excluded.vote_addon, reported_at = excluded.reported_at, map_addons = excluded.map_addons, addons = excluded.addons
+      `).run(serverId, r.current, r.next, r.gamemode, r.pattern, r.poolBasis, r.configSource, r.voteAddon ? 1 : 0, now, JSON.stringify(r.mapAddons ?? []), r.addons ? JSON.stringify(r.addons) : null)
     })()
+  }
+
+  /** Every addon the servers mount, as the bridges reported them (RFC 40); `reported` is false when no server has sent the list (a bridge from before RFC 40). */
+  static getMountedAddons(serverId?: string): { ids: string[], reported: boolean } {
+    const rows = (serverId
+      ? db.prepare('SELECT addons FROM server_map_state WHERE server_id = ?').all(serverId)
+      : db.prepare('SELECT addons FROM server_map_state').all()) as { addons: string | null }[]
+    const ids = new Set<string>()
+    let reported = false
+    for (const r of rows) if (r.addons) { reported = true; for (const id of JSON.parse(r.addons)) ids.add(String(id)) }
+    return { ids: [...ids], reported }
   }
 
   /** Whether the dashboard shows the map cooldown for the server: on unless an admin turned it off (RFC 10, 4.5). */

@@ -134,13 +134,33 @@ describe('TraitorDash.PushMaps', () => {
     expect(r).toBe('300|1001|1300')
   })
 
+  test('RFC 40: the payload also carries every mounted addon (digits only, at most 2000), and mapAddons stays the maps among them', () => {
+    const r = lua(`${FILESET}
+      local addons = {}
+      for i = 1, 2100 do addons[i] = { mounted = true, tags = (i % 10 == 0) and "map" or "weapon", wsid = tostring(5000 + i) } end
+      addons[#addons + 1] = { mounted = true, tags = "map", wsid = "12abc" }
+      addons[#addons + 1] = { mounted = false, tags = "map", wsid = "777" }
+      addons[#addons + 1] = { mounted = true, tags = "map", wsid = "1234567890123" }
+      engine.GetAddons = function() return addons end
+      TraitorDash.PushMaps()
+      local a, m = LAST_PAYLOAD.addons, LAST_PAYLOAD.mapAddons
+      RESULT = #a .. "|" .. a[1] .. "|" .. a[2000] .. "|" .. #m .. "|" .. m[1] .. "|" .. m[2]`)
+    expect(r).toBe('2000|5001|7000|210|5010|5020')
+  })
+
+  test('RFC 40: a server with no mounted addons sends empty lists, not nothing', () => {
+    const r = lua(`${FILESET} engine.GetAddons = function() return {} end TraitorDash.PushMaps()
+      RESULT = #LAST_PAYLOAD.addons .. "|" .. #LAST_PAYLOAD.mapAddons .. "|" .. type(LAST_PAYLOAD.addons)`)
+    expect(r).toBe('0|0|table')
+  })
+
   test('the payload has the maps, the current/next map, the gamemode and the pool basis, and nothing else', () => {
     const r = lua(`${FILESET} TraitorDash.PushMaps()
       local p = LAST_PAYLOAD
       local function keys(t) local k = {} for key in pairs(t) do k[#k + 1] = key end table.sort(k) return table.concat(k, ",") end
       RESULT = keys(p) .. "|" .. keys(p.maps[2]) .. "|" .. keys(p.mapvote) .. "|" .. #p.maps .. "|" .. p.current .. "|" .. p.next .. "|" .. p.gamemode .. "|" .. p.pattern`)
     expect(r).toBe([
-      'current,gamemode,mapAddons,maps,mapvote,next,pattern',
+      'addons,current,gamemode,mapAddons,maps,mapvote,next,pattern',
       'fingerprint,inCycle,inVotePool,isCurrent,matchesGamemode,name,onCooldown,size,votable',
       'configSource,poolBasis,present',
       '3', 'ttt_a', 'ttt_b', 'terrortown', '^ttt_',

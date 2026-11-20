@@ -5,7 +5,7 @@ import { BspError, type ByteSource } from './bsp'
 // without unpacking anything (RFC 11, 3.2).
 
 const MAX_TEXT = 1024 * 1024 // an addon's description; the table limit bounds it anyway
-export interface GmaEntry { name: string, offset: number, size: number }
+export interface GmaEntry { name: string, offset: number, size: number, /** The CRC32 the table lists (not checked). */ crc?: number }
 export interface GmaLimits { maxTableBytes?: number, maxFiles?: number }
 
 /** The bytes [offset, offset + length) of `src`, as a source of their own. */
@@ -55,9 +55,9 @@ export async function readGmaIndex(src: ByteSource, limits: GmaLimits = {}): Pro
     if (entries.length >= maxFiles) fail('too many files')
     const name = str()
     const size = Number(u64())
-    u32() // crc
+    const crc = u32()
     if (!Number.isSafeInteger(size) || size < 0) fail('a file size is invalid')
-    entries.push({ name, offset, size })
+    entries.push({ name, offset, size, crc })
     offset += size
   }
   // File data starts right after the table; turn running offsets into absolute ones.

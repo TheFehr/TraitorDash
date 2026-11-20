@@ -2,6 +2,7 @@ import { PageHead, Shell } from './CaseFile'
 import type { Ctx } from './kit'
 import { COVERAGE, lookup, type CoverageRecord, type Status } from '../maps/coverage'
 import { flagSetStatus, sizeText, worldFacesByStatus, type CoverageReport, type MapRow } from '../services/coveragereport'
+import type { WorkshopStatus, AddonRow } from '../services/workshopStore'
 
 // RFC 32, 5: what the 3D pipeline draws of the maps of a server, ignores on purpose and misses, counted from the coverage record each map's mesh carries.
 // An admin's page: a maintenance tool, not a statistic for visitors. The look is the case-file card of every page, with the tables of the stats pages.
@@ -62,9 +63,74 @@ const RecordTables = ({ r }: { r: CoverageRecord }) => {
 
 const MapState = ({ row }: { row: MapRow }) => row.record ? <span class="d">record</span> : <i class="pill mute" data-no-record>{row.state === 'parsed' ? 'no record yet' : `3D ${row.state}`}</i>
 
-export interface MapCoveragePageProps { ctx: Ctx, server: { id: string, name: string }, report: CoverageReport }
+/** What the "Workshop content" card shows (RFC 40, 5). */
+export interface WorkshopPanel {
+  collection: string
+  status: WorkshopStatus
+  state: { running: boolean, current: { kind: 'index' | 'model' | 'list', id: string } | null }
+  failed: AddonRow[]
+  /** What the last look at the collection left out or could not read. */
+  notes: string[]
+  collectionSize: number
+  checkedAt: number | null
+  /** The addons this server mounts and those of them that are not in the collection; null when no bridge has reported the list yet. */
+  mounted: { count: number, notInCollection: string[] } | null
+}
 
-export const MapCoveragePage = ({ ctx, server, report }: MapCoveragePageProps) => {
+const when = (s: number) => new Date(s * 1000).toLocaleString('en-GB', { timeZone: 'Europe/Zurich', hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+const dur = (s: number) => (s < 90 ? `${s} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`)
+
+/** The Workshop collection as a content source (RFC 40): the list, the index, the models. Admin side of the coverage page; every row is always there, so the card does not change height when numbers do. */
+export const WorkshopCard = ({ w, serverId, modelNote }: { w: WorkshopPanel, serverId: string, modelNote?: string }) => {
+  const s = w.status
+  const run = w.state.running ? (w.state.current ? `running: ${w.state.current.kind === 'list' ? 'reading the collection' : `${w.state.current.kind === 'index' ? 'indexing addon' : 'building'} ${w.state.current.id}`}` : 'running') : 'idle'
+  const base = `/servers/${serverId}/workshop-content`
+  return (
+    <div class="f c-violet" id="workshop-content" data-workshop-card>
+      <h2 class="ft">Workshop content</h2>
+      <div class="scrollx">
+        <table class="set" data-workshop-numbers>
+          <tr><td>Collection</td><td class="v" data-w="collection">{w.collection}</td></tr>
+          <tr><td>Addons in the collection</td><td class="v" data-w="listed">{n(w.collectionSize)}{w.checkedAt ? <span class="d"> (read {when(w.checkedAt)})</span> : <span class="d"> (not read yet)</span>}</td></tr>
+          <tr><td>Indexed</td><td class="v" data-w="indexed">{n(s.indexed)}</td></tr>
+          <tr><td>Pending</td><td class="v" data-w="pending">{n(s.pending)}</td></tr>
+          <tr><td>Failed</td><td class="v" data-w="failed">{n(s.failed)}</td></tr>
+          <tr><td>Downloaded for the index</td><td class="v" data-w="bytes">{sizeText(s.bytes)}</td></tr>
+          <tr><td>Rows in the database</td><td class="v" data-w="rows">{n(s.files)} paths, {n(s.dirs)} directory counts (about {sizeText(s.rowBytes)})</td></tr>
+          <tr><td>Models built</td><td class="v" data-w="built">{n(s.models.built)}</td></tr>
+          <tr><td>Models queued</td><td class="v" data-w="queued">{n(s.models.queued + s.models.building)}<span class="d"> ({n(s.models.failed)} failed, {n(s.models.unknown)} not in the index yet)</span></td></tr>
+          <tr><td>Last run</td><td class="v" data-w="lastrun">{s.lastRun ? `${when(s.lastRun.at)}, ${dur(s.lastRun.seconds)}: ${n(s.lastRun.indexed)} indexed, ${n(s.lastRun.failed)} failed, ${sizeText(s.lastRun.bytes)} downloaded${s.lastRun.note ? ` (${s.lastRun.note})` : ''}` : 'none yet'}</td></tr>
+          <tr><td>Queue</td><td class="v" data-w="state">{run}</td></tr>
+          <tr><td>Mounted, not in the collection</td><td class="v" data-w="mounted">{w.mounted ? `${n(w.mounted.notInCollection.length)} of ${n(w.mounted.count)} mounted${w.mounted.notInCollection.length ? `: ${w.mounted.notInCollection.slice(0, 12).join(', ')}${w.mounted.notInCollection.length > 12 ? ', ...' : ''}` : ''}` : 'the bridge has not reported its addons yet'}</td></tr>
+        </table>
+      </div>
+      <div class="actions" data-workshop-actions>
+        <form method="post" action={`${base}/run`} class="inline"><button type="submit" class="btn">Run now</button></form>
+        {' '}
+        <form method="post" action={`${base}/retry`} class="inline"><button type="submit" class="btn">Retry failed</button></form>
+      </div>
+      <form method="post" action={`${base}/model`} class="inline" data-workshop-model>
+        <label>Build a model <input type="text" name="path" placeholder="models/weapons/w_example.mdl" maxlength={300} size={40} autocomplete="off" /></label>
+        {' '}<button type="submit" class="btn">Queue</button>
+        {modelNote ? <span class="d" data-workshop-model-note> {modelNote === 'queued' ? 'queued' : 'not queued (not a model path, or already queued or built)'}</span> : null}
+      </form>
+      {w.notes.length ? <ul class="foot dark" data-workshop-notes>{w.notes.map(t => <li>{t}</li>)}</ul> : null}
+      {w.failed.length ? (
+        <div class="scrollx">
+          <table class="log" data-workshop-failed>
+            <tr><th>Failed addon</th><th>Title</th><th>Why</th></tr>
+            {w.failed.map(f => <tr data-failed-addon={f.id}><td>{f.id}</td><td>{f.title ?? '–'}</td><td class="d">{f.error ?? '–'}</td></tr>)}
+          </table>
+        </div>
+      ) : null}
+      <p class="foot dark">RFC 40. The addons of the server's Workshop collection are indexed (which models and materials each holds) in the background, one at a time, at start and every night; a model that a map needs is built from its addon when asked for. The numbers above are the first measurement of the index: nothing is decided from them yet.</p>
+    </div>
+  )
+}
+
+export interface MapCoveragePageProps { ctx: Ctx, server: { id: string, name: string }, report: CoverageReport, workshop?: WorkshopPanel, modelNote?: string }
+
+export const MapCoveragePage = ({ ctx, server, report, workshop, modelNote }: MapCoveragePageProps) => {
   const id = server.id
   const mapHref = (m: string) => `/servers/${id}/maps/${encodeURIComponent(m)}`
   const anyRecord = report.withRecord > 0
@@ -84,6 +150,7 @@ export const MapCoveragePage = ({ ctx, server, report }: MapCoveragePageProps) =
         {' '}{report.withRecord} of {report.maps} {report.maps === 1 ? 'map has' : 'maps have'} one{report.without.length ? `; without a record: ${report.without.length}` : ''}.
       </p>
       <div class="stack">
+        {workshop ? <WorkshopCard w={workshop} serverId={id} modelNote={modelNote} /> : null}
         <div class="f c-blue" data-coverage-totals>
           <h2 class="ft">Totals by status</h2>
           {anyRecord ? (
