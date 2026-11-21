@@ -530,7 +530,7 @@ describe('the page (replay.ts)', () => {
     const look = apply.indexOf('persp.lookAt(tmp)'), up = apply.indexOf('updateHole(hole, persp, tmp.set(mine.x, mine.z, -mine.y), true)')
     expect(look).toBeGreaterThan(0)
     expect(up).toBeGreaterThan(look) // after the pose (the matrices are worked out from it)
-    expect(apply).toContain('} else updateHole(hole, camera, null, false)')
+    expect(apply).toContain('} else { viewWeapon.visible = false; updateHole(hole, camera, null, false) }') // any other camera: no hole (and no POV weapon in the view)
     expect(apply.indexOf('render()')).toBeGreaterThan(apply.indexOf('updateHole(hole, camera, null, false)'))
   })
   test('the ghost: made for the figure of a player (not for the body that lies), shown by ghostShown, recoloured with the team', () => {

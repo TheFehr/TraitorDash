@@ -43,3 +43,10 @@ export function applyTilt(g: Object3D, bones: TiltBones, shares: { head: number,
 
 /** Looks up or down by a view pitch in degrees (positive looking down). */
 export const tiltFigure = (g: Object3D, bones: TiltBones, pitch: number) => applyTilt(g, bones, tiltShares(pitch))
+
+/** The right hand of a figure (the standard biped's `Bip01_R_Hand`, with or without the `ValveBiped.` prefix), or null: where a weapon is held (RFC 39, 4a). */
+export function findHand(g: Object3D): Object3D | null {
+  let hand: Object3D | null = null
+  g.traverse(o => { if (boneKey(o.name) === 'Bip01_R_Hand') hand = o })
+  return hand
+}

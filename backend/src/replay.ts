@@ -1,7 +1,7 @@
 /// <reference lib="dom" />
 import {
-  WebGLRenderer, OrthographicCamera, Box3, Vector3, Color, Group, Mesh, MeshStandardMaterial, MeshBasicMaterial,
-  SphereGeometry, CylinderGeometry, RingGeometry, DoubleSide, ConeGeometry, BoxGeometry, InstancedMesh, Matrix4, Object3D, Plane, Sprite,
+  WebGLRenderer, OrthographicCamera, Box3, Vector3, Quaternion, Color, Group, Mesh, MeshStandardMaterial, MeshBasicMaterial,
+  SphereGeometry, CylinderGeometry, RingGeometry, DoubleSide, ConeGeometry, BoxGeometry, InstancedMesh, Matrix4, Euler, Object3D, Plane, Sprite,
   SpriteMaterial, CanvasTexture, Raycaster, BufferGeometry, Float32BufferAttribute, Line, LineSegments, EdgesGeometry, LineBasicMaterial, AnimationMixer, BufferAttribute, type Material, type AnimationAction, type AnimationClip,
   type Camera, type MeshStandardMaterial as StdMat,
 } from 'three'
@@ -13,7 +13,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { startFlat } from './replayflat'
 import { offerBrowser, levelColour, paintPlain, makeCamera, makeRenderer, makeScene, mapLoader, prepareDecoration, prepareMovable, prepareProps, prepareWater, lyingPlaces, boxWithout, mergeDrawn, type Painted } from './sceneKit'
 import { weaponName } from './weaponName'
-import { findTiltBones, tiltFigure, type TiltBones } from './figureTilt'
+import { findTiltBones, tiltFigure, findHand, type TiltBones } from './figureTilt'
 import { holeUniforms, patchHole, updateHole, ghostFigure, ghostShown, createMask, sizeMask, renderMask, maskWanted } from './followHole'
 import {
   decodeTrack, isTalking, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, shownLevels, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, bodyAt, thingAt, movedProps, killerDiedBefore, reviveSource, revivePose, fitLabel, healthAt, healthBar, healthColour, hurtText, hurtOwnText, healText, healOwnText, equipText, equipOwnText, c4Text, c4OwnText, dnaText, dnaOwnText, tbtnText, tbtnOwnText, EQUIPMENT_KINDS, hiddenPickups, timeMark, c4Charges, c4At, damageTotals, shotsByWeapon, shotsTitle, totalsText,
@@ -791,6 +791,81 @@ async function start(root: HTMLElement) {
     posedAt: number
   }
   const markers = new Map<string, Marker>()
+
+  // ---- weapon models (RFC 39, 3.4, 4a): the world model of the weapon in a player's hand, from the route that serves the models a round's track names. A model that is not built
+  // yet (or cannot be) is a small plain box, and is asked for again every 20 seconds, five times; the real one replaces it when it comes. In POV the followed player's own
+  // weapon is drawn in the view instead, in a fixed pose at the lower right, and only when the real model is there.
+  interface WeaponModel { state: 'loading' | 'ready' | 'missing', scene: Object3D | null, tries: number, retryAt: number }
+  const weaponModels = new Map<string, WeaponModel>()
+  const weaponUrl = src ? src.replace(/track\.json.*$/, 'weapon-model.glb') : null
+  const weaponModel = (cls: string): WeaponModel => {
+    let w = weaponModels.get(cls)
+    if (!w) { w = { state: 'missing', scene: null, tries: data.weaponModels.has(cls) && weaponUrl ? 0 : 99, retryAt: 0 }; weaponModels.set(cls, w) }
+    if (w.state !== 'missing' || w.tries >= 5 || performance.now() < w.retryAt) return w
+    const mine = w
+    mine.state = 'loading'; mine.tries++
+    fetch(`${weaponUrl}?class=${encodeURIComponent(cls)}`, { credentials: 'same-origin' })
+      .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.arrayBuffer() })
+      .then(buf => new Promise<Object3D>((ok, fail) => new GLTFLoader().parse(buf, '', g => ok(g.scene), fail)))
+      .then(scene => { scene.getObjectByName('z-up')?.quaternion.set(0, 0, 0, 1); mine.scene = scene; mine.state = 'ready'; changed() }) // the vertices are in Source's axes already
+      .catch(() => { mine.state = 'missing'; mine.retryAt = performance.now() + 20000 })
+    return w
+  }
+  const placeholderGeo = new BoxGeometry(18, 3, 6)
+  const placeholderMat = new MeshStandardMaterial({ color: 0x6b7280, roughness: 0.9, metalness: 0 })
+  const held = new Map<string, { cls: string | null, obj: Object3D | null, real: boolean }>()
+  const SIDE_AXIS = new Vector3(0, 1, 0)
+  const handPos = new Vector3()
+  /** Puts the weapon of `id` in the figure's right hand, pointing where the player aims (the hand's own turn is not followed: the model is kept to the aim, so it never points anywhere odd). */
+  const holdWeapon = (id: string, m: Marker, ms: number, pitch: number) => {
+    const cls = holdAt(data.polled.hold.get(id), ms, currentDeath(data.deaths, data.events, id, ms) !== null)
+    let st = held.get(id)
+    if (!st) { st = { cls: null, obj: null, real: false }; held.set(id, st) }
+    if (cls !== st.cls) { if (st.obj) m.group.remove(st.obj); st.obj = null; st.real = false; st.cls = cls }
+    if (!cls) return
+    const w = weaponModel(cls)
+    if (w.state === 'ready' && w.scene && !st.real) {
+      if (st.obj) m.group.remove(st.obj)
+      st.obj = w.scene.clone(true); st.real = true; m.group.add(st.obj)
+    } else if (!st.obj) { st.obj = new Mesh(placeholderGeo, placeholderMat); m.group.add(st.obj) }
+    const hand = (m.body.userData.hand ??= findHand(m.body)) as Object3D | null
+    if (!hand) { st.obj.visible = false; return }
+    st.obj.visible = true
+    m.group.updateMatrixWorld(true)
+    hand.getWorldPosition(handPos)
+    m.group.worldToLocal(handPos)
+    st.obj.position.copy(handPos)
+    st.obj.quaternion.setFromAxisAngle(SIDE_AXIS, (Math.min(Math.max(pitch, -89), 89) * Math.PI) / 180)
+  }
+  // POV: the weapon in the view, at the lower right, drawn over the world (a model has to be in the camera's own frame: Source's forward is the camera's -z, its left the camera's -x, its up +y)
+  const viewWeapon = new Group()
+  viewWeapon.visible = false
+  persp.add(viewWeapon)
+  scene.add(persp)
+  const toCamera = new Quaternion().setFromRotationMatrix(new Matrix4().makeBasis(new Vector3(0, 0, -1), new Vector3(-1, 0, 0), new Vector3(0, 1, 0)))
+  const viewState = { cls: null as string | null, real: false }
+  const VIEW_AT = new Vector3(9, -13, -42) // right, down and forward of the eye, in units (looked at in three real weapon models: whole in the picture at lower right, upright, the muzzle a little towards the middle)
+  const showViewWeapon = (cls: string | null) => {
+    if (cls !== viewState.cls) { viewWeapon.clear(); viewState.cls = cls; viewState.real = false }
+    const w = cls ? weaponModel(cls) : null
+    if (w && w.state === 'ready' && w.scene && !viewState.real) {
+      const obj = w.scene.clone(true)
+      obj.traverse(o => {
+        const mesh = o as Mesh
+        if (!mesh.isMesh) return
+        const over = (mt: Material) => { const c = mt.clone(); c.depthTest = false; c.depthWrite = false; return c }
+        mesh.material = Array.isArray(mesh.material) ? mesh.material.map(over) : over(mesh.material)
+        mesh.renderOrder = 999
+        mesh.frustumCulled = false
+      })
+      const holder = new Group()
+      holder.add(obj)
+      holder.quaternion.copy(toCamera).premultiply(new Quaternion().setFromEuler(new Euler(0.06, 0.14, 0))) // the muzzle turned a little towards the middle of the picture
+      holder.position.copy(VIEW_AT)
+      viewWeapon.add(holder); viewState.real = true
+    }
+    viewWeapon.visible = viewState.real
+  }
   const PIN = 0.03, LABEL_H = 0.036
   // The health bar (RFC 26, 4a) sits over the name: dark outline, grey ground, the colour of the health by the fraction of the most. Its texture is drawn again
   // only when the number of filled pixels changes.
@@ -1036,7 +1111,7 @@ async function start(root: HTMLElement) {
           // the body looks where the player looks, as in the game; its legs walk the way the player goes relative to that (forward, back, sideways)
           const v = velocityAt(m.segs, ms)
           m.group.rotation.z = look
-          if (Math.abs(ms - m.posedAt) >= (slow ? 33 : 12)) { m.posedAt = ms; poseRig(m.body, clipWeights(v.speed, v.heading - look, (moveAt(m.segs, ms) & MOVE.crouching) !== 0), m.path, ms, pitchAt(m.segs, ms) ?? 0) }
+          if (Math.abs(ms - m.posedAt) >= (slow ? 33 : 12)) { m.posedAt = ms; poseRig(m.body, clipWeights(v.speed, v.heading - look, (moveAt(m.segs, ms) & MOVE.crouching) !== 0), m.path, ms, pitchAt(m.segs, ms) ?? 0); holdWeapon(id, m, ms, pitchAt(m.segs, ms) ?? 0) }
         } else m.group.rotation.z = look
       }
       // from above the bodies are specks, so the pin itself points the way the player faces
@@ -1161,8 +1236,9 @@ async function start(root: HTMLElement) {
         if (pov.vignette) pov.vignette.style.opacity = String(cues.hurt)
         if (pov.note) pov.note.hidden = segs.length === 0 || !!segs[0]!.ap
       }
+      showViewWeapon(holdAt(data.polled.hold.get(sub.id), ms, !!sub.dead))
       updateHole(hole, camera, null, false)
-    } else updateHole(hole, camera, null, false) // no follow camera, no hole
+    } else { viewWeapon.visible = false; updateHole(hole, camera, null, false) } // no follow camera, no hole
     scrub.value = String(ms)
     setText(timeEl, `${stamp(ms)} / ${stamp(data.length)}`)
     render()
@@ -1187,6 +1263,7 @@ async function start(root: HTMLElement) {
     topControls.enabled = mode === 'top'
     lens()
     if (pov.box) pov.box.hidden = mode !== 'pov'
+    if (mode !== 'pov') viewWeapon.visible = false
     if (pov.controls) pov.controls.hidden = mode !== 'pov'
     if (mode === 'orbit') { orbit.update() }
     root.querySelectorAll<HTMLElement>('[data-cam]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.cam === mode)))
