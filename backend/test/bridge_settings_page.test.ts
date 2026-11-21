@@ -131,3 +131,13 @@ describe('the state the page asks for while it waits', () => {
     expect((await get('/api/bridge-settings/nope', ADMIN)).status).toBe(404)
   })
 })
+
+// Clicking the empty space beside a setting's name toggled the setting (found 2026-11-21): the name is a label for the control, and the label was stretched across the whole row.
+describe('the label of a setting is as wide as its name', () => {
+  test('the label does not grow to fill the row (the empty space beside it is not part of it), and the row keeps the name on the left and the tags on the right', async () => {
+    const { ADMIN_CSS } = await import('../src/components/styles')
+    expect(ADMIN_CSS).toContain('.fh .fl{flex:0 1 auto;min-width:0}')
+    expect(ADMIN_CSS).not.toContain('.fh .fl{flex:1 1 auto')
+    expect(ADMIN_CSS).toContain('.fh{display:flex;align-items:flex-start;justify-content:space-between;')
+  })
+})

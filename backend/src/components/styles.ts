@@ -391,7 +391,7 @@ form.add input{flex:1;min-width:14rem}
 .cfg [data-group]{scroll-margin-top:3.4rem}
 .cfg{padding-bottom:6.5rem}
 .fh{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-1) var(--space-3)}
-.fh .fl{flex:1 1 auto;min-width:0}
+.fh .fl{flex:0 1 auto;min-width:0}
 .fx{flex:none;display:flex;align-items:center;gap:var(--space-2);min-height:1.9rem;white-space:nowrap}
 .fx .src{margin-left:0}
 @media (max-width:30rem){.fh{flex-direction:column}.fx{flex-wrap:wrap;white-space:normal}}
