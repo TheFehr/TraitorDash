@@ -81,6 +81,7 @@ describe('the shell of every game page', () => {
     round()
     const r = await get(`/servers/${serverId}/stats?embed=1`)
     expect(r.headers.get('Cache-Control')).toBe('private, max-age=30')
+    expect(r.headers.get('Vary')).toBe('Cookie') // the copy is for the same cookie only: after a sign-in the browser asks again (the page it showed before is not shown again)
     const again = await get(`/servers/${serverId}/stats?embed=1`, false, { 'If-None-Match': r.headers.get('ETag')! })
     expect(again.status).toBe(304)
   })
@@ -244,5 +245,17 @@ describe('headings', () => {
     }
     const overview = await text(`/servers/${serverId}/stats`)
     expect(overview).toContain('<h2 class="ft">Who wins</h2>')
+  })
+})
+
+// A page kept by the browser for 30 seconds must not be shown again after a sign-in: it is kept for one cookie only (Vary: Cookie), and the page of a signed-in visitor is not the page of a visitor.
+describe('the page before and after a sign-in', () => {
+  test('every page answer that may be kept says Vary: Cookie, and the signed-in page differs from the visitor\'s (so a kept visitor page cannot stand in for it)', async () => {
+    const path = `/servers/${serverId}/stats?embed=0`
+    const before = await get(path, false)
+    expect(before.headers.get('Vary')).toBe('Cookie')
+    const after = await get(path, true)
+    expect(after.headers.get('Vary')).toBe('Cookie')
+    expect(after.headers.get('ETag')).not.toBe(before.headers.get('ETag'))
   })
 })

@@ -67,6 +67,9 @@ export function respond(c: any, ctx: Ctx, page: { toString(): string }, opts: { 
     return c.html(html, opts.status ?? 200, headers)
   }
   headers['Cache-Control'] = ctx.viewer?.admin ? 'private, max-age=0, must-revalidate' : 'private, max-age=30'
+  // What the page shows depends on the cookie (the header says who is signed in): a copy kept for 30 s is only for a request with the same cookie, or the page seen before
+  // signing in would be shown again after it (found 2026-11-21: the sign-in came back to the page it started from and showed it as before until the visitor reloaded)
+  headers.Vary = 'Cookie'
   const etag = 'W/"' + createHash('sha1').update(html).digest('hex').slice(0, 20) + '"'
   headers.ETag = etag
   const given = c.req.header('If-None-Match')
