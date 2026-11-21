@@ -168,7 +168,7 @@ html.theater{overflow:hidden}
 .scrub input{width:100%;margin:0}
 .ticks{position:absolute;left:0;right:0;top:0;height:1.2rem;pointer-events:none}
 .tick{position:absolute;top:0;bottom:0;width:2px;background:#dc2626;pointer-events:none}
-.tick-revive{background:#34d399}.tick-role{background:#a78bfa}.tick-c4plant{background:#fb923c}.tick-c4defuse{background:#38bdf8}.tick-c4boom{background:#fde047}
+.tick-end{width:3px;background:#f3f4f6;box-shadow:0 0 0 1px #111827}.tick-revive{background:#34d399}.tick-role{background:#a78bfa}.tick-c4plant{background:#fb923c}.tick-c4defuse{background:#38bdf8}.tick-c4boom{background:#fde047}
 .time{font-family:var(--mono);font-weight:400;min-width:13ch}
 /* room kept for what the script fills in, so that the panels below do not move when the track arrives (measured at 1100 and 390 px: the time text was 10 px wider before the round starts, "-0:05 / 4:55"; the players list grew from 0 to 224 px; the selected player's line from 0 to 46; the map note from 0 to 18 or 37; the level row left with 33 or 77 px) */
 .replay [data-players]{min-height:min(14rem,calc(var(--n,0) * 1.73rem))}

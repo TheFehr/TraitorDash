@@ -152,6 +152,8 @@ export interface Track {
   fingerprint: string | null
   /** Milliseconds from the first sample to the round's start: the preparation before it (RFC 12, 3.7). 0 when the recording began with the round. */
   begin?: number
+  /** Where the round ended, in ms on the track's clock (RFC 41): the track goes on after it when the server records after the end; absent in older tracks and when it does not. */
+  ended?: number
   truncated: boolean
   degraded: boolean
   /** Tick times in ms since the round began, as differences. */
@@ -208,6 +210,7 @@ export function validateTrack(body: unknown, round: { roundId: string, map: stri
   const total = t.reduce((a, n) => a + n, 0)
   if (total > TIME_MAX) return no('the track is longer than six hours')
   if (b.begin !== undefined && (!isInt(b.begin) || b.begin < 0 || b.begin > total)) return no('begin must be a whole number of ms from 0 to the length of the track')
+  if (b.ended !== undefined && (!isInt(b.ended) || b.ended < (typeof b.begin === 'number' ? b.begin : 0) || b.ended > total + TICK_STEP_MAX)) return no('ended must be a whole number of ms, not before the round began and not beyond the track')
 
   if (!Array.isArray(b.players) || b.players.length === 0 || b.players.length > MAX_TRACK_PLAYERS) return no(`players must be 1-${MAX_TRACK_PLAYERS} entries`)
   const seen = new Set<string>()
@@ -508,7 +511,7 @@ export function validateTrack(body: unknown, round: { roundId: string, map: stri
   return { ok: true, track: {
     roundId: round.roundId, map: b.map, fingerprint: typeof b.fingerprint === 'string' ? b.fingerprint : null,
     truncated: b.truncated === true, degraded: b.degraded === true, t, players, deaths, events,
-    ...(wm && Object.keys(wm).length > 0 ? { wm } : {}), ...(bodies.length > 0 ? { bodies } : {}), ...(typeof b.begin === 'number' && b.begin > 0 ? { begin: b.begin } : {}), ...(parts.length > 0 ? { parts } : {}), ...(things.length > 0 ? { things } : {}), ...(inputs.length > 0 ? { inputs } : {}),
+    ...(wm && Object.keys(wm).length > 0 ? { wm } : {}), ...(bodies.length > 0 ? { bodies } : {}), ...(typeof b.begin === 'number' && b.begin > 0 ? { begin: b.begin } : {}), ...(typeof b.ended === 'number' ? { ended: b.ended } : {}), ...(parts.length > 0 ? { parts } : {}), ...(things.length > 0 ? { things } : {}), ...(inputs.length > 0 ? { inputs } : {}),
   } }
 }
 
@@ -550,4 +553,46 @@ export function parseLimit(raw: string, ceiling: number, what: string): { ok: tr
   const n = Number(v)
   if (n > ceiling) return { ok: false, error: `${what} cannot be more than ${ceiling} on this instance` }
   return { ok: true, value: n }
+}
+
+/**
+ * A stored track extended with what was recorded after the round's end (RFC 41). The extension continues the track exactly where it stops (`base` is the number of ticks the
+ * stored track has: a second extension, or one for another track, does not match), carries the ticks, the tails of the segments that go on (their differences continue the
+ * segment, so they are joined to it when it ends where the tail begins; any other is a segment of its own) and the deaths and events after. The result is checked as a whole,
+ * as an upload is (so the caps hold for the sum), and a stored track that was not recorded with an end mark cannot be extended.
+ */
+export function extendTrack(stored: Track, ext: unknown, round: { roundId: string, map: string | null, players: ReadonlySet<string> }): TrackCheck {
+  const no = (error: string): TrackCheck => ({ ok: false, error })
+  const e = ext as Record<string, unknown> | null
+  if (!e || typeof e !== 'object' || Array.isArray(e)) return no('the body must be an object')
+  if (stored.ended === undefined) return no('this track was recorded without an end mark and cannot be extended')
+  if (!isInt(e.base) || e.base !== stored.t.length) return no('the extension does not continue this track (it may have been extended already)')
+  if (!Array.isArray(e.t) || e.t.length === 0) return no('t must be the ticks after the end')
+  if (e.players !== undefined && !Array.isArray(e.players)) return no('players must be a list')
+  for (const k of ['deaths', 'events'] as const) if (e[k] !== undefined && !Array.isArray(e[k])) return no(`${k} must be a list`)
+  const plain = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+  const players = stored.players.map(p => ({ ...p, segments: p.segments.map(s => ({ ...s })) })) as unknown as { id: string, segments: Record<string, any>[] }[]
+  for (const ep of (e.players ?? []) as unknown[]) {
+    if (!plain(ep) || typeof ep.id !== 'string' || !Array.isArray(ep.segments)) return no('a player of the extension needs an id and segments')
+    let mine = players.find(p => p.id === ep.id)
+    if (!mine) { mine = { id: ep.id, segments: [] }; players.push(mine) }
+    for (const seg of ep.segments as unknown[]) {
+      if (!plain(seg) || !isInt(seg.from) || !Array.isArray(seg.x)) return no('a segment of the extension needs from and positions')
+      const last = mine.segments[mine.segments.length - 1]
+      if (last && Array.isArray(last.x) && last.from + last.x.length === seg.from) {
+        // the segment goes on: its arrays continue; an optional one that only one side has is dropped (the arrays must stay as long as the positions)
+        for (const k of ['x', 'y', 'z', 'a'] as const) { if (!Array.isArray(seg[k])) return no(`${k} must be a list`); last[k] = [...last[k], ...seg[k]] }
+        for (const k of ['s', 'hp', 'ap'] as const) {
+          if (Array.isArray(last[k]) && Array.isArray(seg[k])) last[k] = [...last[k], ...(seg[k] as number[])]
+          else delete last[k]
+        }
+      } else mine.segments.push({ ...seg })
+    }
+  }
+  const raw = {
+    ...stored, round_id: stored.roundId, t: [...stored.t, ...(e.t as unknown[])], players,
+    deaths: [...stored.deaths, ...((e.deaths ?? []) as unknown[])], events: [...stored.events, ...((e.events ?? []) as unknown[])],
+    truncated: stored.truncated || e.truncated === true, degraded: stored.degraded || e.degraded === true,
+  }
+  return validateTrack(raw, round)
 }

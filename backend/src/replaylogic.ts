@@ -10,6 +10,8 @@ export interface RawSegment { from: number, x: number[], y: number[], z: number[
 export interface RawTrack {
   /** ms from the first sample to the round's start: the preparation recorded before it (RFC 12, 3.7); absent when there is none. */
   begin?: number
+  /** Where the round ended on the track's clock, when the server records after the end (RFC 41); absent otherwise. */
+  ended?: number
   t: number[]
   players: { id: string, /** The most health the player had; absent in older tracks. */ mh?: number, /** The eye height standing and crouching, whole units (RFC 39, 3.2); absent in older tracks. */ eh?: number, ed?: number, segments: RawSegment[] }[]
   /** The world model path of each weapon class held in the round (RFC 39, 3.4); absent in older tracks. */
@@ -59,6 +61,8 @@ export interface Decoded {
   things: Thing[]
   /** The most health each player had, where the track says (RFC 26, 4a). */
   maxHealth: Map<string, number>
+  /** Where the round ended in the replay's time (the round's start is 0), when the track goes on after the end (RFC 41); null for a track that stops there. */
+  ended: number | null
   /** The eye height above the feet of each player, standing and crouching, where the track says (RFC 39, 3.2); use `eyeHeights` for the defaults. */
   eyes: Map<string, { stand: number, duck: number }>
   /** The world model path of each weapon class held in the round (RFC 39, 3.4); empty for a track without them. */
@@ -171,7 +175,7 @@ export function decodeTrack(raw: RawTrack): Decoded {
     for (const s of l) { const last = merged[merged.length - 1]; if (last && s[0] <= last[1]) last[1] = Math.max(last[1], s[1]); else merged.push([s[0], s[1]]) }
     talk.set(p, merged)
   }
-  return { times, length: times.length ? times[times.length - 1]! : 0, start: times.length ? times[0]! : 0, players, deaths, events, bodies, things, maxHealth, eyes, weaponModels: new Map(Object.entries(raw.wm ?? {})), hurts, polled, talk }
+  return { times, length: times.length ? times[times.length - 1]! : 0, start: times.length ? times[0]! : 0, players, deaths, events, bodies, things, maxHealth, ended: typeof raw.ended === 'number' ? raw.ended - begin : null, eyes, weaponModels: new Map(Object.entries(raw.wm ?? {})), hurts, polled, talk }
 }
 
 /**
@@ -760,9 +764,10 @@ export function healOwnText(e: TrackEvent, nick: Nick, who: string): string {
   return `healed +${e.d}${e.a ? ` by ${nick(e.a)}${src ? ` (${src})` : ''}` : src ? ` by ${src}` : ''}, ${tail}`
 }
 /** What a player took, dealt and was healed over the round, as sums of the `hurt` and `heal` events ("healed" is health they gained, from anybody), and the shots they fired (the sum of the `n` of their `shots` events, RFC 26, 4c, C3). */
-export function damageTotals(events: TrackEvent[], who: string): { took: number, dealt: number, healed: number, shots: number } {
+export function damageTotals(events: TrackEvent[], who: string, until?: number | null): { took: number, dealt: number, healed: number, shots: number } {
   let took = 0, dealt = 0, healed = 0, shots = 0
   for (const e of events) {
+    if (until != null && e.t > until) continue // the totals are of the round: what happens after its end (RFC 41) is in the feed, not in them
     if (e.k === 'shots') { if (e.p === who && typeof e.n === 'number' && e.n > 0) shots += e.n; continue }
     if (typeof e.d !== 'number') continue
     if (e.k === 'hurt') { if (e.p === who) took += e.d; if (e.a === who) dealt += e.d }
@@ -771,9 +776,9 @@ export function damageTotals(events: TrackEvent[], who: string): { took: number,
   return { took, dealt, healed, shots }
 }
 /** The shots a player fired over the round by weapon class, the most first (then by class), for the totals line's tooltip. */
-export function shotsByWeapon(events: TrackEvent[], who: string): { w: string, n: number }[] {
+export function shotsByWeapon(events: TrackEvent[], who: string, until?: number | null): { w: string, n: number }[] {
   const by = new Map<string, number>()
-  for (const e of events) if (e.k === 'shots' && e.p === who && typeof e.n === 'number' && e.n > 0 && e.w) by.set(e.w, (by.get(e.w) ?? 0) + e.n)
+  for (const e of events) if (!(until != null && e.t > until) && e.k === 'shots' && e.p === who && typeof e.n === 'number' && e.n > 0 && e.w) by.set(e.w, (by.get(e.w) ?? 0) + e.n)
   return [...by].map(([w, n]) => ({ w, n })).sort((a, b) => b.n - a.n || (a.w < b.w ? -1 : a.w > b.w ? 1 : 0))
 }
 /** "Shots: Pistol 20, Shotgun 17" for the tooltip of the totals line, or nothing when the player fired none. */

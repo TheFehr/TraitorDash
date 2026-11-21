@@ -67,9 +67,9 @@ describe('the page', () => {
     expect(rule('.phealth-line.two')).toMatch(/height:3em/) // a track with shots: two lines of 1.5em, whatever the text
     expect(rule('.phealth-line.two')).toContain('white-space:normal')
     expect(replay).toContain("totalsLine.classList.toggle('two', kindsInTrack.has('shots'))") // by the whole track, not by the selection
-    expect(replay).toContain('totalsText(damageTotals(data.events, selected))')
+    expect(replay).toContain('totalsText(damageTotals(data.events, selected, data.ended))') // the totals of the round: they stop at its end (RFC 41)
     expect(replay).toContain('if (!totalsText_.has(selected ?? \'\'))')
-    expect(replay).toContain('shotsTitle(shotsByWeapon(data.events, selected))')
+    expect(replay).toContain('shotsTitle(shotsByWeapon(data.events, selected, data.ended))')
   })
   test('shots are not in the feed, not in the player\'s list and not marked on the bar', () => {
     const feedFilter = replay.match(/const feed = data\.events\.filter\(([^\n]*)\n/)![1]!

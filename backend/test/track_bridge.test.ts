@@ -3,7 +3,7 @@ import { lauxlib, lua, lualib, to_luastring, to_jsstring } from 'fengari'
 import fs from 'fs'
 import path from 'path'
 import { addJsonDecode } from './helpers/bridge_harness'
-import { validateTrack } from '../src/services/tracks'
+import { validateTrack, extendTrack } from '../src/services/tracks'
 
 // RFC 12, 3.2 and 3.3: runs the real addon/lua/traitordash/{stats,track}.lua against a minimal
 // fake of GMod/TTT2 with a clock the test controls, plays rounds through the hooks and the timer,
@@ -19,7 +19,7 @@ const PRELUDE = `
   IsValid = function(v) return v ~= nil and v ~= false and not (type(v) == "table" and v.removed) end
   local cvars = {}
   function CreateConVar(n, v)
-    cvars[n] = tostring(v)
+    if n ~= "traitordash_track_post" or cvars[n] == nil then cvars[n] = tostring(v) end -- as the game does, a reload of the file keeps the value the ConVar has (RFC 41's tests set it)
     return { GetBool = function() return cvars[n] == "1" end, GetFloat = function() return tonumber(cvars[n]) end, GetInt = function() return math.floor(tonumber(cvars[n]) or 0) end }
   end
   cvars.traitordash_url = "https://td.test/"; cvars.traitordash_token = "tok"
@@ -157,6 +157,7 @@ function play(script: string, tracking = true): Run {
     run(read('config.lua'))
     run(read('track.lua'))
     run(read('stats.lua'))
+    run('SetCv("traitordash_track_post", "0")') // RFC 41: the tests are of the recording up to the round's end, as before; the ones of the time after set it themselves
     if (tracking) run('SetCv("traitordash_track", "1")')
     run(script)
     run(`
@@ -3278,5 +3279,64 @@ describe('track.lua: view pitch, eye heights and weapon models (RFC 39)', () => 
     const wm = trackOf(many).wm
     expect(Object.keys(wm).length).toBeLessThanOrEqual(64)
     expect(okTrack(trackOf(many))).toBe(true)
+  })
+})
+
+// RFC 41: recording after the round's end: the track is sent at the end with the end mark, and what comes after is sent as an extension.
+describe('track.lua: recording after the end of the round (RFC 41)', () => {
+  const POST = (secs: number) => C2 + `SetCv("traitordash_track_post", "${secs}") function Post() NOW = NOW + ${secs}; TIMERS.TraitorDash_TrackPost.fn() end
+`
+  const extOf = (r: Run) => r.sent.filter(s => s.url.endsWith('/api/v1/track/extend')).map(s => s.body)
+  const stored = (r: Run) => { const t = trackOf(r); const v = validateTrack(t, { roundId: t.round_id, map: t.map, players: new Set([A, B, C]) }); if (!v.ok) throw new Error(v.error); return v.track }
+  const players = new Set([A, B, C])
+
+  test('post 0 sends the track at the end as before: no end mark, no extension, nothing left running', () => {
+    const r = play(C2 + `Start() Run(3) Ends() OUT = { timers = Count() }`)
+    expect(trackOf(r).ended).toBeUndefined(); expect(extOf(r)).toHaveLength(0); expect(r.out.timers).toBe(0)
+  })
+
+  test('post 10: the track is sent at the end with where the round ended, the recording goes on, and after 10 s the rest is sent as an extension that continues it exactly; the backend joins them', () => {
+    const r = play(POST(10) + `Start() Run(3) Ends() Run(4) Post()`)
+    const first = trackOf(r), ext = extOf(r)
+    expect(first.ended).toBeGreaterThan(0)
+    expect(ext).toHaveLength(1)
+    expect(ext[0].round_id).toBe(first.round_id); expect(ext[0].base).toBe(first.t.length); expect(ext[0].t.length).toBeGreaterThanOrEqual(4)
+    const joined = extendTrack(stored(r), ext[0], { roundId: first.round_id, map: first.map, players })
+    expect(joined.ok).toBe(true)
+    if (joined.ok) {
+      expect(joined.track.t).toHaveLength(first.t.length + ext[0].t.length)
+      expect(joined.track.ended).toBe(first.ended)
+      const a = joined.track.players.find((p: any) => p.id === A)!
+      expect(a.segments).toHaveLength(1) // a player alive throughout is one segment: no gap at the join
+      expect(a.segments[0]!.x).toHaveLength(joined.track.t.length)
+    }
+  })
+
+  test('the track sent at the end does not grow while the recording goes on: it is the track as it was at the end even if it is sent later', () => {
+    const r = play(POST(10) + `Start() Run(3) Fire("TTTEndRound", WIN_TRAITOR) Run(5) Accept(1) Post()`)
+    const first = trackOf(r), ext = extOf(r)[0]
+    expect(ext.base).toBe(first.t.length)
+    expect(first.players.find((p: any) => p.id === A).segments[0].x.length).toBe(first.t.length)
+    expect(extendTrack(stored(r), ext, { roundId: first.round_id, map: first.map, players }).ok).toBe(true)
+  })
+
+  test('the next round being prepared sends what has been recorded so far at once; the timer is gone and nothing is sent twice', () => {
+    const r = play(POST(10) + `Start() Run(3) Ends() Run(2) Fire("TTTPrepareRound") OUT = { timers = Count() } NOW = NOW + 20`)
+    expect(extOf(r)).toHaveLength(1)
+    expect(extOf(r)[0].t.length).toBeGreaterThanOrEqual(2)
+    expect(r.out.timers).toBeLessThanOrEqual(1) // the preparation's own sampling, not the post timer
+  })
+
+  test('the seconds are clamped to 0..60, and a recording that stopped by itself is sent at the end as before', () => {
+    const big = play(POST(500) + `Start() Run(2) Ends() OUT = { delay = TIMERS.TraitorDash_TrackPost.delay }`)
+    expect(big.out.delay).toBe(60)
+    const neg = play(POST(-5) + `Start() Run(2) Ends() OUT = { timers = Count() }`)
+    expect(neg.out.timers).toBe(0); expect(trackOf(neg).ended).toBeUndefined()
+  })
+
+  test('an extension with nothing new is not sent', () => {
+    const r = play(POST(10) + `Start() Run(3) Ends() Post()`)
+    expect(trackOf(r).ended).toBeGreaterThan(0)
+    expect(extOf(r)).toHaveLength(0)
   })
 })

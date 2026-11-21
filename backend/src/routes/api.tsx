@@ -8,7 +8,7 @@ import { RateLimiter } from '../services/rateLimit'
 import { clientAddress } from '../services/gates'
 import { validatePlan, MAX_PLAN_BYTES } from '../services/mapplan'
 import { formatCode } from '../services/pairing'
-import { validateTrack, MAX_TRACK_BYTES, parseLimit } from '../services/tracks'
+import { validateTrack, extendTrack, MAX_TRACK_BYTES, parseLimit } from '../services/tracks'
 import { refreshWorkshopText } from '../services/workshopText'
 import { NONCE, signResponse } from '../services/signing'
 import { FINGERPRINT, NAME, ROUND_ID, STEAM_ID, STEAM_ID64, WSID } from '../services/validators'
@@ -465,6 +465,33 @@ api.post('/v1/track', getServer, async (c) => {
   if (result.status === 'too_big') return c.json({ error: `The track is too big: ${result.limit}` }, 413)
   console.log(`[Track] Round ${body.round_id} from ${server.name}: ${result.status} (${checked.track.t.length} ticks, ${checked.track.players.length} players, ${(json.length / 1024).toFixed(0)} KB)`)
   return c.json({ success: true, stored: result.status === 'stored' })
+})
+
+// What was recorded after the round's end (RFC 41): joined to the track the bridge sent at the end of the round.
+api.post('/v1/track/extend', getServer, async (c) => {
+  const server = c.get('server')
+  const wait = trackLimiter.hit(server.id)
+  if (wait > 0) return tooMany(c, wait, 'Too many tracks uploaded; slow down')
+  const read = await readJson(c, MAX_TRACK_BYTES)
+  if (read.tooLarge) return c.json({ error: `A track is at most ${MAX_TRACK_BYTES / 1024 / 1024} MB` }, 413)
+  const body = read.body
+  if (!body || typeof body.round_id !== 'string' || !ROUND_ID.test(body.round_id)) return c.json({ error: 'round_id is required' }, 400)
+  const round = Store.getRoundForTrack(server.id, body.round_id)
+  if (!round) return c.json({ error: 'this server has not reported that round' }, 400)
+  const stored = Store.getTrack(server.id, body.round_id)
+  if (!stored) return c.json({ error: 'there is no track to extend' }, 404)
+  const checked = extendTrack(stored.track, body, { roundId: body.round_id, map: round.map, players: round.players })
+  if (!checked.ok) {
+    console.warn(`[Track] Rejected extension from ${server.name}: ${checked.error}`)
+    return c.json({ error: checked.error }, 409)
+  }
+  const json = JSON.stringify(checked.track)
+  const result = Store.replaceTrack(server.id, checked.track, json)
+  Store.updateHeartbeat(server.id)
+  if (result.status === 'too_big') return c.json({ error: `The track is too big: ${result.limit}` }, 413)
+  if (result.status === 'missing') return c.json({ error: 'there is no track to extend' }, 404)
+  console.log(`[Track] Round ${body.round_id} from ${server.name}: extended to ${checked.track.t.length} ticks (${(json.length / 1024).toFixed(0)} KB)`)
+  return c.json({ success: true })
 })
 
 // The bridge reports the maps the server has and which it will play (RFC 10), on startup and when

@@ -198,7 +198,7 @@ async function start(root: HTMLElement) {
     }
     const totals = el(root, '[data-selected-totals]') // what the selected player took, dealt and was healed over the whole round; it changes with the selection only
     if (totals) {
-      if (!totalsText_.has(selected ?? '')) totalsText_.set(selected ?? '', selected ? { text: totalsText(damageTotals(data.events, selected)), title: shotsTitle(shotsByWeapon(data.events, selected)) } : { text: '', title: '' })
+      if (!totalsText_.has(selected ?? '')) totalsText_.set(selected ?? '', selected ? { text: totalsText(damageTotals(data.events, selected, data.ended)), title: shotsTitle(shotsByWeapon(data.events, selected, data.ended)) } : { text: '', title: '' })
       const sums = totalsText_.get(selected ?? '')!
       setText(totals, sums.text)
       if (totals.title !== sums.title) totals.title = sums.title // the shots by weapon, for a mouse
@@ -309,6 +309,13 @@ async function start(root: HTMLElement) {
     const t = text('', 'span', 'tick')
     t.style.left = place(d.t)
     t.title = `${stamp(d.t)} ${nick(d.victim)} died`
+    ticks.append(t)
+  }
+  // where the round ended, when the track goes on after it (RFC 41)
+  if (ticks && data.ended !== null) {
+    const t = text('', 'span', 'tick tick-end')
+    t.style.left = place(data.ended)
+    t.title = `${stamp(data.ended)} Round end`
     ticks.append(t)
   }
   // revivals (green), role changes (violet) and C4 (orange armed, blue defused, yellow exploded) beside the deaths

@@ -43,6 +43,7 @@ local cv_max = CreateConVar("traitordash_track_interval_max", "1", {FCVAR_ARCHIV
 local cv_budget = CreateConVar("traitordash_track_budget_ms", "0.5", {FCVAR_ARCHIVE}, "What one sampling tick may cost on average, in milliseconds.")
 local cv_maxticks = CreateConVar("traitordash_track_max_ticks", "40000", {FCVAR_ARCHIVE}, "The most sampling ticks a round records; a longer round is cut and flagged truncated (1000 to 100000).")
 local cv_prep = CreateConVar("traitordash_track_prep", "1", {FCVAR_ARCHIVE}, "Also record the preparation before the round starts; the replay shows it before the round's time 0 (1/0; needs traitordash_track).")
+local cv_post = CreateConVar("traitordash_track_post", "10", {FCVAR_ARCHIVE}, "Seconds to keep recording after the round ends, so the replay shows what happens next (0 to 60; 0 = stop at the end; needs traitordash_track).")
 local cv_parts = CreateConVar("traitordash_track_parts", "0", {FCVAR_ARCHIVE}, "Also record doors, lifts and other parts that move, and who set them off (1/0; needs traitordash_track).")
 local cv_props = CreateConVar("traitordash_track_props", "0", {FCVAR_ARCHIVE}, "Also record props, prop doors and weapons on the floor that move (1/0; needs traitordash_track).")
 local cv_chat = CreateConVar("traitordash_track_chat", "0", {FCVAR_ARCHIVE}, "Also record what players write in chat, for the replay (1/0; needs traitordash_track). Everyone who may open a replay can read it.")
@@ -52,6 +53,7 @@ CreateConVar("traitordash_track_voice", "0", {FCVAR_ARCHIVE}, "Let the dashboard
 local cv_debug = CreateConVar("traitordash_stats_debug", "1", {FCVAR_ARCHIVE}, "Log what the stats tracker does (1/0).")
 
 local TIMER = "TraitorDash_Track"
+local POST_TIMER = "TraitorDash_TrackPost"
 local MAX_TICKS_FLOOR, MAX_TICKS_CEILING = 1000, 100000 -- what traitordash_track_max_ticks is kept between (the backend refuses more than the ceiling)
 local MAX_SEGMENTS = 64          -- per player
 local MAX_DEATHS = 512
@@ -1901,11 +1903,30 @@ hook.Add("EntityFireBullets", "TraitorDash_TrackShots", ShotHook) -- returns not
 
 -- The round is over: stops the timer, prints the one line, and returns the track to upload (or nil
 -- when there is nothing to send). `fingerprint` of the map is added when it is known.
+-- A copy of a plain table of data (the track sent at the end of the round must not grow while the recording goes on after it, RFC 41).
+local function Copy(v)
+    if type(v) ~= "table" then return v end
+    local o = {}
+    for k, x in pairs(v) do o[k] = Copy(x) end
+    return o
+end
+local POST_MAX = 60
+local function PostSeconds()
+    return math.min(math.max(math.floor(cv_post:GetInt()), 0), POST_MAX)
+end
+
 function Track.Finish(roundId)
     local r = rec
-    rec = nil
-    RemoveTimer()
-    if not r or r.id ~= roundId then return nil end
+    if not r or r.id ~= roundId then
+        rec = nil
+        RemoveTimer()
+        return nil
+    end
+    local post = (not r.stopped) and PostSeconds() or 0 -- a recording that stopped (a cap, an error) is finished now
+    if post == 0 then
+        rec = nil
+        RemoveTimer()
+    end
 
     local avg = r.ticks > 0 and r.costSum / r.ticks or 0
     print(string.format(
@@ -1960,7 +1981,10 @@ function Track.Finish(roundId)
         if e.by ~= nil and not In(e.by) then e.by = nil end
         inputs[#inputs + 1] = e
     end
-    if #players == 0 or #r.t == 0 then return nil end
+    if #players == 0 or #r.t == 0 then
+        if post ~= 0 then rec = nil RemoveTimer() end -- nothing to send, so nothing to extend
+        return nil
+    end
 
     local fingerprint = nil
     if TraitorDash.MapFingerprint and file.Size then
@@ -1972,7 +1996,7 @@ function Track.Finish(roundId)
         if ok then fingerprint = fp end
     end
 
-    return {
+    local body = {
         round_id = r.id, map = game.GetMap(), fingerprint = fingerprint,
         truncated = r.truncated, degraded = r.degraded,
         t = r.t, players = players, deaths = deaths, begin = r.begin > 0 and r.begin or nil,
@@ -1981,10 +2005,82 @@ function Track.Finish(roundId)
         bodies = #bodies > 0 and bodies or nil,
         parts = PartsOut(r), things = things, inputs = #inputs > 0 and inputs or nil,
     }
+    if post == 0 then return body end
+
+    -- RFC 41: the recording goes on for `post` seconds. What is sent now is a copy of the track as it is at the end of the round, marked with where the round ended; what comes
+    -- after is sent later as an extension (Track.FinishPost), from the marks taken here: how much of every array has been sent.
+    body.ended = RoundMs(r, CurTime())
+    local marks = { ticks = #r.t, events = #r.events, deaths = #r.deaths, players = {} }
+    for sid, p in pairs(r.players) do
+        local n = {}
+        for i, c in ipairs(p.segs) do n[i] = #c.x end
+        marks.players[sid] = n
+    end
+    r.post = { marks = marks, ended = body.ended }
+    timer.Create(POST_TIMER, post, 1, function() pcall(Track.FinishPost) end)
+    Dbg(string.format("the round ended; recording %d s more", post))
+    return Copy(body)
+end
+
+-- The track after the round's end (RFC 41): what was recorded since Track.Finish sent the track, as an extension of it. The tail of a segment that goes on keeps its
+-- differences, so that the backend can join it to the segment it continues; a segment that began after the end is sent whole.
+function Track.FinishPost()
+    local r = rec
+    if not r or not r.post then return end
+    rec = nil
+    RemoveTimer()
+    timer.Remove(POST_TIMER)
+    local marks = r.post.marks
+    local function In(sid) return sid ~= nil and r.players[sid] ~= nil and (r.members == nil or r.members[sid] == true) end
+    local t = {}
+    for i = marks.ticks + 1, #r.t do t[#t + 1] = r.t[i] end
+    if #t == 0 then return end
+    local function Tail(a, from)
+        local o = {}
+        for i = from + 1, #a do o[#o + 1] = a[i] end
+        return o
+    end
+    local players = {}
+    for _, sid in ipairs(r.order) do
+        local p = r.players[sid]
+        if In(sid) and #p.segs > 0 then
+            local sent = marks.players[sid] or {}
+            local segs = {}
+            for i, c in ipairs(p.segs) do
+                local from = sent[i] or 0
+                if #c.x > from then
+                    segs[#segs + 1] = {
+                        from = c.from + from, x = Tail(c.x, from), y = Tail(c.y, from), z = Tail(c.z, from), a = Tail(c.a, from), s = Tail(c.s, from),
+                        hp = (not c.hpBad and #c.hp == #c.x) and Tail(c.hp, from) or nil, ap = (not c.apBad and #c.ap == #c.x) and Tail(c.ap, from) or nil,
+                    }
+                end
+            end
+            if #segs > 0 then players[#players + 1] = { id = sid, segments = segs } end
+        end
+    end
+    local deaths, events = {}, {}
+    for i = marks.deaths + 1, #r.deaths do
+        local d = r.deaths[i]
+        if In(d.victim) then
+            if d.attacker ~= nil and not In(d.attacker) then d.attacker, d.ax, d.ay, d.az = nil, nil, nil, nil end
+            deaths[#deaths + 1] = d
+        end
+    end
+    for i = marks.events + 1, #r.events do
+        local e = r.events[i]
+        if In(e.p) then
+            for _, f in ipairs({ "by", "of", "a" }) do if e[f] ~= nil and not In(e[f]) then e[f] = nil end end
+            e.cand = nil
+            events[#events + 1] = e
+        end
+    end
+    local body = { round_id = r.id, base = marks.ticks, t = t, players = players, deaths = #deaths > 0 and deaths or nil, events = #events > 0 and events or nil, truncated = r.truncated or nil, degraded = r.degraded or nil }
+    Dbg(string.format("the recording after the round: %d ticks, %d events", #t, #events))
+    Track.Upload(body, "/api/v1/track/extend")
 end
 
 -- Sends a finished track. Called once the backend has accepted the round's stats; a failure is logged and dropped.
-function Track.Upload(body)
+function Track.Upload(body, path)
     local cfg = TraitorDash.GetConfig and TraitorDash.GetConfig()
     if not cfg or not cfg.url or cfg.token == "" then return end
     -- Encoding a big track is the one hitch the tracker causes (at the end of the round); its time is printed.
@@ -1997,7 +2093,7 @@ function Track.Upload(body)
     end
     local map = game.GetMap()
     HTTP({
-        url = cfg.url .. "/api/v1/track",
+        url = cfg.url .. (path or "/api/v1/track"),
         method = "POST",
         headers = { ["Content-Type"] = "application/json", ["Authorization"] = "Bearer " .. cfg.token },
         body = json,
@@ -2020,6 +2116,7 @@ end
 
 -- A new round is being prepared: whatever was being recorded is dropped.
 hook.Add("TTTPrepareRound", "TraitorDash_TrackReset", function()
+    if rec and rec.post then pcall(Track.FinishPost) end -- the next round is being prepared: what was recorded after the last one is sent now (RFC 41)
     rec = nil
     RemoveTimer()
     local ok, err = pcall(Track.Prepare)

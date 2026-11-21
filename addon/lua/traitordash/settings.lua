@@ -24,6 +24,7 @@ TraitorDash.SettingList = {
     { name = "traitordash_track_budget_ms",      kind = "number", default = "0.5", min = 0.05, max = 5 },
     { name = "traitordash_track_max_ticks",      kind = "int",    default = "40000", min = 1000, max = 100000 },
     { name = "traitordash_track_prep",           kind = "bool",   default = "1" },
+    { name = "traitordash_track_post",           kind = "int",    default = "10", min = 0, max = 60 },
     { name = "traitordash_track_parts",          kind = "bool",   default = "0" },
     { name = "traitordash_track_props",          kind = "bool",   default = "0" },
     { name = "traitordash_track_chat",           kind = "bool",   default = "0" },

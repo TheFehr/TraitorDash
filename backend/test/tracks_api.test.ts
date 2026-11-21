@@ -251,3 +251,70 @@ describe('pinning', () => {
     expect(Store.getTrackedRounds(serverId, []).size).toBe(0)
   })
 })
+
+// RFC 41: what was recorded after the round's end is joined to the track the bridge sent at the end of the round.
+describe('POST /api/v1/track/extend', () => {
+  const ended = (roundId: string, over: Record<string, unknown> = {}) => track(roundId, { ended: 380, ...over })
+  const ext = (roundId: string, over: Record<string, unknown> = {}) => ({
+    round_id: roundId, base: 3, t: [200, 200],
+    players: [{ id: A, segments: [{ from: 3, x: [2, 2], y: [0, 0], z: [0, 0], a: [1, 1] }] }],
+    deaths: [], events: [{ t: 700, p: A, k: 'say', text: 'gg', ch: 'all' }], ...over,
+  })
+  const stored = (id: string) => Store.getTrack(serverId, id).track
+
+  test('extends the stored track: the ticks, the segment that goes on (one segment), the events; the end mark stays', async () => {
+    const id = await round()
+    expect((await post('/v1/track', ended(id))).status).toBe(200)
+    const r = await post('/v1/track/extend', ext(id))
+    expect(r.status).toBe(200)
+    const t = stored(id)
+    expect(t.t).toEqual([0, 200, 200, 200, 200]); expect(t.ended).toBe(380)
+    expect(t.players[0].segments).toHaveLength(1)
+    expect(t.players[0].segments[0].x).toEqual([10, 1, 1, 2, 2])
+    expect(t.events).toHaveLength(1)
+    expect(db.query('SELECT bytes FROM round_tracks WHERE round_id = ?').get(id).bytes).toBeGreaterThan(0)
+  })
+  test('a segment that does not begin where the stored one ends is a segment of its own', async () => {
+    const id = await round()
+    await post('/v1/track', ended(id))
+    const r = await post('/v1/track/extend', ext(id, { players: [{ id: A, segments: [{ from: 4, x: [50], y: [0], z: [0], a: [0] }] }] }))
+    expect(r.status).toBe(200)
+    expect(stored(id).players[0].segments.map((s: any) => s.from)).toEqual([0, 4])
+  })
+  test('a second extension, or one that does not continue the track, is refused and changes nothing', async () => {
+    const id = await round()
+    await post('/v1/track', ended(id))
+    expect((await post('/v1/track/extend', ext(id))).status).toBe(200)
+    const again = await post('/v1/track/extend', ext(id))
+    expect(again.status).toBe(409)
+    expect((await post('/v1/track/extend', ext(id, { base: 1 }))).status).toBe(409)
+    expect(stored(id).t).toHaveLength(5)
+  })
+  test('a track recorded without an end mark cannot be extended; a round without a track is 404; an unknown round and a missing id are refused', async () => {
+    const id = await round()
+    await post('/v1/track', track(id))
+    expect((await post('/v1/track/extend', ext(id))).status).toBe(409)
+    const none = await round()
+    expect((await post('/v1/track/extend', ext(none))).status).toBe(404)
+    expect((await post('/v1/track/extend', ext('round-999999'))).status).toBe(400)
+    expect((await post('/v1/track/extend', { base: 3, t: [1] })).status).toBe(400)
+  })
+  test('the sum is checked as an upload is: a bad number in the extension refuses it, the stored track stays', async () => {
+    const id = await round()
+    await post('/v1/track', ended(id))
+    for (const bad of [ext(id, { t: [200, -5] }), ext(id, { t: [] }), ext(id, { players: [{ id: A, segments: [{ from: 3, x: [1.5, 2], y: [0, 0], z: [0, 0], a: [0, 0] }] }] }), ext(id, { players: 'x' }), ext(id, { events: [{ t: 1, p: A, k: 'nonsense' }] })]) {
+      expect((await post('/v1/track/extend', bad)).status).toBeGreaterThanOrEqual(400)
+    }
+    expect(stored(id).t).toHaveLength(3)
+  })
+  test('only the server that sent the round can extend it, and the token is needed', async () => {
+    const id = await round()
+    await post('/v1/track', ended(id))
+    expect((await post('/v1/track/extend', ext(id), other.token)).status).toBe(400) // that server has not reported the round
+    expect((await post('/v1/track/extend', ext(id), 'wrong')).status).toBe(401)
+    expect(stored(id).t).toHaveLength(3)
+  })
+  test('ended must be a whole number not before the round began and not beyond the track', async () => {
+    for (const bad of [-1, 1.5, '380', 99999]) { const id = await round(); expect((await post('/v1/track', ended(id, { ended: bad }))).status).toBe(400) }
+  })
+})

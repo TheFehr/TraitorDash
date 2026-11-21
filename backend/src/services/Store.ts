@@ -397,6 +397,18 @@ export class Store {
     return { status: 'stored' }
   }
 
+  /** Replaces the stored track of a round with its extension (RFC 41): the same row, the new size checked against the server's limit. */
+  static replaceTrack(serverId: string, t: Track, json: string): { status: 'stored' | 'missing' } | { status: 'too_big', limit: string } {
+    const limits = Store.getTrackLimits(serverId)
+    const bytes = Buffer.byteLength(json)
+    if (bytes > limits.mb * 1024 * 1024) return { status: 'too_big', limit: `this server keeps at most ${limits.mb} MB of tracks` }
+    const r = db.prepare('UPDATE round_tracks SET truncated = ?, degraded = ?, bytes = ?, data = ? WHERE server_id = ? AND round_id = ?')
+      .run(t.truncated ? 1 : 0, t.degraded ? 1 : 0, bytes, json, serverId, t.roundId)
+    if (r.changes === 0) return { status: 'missing' }
+    Store.enforceTrackLimits(serverId)
+    return { status: 'stored' }
+  }
+
   /** Removes the oldest unpinned tracks until the count and the size both fit. Pinned ones are never removed. */
   static enforceTrackLimits(serverId: string) {
     const limits = Store.getTrackLimits(serverId)
