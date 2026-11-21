@@ -32,7 +32,7 @@ export const MAX_MATERIALS_PER_MODEL = 400
 const key = (s: string) => createHash('sha1').update(s).digest('hex')
 const modelFile = (root: string, base: string, ext: string) => join(root, 'models', `${key(base)}.${ext}`)
 const textureFile = (root: string, path: string) => join(root, 'textures', `${key(path)}.${path.slice(-3)}`)
-const glbFile = (root: string, base: string) => join(root, 'glb', `${key(base)}.glb`)
+export const glbFile = (root: string, base: string) => join(root, 'glb', `${key(base)}.glb`)
 
 async function put(file: string, bytes: Uint8Array) {
   await mkdir(dirname(file), { recursive: true })
@@ -201,6 +201,8 @@ export interface ContentDeps {
   root?: string
   /** The game's own materials and textures, for what the addons do not hold (the pipeline's stock source). */
   stock?: StockTextures
+  /** The game's own models: asked for a model that no indexed addon holds, so that a stock weapon (the Counter-Strike and Half-Life ones) is built the same way (RFC 39, 3.4). */
+  stockModels?: StockModels
   /** Default `MAX_MEMBER_BYTES`. */
   maxMemberBytes?: number
 }
@@ -238,26 +240,37 @@ async function buildInner(base: string, d: ContentDeps): Promise<'unknown' | { a
 
   // 1. The addon that holds all of the model's files.
   const holders = W.holders(`${base}.mdl`)
-  if (holders.length === 0) return 'unknown'
-  const holder = holders.find(h => { const have = W.heldBy(h, [`${base}.vvd`, ...VTX.map(e => `${base}.${e}`)]); return have.has(`${base}.vvd`) && VTX.some(e => have.has(`${base}.${e}`)) })
-  if (!holder) throw new BuildError('The addon that holds the model lacks its vertex or triangle file.')
+  let holder: string | null = null
+  let stockFiles: ModelFiles | null = null
+  if (holders.length === 0) {
+    // no addon of the index holds it: the game's own content may (a stock weapon, RFC 39, 3.4)
+    const got = d.stockModels ? await d.stockModels([`${base}.mdl`]).catch(() => null) : null
+    stockFiles = got?.models.get(`${base}.mdl`) ?? null
+    if (!stockFiles) return 'unknown'
+  } else {
+    holder = holders.find(h => { const have = W.heldBy(h, [`${base}.vvd`, ...VTX.map(e => `${base}.${e}`)]); return have.has(`${base}.vvd`) && VTX.some(e => have.has(`${base}.${e}`)) }) ?? null
+    if (!holder) throw new BuildError('The addon that holds the model lacks its vertex or triangle file.')
+  }
 
   const wantedVmts: string[][] = []
   const found = new Map<string, Uint8Array>() // materials/... path -> bytes, what the model's materials came to
   const stockFound = new Map<string, Uint8Array>()
   let files: ModelFiles
-  const own = await openAddon(holder, d.fetcher)
-  report.addons++
+  const own = holder ? await openAddon(holder, d.fetcher) : null
+  if (own) report.addons++
   try {
-    const mdl = await extract(own, `${base}.mdl`, max), vvd = await extract(own, `${base}.vvd`, max)
-    let vtx: Uint8Array | null = null
-    for (const e of VTX) { vtx = await extract(own, `${base}.${e}`, max); if (vtx) break }
-    if (!mdl || !vvd || !vtx) throw new BuildError('The addon\'s archive lacks one of the model\'s files.')
-    files = { mdl, vvd, vtx }
+    if (stockFiles) files = stockFiles
+    else {
+      const mdl = await extract(own!, `${base}.mdl`, max), vvd = await extract(own!, `${base}.vvd`, max)
+      let vtx: Uint8Array | null = null
+      for (const e of VTX) { vtx = await extract(own!, `${base}.${e}`, max); if (vtx) break }
+      if (!mdl || !vvd || !vtx) throw new BuildError('The addon\'s archive lacks one of the model\'s files.')
+      files = { mdl, vvd, vtx }
+    }
     // The materials the model names: for each mesh the places its `.vmt` could be at.
     const mesh = readModel(files, paths => { wantedVmts.push(paths.slice(0, 16)); return false }, 5_000_000)
     if (!mesh) throw new BuildError('The model files could not be read (damaged, or too large).')
-    await put(modelFile(root, base, 'mdl'), mdl); await put(modelFile(root, base, 'vvd'), vvd); await put(modelFile(root, base, 'vtx'), vtx)
+    await put(modelFile(root, base, 'mdl'), files.mdl); await put(modelFile(root, base, 'vvd'), files.vvd); await put(modelFile(root, base, 'vtx'), files.vtx)
 
     // 2. The materials and textures, round by round: the `.vmt` files, then the textures they name and the material a patch includes.
     const wanted = new Set<string>()
@@ -270,7 +283,7 @@ async function buildInner(base: string, d: ContentDeps): Promise<'unknown' | { a
         if (wanted.size > MAX_MATERIALS_PER_MODEL * 3) { report.note = `More than ${MAX_MATERIALS_PER_MODEL * 3} material files named: the rest were left out (a safety ceiling).`; return }
         const cached = await get(textureFile(root, p))
         if (cached) { found.set(p, cached); continue }
-        const mine = await extract(own, p, max)
+        const mine = own ? await extract(own, p, max) : null
         if (mine) { found.set(p, mine); await put(textureFile(root, p), mine); continue }
         const other = W.holders(p).find(h => h !== holder)
         if (other) { const s = plan.get(other) ?? new Set<string>(); s.add(p); plan.set(other, s) }
@@ -323,13 +336,13 @@ async function buildInner(base: string, d: ContentDeps): Promise<'unknown' | { a
       if (fresh.length === 0) break
       await gather(fresh)
     }
-  } finally { await own.close() }
+  } finally { await own?.close() }
 
   // 3. The GLB.
   const glb = await modelGlbOf(base, files, found, stockFound, report)
   await put(glbFile(root, base), glb)
   report.bytes = glb.length + files.mdl.length + files.vvd.length + files.vtx.length + [...found.values()].reduce((n, b) => n + b.length, 0)
-  return { addon: holder, report }
+  return { addon: holder ?? 'game', report }
 }
 
 /** The GLB of a model: its triangles, a run for each material, the textures embedded; a material that has no texture is a plain colour (RFC 36's fallback). */

@@ -30,6 +30,7 @@ export const TIERS: Record<string, Tier> = {
   'GET /servers/:serverId/playermodel.glb': 'user',
   'GET /servers/:serverId/rounds/:roundId/replay': 'user',
   'GET /servers/:serverId/rounds/:roundId/track.json': 'user',
+  'GET /servers/:serverId/rounds/:roundId/weapon-model.glb': 'user',
   // The four voice routes (the page, the token, who is on, and who speaks) also take the voice cookie (RFC 31, `getVoiceSession`); the page answers a visitor without a session with the code form.
   'GET /servers/:serverId/voice': 'user',
   'POST /servers/:serverId/voice/token': 'user',

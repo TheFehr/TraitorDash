@@ -58,7 +58,7 @@ const withPlan = (fingerprint: string | null = FP) => {
 }
 
 /** A round with players, and a track for it unless `track` is false. */
-function round(opts: { track?: boolean, players?: string[], fingerprint?: string | null, map?: string } = {}) {
+function round(opts: { track?: boolean, players?: string[], fingerprint?: string | null, map?: string, wm?: Record<string, string> } = {}) {
   const id = `round-${String(++n).padStart(6, '0')}`
   const players = opts.players ?? [P1, P2]
   Store.recordRound(serverId, { roundId: id, map: opts.map ?? 'ttt_a', startedAt: null, duration: 120, result: 'traitors',
@@ -66,7 +66,7 @@ function round(opts: { track?: boolean, players?: string[], fingerprint?: string
   if (opts.track !== false) {
     const track = { roundId: id, map: opts.map ?? 'ttt_a', fingerprint: opts.fingerprint === undefined ? FP : opts.fingerprint, truncated: false, degraded: false, t: [0, 200, 200],
       players: players.map(p => ({ id: p, segments: [{ from: 0, x: [10, 1, 1], y: [10, 0, 0], z: [0, 0, 0], a: [0, 8, 8] }] })),
-      deaths: [{ victim: players[1], attacker: players[0], t: 400, vx: 12, vy: 10, vz: 0, ax: 10, ay: 10, az: 0, weapon: 'weapon_ttt_m16' }] }
+      deaths: [{ victim: players[1], attacker: players[0], t: 400, vx: 12, vy: 10, vz: 0, ax: 10, ay: 10, az: 0, weapon: 'weapon_ttt_m16' }], ...(opts.wm ? { wm: opts.wm } : {}) }
     Store.recordTrack(serverId, track, JSON.stringify(track))
   }
   return id
@@ -351,5 +351,54 @@ describe('glbLevels', () => {
     expect(glb.glbLevels(new Uint8Array(64))).toEqual([])
     const bad = MESH.slice(); bad[12] = 0xff; bad[13] = 0xff; bad[14] = 0xff // a length that runs past the file
     expect(glb.glbLevels(bad)).toEqual([])
+  })
+})
+
+// RFC 39, 3.4: the world model of a weapon class that a round's track recorded, for signed-in users, only through the round's own track.
+describe('weapon-model.glb', () => {
+  const PATH = 'models/weapons/w_test_rifle.mdl'
+  const url = (id: string, cls: string) => `/servers/${serverId}/rounds/${id}/weapon-model.glb?class=${cls}`
+  let dir = ''
+  beforeEach(async () => {
+    const { mkdtempSync } = await import('node:fs'); const { tmpdir } = await import('node:os'); const { join } = await import('node:path')
+    dir = mkdtempSync(join(tmpdir(), 'wm-route-'))
+    process.env.WORKSHOP_CONTENT_DIR = dir
+    process.env.WORKSHOP_COLLECTION = '1'
+    for (const t of ['workshop_models']) db.run(`DELETE FROM ${t}`)
+  })
+  afterAll(async () => { delete process.env.WORKSHOP_CONTENT_DIR; delete process.env.WORKSHOP_COLLECTION })
+  const seed = async (bytes: Uint8Array) => {
+    const { glbFile } = await import('../src/services/workshopContent'); const { mkdirSync, writeFileSync } = await import('node:fs'); const { dirname } = await import('node:path')
+    const f = glbFile(dir, PATH.replace(/\.mdl$/, '')); mkdirSync(dirname(f), { recursive: true }); writeFileSync(f, bytes)
+  }
+
+  test('a signed-in user gets a built model of a class the round recorded; an anonymous visitor does not', async () => {
+    const id = round({ wm: { weapon_ttt_m16: PATH } })
+    await seed(new Uint8Array([0x67, 0x6c, 0x54, 0x46, 1, 2, 3]))
+    expect((await req(url(id, 'weapon_ttt_m16'), null)).status).toBe(401)
+    const r = await req(url(id, 'weapon_ttt_m16'), USER)
+    expect(r.status).toBe(200)
+    expect(r.headers.get('Content-Type')).toBe('model/gltf-binary')
+    expect(r.headers.get('X-Content-Type-Options')).toBe('nosniff')
+    expect([...new Uint8Array(await r.arrayBuffer())]).toEqual([0x67, 0x6c, 0x54, 0x46, 1, 2, 3])
+  })
+  test('a class the round did not record is 404, whatever path it names; so are inherited object keys', async () => {
+    const id = round({ wm: { weapon_ttt_m16: PATH } })
+    await seed(new Uint8Array([1]))
+    for (const cls of ['weapon_zm_mac10', '', 'models/weapons/w_test_rifle.mdl', 'constructor', '__proto__', 'toString']) expect((await req(url(id, cls), USER)).status).toBe(404)
+    expect((await req(url(round(), 'weapon_ttt_m16'), USER)).status).toBe(404) // a round with no wm
+  })
+  test('a model that is not built yet is 404, not cached, and queued to be built', async () => {
+    const id = round({ wm: { weapon_ttt_m16: PATH } })
+    const r = await req(url(id, 'weapon_ttt_m16'), USER)
+    expect(r.status).toBe(404); expect(r.headers.get('Cache-Control')).toBe('no-store')
+    const row = db.prepare('SELECT status FROM workshop_models WHERE path = ?').get(PATH) as { status: string } | undefined
+    expect(row?.status).toBe('queued')
+  })
+  test('with the Workshop content source off it is 404 and nothing is queued', async () => {
+    const id = round({ wm: { weapon_ttt_m16: PATH } })
+    delete process.env.WORKSHOP_COLLECTION
+    expect((await req(url(id, 'weapon_ttt_m16'), USER)).status).toBe(404)
+    expect(db.prepare('SELECT COUNT(*) AS n FROM workshop_models').get().n).toBe(0)
   })
 })

@@ -658,6 +658,28 @@ app.get('/servers/:serverId/rounds/:roundId/track.json', gated('track'), async (
   return c.body(json, 200, headers)
 })
 
+/**
+ * The world model of a weapon class held in a round's replay (RFC 39, 3.4), as a GLB: only a class and path that the round's own (checked) track recorded can be asked for, so this
+ * is no way to fetch any model by path. A model that is built is sent; one that is not is queued to be built, and the answer is 404 until it is: the replay draws a placeholder
+ * and asks again on a later load. 404 as well when the Workshop content source is off (it does the building) or the round recorded no model for the class.
+ */
+app.get('/servers/:serverId/rounds/:roundId/weapon-model.glb', gated('track'), async (c) => {
+  const serverId = c.req.param('serverId'), roundId = c.req.param('roundId')
+  if (!Store.getServerById(serverId) || !workshopEnabled()) return c.text('Not found', 404)
+  const cls = c.req.query('class') ?? ''
+  const wm = (Store.getTrack(serverId, roundId)?.track as { wm?: Record<string, string> } | undefined)?.wm
+  const path = wm && Object.prototype.hasOwnProperty.call(wm, cls) ? wm[cls] : undefined
+  if (!path) return c.text('Not found', 404)
+  const glb = await workshopModelGlb(path, workshopContentRoot())
+  if (!glb) { queueModelBuild(path); return c.text('Not built yet', 404, { 'Cache-Control': 'no-store' }) }
+  return c.body(glb as Uint8Array<ArrayBuffer>, 200, {
+    'Content-Type': 'model/gltf-binary',
+    'X-Content-Type-Options': 'nosniff',
+    'Content-Security-Policy': "default-src 'none'",
+    'Cache-Control': 'private, max-age=3600',
+  })
+})
+
 /** One round as a file: who played what, how it ended, first blood, and the way to its replay (RFC 16, 17). Public. */
 app.get('/servers/:serverId/rounds/:roundId', async (c) => {
   const found = serverOf(c)
@@ -952,7 +974,7 @@ if (import.meta.main) {
       : '[Geometry] MAP_GEOMETRY=1, but the download helper (DepotDownloader) was not found; requested maps will fail. Set DEPOTDOWNLOADER_PATH.'))
   }
   if (workshop) {
-    startWorkshop(game?.textures)
+    startWorkshop(game?.textures, game?.models)
     console.log(`[Workshop] The collection ${workshopCollectionId()} is a content source: indexed at start and every night, models built into ${workshop.root} when something needs them.`)
   }
   Store.resetStaleGeometry()

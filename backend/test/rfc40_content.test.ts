@@ -112,6 +112,34 @@ describe('building a model from its addon', () => {
     expect(row('models/props/crate.mdl')?.status).toBe('built')
   })
 
+  test('a model that no addon holds but the game does (a stock weapon) is built from the game\'s files, with its materials from the addons or the game (RFC 39, 3.4)', async () => {
+    await index()
+    const fetched = fake.log.length // the indexing fetched every addon once
+    const asked: string[][] = []
+    const stockModels = async (names: string[]) => { asked.push(names); return { models: new Map(names.filter(n => n === 'models/weapons/w_stockgun.mdl').map(n => [n, gun])) } }
+    const report = await build('models/weapons/w_stockgun.mdl', { stockModels })
+    expect(asked).toEqual([['models/weapons/w_stockgun.mdl']])
+    expect(report).not.toBeNull()
+    expect(row('models/weapons/w_stockgun.mdl')?.status).toBe('built')
+    expect((db.prepare('SELECT addon_id AS addon FROM workshop_models WHERE path = ?').get('models/weapons/w_stockgun.mdl') as { addon: string }).addon).toBe('game')
+    const doc = await glbOf('models/weapons/w_stockgun.mdl')
+    expect(doc.getRoot().listMeshes().length).toBeGreaterThan(0)
+    expect(fake.log.slice(fetched).map(l => l.id).sort()).toEqual(['10', '20']) // only the materials came from addons (the decal from 10, the wall from 20): no addon was fetched for the model itself
+  })
+
+  test('a model that the game does not hold either, or a game that fails to answer, stays unknown; an addon that holds it wins over the game', async () => {
+    await index()
+    await build('models/none/nothing.mdl', { stockModels: async () => ({ models: new Map() }) })
+    expect(row('models/none/nothing.mdl')).toMatchObject({ status: 'unknown' })
+    await build('models/none/other.mdl', { stockModels: async () => { throw new Error('offline') } })
+    expect(row('models/none/other.mdl')).toMatchObject({ status: 'unknown' })
+    const asked: string[][] = []
+    await build('models/weapons/w_gun.mdl', { stockModels: async (n: string[]) => { asked.push(n); return { models: new Map() } } })
+    expect(asked).toEqual([]) // the addon had it: the game was not asked
+    expect(row('models/weapons/w_gun.mdl')?.status).toBe('built')
+    expect((db.prepare('SELECT addon_id AS addon FROM workshop_models WHERE path = ?').get('models/weapons/w_gun.mdl') as { addon: string }).addon).toBe('10')
+  })
+
   test('a model that no addon holds stays unknown, and is looked at again at the next run', async () => {
     await index()
     expect(C.queueModelBuild('models/none/nothing.mdl')).toBe(true)
