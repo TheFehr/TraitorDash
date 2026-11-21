@@ -13,10 +13,11 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { startFlat } from './replayflat'
 import { offerBrowser, levelColour, paintPlain, makeCamera, makeRenderer, makeScene, mapLoader, prepareDecoration, prepareMovable, prepareProps, prepareWater, lyingPlaces, boxWithout, mergeDrawn, type Painted } from './sceneKit'
 import { weaponName } from './weaponName'
+import { findTiltBones, tiltFigure, type TiltBones } from './figureTilt'
 import { holeUniforms, patchHole, updateHole, ghostFigure, ghostShown, createMask, sizeMask, renderMask, maskWanted } from './followHole'
 import {
   decodeTrack, isTalking, poseAt, lastPoseAt, clipWeights, damp, dampAngle, cyclesAt, clipNames, gaitClips, GAITS, moveAt, pathOf, velocityAt, MOVE, type ClipName, type Path, type Strides, trailBetween, levelOf, holdLevel, cutHeight, shownLevels, type LevelHold, defaultSelection, playerColour, clock, stateAt, currentDeath, bodyAt, thingAt, movedProps, killerDiedBefore, reviveSource, revivePose, fitLabel, healthAt, healthBar, healthColour, hurtText, hurtOwnText, healText, healOwnText, equipText, equipOwnText, c4Text, c4OwnText, dnaText, dnaOwnText, tbtnText, tbtnOwnText, EQUIPMENT_KINDS, hiddenPickups, timeMark, c4Charges, c4At, damageTotals, shotsByWeapon, shotsTitle, totalsText,
-  holdAt, creditsAt, karmaAt, holdingText, POV_FOV, POV_NEAR, povVerticalFov, eyeHeights, povEye, povDirection, turnToBody, povSubject, hurtsDealt, cueLevels, creditsLine, karmaLine, creditsOwnText, karmaOwnText, specOwnText, watchEventAt, watchLine,
+  holdAt, creditsAt, karmaAt, holdingText, pitchAt, followTilt, followHeights, POV_FOV, POV_NEAR, povVerticalFov, eyeHeights, povEye, povDirection, turnToBody, povSubject, hurtsDealt, cueLevels, creditsLine, karmaLine, creditsOwnText, karmaOwnText, specOwnText, watchEventAt, watchLine,
   type Decoded, type Segment, type LevelRange, type TrackEvent,
 } from './replaylogic'
 
@@ -92,6 +93,7 @@ async function start(root: HTMLElement) {
   let camMode: 'orbit' | 'top' | 'follow' | 'pov' = 'orbit'
   let povFov: number = POV_FOV.normal // the viewer's choice of the horizontal field of view in POV (RFC 39, 4)
   let povDot = true
+  let lookWith = true // "Look with them" (RFC 39, 4a): the third-person follow camera tilts with the followed player's view pitch
   let followLevel = true
   let levelHold: LevelHold | null = null, levelHoldFor: string | null = null // the level the cut follows, held for a moment when the player is found lower (replaylogic: holdLevel)
   let upTo: number | 'all' = 'all'
@@ -407,6 +409,9 @@ async function start(root: HTMLElement) {
   root.querySelectorAll<HTMLElement>('[data-pov-fov]').forEach(b => b.addEventListener('click', () => { povFov = Number(b.dataset.povFov); keep('td-pov-fov', String(povFov)); markPov(); lens(); changed() }))
   root.querySelector<HTMLInputElement>('[data-pov-dotbox]')?.addEventListener('change', e => { povDot = (e.target as HTMLInputElement).checked; keep('td-pov-dot', povDot ? '1' : '0'); markPov() })
   markPov()
+  if (keep('td-look') === '0') lookWith = false
+  const lookBox = root.querySelector<HTMLInputElement>('[data-look]')
+  if (lookBox) { lookBox.checked = lookWith; lookBox.addEventListener('change', () => { lookWith = lookBox.checked; keep('td-look', lookWith ? '1' : '0'); changed() }) }
   root.querySelectorAll<HTMLElement>('[data-speed]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.speed === '1')))
 
   // ---- WebGL: a browser without it gets the lists above and this message
@@ -725,7 +730,7 @@ async function start(root: HTMLElement) {
    * clips are made to be blended): the cycle is the one gone along the path, so a foot does not slide at any speed or direction and
    * when scrubbing; the two idles go by the time.
    */
-  const poseRig = (g: Group, weights: Record<ClipName, number>, path: Path | null, ms: number) => {
+  const poseRig = (g: Group, weights: Record<ClipName, number>, path: Path | null, ms: number, pitch = 0) => {
     const rig = g.userData.rig as { mixer: AnimationMixer, actions: Map<string, AnimationAction> } | undefined
     if (!rig || !moving) return
     for (const [name, action] of rig.actions) {
@@ -739,6 +744,7 @@ async function start(root: HTMLElement) {
       action.time = cycle * clip.duration
     }
     rig.mixer.update(0)
+    if (pitch !== 0) { const r = g.userData.rig as { tilt?: TiltBones }; tiltFigure(g, r.tilt ??= findTiltBones(g), pitch) } // RFC 39, 4a
   }
   const STILL = { idle: 1 } as Record<ClipName, number>
 
@@ -952,7 +958,7 @@ async function start(root: HTMLElement) {
     cut.constant = cutHeight(levels, upto, CUT_ABOVE)
     markLevels()
   }
-  const follow = { x: 0, y: 0, z: 0, yaw: 0, at: 0, ms: 0, who: null as string | null } // where the follow camera is settled
+  const follow = { x: 0, y: 0, z: 0, yaw: 0, tilt: 0, at: 0, ms: 0, who: null as string | null } // where the follow camera is settled (tilt: how far it has settled into looking up or down with the player)
 
   // ---- what is shown at time `ms`
   const tmp = new Vector3()
@@ -1030,7 +1036,7 @@ async function start(root: HTMLElement) {
           // the body looks where the player looks, as in the game; its legs walk the way the player goes relative to that (forward, back, sideways)
           const v = velocityAt(m.segs, ms)
           m.group.rotation.z = look
-          if (Math.abs(ms - m.posedAt) >= (slow ? 33 : 12)) { m.posedAt = ms; poseRig(m.body, clipWeights(v.speed, v.heading - look, (moveAt(m.segs, ms) & MOVE.crouching) !== 0), m.path, ms) }
+          if (Math.abs(ms - m.posedAt) >= (slow ? 33 : 12)) { m.posedAt = ms; poseRig(m.body, clipWeights(v.speed, v.heading - look, (moveAt(m.segs, ms) & MOVE.crouching) !== 0), m.path, ms, pitchAt(m.segs, ms) ?? 0) }
         } else m.group.rotation.z = look
       }
       // from above the bodies are specks, so the pin itself points the way the player faces
@@ -1114,17 +1120,20 @@ async function start(root: HTMLElement) {
     if (camMode === 'follow' && mine) {
       const a = (mine.yaw / 256) * Math.PI * 2
       const now = performance.now(), dt = now - follow.at
+      const wantTilt = followTilt(pitchAt(data.players.get(selected!) ?? [], ms) ?? 0, lookWith) // RFC 39, 4a: the picture tilts with the player, by a factor, unless switched off
       const glide = playing && follow.who === selected && ms >= follow.ms && ms - follow.ms < 600 && dt < 250
       if (glide) {
         follow.x = damp(follow.x, mine.x, dt, 70); follow.y = damp(follow.y, mine.y, dt, 70); follow.z = damp(follow.z, mine.z, dt, 120)
         follow.yaw = dampAngle(follow.yaw, a, dt, 200)
-      } else { follow.x = mine.x; follow.y = mine.y; follow.z = mine.z; follow.yaw = a }
+        follow.tilt = damp(follow.tilt, wantTilt, dt, 200)
+      } else { follow.x = mine.x; follow.y = mine.y; follow.z = mine.z; follow.yaw = a; follow.tilt = wantTilt }
       follow.at = now; follow.ms = ms; follow.who = selected
       const px = follow.x, py = follow.y, pz = follow.z
       const dx = Math.cos(follow.yaw), dy = Math.sin(follow.yaw)
       // Source (x, y, z) -> three (x, z, -y)
-      persp.position.set(px - dx * 300, pz + 170, -(py - dy * 300))
-      tmp.set(px + dx * 90, pz + 50, -(py + dy * 90))
+      const hts = followHeights(follow.tilt)
+      persp.position.set(px - dx * 300, pz + hts.camera, -(py - dy * 300))
+      tmp.set(px + dx * 90, pz + hts.target, -(py + dy * 90))
       persp.lookAt(tmp)
       // the hole is made around where the player is drawn (the settled camera follows them a little behind)
       updateHole(hole, persp, tmp.set(mine.x, mine.z, -mine.y), true)

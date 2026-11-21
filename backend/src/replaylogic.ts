@@ -1088,3 +1088,29 @@ export function cueLevels(dealt: TrackEvent[] | undefined, taken: TrackEvent[] |
     hurt: t && takenAge >= 0 && takenAge < VIGNETTE_MS ? strength * (1 - takenAge / VIGNETTE_MS) : 0,
   }
 }
+
+// ---- RFC 39, stage C: looking up and down in every camera
+
+/** The share of the view pitch the head takes, and how far the head may tilt in degrees (the rest is carried by the spine) (RFC 39, 4a). */
+export const HEAD_SHARE = 0.5
+export const HEAD_LIMIT = 60
+/** How a view pitch (degrees, positive looking down) is split between the head and the spine: the head half of it up to HEAD_LIMIT, the spine what is left, so the two add up to the pitch. */
+export function tiltShares(pitch: number): { head: number, spine: number } {
+  const p = Math.min(Math.max(pitch, -89), 89)
+  const head = Math.min(Math.max(p * HEAD_SHARE, -HEAD_LIMIT), HEAD_LIMIT)
+  return { head, spine: p - head }
+}
+
+/** How much of the pitch the third-person follow camera takes (RFC 39, 4a): 0.4 to start, tuned on real rounds; and the most it tilts, in degrees. */
+export const FOLLOW_TILT = 0.4
+export const FOLLOW_TILT_MAX = 35
+/** The tilt of the follow camera for a view pitch: by the factor, within the limit; 0 when the viewer switched "Look with them" off. */
+export const followTilt = (pitch: number, on: boolean, factor = FOLLOW_TILT): number => (on ? Math.min(Math.max(pitch * factor, -FOLLOW_TILT_MAX), FOLLOW_TILT_MAX) : 0)
+/**
+ * Where the follow camera and what it looks at are above the player's feet for a tilt (degrees, positive looking down): level it is the camera at 170 units and the point
+ * 50 units up that it has always been; looking down the camera goes up and the point down, looking up the other way, so the picture tilts with the player and does not swing.
+ */
+export function followHeights(tilt: number): { camera: number, target: number } {
+  const t = (tilt * Math.PI) / 180
+  return { camera: 170 + 200 * Math.sin(t), target: 50 - 90 * Math.tan(t) }
+}
